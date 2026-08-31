@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>极速争锋 · REAL RACING</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏁</text></svg>">
+<script>
+// 最早的错误捕获：模块加载失败（常见于缓存新旧混杂）时直接屏显，避免永远停在加载页
+(function () {
+    window.addEventListener('error', function (e) {
+        var box = document.getElementById('earlyError');
+        if (!box) return;
+        var msg = (e && (e.message || e.filename)) ? (e.message || e.filename) : String(e);
+        box.style.display = 'block';
+        box.innerHTML = '<b>资源加载/运行出错</b><br>' + String(msg).slice(0, 300) +
+            '<br><br>请按 <b>Cmd+Shift+R</b> 强制刷新（清除旧缓存）后重试。';
+    });
+    setTimeout(function () {
+        var veil = document.getElementById('loadingVeil');
+        var box = document.getElementById('earlyError');
+        if (veil && box && !veil.dataset.done) {
+            box.style.display = 'block';
+            box.innerHTML = '<b>加载时间过长</b><br>可能是浏览器缓存了旧版本文件。<br>请按 <b>Cmd+Shift+R</b> 强制刷新后重试。';
+        }
+    }, 20000);
+});
+</script>
+<link rel="stylesheet" href="./css/style.css">
+<script type="importmap">
+{
+    "imports": {
+        "three": "./lib/three.module.js",
+        "three/addons/": "./lib/addons/"
+    }
+}
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="earlyError" style="display:none;position:fixed;left:50%;top:12%;transform:translateX(-50%);z-index:99;background:rgba(150,24,24,.94);color:#fff;font:13px/1.6 Menlo,monospace;padding:14px 18px;border-radius:10px;max-width:80vw;text-align:center"></div>
+<div id="loadingVeil"><div class="veil-inner"><div class="spinner"></div><p>赛道生成中…</p></div></div>
+
+<!-- 主菜单 -->
+<div id="menu" class="overlay hidden">
+    <div class="menu-box">
+        <div class="menu-kicker">REAL RACING</div>
+        <h1 class="menu-title">极速争锋</h1>
+        <p class="menu-sub" id="menuSub">拟真场地竞速 · 环形大奖赛赛道 · 4 车对决</p>
+
+        <button id="btnStart" class="btn-primary">开 始 比 赛</button>
+
+        <div class="menu-options">
+            <label>赛道
+                <select id="trackSel"></select>
+            </label>
+            <label>座驾车型
+                <select id="carSel"></select>
+            </label>
+            <label>比赛圈数
+                <select id="lapsSel">
+                    <option value="2">2 圈</option>
+                    <option value="3" selected>3 圈</option>
+                    <option value="5">5 圈</option>
+                </select>
+            </label>
+            <label>AI 强度
+                <select id="diffSel">
+                    <option value="easy">轻松</option>
+                    <option value="normal" selected>标准</option>
+                    <option value="hard">硬核</option>
+                </select>
+            </label>
+            <label class="best">历史最快圈<span id="bestLapMenu">--:--.---</span></label>
+        </div>
+
+        <div class="controls-grid">
+            <span><b>W / ↑</b> 油门</span>
+            <span><b>S / ↓</b> 刹车·倒车</span>
+            <span><b>A D / ← →</b> 转向</span>
+            <span><b>Space</b> 手刹漂移</span>
+            <span><b>C</b> 切换镜头</span>
+            <span><b>R</b> 回到赛道</span>
+            <span><b>P / Esc</b> 暂停</span>
+            <span><b>T</b> 操控调参面板</span>
+            <span><b>M</b> 静音</span>
+        </div>
+        <p class="menu-tip">小提示：出弯给油更稳；草地会严重掉速，手刹在低速发夹弯最好用。</p>
+    </div>
+</div>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+    <div id="minimapWrap"><canvas id="minimap"></canvas></div>
+    <div id="standings"></div>
+
+    <div id="raceTop">
+        <div id="posBig">P4<small>/ 4</small></div>
+        <div id="timeTotalBox"><i>总时间</i><b id="timeTotal">0:00.000</b></div>
+    </div>
+
+    <div id="timingPanel">
+        <div class="tp-row head"><span>单圈计时</span><span id="lapNum">1 / 3</span></div>
+        <div class="tp-row"><span>本圈</span><b id="lapCur">0:00.000</b></div>
+        <div class="tp-row"><span>上圈</span><b id="lapLast">--:--.---</b></div>
+        <div class="tp-row best"><span>最快圈</span><b id="lapBest">--:--.---</b></div>
+    </div>
+
+    <div id="speedoWrap"><canvas id="tach"></canvas></div>
+
+    <div id="centerMsg"></div>
+    <div id="wrongWay">⚠️ 逆行！请立即调头</div>
+</div>
+
+<!-- 触屏控制 -->
+<div id="touchControls"></div>
+
+<!-- 暂停 -->
+<div id="pauseMenu" class="overlay hidden">
+    <div class="menu-box small">
+        <h2>已暂停</h2>
+        <button class="btn-primary" id="btnResume">继续比赛</button>
+        <button class="btn-ghost" id="btnRestart">重新开始</button>
+        <button class="btn-ghost" id="btnQuitPause">回到主菜单</button>
+    </div>
+</div>
+
+<!-- 结算 -->
+<div id="resultsScreen" class="overlay hidden">
+    <div class="menu-box results-box">
+        <h2 class="res-title">比赛结果</h2>
+        <table class="results-table">
+            <thead><tr><th>名次</th><th>车队</th><th>总时间</th><th>最快圈</th></tr></thead>
+            <tbody id="resultsBody"></tbody>
+        </table>
+        <div class="btn-row">
+            <button class="btn-primary" id="btnAgain">再来一局</button>
+            <button class="btn-ghost" id="btnQuitResults">主菜单</button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

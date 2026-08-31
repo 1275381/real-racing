@@ -1,0 +1,8 @@
+{
+    "name": "real-racing",
+    "private": true,
+    "type": "module",
+    "imports": {
+        "three": "./lib/three.module.js"
+    }
+}
