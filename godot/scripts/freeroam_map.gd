@@ -17,8 +17,11 @@ const MAP_LIMIT := 2800.0   # 漫游世界半径：城市核心 + 北山地 / �
 const GRID_COORDS := [-900.0, -720.0, -540.0, -360.0, -180.0, 0.0, 180.0, 360.0, 540.0, 720.0, 900.0]
 const GRID_HALF_W := 8.0
 const RING_ELEV := 10.0
-const CROSS_ELEV := 14.0
-const STREET_Y_STEP := 0.08   # 相邻街错高步距：路口两层路面至少差半步，避免 z-fighting
+const CROSS_ELEV := 14.0      # 南北快速路
+const CROSS_ELEV_EW := 19.0   # 东西快速路：与南北在 (0,0) 立体交叉，净空 5m
+                              # （原来两条都是 14m，在 (0,0) 完全同高，
+                              #   surf_skip 裁掉一条后合成一个平面十字 —— 不是立交）
+const STREET_Y := 0.03        # 网格街统一标高：路口靠拼块拼接，不再靠错高避让
 
 # 建筑排布
 const BLOCK_CELL := 12.0     # 禁建区位图格边长
@@ -45,6 +48,8 @@ class Road:
 	var slope := PackedFloat32Array()     # dy/ds（沿切线）
 	var half_w := 8.0
 	var closed := false                   # 闭环（仅环线）；开放路不可首尾相连
+	var xsec_cut := false                 # 网格街：路口方块内不铺面（由路口拼块接管）
+	var along_x := false                  # 沿 X 走（水平街）
 	var elevated := false
 	var wall := 10.0
 	var grid := {}                        # Vector2i -> PackedInt32Array
@@ -177,20 +182,24 @@ func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bo
 	return road
 
 
-## 每条街独立高度（垂直街 k：0.03+k·STEP；水平街再错半步）。
-## 22 条街两两不等高：原来 k%3 只有 3 档，121 个路口里 41 个两层路面完全共面，
-## 深度冲突让路面虚线持续狂闪；其余路口 0.012m 错高也只够撑到 ~250m 外。
-func _street_h(k: int, horizontal: bool) -> float:
-	return 0.03 + (float(k) + (0.5 if horizontal else 0.0)) * STREET_Y_STEP
+## 网格街统一标高。旧版让 22 条街两两错高（0.03~0.87）来躲深度冲突，代价是
+## 121 个路口全变成 0.04~0.84m 的台阶，城市西东两侧差了将近一米。
+## 现在改成：路口方块内两条街的路面都不铺，由 _build_intersections 的路口
+## 拼块精确填满（边界正好是 ±GRID_HALF_W），既不重叠也不留缝，全程同一高度。
+func _street_h(_k: int, _horizontal: bool) -> float:
+	return STREET_Y
 
 
 func _make_grid_roads() -> void:
 	for k in GRID_COORDS.size():
 		var c: float = GRID_COORDS[k]
-		_make_road([Vector2(c, -900.0), Vector2(c, 900.0)],
-				[_street_h(k, false)], false, GRID_HALF_W, false)
-		_make_road([Vector2(-900.0, c), Vector2(900.0, c)],
-				[_street_h(k, true)], false, GRID_HALF_W, false)
+		var rv := _make_road([Vector2(c, -900.0), Vector2(c, 900.0)],
+				[STREET_Y], false, GRID_HALF_W, false)
+		rv.xsec_cut = true
+		var rh := _make_road([Vector2(-900.0, c), Vector2(900.0, c)],
+				[STREET_Y], false, GRID_HALF_W, false)
+		rh.xsec_cut = true
+		rh.along_x = true
 
 
 func _make_ring() -> void:
@@ -205,8 +214,8 @@ func _make_ring() -> void:
 
 
 func _make_cross_highways() -> void:
-	# 东西 / 南北高架快速路（与环线立交：14m vs 10m）
-	_make_road([Vector2(-900.0, 0.0), Vector2(900.0, 0.0)], [CROSS_ELEV], false, 10.0, true)
+	# 东西 19m / 南北 14m / 环线 10m —— 三层互不同高，才是立交
+	_make_road([Vector2(-900.0, 0.0), Vector2(900.0, 0.0)], [CROSS_ELEV_EW], false, 10.0, true)
 	_make_road([Vector2(0.0, -900.0), Vector2(0.0, 900.0)], [CROSS_ELEV], false, 10.0, true)
 
 
@@ -226,24 +235,29 @@ func _make_ramps() -> void:
 				best = dot
 				bi = i
 		var rp := ring.pts[bi]
+		# rp 是 Vector3：rp.y 是高度，环线的 XZ 坐标必须取 (rp.x, rp.z)。
+		# 原来除 outward 外的几处都误写成 Vector2(rp.x, rp.y)，等于把汇入点
+		# 当成 z=10 的位置 —— 4 条匝道全部拐向错误方位、终点悬在半空，
+		# 根本没接上环线（车开上去会冲出路面卡死）。
+		var rxz := Vector2(rp.x, rp.z)
 		var rtan := Vector2(sin(ring.ang[bi]), cos(ring.ang[bi]))
-		var outward := Vector2(rp.x, rp.z).normalized()   # 径向单位向量（注意 rp.y 是高度）
+		var outward := rxz.normalized()   # 径向单位向量
 		# 地面端：就近的网格街道交点（内圈 540），入口沿街道后退 30m 保证精确接驳
 		var g := Vector2(signf(d[0]) * 540.0, signf(d[1]) * 540.0)
-		var on_x := absf(rp.x) > absf(rp.y)   # 退沿 X → 匝道口贴水平街
+		var on_x := absf(rp.x) > absf(rp.z)   # 退沿 X → 匝道口贴水平街
 		# 入口段抬高 0.20：匝道贴着街面起步，不叠面（叠面会深度打架闪烁）
 		var g_y := _street_h(8, on_x) + 0.20
 		var crown_y := maxf(_street_h(8, false), _street_h(8, true)) + 0.20
-		var street_back := Vector2(-signf(d[0]), 0.0) if absf(rp.x) > absf(rp.y) \
+		var street_back := Vector2(-signf(d[0]), 0.0) if on_x \
 				else Vector2(0.0, -signf(d[1]))
 		# 并线尾段：沿环线外侧平行（径向偏 16.5 = 环半宽10 + 0.5缝 + 匝道半宽6），
 		# 边对边衔接不叠面 —— 原来尾段压在环线中心线上，两条虚线深度冲突狂闪
-		var merge_c := Vector2(rp.x, rp.y) + outward * 16.5
+		var merge_c := rxz + outward * 16.5
 		var cps := [
 			g + street_back * 30.0,
 			g,
-			g.lerp(Vector2(rp.x, rp.y), 0.55) + outward * 26.0,
-			Vector2(rp.x, rp.y) - rtan * 80.0 + outward * 20.0,
+			g.lerp(rxz, 0.55) + outward * 26.0,
+			rxz - rtan * 80.0 + outward * 20.0,
 			merge_c - rtan * 30.0,
 			merge_c + rtan * 10.0,
 		]
@@ -257,7 +271,7 @@ func _make_ramps() -> void:
 			Vector2(hx - 150.0 * sx, -10.5), Vector2(hx - 40.0 * sx, -10.5),
 			Vector2(hx + 60.0 * sx, -16.0), Vector2(hx + 150.0 * sx, -170.0),
 			Vector2(hx + 150.0 * sx, -320.0),
-		], [CROSS_ELEV, CROSS_ELEV, 10.0, 1.5, 0.03], false, 6.0, true)
+		], [CROSS_ELEV_EW, CROSS_ELEV_EW, 11.0, 1.5, STREET_Y], false, 6.0, true)
 	for sz in [-1.0, 1.0]:
 		var hz: float = 560.0 * sz
 		# 起点与主线边对边（主线东侧 10.5m = 半宽10 + 0.5缝），不叠面
@@ -265,7 +279,7 @@ func _make_ramps() -> void:
 			Vector2(10.5, hz - 150.0 * sz), Vector2(10.5, hz - 40.0 * sz),
 			Vector2(16.0, hz + 60.0 * sz), Vector2(170.0, hz + 150.0 * sz),
 			Vector2(320.0, hz + 150.0 * sz),
-		], [CROSS_ELEV, CROSS_ELEV, 10.0, 1.5, 0.03], false, 6.0, true)
+		], [CROSS_ELEV, CROSS_ELEV, 8.0, 1.5, STREET_Y], false, 6.0, true)
 
 
 ## 城市外的四大区域路网：北盘山 / 西海岸 / 东沙漠 / 南郊野
@@ -594,6 +608,30 @@ func _mark_surf_skips() -> void:
 			road.surf_skip[i] = skip
 
 
+## 该段落在路口方块外的参数区间（0..1）。段长 1.5m 远小于方块 16m，
+## 所以最多只会跨过一条边界，单趟扫描即可。返回 x>=y 表示整段都在方块内。
+func _xsec_span(a: float, b: float, half: float) -> Vector2:
+	var lo := minf(a, b)
+	var hi := maxf(a, b)
+	for c in GRID_COORDS:
+		var c0: float = c - half
+		var c1: float = c + half
+		if hi <= c0 or lo >= c1:
+			continue
+		if lo >= c0 and hi <= c1:
+			return Vector2(1.0, 0.0)
+		if lo < c0:
+			hi = minf(hi, c0)
+		else:
+			lo = maxf(lo, c1)
+	var d := b - a
+	if absf(d) < 1e-6:
+		return Vector2(0.0, 1.0)
+	var f0 := (lo - a) / d
+	var f1 := (hi - a) / d
+	return Vector2(minf(f0, f1), maxf(f0, f1))
+
+
 func _build_road_meshes() -> void:
 	_mark_rail_skips()
 	_mark_surf_skips()
@@ -626,23 +664,49 @@ func _build_road_meshes() -> void:
 			var w := road.half_w
 			var u0 := float(i) / float(cnt) * rep
 			var u1 := float(i + 1) / float(cnt) * rep
+			# 网格街在路口处裁剪：路面裁到 ±GRID_HALF_W，人行道裁到 ±(GRID_HALF_W+2.2)，
+			# 空出来的方块与四个转角由 _build_intersections 精确填上。
+			# 两者裁剪边界不同，否则两条街的人行道会在转角互相叠面。
+			var sp_r := Vector2(0.0, 1.0)
+			var sp_w := Vector2(0.0, 1.0)
+			if road.xsec_cut:
+				var sa: float = pi.x if road.along_x else pi.z
+				var sb: float = pj.x if road.along_x else pj.z
+				sp_r = _xsec_span(sa, sb, GRID_HALF_W)
+				sp_w = _xsec_span(sa, sb, GRID_HALF_W + 2.2)
 			# 主路面（同层共面重叠段跳过：由覆盖路面的沥青接管，如高架十字交叉）
-			if road.surf_skip.size() != cnt or not (road.surf_skip[i] or road.surf_skip[j]):
+			if sp_r.x < sp_r.y and (road.surf_skip.size() != cnt
+					or not (road.surf_skip[i] or road.surf_skip[j])):
+				var ra := pi.lerp(pj, sp_r.x)
+				var rb := pi.lerp(pj, sp_r.y)
+				var rla := li.lerp(lj, sp_r.x)
+				var rlb := li.lerp(lj, sp_r.y)
+				var ru0 := lerpf(u0, u1, sp_r.x)
+				var ru1 := lerpf(u0, u1, sp_r.y)
 				_quad(
-					pi + Vector3(-li.x * w, 0, -li.y * w),
-					pj + Vector3(-lj.x * w, 0, -lj.y * w),
-					pj + Vector3(lj.x * w, 0, lj.y * w),
-					pi + Vector3(li.x * w, 0, li.y * w),
+					ra + Vector3(-rla.x * w, 0, -rla.y * w),
+					rb + Vector3(-rlb.x * w, 0, -rlb.y * w),
+					rb + Vector3(rlb.x * w, 0, rlb.y * w),
+					ra + Vector3(rla.x * w, 0, rla.y * w),
 					Vector3.UP, Color.WHITE,
-					Vector2(0, u0), Vector2(0, u1), Vector2(1, u1), Vector2(1, u0))
+					Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
 			if not road.elevated:
 				# 路缘人行道（略高于路面）
-				for side in [-1.0, 1.0]:
-					var a := pi + Vector3(li.x * side * (w + 0.06), 0.05, li.y * side * (w + 0.06))
-					var b := pj + Vector3(lj.x * side * (w + 0.06), 0.05, lj.y * side * (w + 0.06))
-					var c := pj + Vector3(lj.x * side * (w + 2.2), 0.05, lj.y * side * (w + 2.2))
-					var d := pi + Vector3(li.x * side * (w + 2.2), 0.05, li.y * side * (w + 2.2))
-					_quad(a, b, c, d, Vector3.UP, Color.WHITE)
+				if sp_w.x < sp_w.y:
+					var wa := pi.lerp(pj, sp_w.x)
+					var wb := pi.lerp(pj, sp_w.y)
+					var wla := li.lerp(lj, sp_w.x)
+					var wlb := li.lerp(lj, sp_w.y)
+					for side in [-1.0, 1.0]:
+						var a := wa + Vector3(wla.x * side * (w + 0.06), 0.05,
+								wla.y * side * (w + 0.06))
+						var b := wb + Vector3(wlb.x * side * (w + 0.06), 0.05,
+								wlb.y * side * (w + 0.06))
+						var c := wb + Vector3(wlb.x * side * (w + 2.2), 0.05,
+								wlb.y * side * (w + 2.2))
+						var d := wa + Vector3(wla.x * side * (w + 2.2), 0.05,
+								wla.y * side * (w + 2.2))
+						_quad(a, b, c, d, Vector3.UP, Color.WHITE)
 			else:
 				# 高架防撞墙：0.55m 高实体墙（内壁 + 顶面 + 外壁），哑光混凝土
 				for side in [-1.0, 1.0]:
@@ -683,8 +747,15 @@ func _build_road_meshes() -> void:
 		var cnt := road.pts.size()
 		var step := maxi(1, roundi(45.0 / SAMPLE_DS))
 		for i in range(0, cnt, step):
-			var p := road.pts[i]
-			if p.y < 1.5:
+			# 落点被占就沿桥往前挪（最多 ~45m），实在挪不开就少一根 ——
+			# 桥墩原来不做任何检查，会立在路口正中，也会直接穿过下层桥面
+			var idx := i
+			var tries := 0
+			while tries < 10 and _pillar_blocked(road, road.pts[idx]):
+				idx = mini(idx + 3, cnt - 1)
+				tries += 1
+			var p := road.pts[idx]
+			if p.y < 1.5 or _pillar_blocked(road, p):
 				continue
 			pillar_list.append(Transform3D(
 					Basis.from_scale(Vector3(1, p.y, 1)), Vector3(p.x, p.y / 2.0, p.z)))
@@ -701,6 +772,30 @@ func _build_road_meshes() -> void:
 
 
 ## 四大区域地面与景观：顶点色大网格（城市/草地/沙漠/山地/沙滩同一层，无深度冲突）
+## 桥墩落点是否被占：地面街道（含人行道 11m）或它要穿过的更低一层桥面
+func _pillar_blocked(road: Road, p: Vector3) -> bool:
+	for c in GRID_COORDS:
+		if absf(p.x - c) < 11.0 or absf(p.z - c) < 11.0:
+			return true
+	for other in roads:
+		if other == road or not other.elevated:
+			continue
+		var gap: float = other.half_w + 2.0
+		var rr := int(ceil(gap / CELL)) + 1
+		var gx := int(p.x / CELL)
+		var gz := int(p.z / CELL)
+		for cxi in range(gx - rr, gx + rr + 1):
+			for czi in range(gz - rr, gz + rr + 1):
+				var key := Vector2i(cxi, czi)
+				if not other.grid.has(key):
+					continue
+				for j in other.grid[key]:
+					var q := other.pts[j]
+					if q.y < p.y - 1.0 and Vector2(q.x - p.x, q.z - p.z).length() < gap:
+						return true
+	return false
+
+
 func _build_zones() -> void:
 	_build_zone_ground()
 	# 海面（独立光泽层，驶入即浅水漫过轮组）
@@ -965,6 +1060,42 @@ func _desert_props() -> void:
 
 ## 十字路口：斑马线 + 红绿灯
 func _build_intersections() -> void:
+	# ---- 路口铺装：16×16m 拼块，边界正好接上两条街被裁掉的地方 ----
+	# 中间不画车道线（真实路口就是这样），四角补人行道转角。
+	# 全部与街面同高（STREET_Y / +0.05），既不重叠也不留缝。
+	var hw := GRID_HALF_W
+	var wk := hw + 2.2
+	for cx in GRID_COORDS:
+		for cz in GRID_COORDS:
+			_quad(Vector3(cx - hw, STREET_Y, cz - hw), Vector3(cx - hw, STREET_Y, cz + hw),
+					Vector3(cx + hw, STREET_Y, cz + hw), Vector3(cx + hw, STREET_Y, cz - hw),
+					Vector3.UP, Color.WHITE,
+					Vector2(0, 0), Vector2(0, 2), Vector2(2, 2), Vector2(2, 0))
+	var xsec_mat := StandardMaterial3D.new()
+	xsec_mat.albedo_texture = RRTextures.asphalt_plain()
+	xsec_mat.roughness = 0.92
+	xsec_mat.metallic_specular = 0.08
+	xsec_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	_flush(xsec_mat)
+
+	for cx in GRID_COORDS:
+		for cz in GRID_COORDS:
+			for sx in [-1.0, 1.0]:
+				for sz in [-1.0, 1.0]:
+					var x0: float = cx + minf(sx * hw, sx * wk)
+					var x1: float = cx + maxf(sx * hw, sx * wk)
+					var z0: float = cz + minf(sz * hw, sz * wk)
+					var z1: float = cz + maxf(sz * hw, sz * wk)
+					var yy := STREET_Y + 0.05
+					_quad(Vector3(x0, yy, z0), Vector3(x0, yy, z1),
+							Vector3(x1, yy, z1), Vector3(x1, yy, z0),
+							Vector3.UP, Color.WHITE)
+	var corner_mat := StandardMaterial3D.new()
+	corner_mat.albedo_color = Color("#787e88")
+	corner_mat.roughness = 0.9
+	corner_mat.metallic_specular = 0.0
+	_flush(corner_mat)
+
 	# 斑马线（每个路口 4 条）
 	var zebra_mat := StandardMaterial3D.new()
 	zebra_mat.albedo_texture = RRTextures.zebra()

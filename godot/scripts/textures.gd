@@ -151,6 +151,35 @@ static func building() -> ImageTexture:
 	for yy in rows:
 		img.fill_rect(Rect2i(0, yy * rh + rh - 4, S, 4), Color(40 / 255.0, 44 / 255.0, 50 / 255.0, 0.5))
 	return _tex("building", img)
+## 路口铺装：与 asphalt() 完全相同的底噪 + 车辙，只是不画任何车道线 ——
+## 真实路口中间是不画线的。底色必须一致，否则路口会明显比路面暗一块。
+static func asphalt_plain() -> ImageTexture:
+	if _cache.has("asphalt_plain"):
+		return _cache["asphalt_plain"]
+	var S := 512
+	var img := _img(S, S)
+	img.fill(Color("#33353a"))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for i in 9000:
+		var v := 30.0 + rng.randf() * 46.0
+		var a := 0.35 + rng.randf() * 0.4
+		img.set_pixel(int(rng.randf() * S) % S, int(rng.randf() * S) % S,
+				Color(v / 255.0, v / 255.0, (v + 4.0) / 255.0, a))
+	for x in S:
+		var u := float(x) / S
+		var lift := 0.0
+		if u > 0.26 and u < 0.38:
+			lift = 0.055
+		elif u > 0.66 and u < 0.78:
+			lift = 0.055
+		if lift > 0.0:
+			for y in range(0, S, 2):
+				var c := img.get_pixel(x, y)
+				img.set_pixel(x, y, c.lerp(Color(0.83, 0.83, 0.85), lift))
+	return _tex("asphalt_plain", img)
+
+
 ## 幕墙贴图（可平铺）：4 开间 × 4 层，一张覆盖 12.8m × 14.4m 实际尺寸。
 ## 与 building() 不同 —— 那张是「整张贴一个面」，楼越高窗越大；这张由
 ## _place_buildings 的着色器按米取 UV，窗格尺寸不随楼体缩放。

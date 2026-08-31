@@ -96,6 +96,10 @@ func _init() -> void:
 		print("ramp-climb: 未找到匝道")
 
 	# --- 物理：高架桥面行驶（直接放上去）---
+	# 先把选层高度复位到桥面：place_at 会按 vehicle_y 选层，
+	# 沿用上一用例结束时的 9.88m 会选到别的层，车一放上去就在路肩上
+	map.vehicle_y = 14.0
+	veh.input_steer = 0.0   # place_at 不重置输入，匝道用例最后留着转向量会让车转出桥面
 	veh.place_at({"pos": Vector3(3.0, 14.0, -300.0), "heading": 0.0, "idx": null})
 	veh.input_throttle = 1.0
 	for i in int(6.0 / h):
