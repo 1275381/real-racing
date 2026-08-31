@@ -31,6 +31,7 @@ const THEMES := {
 
 var sun: DirectionalLight3D
 var _sky_mat: ShaderMaterial
+var _sky: Sky
 var _env: Environment
 var _ground: MeshInstance3D
 var _ground_mats := {}
@@ -45,13 +46,16 @@ var _rng := RRUtil.Mulberry.new(2024)
 
 
 func build(tracks: Array[RaceTrack]) -> void:
-	# ---- 天空穹顶 ----
+	# ---- 天空 ----
+	# 用 Godot 的 Sky（在无穷远处绘制，永远在所有几何之后且不受远裁剪面影响）。
+	# 旧版用半径 4200 的球体网格：相机 far 只有 2800，天空球整个被裁掉，
+	# 露出背景清除色（灰）；远裁剪是平面不是球面，高速 FOV 涨到 77° 时
+	# 画面四角的有效距离 2800/cos(θ) 才够到球面 —— 于是中间灰、四周蓝，
+	# 交界正是一道圆弧。改成 Sky 后不再有几何，也不再有这条弧。
 	_sky_mat = ShaderMaterial.new()
 	var sh := Shader.new()
 	sh.code = """
-// 天空球不参与深度雾（render_mode 缺省会被 4200m 外的深度雾糊成雾色）
-shader_type spatial;
-render_mode cull_front, unshaded, fog_disabled;
+shader_type sky;
 
 uniform vec3 top_color : source_color = vec3(0.184, 0.388, 0.722);
 uniform vec3 mid_color : source_color = vec3(0.525, 0.682, 0.871);
@@ -59,37 +63,26 @@ uniform vec3 bot_color : source_color = vec3(0.875, 0.914, 0.933);
 uniform vec3 sun_dir = vec3(0.52, 0.42, 0.74);
 uniform vec3 sun_color : source_color = vec3(1.0, 0.945, 0.839);
 
-varying vec3 v_dir;
-
-void vertex() {
-	v_dir = normalize(VERTEX);
-}
-
-void fragment() {
-	float h = clamp(v_dir.y, -1.0, 1.0);
+void sky() {
+	vec3 dir = normalize(EYEDIR);
+	float h = clamp(dir.y, -1.0, 1.0);
 	vec3 col;
 	if (h > 0.12) {
 		col = mix(mid_color, top_color, pow((h - 0.12) / 0.88, 0.72));
 	} else {
 		col = mix(bot_color, mid_color, clamp((h + 0.06) / 0.18, 0.0, 1.0));
 	}
-	float sd = max(dot(normalize(v_dir), normalize(sun_dir)), 0.0);
+	float sd = max(dot(dir, normalize(sun_dir)), 0.0);
 	col += sun_color * (pow(sd, 900.0) * 1.15 + pow(sd, 26.0) * 0.16);
-	ALBEDO = col;
+	COLOR = col;
 }
 """
 	_sky_mat.shader = sh
 	_sky_mat.set_shader_parameter("sun_dir", Vector3(0.52, 0.42, 0.74))
-	var sky := MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = 4200.0
-	sphere.height = 8400.0
-	sphere.radial_segments = 32
-	sphere.rings = 16
-	sphere.material = _sky_mat
-	sky.mesh = sphere
-	sky.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(sky)
+	_sky = Sky.new()
+	_sky.sky_material = _sky_mat
+	_sky.radiance_size = Sky.RADIANCE_SIZE_128
+	_sky.process_mode = Sky.PROCESS_MODE_REALTIME
 
 	# ---- 光照 ----
 	sun = DirectionalLight3D.new()
@@ -105,12 +98,13 @@ void fragment() {
 
 	# ---- 环境雾 / 环境光 / 色调映射（网页版为 ACES，Godot 默认 Linear 会过曝）----
 	_env = Environment.new()
-	_env.background_mode = Environment.BG_CLEAR_COLOR
+	_env.background_mode = Environment.BG_SKY
+	_env.sky = _sky
 	_env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	_env.tonemap_exposure = 1.0
 	_env.fog_enabled = true
 	_env.fog_mode = Environment.FOG_MODE_DEPTH
-	_env.fog_sky_affect = 0.0   # 深度雾不遮天空：4200m 天空球远超雾终点，否则整片天被雾色糊白
+	_env.fog_sky_affect = 0.0   # 深度雾不遮天空（天空在无穷远，否则整片天被雾色糊白）
 	_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	_env.ambient_light_energy = 0.4
 	var we := WorldEnvironment.new()

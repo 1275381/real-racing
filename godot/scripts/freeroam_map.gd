@@ -37,6 +37,7 @@ class Road:
 	var ang := PackedFloat32Array()
 	var slope := PackedFloat32Array()     # dy/ds（沿切线）
 	var half_w := 8.0
+	var closed := false                   # 闭环（仅环线）；开放路不可首尾相连
 	var elevated := false
 	var wall := 10.0
 	var grid := {}                        # Vector2i -> PackedInt32Array
@@ -77,6 +78,7 @@ func build() -> void:
 func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bool) -> Road:
 	var road := Road.new()
 	road.half_w = half_w
+	road.closed = closed
 	road.elevated = elevated
 	road.wall = (half_w + 0.15) if elevated else (half_w + 2.6)
 	var m := cps.size()
@@ -144,8 +146,10 @@ func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bo
 		road.pts[i] = Vector3(pt.x, y, pt.y)
 
 	for i in cnt:
-		var a := road.pts[i]
-		var b := road.pts[(i + 1) % cnt]
+		# 开放路末点沿用前一段切线：回卷取 pts[0] 会让末点朝向反转 180°
+		var ia: int = i if (closed or i < cnt - 1) else i - 1
+		var a := road.pts[ia]
+		var b := road.pts[(ia + 1) % cnt]
 		var tv := Vector2(b.x - a.x, b.z - a.z).normalized()
 		road.ang[i] = atan2(tv.x, tv.y)
 		road.left[i] = Vector2(tv.y, -tv.x)
@@ -602,7 +606,9 @@ func _build_road_meshes() -> void:
 	for road in roads:
 		var cnt := road.pts.size()
 		var rep := maxf(1.0, roundf(cnt * SAMPLE_DS / 16.0))
-		for i in cnt:
+		# 开放路只到 cnt-1：原来 (i+1)%cnt 会把末点接回起点，
+		# 多铺一条与整条街完全共面的整长路面 —— 深度打架，虚线狂闪
+		for i in (cnt if road.closed else cnt - 1):
 			var j := (i + 1) % cnt
 			var pi := road.pts[i]
 			var pj := road.pts[j]
