@@ -105,7 +105,12 @@ void sky() {
 	_env.fog_enabled = true
 	_env.fog_mode = Environment.FOG_MODE_DEPTH
 	_env.fog_sky_affect = 0.0   # 深度雾不遮天空（天空在无穷远，否则整片天被雾色糊白）
+	# 环境光与反射都不取自天空：Compatibility 下 BG_SKY 会把天空辐照喂进
+	# 环境光/反射，整个场景（地面、路面）被染成蓝色 —— 俯视时尤其明显。
+	# 这里显式切断，保持与旧版（BG_CLEAR_COLOR）一致的中性光照。
 	_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	_env.ambient_light_sky_contribution = 0.0
+	_env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	_env.ambient_light_energy = 0.4
 	var we := WorldEnvironment.new()
 	we.environment = _env
@@ -123,6 +128,9 @@ void sky() {
 			"desert":
 				m.albedo_texture = RRTextures.sand()
 		m.roughness = 1.0
+		# 干燥地面几乎没有镜面反射。默认 specular=0.5 会把整片天空反射上来，
+		# 俯视时地面直接变成亮蓝色（改用 Sky 背景后尤其明显）。
+		m.metallic_specular = 0.0
 		m.uv1_scale = Vector3(150, 150, 1)
 		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 		_ground_mats[theme_name] = m

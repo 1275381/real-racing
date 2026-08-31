@@ -151,6 +151,58 @@ static func building() -> ImageTexture:
 	for yy in rows:
 		img.fill_rect(Rect2i(0, yy * rh + rh - 4, S, 4), Color(40 / 255.0, 44 / 255.0, 50 / 255.0, 0.5))
 	return _tex("building", img)
+## 幕墙贴图（可平铺）：4 开间 × 4 层，一张覆盖 12.8m × 14.4m 实际尺寸。
+## 与 building() 不同 —— 那张是「整张贴一个面」，楼越高窗越大；这张由
+## _place_buildings 的着色器按米取 UV，窗格尺寸不随楼体缩放。
+static func building_wall() -> ImageTexture:
+	if _cache.has("bwall"):
+		return _cache["bwall"]
+	var S := 256
+	var CELL := 64          # 一个开间 × 一层
+	var img := _img(S, S)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3407
+	img.fill(Color("#8b8f96"))
+
+	for ry in 4:
+		for cx in 4:
+			# 每层每开间：窗玻璃嵌在实心裙墙里（下缘留 18px 楼板带）
+			var gl := rng.randf()
+			var col: Color
+			if gl < 0.05:
+				col = Color(0.90, 0.84, 0.70)          # 少量亮灯（白天不该太黄）
+			elif gl < 0.22:
+				col = Color(0.56, 0.64, 0.71)          # 反天光
+			elif gl < 0.48:
+				col = Color(0.28, 0.36, 0.44)          # 半反光
+			else:
+				col = Color(0.13, 0.17, 0.23)          # 暗玻璃
+			var jit := (rng.randf() - 0.5) * 0.06
+			col = Color(clampf(col.r + jit, 0, 1), clampf(col.g + jit, 0, 1),
+					clampf(col.b + jit, 0, 1))
+			img.fill_rect(Rect2i(cx * CELL + 6, ry * CELL + 7, CELL - 12, CELL - 25), col)
+			# 玻璃上缘一道高光，避免整块死板
+			img.fill_rect(Rect2i(cx * CELL + 6, ry * CELL + 7, CELL - 12, 3),
+					col.lerp(Color(0.85, 0.90, 0.96), 0.55))
+
+	# 竖向竖梃（开间分隔）与楼板带：都落在格子边界上，保证平铺无缝
+	for cx in 4:
+		img.fill_rect(Rect2i(cx * CELL, 0, 3, S), Color(0.42, 0.45, 0.49))
+	for ry in 4:
+		img.fill_rect(Rect2i(0, ry * CELL + CELL - 7, S, 7), Color(0.62, 0.64, 0.67))
+		img.fill_rect(Rect2i(0, ry * CELL + CELL - 2, S, 2), Color(0.34, 0.36, 0.40))
+
+	# 细噪，破掉纯色
+	for i in 5200:
+		var x := int(rng.randf() * S) % S
+		var y := int(rng.randf() * S) % S
+		var c := img.get_pixel(x, y)
+		var n := (rng.randf() - 0.5) * 0.07
+		img.set_pixel(x, y, Color(clampf(c.r + n, 0, 1), clampf(c.g + n, 0, 1),
+				clampf(c.b + n, 0, 1), c.a))
+	return _tex("bwall", img)
+
+
 ## 车底软阴影贴图
 static func blob_shadow() -> ImageTexture:
 	if _cache.has("blob"):

@@ -20,6 +20,13 @@ const RING_ELEV := 10.0
 const CROSS_ELEV := 14.0
 const STREET_Y_STEP := 0.08   # 相邻街错高步距：路口两层路面至少差半步，避免 z-fighting
 
+# 建筑排布
+const BLOCK_CELL := 12.0     # 禁建区位图格边长
+const BLK_FRONT := 13.0      # 楼正面距街道中心线：街半宽 8 + 人行道 2.2 + 退让 2.8
+const BLK_DEEP_MIN := 14.0
+const BLK_DEEP_MAX := 22.0
+const BLK_CORNER := 35.0     # ≈ BLK_FRONT + BLK_DEEP_MAX：转角楼与沿街排不重叠
+
 var roads: Array[Road] = []
 var n := 0                 # 采样总数（vehicle 进度计算用）
 var ds := SAMPLE_DS
@@ -593,10 +600,12 @@ func _build_road_meshes() -> void:
 	var road_mat := StandardMaterial3D.new()
 	road_mat.albedo_texture = RRTextures.asphalt()
 	road_mat.roughness = 0.92
+	road_mat.metallic_specular = 0.08   # 沥青只留一点点反光
 	road_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	var walk_mat := StandardMaterial3D.new()
 	walk_mat.albedo_color = Color("#787e88")
 	walk_mat.roughness = 0.9
+	walk_mat.metallic_specular = 0.0
 	var rail_mat := StandardMaterial3D.new()
 	rail_mat.albedo_color = Color("#c9ced4")
 	rail_mat.metallic = 0.0
@@ -718,6 +727,7 @@ func _build_zone_ground() -> void:
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 1.0
+	mat.metallic_specular = 0.0   # 同上：干地面不反天空，否则俯视一片亮蓝
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 	for bz in CELLS / BLOCK:
@@ -1096,76 +1106,302 @@ func _street_y(cx: float, cz: float) -> float:
 	return maxf(_street_h(kx, false), _street_h(kz, true)) + 0.012
 
 
-## 预计算建筑禁建区位图：所有道路样本周边 2 格（24m 格）标记为不可摆放
+## 预计算建筑禁建区（12m 格）：只标记非网格道路 —— 高架环线 / 快速路 / 匝道
+## 留 16m 余量（楼不能贴到桥面和桥墩），城外公路留 7m。
+## 网格街道不入表：沿街楼按街区边界精确排布（BLK_FRONT），比位图掩码准得多。
+## 旧版对「所有」道路各标 ±2 格 × 24m ≈ 60m，而街距只有 180m，
+## 楼全被推到街区正中，沿街两侧空荡荡 —— 城市不像城市的主因。
 func _mark_road_blocks() -> void:
-	for road in roads:
+	var grid_roads := GRID_COORDS.size() * 2   # 前 22 条是网格街道
+	for ri in range(grid_roads, roads.size()):
+		var road: Road = roads[ri]
+		var rad: float = road.half_w + (16.0 if road.elevated else 7.0)
+		var rc := int(ceil(rad / BLOCK_CELL))
 		for i in range(0, road.pts.size(), 4):
 			var p := road.pts[i]
-			var cx := int(p.x / 24.0)
-			var cz := int(p.z / 24.0)
-			for ox in range(-2, 3):
-				for oz in range(-2, 3):
+			var cx := int(floor(p.x / BLOCK_CELL))
+			var cz := int(floor(p.z / BLOCK_CELL))
+			for ox in range(-rc, rc + 1):
+				for oz in range(-rc, rc + 1):
 					_block[Vector2i(cx + ox, cz + oz)] = true
 
 
-## 建筑群：约 800 栋，市中心高、外围矮，避让路网
+## 楼体着色器：UV 按「实际米数」取，窗格不随楼体缩放
+## （旧版整张贴图铺满一个面，62m 高塔上每扇窗有 8m 高）。
+## 首层商铺带与屋顶女儿墙用高度切色实现，不加几何 —— 屋顶盖板与楼顶面
+## 共面正是 z-fighting 的经典形状。
+## 实例色的 alpha 当作类型标记：1=落地楼体，0.5=退台叠加体，0=素面块（设备房）。
+func _building_material() -> ShaderMaterial:
+	var sh := Shader.new()
+	sh.code = """
+shader_type spatial;
+
+uniform sampler2D wall_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec2 tile_m = vec2(9.6, 13.6);    // 一张贴图覆盖的实际米数（4 开间 2.4m × 4 层 3.4m）
+uniform vec3 roof_color : source_color = vec3(0.30, 0.31, 0.33);
+uniform vec3 podium_color : source_color = vec3(0.19, 0.21, 0.25);
+uniform float podium_h = 4.6;
+uniform float parapet_h = 1.2;
+
+varying vec3 v_tint;
+varying float v_kind;   // 实例类型（见上）
+varying float v_face;   // >0.5 为水平面（屋顶 / 底面）
+varying float v_up;     // 距该体块底面的高度（米）
+varying float v_hgt;    // 该体块总高（米）
+
+void vertex() {
+	// MultiMesh 每实例的缩放：从 MODEL_MATRIX 各列长度取（朝向严格正交，无剪切）
+	vec3 sc = vec3(length(MODEL_MATRIX[0].xyz),
+			length(MODEL_MATRIX[1].xyz),
+			length(MODEL_MATRIX[2].xyz));
+	vec3 p = VERTEX * sc;
+	vec3 n = abs(NORMAL);
+	v_hgt = sc.y;
+	v_up = p.y + sc.y * 0.5;
+	if (n.y > 0.5) {
+		v_face = 1.0;
+		UV = p.xz / 6.0;
+	} else {
+		v_face = 0.0;
+		// 按实例世界坐标错开整开间：否则整条街的窗格同相位，一眼是复制粘贴
+		float ph = fract(sin(dot(vec2(MODEL_MATRIX[3].x, MODEL_MATRIX[3].z),
+				vec2(12.9898, 78.233))) * 43758.545);
+		UV = vec2(((n.x > 0.5) ? p.z : p.x) / tile_m.x + floor(ph * 4.0) * 0.25,
+				-v_up / tile_m.y);
+	}
+	v_tint = COLOR.rgb;
+	v_kind = COLOR.a;
+}
+
+void fragment() {
+	vec3 c;
+	if (v_face > 0.5) {
+		c = roof_color;
+	} else if (v_kind < 0.25) {
+		c = v_tint;                                          // 素面设备房
+	} else if (v_kind > 0.75 && v_hgt > 11.0 && v_up < podium_h) {
+		// 首层商铺：整面玻璃 + 竖框 + 上下压边（比一整片灰墙像街道得多）
+		float bay = fract(UV.x * tile_m.x / 3.2);
+		float band = v_up / podium_h;
+		float frame = max(max(step(0.90, bay), step(bay, 0.10)),
+				max(step(0.90, band), step(band, 0.09)));
+		c = mix(vec3(0.12, 0.15, 0.19), podium_color * (1.7 + 0.6 * v_tint.r), frame);
+	} else if (v_hgt > 9.0 && v_hgt - v_up < parapet_h) {
+		c = roof_color * 1.5;                                // 屋顶女儿墙
+	} else if (v_up < 0.9) {
+		c = roof_color * 1.15;                               // 墙裙：楼体压住地面，不像悬浮
+	} else {
+		c = texture(wall_tex, UV).rgb * v_tint;
+	}
+	ALBEDO = c;
+	ROUGHNESS = 0.86;
+	SPECULAR = 0.14;   // 天空反射源下掠射角高光会把整面墙打成荧光蓝，压住
+}
+"""
+	var m := ShaderMaterial.new()
+	m.shader = sh
+	m.set_shader_parameter("wall_tex", RRTextures.building_wall())
+	return m
+
+
+## 建筑群：沿街区四边成排（正面退到人行道后 2.8m）+ 四角角楼 + 街区内低层填充
+## + 城郊散点；高层带退台、屋顶设备房与天线。朝向与街道网格严格正交
+## （旧版 rng.range(0, PI) 随机转，楼歪着站，而且 Basis.scaled 是先转后按世界轴
+## 缩放，非 90° 倍数时盒子会被剪切成平行六面体）。
 func _place_buildings() -> void:
 	var rng := RRUtil.Mulberry.new(20260830)
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var ants: Array[Transform3D] = []
+
+	# 冷玻璃 / 暖混凝土 / 深灰石材 / 浅色面砖 / 灰绿
+	var palette := [
+		Color(0.78, 0.80, 0.84), Color(0.83, 0.79, 0.73),
+		Color(0.55, 0.58, 0.63), Color(0.88, 0.88, 0.90),
+		Color(0.64, 0.69, 0.71),
+	]
+
+	var buildable := func(cx: float, cz: float, hw: float, hd: float) -> bool:
+		if absf(cx) < 150.0 and absf(cz) < 150.0:
+			return false                       # 中心广场留空
+		for ox in [-hw, 0.0, hw]:
+			for oz in [-hd, 0.0, hd]:
+				if _block.has(Vector2i(int(floor((cx + ox) / BLOCK_CELL)),
+						int(floor((cz + oz) / BLOCK_CELL)))):
+					return false
+		return true
+
+	# 市中心高、外围矮
+	var zone_h := func(x: float, z: float) -> float:
+		var d := maxf(absf(x), absf(z))
+		if d < 260.0:
+			return rng.range(52.0, 104.0)
+		elif d < 480.0:
+			return rng.range(28.0, 62.0)
+		elif d < 700.0:
+			return rng.range(16.0, 38.0)
+		elif d < 900.0:
+			return rng.range(10.0, 24.0)
+		return rng.range(7.0, 16.0)
+
+	# 放一栋：主体 →（退台）→（屋顶设备房）→（天线）
+	var put := func(cx: float, cz: float, w: float, dep: float, h: float) -> void:
+		if not buildable.call(cx, cz, w * 0.5, dep * 0.5):
+			return
+		var tint: Color = palette[mini(int(rng.next() * palette.size()), palette.size() - 1)]
+		var j := rng.range(-0.05, 0.05)
+		tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
+				clampf(tint.b + j, 0, 1), 1.0)
+		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
+				Vector3(cx, h * 0.5, cz)))
+		cols.append(tint)
+		var top := h
+		var tw := w
+		var td := dep
+		# 退台收分：天际线才有层次
+		if h > 52.0 and rng.next() < 0.72:
+			var k := rng.range(0.58, 0.78)
+			var uh := h * rng.range(0.20, 0.42)
+			tw = w * k
+			td = dep * k
+			# 底面埋进主体 0.5m，不与主体顶面共面
+			xfs.append(Transform3D(Basis.from_scale(Vector3(tw, uh, td)),
+					Vector3(cx, h + uh * 0.5 - 0.5, cz)))
+			cols.append(Color(tint.r, tint.g, tint.b, 0.5))
+			top = h + uh - 0.5
+		# 屋顶设备房
+		if top > 16.0 and rng.next() < 0.5:
+			var mw := minf(rng.range(4.0, 9.0), tw * 0.5)
+			var md := minf(rng.range(4.0, 9.0), td * 0.5)
+			var mh := rng.range(2.4, 4.2)
+			var ox := rng.range(-1.0, 1.0) * maxf(tw * 0.5 - mw * 0.5 - 0.8, 0.0)
+			var oz := rng.range(-1.0, 1.0) * maxf(td * 0.5 - md * 0.5 - 0.8, 0.0)
+			xfs.append(Transform3D(Basis.from_scale(Vector3(mw, mh, md)),
+					Vector3(cx + ox, top + mh * 0.5 - 0.5, cz + oz)))
+			cols.append(Color(0.55, 0.56, 0.58, 0.0))
+		# 天线：只给最高的那批
+		if top > 78.0 and rng.next() < 0.65:
+			var ah := rng.range(9.0, 24.0)
+			ants.append(Transform3D(Basis.from_scale(Vector3(1.0, ah, 1.0)),
+					Vector3(cx, top + ah * 0.5, cz)))
+
+	# ---- 逐街区排布（11 条街 → 10×10 个 180m 街区）----
+	for bi in GRID_COORDS.size() - 1:
+		for bj in GRID_COORDS.size() - 1:
+			var x0: float = GRID_COORDS[bi]
+			var x1: float = GRID_COORDS[bi + 1]
+			var z0: float = GRID_COORDS[bj]
+			var z1: float = GRID_COORDS[bj + 1]
+
+			# 四角角楼：转角有楼，街道才闭合
+			for c in 4:
+				var dcx := rng.range(17.0, 22.0)
+				var dcz := rng.range(17.0, 22.0)
+				var ccx: float = (x0 + BLK_FRONT + dcx * 0.5) if (c == 0 or c == 3) \
+						else (x1 - BLK_FRONT - dcx * 0.5)
+				var ccz: float = (z0 + BLK_FRONT + dcz * 0.5) if (c == 0 or c == 1) \
+						else (z1 - BLK_FRONT - dcz * 0.5)
+				var ch: float = zone_h.call(ccx, ccz)
+				put.call(ccx, ccz, dcx, dcz, ch * rng.range(0.80, 1.25))
+
+			# 四条沿街排（同一排高度相近，真实街道就是这样）
+			for e in 4:
+				var horiz := e < 2
+				var run_a: float = (x0 + BLK_CORNER) if horiz else (z0 + BLK_CORNER)
+				var run_b: float = (x1 - BLK_CORNER) if horiz else (z1 - BLK_CORNER)
+				var mid_x: float = (x0 + x1) * 0.5 if horiz else \
+						((x0 + BLK_FRONT + 18.0) if e == 2 else (x1 - BLK_FRONT - 18.0))
+				var mid_z: float = (((z0 + BLK_FRONT + 18.0) if e == 0 \
+						else (z1 - BLK_FRONT - 18.0)) if horiz else (z0 + z1) * 0.5)
+				var base_h: float = zone_h.call(mid_x, mid_z)
+				var cur := run_a
+				while cur < run_b - 12.0:
+					var w := minf(rng.range(12.0, 30.0), run_b - cur)
+					if w < 12.0:
+						break
+					var dep := rng.range(BLK_DEEP_MIN, BLK_DEEP_MAX)
+					var bx: float
+					var bz: float
+					if horiz:
+						bx = cur + w * 0.5
+						bz = (z0 + BLK_FRONT + dep * 0.5) if e == 0 \
+								else (z1 - BLK_FRONT - dep * 0.5)
+					else:
+						bz = cur + w * 0.5
+						bx = (x0 + BLK_FRONT + dep * 0.5) if e == 2 \
+								else (x1 - BLK_FRONT - dep * 0.5)
+					var hh: float = base_h * rng.range(0.72, 1.32)
+					if maxf(absf(bx), absf(bz)) < 300.0 and rng.next() < 0.10:
+						hh *= 1.45          # 市中心偶尔冒一根超高
+					put.call(bx, bz, w if horiz else dep, dep if horiz else w,
+							minf(hh, 165.0))
+					cur += w + rng.range(0.8, 4.5)
+
+			# 街区内部低层填充（留出与沿街排的间距）
+			var lo_x := x0 + BLK_CORNER + 18.0
+			var hi_x := x1 - BLK_CORNER - 18.0
+			var lo_z := z0 + BLK_CORNER + 18.0
+			var hi_z := z1 - BLK_CORNER - 18.0
+			if hi_x > lo_x and hi_z > lo_z:
+				for k in int(rng.range(0.0, 2.6)):
+					put.call(rng.range(lo_x, hi_x), rng.range(lo_z, hi_z),
+							rng.range(12.0, 24.0), rng.range(12.0, 24.0),
+							rng.range(7.0, 15.0))
+
+	# ---- 城郊散点（网格外 900~1080 环带）----
+	var occ := {}
+	for guard in 2600:
+		var sx := rng.range(-1080.0, 1080.0)
+		var sz := rng.range(-1080.0, 1080.0)
+		if absf(sx) < 905.0 and absf(sz) < 905.0:
+			continue
+		var cell := Vector2i(int(floor(sx / 56.0)), int(floor(sz / 56.0)))
+		if occ.has(cell):
+			continue
+		occ[cell] = true
+		put.call(sx, sz, rng.range(11.0, 20.0), rng.range(11.0, 20.0),
+				rng.range(6.0, 15.0))
+
+	if xfs.is_empty():
+		return
 	var bmesh := BoxMesh.new()
 	bmesh.size = Vector3.ONE
-	var bmat := StandardMaterial3D.new()
-	bmat.albedo_texture = RRTextures.building()
-	bmat.albedo_color = Color.WHITE
-	bmat.vertex_color_use_as_albedo = true
-	bmat.roughness = 0.8
-	bmesh.material = bmat
-
-	var placed: Array[Transform3D] = []
-	var colors: Array[Color] = []
-	var occupancy := {}
-	var guard := 0
-	while placed.size() < 820 and guard < 40000:
-		guard += 1
-		var x := rng.range(-1080.0, 1080.0)
-		var z := rng.range(-1080.0, 1080.0)
-		if absf(x) < 150.0 and absf(z) < 150.0:
-			continue   # 中心广场留空
-		var cell := Vector2i(int(x / 70.0), int(z / 70.0))
-		if occupancy.has(cell):
-			continue
-		if _block.has(Vector2i(int(x / 24.0), int(z / 24.0))):
-			continue   # 距道路过近
-		occupancy[cell] = true
-		var d := maxf(absf(x), absf(z))
-		var h: float
-		if d < 420.0:
-			h = rng.range(18.0, 62.0)
-		elif d < 750.0:
-			h = rng.range(9.0, 26.0)
-		else:
-			h = rng.range(5.0, 15.0)
-		var w := rng.range(11.0, 22.0)
-		var dep := rng.range(11.0, 22.0)
-		var basis := Basis(Quaternion(Vector3.UP, rng.range(0.0, PI))) \
-				.scaled(Vector3(w, h, dep))
-		placed.append(Transform3D(basis, Vector3(x, h / 2.0, z)))
-		var tint := 0.72 + rng.next() * 0.28
-		colors.append(Color(tint, tint, tint * (0.96 + rng.next() * 0.08)))
-
-	if placed.is_empty():
-		return
+	bmesh.material = _building_material()
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
 	mm.mesh = bmesh
-	mm.instance_count = placed.size()
-	for i in placed.size():
-		mm.set_instance_transform(i, placed[i])
-		mm.set_instance_color(i, colors[i])
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mmi)
+	print("[map] 楼 %d 体块（含退台/设备房）+ %d 天线" % [xfs.size(), ants.size()])
+
+	if ants.is_empty():
+		return
+	var amesh := CylinderMesh.new()
+	amesh.top_radius = 0.12
+	amesh.bottom_radius = 0.30
+	amesh.height = 1.0
+	amesh.radial_segments = 6
+	var amat := StandardMaterial3D.new()
+	amat.albedo_color = Color("#3a3e44")
+	amat.roughness = 0.7
+	amesh.material = amat
+	var amm := MultiMesh.new()
+	amm.transform_format = MultiMesh.TRANSFORM_3D
+	amm.mesh = amesh
+	amm.instance_count = ants.size()
+	for i in ants.size():
+		amm.set_instance_transform(i, ants[i])
+	var ammi := MultiMeshInstance3D.new()
+	ammi.multimesh = amm
+	ammi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(ammi)
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）

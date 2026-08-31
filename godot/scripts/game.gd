@@ -36,6 +36,7 @@ var player_finish_time = null      # float(ms) 或 null
 var best_stored = null             # float(ms) 或 null
 var shake := 0.0
 var _acc := 0.0
+const INTRO_DUR := 2.6     # 入场运镜时长（秒）
 var _now_s := 0.0
 var _rescue_cd := 0.0
 var _paused_from: int = ST.RACING
@@ -49,6 +50,7 @@ var _in_steer := 0.0
 var _cam_pos := Vector3.ZERO
 var _cam_look := Vector3.ZERO
 var _cam_init := false
+var _intro_t := 0.0        # 入场运镜剩余时长（开赛 / 进漫游）
 
 
 class CarRec:
@@ -439,6 +441,7 @@ func enter_roam() -> void:
 	player.veh.place_at({"pos": spawn["pos"], "heading": spawn["heading"], "idx": null})
 	_in_steer = 0.0
 	_cam_init = false
+	_intro_t = INTRO_DUR
 	hud.init_roam_minimap(freeroam.minimap_tex,
 			Vector2(-FreeroamMap.MAP_LIMIT, -FreeroamMap.MAP_LIMIT),
 			Vector2(FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
@@ -494,6 +497,8 @@ func start_race() -> void:
 	track.set_lamp_stage(0)
 	lap_num_display = 1
 	state = ST.COUNTDOWN
+	_cam_init = false
+	_intro_t = INTRO_DUR
 	hud.show_only("hud")
 	var diff_label: String = TrackData.DIFF_PRESETS[difficulty]["label"]
 	hud.show_center("准备…", "%s · %d 圈" % [diff_label, total_laps], 1400)
@@ -636,6 +641,7 @@ func _process(dt_real: float) -> void:
 	var dt: float = minf(dt_real, 0.1)
 	_now_s += dt
 	_rescue_cd = maxf(0.0, _rescue_cd - dt)
+	_intro_t = maxf(0.0, _intro_t - dt)
 	_handle_hotkeys()
 
 	# 固定步长模拟
@@ -1043,8 +1049,10 @@ func _update_camera(dt: float) -> void:
 	else:
 		var mode := cam_mode
 		if not _cam_init:
-			_cam_pos = camera.position
-			_cam_look = pv.pos
+			# 车库在 y=-400，直接沿用 camera.position 会让相机从地下 400m
+			# 一路 lerp 上来、穿过地面（"相机从地底下照上来"）。这里直接落位。
+			_cam_pos = pv.pos - f * 8.2 + Vector3(0, 2.45, 0)
+			_cam_look = pv.pos + f * 7.0 + Vector3(0, 1.1, 0)
 			_cam_init = true
 		if mode == 2:   # 车头盖
 			_cam_pos = Vector3(pv.pos.x + f.x * 0.55,
@@ -1063,6 +1071,16 @@ func _update_camera(dt: float) -> void:
 			want_fov = 63.0 + spd_ratio * 14.0
 		camera.position = _cam_pos
 		camera.look_at(_cam_look, Vector3.UP)
+
+		# 入场运镜：从车正上方 40m 俯视缓降到车后追车位。
+		# 机位始终在车道正上方（不在楼群里穿行），落点即追车位，交接无跳变。
+		if _intro_t > 0.0:
+			var s01 := clampf(_intro_t / INTRO_DUR, 0.0, 1.0)
+			var e := s01 * s01 * (3.0 - 2.0 * s01)          # smoothstep
+			var high := pv.pos + Vector3(0, 40.0, 0) - f * 12.0
+			camera.position = _cam_pos.lerp(high, e)
+			camera.look_at(_cam_look.lerp(pv.pos + Vector3(0, 0.6, 0), e), Vector3.UP)
+			want_fov = lerpf(want_fov, 74.0, e)
 
 	# 抖动（撞击积累 + 草地颠簸）
 	var rumble := clampf(absf(pv.vf) * 0.006, 0.0, 0.4) if pv.surface == "grass" else 0.0
