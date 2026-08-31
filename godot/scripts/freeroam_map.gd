@@ -632,6 +632,35 @@ func _xsec_span(a: float, b: float, half: float) -> Vector2:
 	return Vector2(minf(f0, f1), maxf(f0, f1))
 
 
+## 桥体四边形暂存（与路面不同材质，需单独 flush）
+var _d_pos := PackedVector3Array()
+var _d_nrm := PackedVector3Array()
+
+
+func _deck_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3) -> void:
+	for v in [a, c, b, a, d, c]:
+		_d_pos.append(v)
+		_d_nrm.append(nrm)
+
+
+func _flush_deck(mat: Material) -> void:
+	if _d_pos.is_empty():
+		return
+	var am := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = _d_pos
+	arrays[Mesh.ARRAY_NORMAL] = _d_nrm
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(mi)
+	_d_pos = PackedVector3Array()
+	_d_nrm = PackedVector3Array()
+
+
 func _build_road_meshes() -> void:
 	_mark_rail_skips()
 	_mark_surf_skips()
@@ -644,6 +673,13 @@ func _build_road_meshes() -> void:
 	walk_mat.albedo_color = Color("#787e88")
 	walk_mat.roughness = 0.9
 	walk_mat.metallic_specular = 0.0
+	# 桥体（箱梁底板 + 腹板）：路面四边形是单面的，站在桥下抬头看是空的 ——
+	# 必须补出底面与侧面，否则高架就是一张飘着的纸
+	var deck_mat := StandardMaterial3D.new()
+	deck_mat.albedo_color = Color("#9aa0a8")
+	deck_mat.roughness = 0.9
+	deck_mat.metallic_specular = 0.0
+	deck_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var rail_mat := StandardMaterial3D.new()
 	rail_mat.albedo_color = Color("#c9ced4")
 	rail_mat.metallic = 0.0
@@ -690,6 +726,23 @@ func _build_road_meshes() -> void:
 					ra + Vector3(rla.x * w, 0, rla.y * w),
 					Vector3.UP, Color.WHITE,
 					Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
+			if road.elevated and (road.surf_skip.size() != cnt
+					or not (road.surf_skip[i] or road.surf_skip[j])):
+				# 箱梁：底板（朝下）+ 两侧腹板，厚 0.7m，稍宽于路面
+				var dt := 0.7
+				var eo := w + 0.45
+				var s0 := pi + Vector3(-li.x * eo, -dt, -li.y * eo)
+				var s1 := pj + Vector3(-lj.x * eo, -dt, -lj.y * eo)
+				var s2 := pj + Vector3(lj.x * eo, -dt, lj.y * eo)
+				var s3 := pi + Vector3(li.x * eo, -dt, li.y * eo)
+				_deck_quad(s3, s2, s1, s0, Vector3.DOWN)
+				for side in [-1.0, 1.0]:
+					var o: float = eo * side
+					var t0 := pi + Vector3(li.x * o, 0.05, li.y * o)
+					var t1 := pj + Vector3(lj.x * o, 0.05, lj.y * o)
+					var b0 := pi + Vector3(li.x * o, -dt, li.y * o)
+					var b1 := pj + Vector3(lj.x * o, -dt, lj.y * o)
+					_deck_quad(b0, b1, t1, t0, Vector3(li.x * side, 0, li.y * side))
 			if not road.elevated:
 				# 路缘人行道（略高于路面）
 				if sp_w.x < sp_w.y:
@@ -730,6 +783,7 @@ func _build_road_meshes() -> void:
 	_flush(road_mat)
 	_flush(walk_mat)
 	_flush(rail_mat)
+	_flush_deck(deck_mat)
 
 	# 高架桥墩（每 ~45m 一根，从地面顶到桥面）
 	var pillar_mesh := CylinderMesh.new()
@@ -740,25 +794,48 @@ func _build_road_meshes() -> void:
 	pillar_mat.albedo_color = Color("#8f959c")
 	pillar_mat.roughness = 0.85
 	pillar_mesh.material = pillar_mat
+	# 桥墩：优先桥下中央单柱；正下方是马路时改成门式墩（两侧立柱 + 横梁），
+	# 两侧也让不开才沿桥前后挪，最后才放弃。
+	# 原来完全不做检查，桥墩会立在路口正中、也会穿过下层桥面；
+	# 而只做「被占就跳过」又会让两条正压在街道上方的快速路一根柱子都不剩。
 	var pillar_list: Array[Transform3D] = []
+	var beam_list: Array[Transform3D] = []
 	for road in roads:
 		if not road.elevated:
 			continue
 		var cnt := road.pts.size()
 		var step := maxi(1, roundi(45.0 / SAMPLE_DS))
 		for i in range(0, cnt, step):
-			# 落点被占就沿桥往前挪（最多 ~45m），实在挪不开就少一根 ——
-			# 桥墩原来不做任何检查，会立在路口正中，也会直接穿过下层桥面
 			var idx := i
-			var tries := 0
-			while tries < 10 and _pillar_blocked(road, road.pts[idx]):
+			var placed := false
+			for tries in 10:
+				var p := road.pts[idx]
+				if p.y >= 1.5:
+					if not _pillar_blocked(road, p):
+						pillar_list.append(Transform3D(Basis.from_scale(Vector3(1, p.y, 1)),
+								Vector3(p.x, p.y * 0.5, p.z)))
+						placed = true
+						break
+					# 门式墩：立柱退到桥面外侧 1.6m，柱顶收到横梁底下
+					var lat := road.left[idx]
+					var off := road.half_w + 1.6
+					var pa := p + Vector3(lat.x * off, 0.0, lat.y * off)
+					var pb := p - Vector3(lat.x * off, 0.0, lat.y * off)
+					if not _pillar_blocked(road, pa) and not _pillar_blocked(road, pb):
+						var ch := p.y - 1.0
+						for c in [pa, pb]:
+							pillar_list.append(Transform3D(Basis.from_scale(Vector3(1, ch, 1)),
+									Vector3(c.x, ch * 0.5, c.z)))
+						# 横梁：沿横向跨过桥面，藏在桥底
+						var bx := Vector3(lat.x, 0, lat.y) * (off * 2.0 + 1.4)
+						var bz := Vector3(-lat.y, 0, lat.x) * 1.8
+						beam_list.append(Transform3D(Basis(bx, Vector3(0, 1.0, 0), bz),
+								Vector3(p.x, p.y - 0.6, p.z)))
+						placed = true
+						break
 				idx = mini(idx + 3, cnt - 1)
-				tries += 1
-			var p := road.pts[idx]
-			if p.y < 1.5 or _pillar_blocked(road, p):
+			if not placed:
 				continue
-			pillar_list.append(Transform3D(
-					Basis.from_scale(Vector3(1, p.y, 1)), Vector3(p.x, p.y / 2.0, p.z)))
 	if not pillar_list.is_empty():
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -769,6 +846,20 @@ func _build_road_meshes() -> void:
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		add_child(mmi)
+	if not beam_list.is_empty():
+		var beam_mesh := BoxMesh.new()
+		beam_mesh.size = Vector3.ONE
+		beam_mesh.material = pillar_mat
+		var bmm := MultiMesh.new()
+		bmm.transform_format = MultiMesh.TRANSFORM_3D
+		bmm.mesh = beam_mesh
+		bmm.instance_count = beam_list.size()
+		for i in beam_list.size():
+			bmm.set_instance_transform(i, beam_list[i])
+		var bmmi := MultiMeshInstance3D.new()
+		bmmi.multimesh = bmm
+		add_child(bmmi)
+	print("[map] 桥墩 %d 根（含门式墩）+ 横梁 %d 道" % [pillar_list.size(), beam_list.size()])
 
 
 ## 四大区域地面与景观：顶点色大网格（城市/草地/沙漠/山地/沙滩同一层，无深度冲突）
