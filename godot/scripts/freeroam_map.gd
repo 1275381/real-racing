@@ -25,6 +25,7 @@ const STREET_Y := 0.03        # 网格街统一标高：路口靠拼块拼接，
 
 # 建筑排布
 const BLOCK_CELL := 12.0     # 禁建区位图格边长
+const TERR_CELL := 50.0      # 地形高程场格边长（与区域地面网格同步）
 const BLK_FRONT := 13.0      # 楼正面距街道中心线：街半宽 8 + 人行道 2.2 + 退让 2.8
 const BLK_DEEP_MIN := 14.0
 const BLK_DEEP_MAX := 22.0
@@ -40,6 +41,7 @@ var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
+var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
 
 class Road:
 	var pts := PackedVector3Array()       # 中心线（y = 路面海拔）
@@ -203,13 +205,25 @@ func _make_grid_roads() -> void:
 
 
 func _make_ring() -> void:
+	# 圆角矩形用密控制点直接画出来。
+	# 原来只给 8 个角点走 Catmull-Rom：转角段弧长只有 212m 而切线长达 690m，
+	# 曲率半径被压到 4.5m（小于半宽 10），路面内缘自我折叠；
+	# 直边同时被外鼓 20.6m 到 ±720.6，正好压在 GRID_COORDS 的 ±720 街道上，
+	# 桥墩全部放不下 —— 八段各约 300m 桥面凭空悬着。
 	var s := 700.0
-	var c := 150.0
-	var cps := [
-		Vector2(-s + c, -s), Vector2(s - c, -s), Vector2(s, -s + c),
-		Vector2(s, s - c), Vector2(s - c, s), Vector2(-s + c, s),
-		Vector2(-s, s - c), Vector2(-s, -s + c),
-	]
+	var r := 150.0
+	var k := s - r
+	var seg_start := [Vector2(-k, -s), Vector2(s, -k), Vector2(k, s), Vector2(-s, k)]
+	var seg_end := [Vector2(k, -s), Vector2(s, k), Vector2(-k, s), Vector2(-s, -k)]
+	var arc_c := [Vector2(k, -k), Vector2(k, k), Vector2(-k, k), Vector2(-k, -k)]
+	var arc_a0 := [-PI * 0.5, 0.0, PI * 0.5, PI]
+	var cps := []
+	for q in 4:
+		for i in 22:                       # 直边每 50m 一个控制点
+			cps.append((seg_start[q] as Vector2).lerp(seg_end[q], float(i) / 22.0))
+		for i in 6:                        # 圆角每 15° 一个控制点
+			var th: float = arc_a0[q] + PI * 0.5 * float(i) / 6.0
+			cps.append(arc_c[q] + Vector2(cos(th), sin(th)) * r)
 	_make_road(cps, [RING_ELEV], true, 10.0, true)
 
 
@@ -250,9 +264,10 @@ func _make_ramps() -> void:
 		var crown_y := maxf(_street_h(8, false), _street_h(8, true)) + 0.20
 		var street_back := Vector2(-signf(d[0]), 0.0) if on_x \
 				else Vector2(0.0, -signf(d[1]))
-		# 并线尾段：沿环线外侧平行（径向偏 16.5 = 环半宽10 + 0.5缝 + 匝道半宽6），
-		# 边对边衔接不叠面 —— 原来尾段压在环线中心线上，两条虚线深度冲突狂闪
-		var merge_c := rxz + outward * 16.5
+		# 并线尾段：沿环线外侧平行。名义 16.5 = 环半宽10 + 0.5缝 + 匝道半宽6，
+		# 但样条会把实际间距拉回到 14.8m（< 半宽和 16）造成同高重叠，
+		# 留 2m 余量取 18.5。
+		var merge_c := rxz + outward * 18.5
 		var cps := [
 			g + street_back * 30.0,
 			g,
@@ -266,20 +281,28 @@ func _make_ramps() -> void:
 	# 4 条快速路匝道（东西向 2 条 + 南北向 2 条）
 	for sx in [-1.0, 1.0]:
 		var hx: float = 560.0 * sx
-		# 起点与主线边对边（主线南侧 10.5m = 半宽10 + 0.5缝），不叠面
+		# 起点与主线边对边：主线半宽 10 + 0.5 缝 + 匝道半宽 6 = 16.5。
+		# 原来写 10.5 漏算了匝道自身半宽，匝道桥面与主线桥面同高重叠 5.5m、
+		# 长约 130m —— 两层路面完全共面，surf_skip 也裁不掉。
+		# 控制点在 z 上必须单调远离主线、步长渐增。原来 (hx+60sx,-16) 之后
+		# 直接跳到 (hx+150sx,-170)，z 跨度 154m 把切线撑爆，样条为迎合它先
+		# 反向甩回 z=-1.7 —— 匝道钻进主线桥面正下方，最小净空只剩 0.11m。
+		# 尾段 x 收到 ±640：停在 ±710 会压上 ±720 网格街，停在 ±690 又会贴到
+		# 环线直边（x=±700）—— 下坡途中恰好经过 y=10，与环线同高重叠。
 		_make_road([
-			Vector2(hx - 150.0 * sx, -10.5), Vector2(hx - 40.0 * sx, -10.5),
-			Vector2(hx + 60.0 * sx, -16.0), Vector2(hx + 150.0 * sx, -170.0),
-			Vector2(hx + 150.0 * sx, -320.0),
-		], [CROSS_ELEV_EW, CROSS_ELEV_EW, 11.0, 1.5, STREET_Y], false, 6.0, true)
+			Vector2(hx - 150.0 * sx, -16.5), Vector2(hx - 40.0 * sx, -16.5),
+			Vector2(hx + 40.0 * sx, -30.0), Vector2(hx + 75.0 * sx, -80.0),
+			Vector2(hx + 80.0 * sx, -190.0), Vector2(hx + 80.0 * sx, -330.0),
+		], [CROSS_ELEV_EW, CROSS_ELEV_EW, 17.0, 13.0, 4.0, STREET_Y],
+				false, 6.0, true)
 	for sz in [-1.0, 1.0]:
 		var hz: float = 560.0 * sz
-		# 起点与主线边对边（主线东侧 10.5m = 半宽10 + 0.5缝），不叠面
+		# 同上：16.5 = 主线半宽 10 + 0.5 缝 + 匝道半宽 6
 		_make_road([
-			Vector2(10.5, hz - 150.0 * sz), Vector2(10.5, hz - 40.0 * sz),
-			Vector2(16.0, hz + 60.0 * sz), Vector2(170.0, hz + 150.0 * sz),
-			Vector2(320.0, hz + 150.0 * sz),
-		], [CROSS_ELEV, CROSS_ELEV, 8.0, 1.5, STREET_Y], false, 6.0, true)
+			Vector2(16.5, hz - 150.0 * sz), Vector2(16.5, hz - 40.0 * sz),
+			Vector2(30.0, hz + 40.0 * sz), Vector2(80.0, hz + 75.0 * sz),
+			Vector2(190.0, hz + 80.0 * sz), Vector2(330.0, hz + 80.0 * sz),
+		], [CROSS_ELEV, CROSS_ELEV, 12.5, 9.0, 3.0, STREET_Y], false, 6.0, true)
 
 
 ## 城市外的四大区域路网：北盘山 / 西海岸 / 东沙漠 / 南郊野
@@ -900,7 +923,49 @@ func _build_zones() -> void:
 
 
 ## 单张大网格地面：顶点按世界坐标着色分区（城市灰/草地绿/沙漠黄/山地深绿/沙滩米）
+## 地形高程场：把「非高架但明显离地」的道路（北盘山公路爬到 72m）
+## 压成一道山脊。否则那 3.5km 路面就悬在 y=0 的平板上空，下面既没有
+## 山体也没有桥墩 —— 一条飘在平原上的空中缎带。
+func _build_terrain_field() -> void:
+	const OUTER := 220.0
+	for road in roads:
+		if road.elevated:
+			continue
+		var peak := 0.0
+		for p in road.pts:
+			peak = maxf(peak, p.y)
+		if peak < 3.0:
+			continue
+		var inner: float = road.half_w + 4.0
+		var rc := int(ceil(OUTER / TERR_CELL))
+		for i in range(0, road.pts.size(), 6):
+			var p := road.pts[i]
+			if p.y < 1.0:
+				continue
+			var base: float = p.y - 2.0       # 略低于路面，路像切在山脊上
+			var cx := int(round(p.x / TERR_CELL))
+			var cz := int(round(p.z / TERR_CELL))
+			for ox in range(-rc, rc + 1):
+				for oz in range(-rc, rc + 1):
+					var key := Vector2i(cx + ox, cz + oz)
+					var d := Vector2(float(key.x) * TERR_CELL - p.x,
+							float(key.y) * TERR_CELL - p.z).length()
+					if d > OUTER:
+						continue
+					var h: float = base
+					if d > inner:
+						h = base * (0.5 + 0.5 * cos(PI * (d - inner) / (OUTER - inner)))
+					if h > float(_terr.get(key, 0.0)):
+						_terr[key] = h
+
+
+func _terrain_h(x: float, z: float) -> float:
+	return float(_terr.get(Vector2i(int(round(x / TERR_CELL)),
+			int(round(z / TERR_CELL))), 0.0))
+
+
 func _build_zone_ground() -> void:
+	_build_terrain_field()
 	# 分块生成：GL Compatibility 下非索引网格会被转 16 位索引绘制，
 	# 单 mesh 超 65536 顶点的部分静默丢失 —— 每块独立成 mesh 规避
 	# EXT 覆盖到雾距之外（玩家最远 ±2800 + 雾 6500）：地面尽头不可见，
@@ -930,20 +995,20 @@ func _build_zone_ground() -> void:
 					var c10 := _zone_color(x0 + cell, z0, rng)
 					var c01 := _zone_color(x0, z0 + cell, rng)
 					var c11 := _zone_color(x0 + cell, z0 + cell, rng)
-					var p00 := Vector3(x0, 0, z0)
-					var p10 := Vector3(x0 + cell, 0, z0)
-					var p01 := Vector3(x0, 0, z0 + cell)
-					var p11 := Vector3(x0 + cell, 0, z0 + cell)
+					var p00 := Vector3(x0, _terrain_h(x0, z0), z0)
+					var p10 := Vector3(x0 + cell, _terrain_h(x0 + cell, z0), z0)
+					var p01 := Vector3(x0, _terrain_h(x0, z0 + cell), z0 + cell)
+					var p11 := Vector3(x0 + cell, _terrain_h(x0 + cell, z0 + cell), z0 + cell)
 					for tri in [[p00, c00, p10, c10, p11, c11], [p00, c00, p11, c11, p01, c01]]:
-						st.set_normal(Vector3.UP)
-						st.set_color(tri[1])
-						st.add_vertex(tri[0])
-						st.set_normal(Vector3.UP)
-						st.set_color(tri[3])
-						st.add_vertex(tri[2])
-						st.set_normal(Vector3.UP)
-						st.set_color(tri[5])
-						st.add_vertex(tri[4])
+						# 法线按实际三角形算，山脊才有明暗；全 UP 会把山坡打成平地
+						var nrm: Vector3 = (tri[2] - tri[0]).cross(tri[4] - tri[0])
+						nrm = nrm.normalized() if nrm.length() > 1e-6 else Vector3.UP
+						if nrm.y < 0.0:
+							nrm = -nrm
+						for kk in [0, 2, 4]:
+							st.set_normal(nrm)
+							st.set_color(tri[kk + 1])
+							st.add_vertex(tri[kk])
 			var mi := MeshInstance3D.new()
 			mi.mesh = st.commit()
 			mi.material_override = mat
@@ -1031,9 +1096,14 @@ func _mountains() -> void:
 		var h := radius * (0.5 + rng.next() * 0.4)
 		bodies.append(Transform3D(Basis.from_scale(Vector3(radius, h, radius)),
 				Vector3(x, h * 0.5, z)))
-		var sh := h * 0.3
-		caps.append(Transform3D(Basis.from_scale(Vector3(radius * 0.4, sh, radius * 0.4)),
-				Vector3(x, h * 0.85 + sh * 0.5, z)))
+		# 雪顶必须贴着岩体锥面：底半径 = 覆盖高度比例 × 山体底半径，顶点与山顶
+		# 重合（只高出 1% 做成薄壳）。原来底半径 0.4r、锥尖还高出 15%，
+		# 白锥比该高度处的岩体宽 2.7 倍 —— 整圈裙边悬在半空、尖端戳出山顶。
+		var cf := 0.30
+		var sh: float = (cf + 0.02) * h
+		var sr: float = (cf + 0.01) * radius
+		caps.append(Transform3D(Basis.from_scale(Vector3(sr, sh, sr)),
+				Vector3(x, h * 1.01 - sh * 0.5, z)))
 		placed += 1
 	for pack in [[body_mesh, bodies], [snow_mesh, caps]]:
 		if pack[1].is_empty():
@@ -1232,14 +1302,16 @@ func _build_intersections() -> void:
 	arm_mesh.size = Vector3(0.14, 0.14, 5.2)
 	arm_mesh.material = pole_mat
 	var house_mesh := BoxMesh.new()
-	house_mesh.size = Vector3(0.34, 1.0, 0.3)
+	# 灯壳厚 0.16：原来 0.30 厚而灯泡半径只有 0.13，三颗灯球被完全封在
+	# 不透明壳体内部，路口信号永远看不出颜色
+	house_mesh.size = Vector3(0.36, 1.05, 0.16)
 	var house_mat := StandardMaterial3D.new()
 	house_mat.albedo_color = Color("#181c22")
 	house_mesh.material = house_mat
 
 	var lamp_mesh := SphereMesh.new()
-	lamp_mesh.radius = 0.13
-	lamp_mesh.height = 0.26
+	lamp_mesh.radius = 0.15
+	lamp_mesh.height = 0.30
 	var pole_list: Array[Transform3D] = []
 	var arm_list: Array[Transform3D] = []
 	var house_list: Array[Transform3D] = []
@@ -1270,10 +1342,15 @@ func _build_intersections() -> void:
 		var cx: float = inner[ix]
 		for iz in inner.size():
 			var cz: float = inner[iz]
-			var group := (ix + iz) % 2
-			for corner in [Vector2(1, 1), Vector2(-1, -1)]:
-				var px: float = cx + corner.x * (GRID_HALF_W + 2.4)
-				var pz: float = cz + corner.y * (GRID_HALF_W + 2.4)
+			var group0 := (ix + iz) % 2
+			# 同一路口的两根灯必须反相，否则南北与东西同时绿灯
+			for ci2 in 2:
+				var corner: Vector2 = [Vector2(1, 1), Vector2(-1, -1)][ci2]
+				var group := (group0 + ci2) % 2
+				# 退到 11.0m：街道软墙允许车开到 half_w+2.6=10.6m，
+				# 原来灯杆立在 10.4m，车直接从灯杆里穿过去
+				var px: float = cx + corner.x * (GRID_HALF_W + 3.0)
+				var pz: float = cz + corner.y * (GRID_HALF_W + 3.0)
 				var dir := Vector2(cx - px, cz - pz).normalized()
 				var yaw := atan2(dir.x, dir.y)
 				pole_list.append(Transform3D(Basis(), Vector3(px, 3.0, pz)))
@@ -1446,6 +1523,12 @@ func _place_buildings() -> void:
 	var buildable := func(cx: float, cz: float, hw: float, hd: float) -> bool:
 		if absf(cx) < 150.0 and absf(cz) < 150.0:
 			return false                       # 中心广场留空
+		# 楼脚不能越过人行道外缘（街半宽 8 + 人行道 2.2）。
+		# 沿街排本身就退到 13m，只有城郊散点会撞上这条 —— 原来它只用
+		# absf(sx) < 905 挡外圈街道，而街道人行道外缘在 910.2m，楼直接骑上去
+		for c in GRID_COORDS:
+			if absf(cx - c) - hw < 10.5 or absf(cz - c) - hd < 10.5:
+				return false
 		for ox in [-hw, 0.0, hw]:
 			for oz in [-hd, 0.0, hd]:
 				if _block.has(Vector2i(int(floor((cx + ox) / BLOCK_CELL)),

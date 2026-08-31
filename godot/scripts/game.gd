@@ -1040,11 +1040,13 @@ func _update_camera(dt: float) -> void:
 
 	if state == ST.FINISHED:
 		var t := _now_s * 0.32
+		# 半径收到 8.2（原 10.5 会钻进看台），高度跟随车辆海拔（原为绝对值，
+		# 带高差的自定义赛道上相机会落到路面下方几十米）
 		camera.position = Vector3(
-			pv.pos.x + cos(t) * 10.5,
-			2.9 + sin(t * 0.6) * 0.7,
-			pv.pos.z + sin(t) * 10.5)
-		camera.look_at(Vector3(pv.pos.x, 0.9, pv.pos.z), Vector3.UP)
+			pv.pos.x + cos(t) * 8.2,
+			pv.pos.y + 2.9 + sin(t * 0.6) * 0.7,
+			pv.pos.z + sin(t) * 8.2)
+		camera.look_at(Vector3(pv.pos.x, pv.pos.y + 0.9, pv.pos.z), Vector3.UP)
 		want_fov = 55.0
 	else:
 		var mode := cam_mode
@@ -1055,8 +1057,10 @@ func _update_camera(dt: float) -> void:
 			_cam_look = pv.pos + f * 7.0 + Vector3(0, 1.1, 0)
 			_cam_init = true
 		if mode == 2:   # 车头盖
+			# 高度必须跟着车走：原来写死绝对 1.06m，
+			# 开上 10~19m 的高架或 72m 的盘山公路时相机掉到桥面下方
 			_cam_pos = Vector3(pv.pos.x + f.x * 0.55,
-					1.06 + absf(pv.g_lat) * 0.15,
+					pv.pos.y + 1.02 + absf(pv.g_lat) * 0.15,
 					pv.pos.z + f.z * 0.55)
 			_cam_look = pv.pos + f * 26.0
 			want_fov = 72.0 + spd_ratio * 12.0
@@ -1069,6 +1073,8 @@ func _update_camera(dt: float) -> void:
 			var lead := pv.pos + f * (7.0 + spd_ratio * 6.0) + Vector3(0, 1.1, 0)
 			_cam_look = _cam_look.lerp(lead, 1.0 - exp(-7.5 * dt))
 			want_fov = 63.0 + spd_ratio * 14.0
+		# 兜底：相机不得低于车辆所在路面（高架/盘山上尤其重要）
+		_cam_pos.y = maxf(_cam_pos.y, pv.pos.y + 0.9)
 		camera.position = _cam_pos
 		camera.look_at(_cam_look, Vector3.UP)
 
