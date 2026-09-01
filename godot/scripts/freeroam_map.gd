@@ -941,6 +941,9 @@ func _build_road_meshes() -> void:
 	#     时它横在前上方，必须低阈值 + 走廊（车在匝道上时它只比车高 1m）；
 	#   箱梁 / 桥墩 / 门式墩横梁（+0.3）：同上，匝道自身箱梁因高差 <1m 不触发；
 	#   护栏（+0.9）：自身护栏顶 = 路面+0.55，不镂；前方主线护栏高差 ≥1.8m，镂。
+	# 护栏颜色用沥青贴图：历史上护栏 quads 一直混在路面批里呈深灰色，
+	# 用户从未见过「白色护栏」；按设计色 #c9ced4 渲染会显得沿路一圈突兀的
+	# 白条（用户要求去掉）。这里保持与旧观感一致，仅保留独立材质与淡出档。
 	# 注：人行道 / 护栏必须各自单独 flush —— 原来 _quad 共用一套累积数组，
 	# 循环后连续 _flush(road/walk/rail) 只有第一个拿到几何，人行道和护栏
 	# 全混进了路面 mesh（walk/rail 材质从未生效，护栏还因此走错淡出档）。
@@ -952,7 +955,7 @@ func _build_road_meshes() -> void:
 	# 但桥体一旦挡在相机与车之间，车就看不见了。这里不动相机（挪相机会
 	# 让视距忽远忽近），改成让挡住的那部分桥体自己淡出。
 	var deck_mat := _fade_material(Color("#9aa0a8"), null, 0.9, true, 0.3)
-	var rail_mat := _fade_material(Color("#c9ced4"), null, 0.85, true, 0.9)
+	var rail_mat := _fade_material(Color.WHITE, RRTextures.asphalt(), 0.92, true, 0.9)
 
 	for road in roads:
 		var cnt := road.pts.size()
