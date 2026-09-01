@@ -251,6 +251,7 @@ func _register_inputs() -> void:
 		"rr_pause": [KEY_P, KEY_ESCAPE],
 		"rr_start": [KEY_ENTER],
 		"rr_dual": [KEY_O],
+		"rr_debug": [KEY_I, KEY_F3],   # macOS 上 F3 会被 Mission Control 吃掉
 	}
 	for action in defs:
 		if InputMap.has_action(action):
@@ -717,6 +718,8 @@ func _process(dt_real: float) -> void:
 
 
 func _handle_hotkeys() -> void:
+	if Input.is_action_just_pressed("rr_debug"):
+		hud.toggle_debug()
 	if Input.is_action_just_pressed("rr_camera"):
 		cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
 		hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
@@ -1115,9 +1118,60 @@ func _update_camera(dt: float) -> void:
 			(randf() - 0.5) * a * 0.7,
 			(randf() - 0.5) * a)
 	camera.fov = RRUtil.damp(camera.fov, want_fov, 4.0, dt)
-	# 把相机/车位写给桥体的遮挡淡出着色器
+	# 把相机/车位写给桥体与楼体的遮挡淡出着色器
 	if state == ST.ROAM and freeroam != null:
 		freeroam.update_occluder_fade(camera.position, pv.pos + Vector3(0, 0.7, 0))
+	if hud.debug_visible():
+		_update_debug_text()
+
+
+## F3 调试信息：截图即可精确定位问题位置
+func _update_debug_text() -> void:
+	var v := player.veh
+	var lines := [
+		"车  (%.1f, %.2f, %.1f)  朝向 %.2f  速度 %.1f km/h" % [
+				v.pos.x, v.pos.y, v.pos.z, v.heading, absf(v.vf) * 3.6],
+		"相机 (%.1f, %.2f, %.1f)  相对车高 %+.2f  模式 %d  FOV %.0f" % [
+				camera.position.x, camera.position.y, camera.position.z,
+				camera.position.y - v.pos.y, cam_mode, camera.fov],
+		"表面 %s  贴地 %s  gear %d" % [v.surface, v.grounded, v.gear],
+	]
+	if state == ST.ROAM and freeroam != null:
+		freeroam.vehicle_y = v.pos.y
+		var q := freeroam.query(v.pos.x, v.pos.z, null)
+		var ri: int = int(q["road"])
+		var kind := "?"
+		if ri >= 0:
+			var rd: FreeroamMap.Road = freeroam.roads[ri]
+			kind = ("网格街" if ri < FreeroamMap.GRID_COORDS.size() * 2
+					else ("高架" if rd.elevated else "城外公路"))
+		lines.append("路 road%d(%s) 路面高 %.2f 车离路面 %+.2f 横向 %+.2f 软墙 %.2f 表面 %s" % [
+				ri, kind, float(q["height"]), v.pos.y - float(q["height"]),
+				float(q["lat_off"]), float(q["wall"]), q["surf"]])
+		# 同点所有「面宽之内」的候选路，用来看是不是选错了层
+		var cands := ""
+		for rj in freeroam.roads.size():
+			var rd2: FreeroamMap.Road = freeroam.roads[rj]
+			var key := Vector2i(int(v.pos.x / FreeroamMap.CELL), int(v.pos.z / FreeroamMap.CELL))
+			for cx in range(-1, 2):
+				for cz in range(-1, 2):
+					var k2 := Vector2i(key.x + cx, key.y + cz)
+					if not rd2.grid.has(k2):
+						continue
+					for ii in rd2.grid[k2]:
+						var pp := rd2.pts[ii]
+						if Vector2(pp.x - v.pos.x, pp.z - v.pos.z).length() < rd2.half_w:
+							cands += "  road%d@%.2f" % [rj, pp.y]
+							cx = 9
+							cz = 9
+							break
+					if cx == 9:
+						break
+				if cx == 9:
+					break
+		lines.append("同点候选:" + (cands if cands != "" else " 无"))
+		lines.append("地形高 %.2f" % freeroam.terrain_height(v.pos.x, v.pos.z))
+	hud.set_debug("\n".join(lines))
 
 
 # ================= HUD =================

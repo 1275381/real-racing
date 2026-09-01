@@ -31,10 +31,14 @@ const FADE_SHADER := """
 shader_type spatial;
 render_mode cull_disabled;
 
+uniform sampler2D tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform float use_tex = 0.0;
 uniform vec3 albedo : source_color = vec3(0.6, 0.63, 0.66);
+uniform float rough = 0.9;
 uniform vec3 cam_w = vec3(0.0);
 uniform vec3 plr_w = vec3(0.0);
 uniform float fade_r = 5.5;   // 淡出半径（米）
+uniform float over_r = 15.0;  // 车过高架下方时，头顶桥体的淡出半径（米）
 
 varying vec3 v_world;
 
@@ -43,29 +47,40 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 d = plr_w - cam_w;
-	float L = length(d);
-	if (L > 0.5) {
-		vec3 dir = d / L;
-		float t = dot(v_world - cam_w, dir);
-		// 只淡出「在相机与车之间」的部分，车后面的桥体照常遮挡
-		if (t > 0.15 && t < L - 0.6) {
-			float perp = length((v_world - cam_w) - dir * t);
-			float fade = 1.0 - smoothstep(fade_r * 0.45, fade_r, perp);
-			if (fade > 0.02) {
-				vec2 fp = mod(FRAGCOORD.xy, 4.0);
-				int bi = int(fp.y) * 4 + int(fp.x);
-				float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
-						3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-				if (fade > (m[bi] + 0.5) / 16.0) {
-					discard;
-				}
+	float fade = 0.0;
+	// 通道一：只淡出「挡在相机与车之间、且不低于车所在高度」的片元。
+	// 高度条件很关键：否则车正后方的路面自己会被打出洞。
+	if (v_world.y > plr_w.y - 0.3) {
+		vec3 d = plr_w - cam_w;
+		float L = length(d);
+		if (L > 0.5) {
+			vec3 dir = d / L;
+			float t = dot(v_world - cam_w, dir);
+			if (t > 0.15 && t < L - 0.6) {
+				float perp = length((v_world - cam_w) - dir * t);
+				fade = 1.0 - smoothstep(fade_r * 0.45, fade_r, perp);
 			}
 		}
 	}
-	ALBEDO = albedo;
-	ROUGHNESS = 0.9;
-	SPECULAR = 0.0;
+	// 通道二：车顶上方近距的高架。通道一管不到它 —— 车在地面时高架横在
+	// 前上方 7m+，片元到相机-车视线的垂距远超 fade_r，但它挡的是前方视野。
+	// 高度条件（明显高于车顶）保证地面片元与车自己脚下的桥面都不触发。
+	if (v_world.y > plr_w.y + 1.6) {
+		float hd = distance(v_world.xz, plr_w.xz);
+		fade = max(fade, 1.0 - smoothstep(over_r * 0.45, over_r, hd));
+	}
+	if (fade > 0.02) {
+		vec2 fp = mod(FRAGCOORD.xy, 4.0);
+		int bi = int(fp.y) * 4 + int(fp.x);
+		float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+				3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+		if (fade > (m[bi] + 0.5) / 16.0) {
+			discard;
+		}
+	}
+	ALBEDO = mix(albedo, texture(tex, UV).rgb * albedo, use_tex);
+	ROUGHNESS = rough;
+	SPECULAR = 0.08;
 }
 """
 
@@ -374,8 +389,10 @@ func _make_outskirts_roads() -> void:
 	], [0.03], false, 8.0, false)
 	_make_road([Vector2(-900, -540), Vector2(-1020, -540)], [0.03], false, 6.0, false)
 	_make_road([Vector2(-900, 540), Vector2(-1020, 540)], [0.03], false, 6.0, false)
+	# 接到 x=-180 那条街，而不是 x=0 —— 盘山公路正是从 (0,-900) 起步，
+	# 原来两条路在那里重合约 100m 且高差 0.6m，车开过去会陷进路面
 	_make_road([Vector2(-1040, -1150), Vector2(-880, -1150), Vector2(-300, -1140),
-			Vector2(0, -1010), Vector2(0, -900)], [0.03], false, 6.0, false)
+			Vector2(-180, -1010), Vector2(-180, -900)], [0.03], false, 6.0, false)
 	_make_road([Vector2(-1040, 1150), Vector2(-880, 1150), Vector2(-300, 1140),
 			Vector2(-150, 1020), Vector2(-150, 900)], [0.03], false, 6.0, false)
 
@@ -810,16 +827,22 @@ func _flush_deck(mat: Material) -> void:
 	_d_nrm = PackedVector3Array()
 
 
-## 遮挡淡出材质：落在「相机 → 车」这条线附近、且在车前面的片元按有序抖动
+## 遮挡淡出材质：挡在「相机 → 车」之间、且不低于车高的片元按 4×4 有序抖动
 ## 逐步丢弃。用 discard 而不是半透明，是为了留在不透明管线里、深度正确，
-## 避免整块桥体进透明队列后自相排序错乱。
-func _fade_material(col: Color) -> ShaderMaterial:
+## 避免整块路面/桥体进透明队列后自相排序错乱。
+## 所有可能挡住车的表面都必须用它 —— 沥青路面本身也会挡（车在匝道上、
+## 环线就在头顶 1.8m 时，相机已经在环线上方，环线路面横在中间）。
+func _fade_material(col: Color, tex: Texture2D = null, rough := 0.9) -> ShaderMaterial:
 	if _fade_shader == null:
 		_fade_shader = Shader.new()
 		_fade_shader.code = FADE_SHADER
 	var m := ShaderMaterial.new()
 	m.shader = _fade_shader
 	m.set_shader_parameter("albedo", col)
+	m.set_shader_parameter("rough", rough)
+	if tex != null:
+		m.set_shader_parameter("tex", tex)
+		m.set_shader_parameter("use_tex", 1.0)
 	_fade_mats.append(m)
 	return m
 
@@ -834,25 +857,14 @@ func update_occluder_fade(cam_pos: Vector3, plr_pos: Vector3) -> void:
 func _build_road_meshes() -> void:
 	_mark_rail_skips()
 	_mark_surf_skips()
-	var road_mat := StandardMaterial3D.new()
-	road_mat.albedo_texture = RRTextures.asphalt()
-	road_mat.roughness = 0.92
-	road_mat.metallic_specular = 0.08   # 沥青只留一点点反光
-	road_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-	var walk_mat := StandardMaterial3D.new()
-	walk_mat.albedo_color = Color("#787e88")
-	walk_mat.roughness = 0.9
-	walk_mat.metallic_specular = 0.0
+	var road_mat := _fade_material(Color.WHITE, RRTextures.asphalt(), 0.92)
+	var walk_mat := _fade_material(Color("#787e88"))
 	# 桥体（箱梁底板 + 腹板）：路面四边形是单面的，站在桥下抬头看是空的 ——
 	# 必须补出底面与侧面，否则高架就是一张飘着的纸。
 	# 但桥体一旦挡在相机与车之间，车就看不见了。这里不动相机（挪相机会
 	# 让视距忽远忽近），改成让挡住的那部分桥体自己淡出。
 	var deck_mat := _fade_material(Color("#9aa0a8"))
-	var rail_mat := StandardMaterial3D.new()
-	rail_mat.albedo_color = Color("#c9ced4")
-	rail_mat.metallic = 0.0
-	rail_mat.roughness = 0.85
-	rail_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var rail_mat := _fade_material(Color("#c9ced4"), null, 0.85)
 
 	for road in roads:
 		var cnt := road.pts.size()
@@ -948,9 +960,9 @@ func _build_road_meshes() -> void:
 					var bo := b2 + Vector3(0, 0.55, 0)
 					var n_in := Vector3(-li.x * side, 0, -li.y * side)
 					var n_out := Vector3(li.x * side, 0, li.y * side)
-					_quad(a, b, bi, ai, n_in, rail_mat.albedo_color)
-					_quad(a2, b2, bo, ao, n_out, rail_mat.albedo_color)
-					_quad(ai, bi, bo, ao, Vector3.UP, rail_mat.albedo_color)
+					_quad(a, b, bi, ai, n_in, Color.WHITE)
+					_quad(a2, b2, bo, ao, n_out, Color.WHITE)
+					_quad(ai, bi, bo, ao, Vector3.UP, Color.WHITE)
 	_flush(road_mat)
 	_flush(walk_mat)
 	_flush(rail_mat)
@@ -961,9 +973,7 @@ func _build_road_meshes() -> void:
 	pillar_mesh.top_radius = 1.1
 	pillar_mesh.bottom_radius = 1.5
 	pillar_mesh.height = 1.0
-	var pillar_mat := StandardMaterial3D.new()
-	pillar_mat.albedo_color = Color("#8f959c")
-	pillar_mat.roughness = 0.85
+	var pillar_mat := _fade_material(Color("#8f959c"), null, 0.85)
 	pillar_mesh.material = pillar_mat
 	# 桥墩：优先桥下中央单柱；正下方是马路时改成门式墩（两侧立柱 + 横梁），
 	# 两侧也让不开才沿桥前后挪，最后才放弃。
@@ -1401,11 +1411,7 @@ func _build_intersections() -> void:
 					Vector3(cx + hw, STREET_Y, cz + hw), Vector3(cx + hw, STREET_Y, cz - hw),
 					Vector3.UP, Color.WHITE,
 					Vector2(0, 0), Vector2(0, 2), Vector2(2, 2), Vector2(2, 0))
-	var xsec_mat := StandardMaterial3D.new()
-	xsec_mat.albedo_texture = RRTextures.asphalt_plain()
-	xsec_mat.roughness = 0.92
-	xsec_mat.metallic_specular = 0.08
-	xsec_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	var xsec_mat := _fade_material(Color.WHITE, RRTextures.asphalt_plain(), 0.92)
 	_flush(xsec_mat)
 
 	for cx in GRID_COORDS:
@@ -1420,10 +1426,7 @@ func _build_intersections() -> void:
 					_quad(Vector3(x0, yy, z0), Vector3(x0, yy, z1),
 							Vector3(x1, yy, z1), Vector3(x1, yy, z0),
 							Vector3.UP, Color.WHITE)
-	var corner_mat := StandardMaterial3D.new()
-	corner_mat.albedo_color = Color("#787e88")
-	corner_mat.roughness = 0.9
-	corner_mat.metallic_specular = 0.0
+	var corner_mat := _fade_material(Color("#787e88"))
 	_flush(corner_mat)
 
 	# 斑马线（每个路口 4 条）
@@ -1651,7 +1654,7 @@ void fragment() {
 	// 用淡出而不是把相机拉近 —— 后者会让视距忽远忽近。
 	vec3 fd = plr_w - cam_w;
 	float fl = length(fd);
-	if (fl > 0.5) {
+	if (fl > 0.5 && v_wpos.y > plr_w.y - 0.3) {
 		vec3 fdir = fd / fl;
 		float ft = dot(v_wpos - cam_w, fdir);
 		if (ft > 0.15 && ft < fl - 0.6) {

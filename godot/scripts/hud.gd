@@ -41,6 +41,7 @@ var _lap_flash: Label
 var _lap_flash_timer := 0.0
 var _wrong_way: Label
 var _pos_label: Label
+var _dbg: Label            # F3 调试信息（截图定位问题用）
 
 
 func build(colors: Array) -> void:
@@ -53,6 +54,17 @@ func build(colors: Array) -> void:
 	theme.default_font_size = 16
 	_root.theme = theme
 	add_child(_root)
+
+	# 调试信息层：F3 开关。常驻最上层，任何模式都能看。
+	_dbg = Label.new()
+	_dbg.visible = true          # 默认开着，方便截图定位；I / F3 关掉
+	_dbg.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_dbg.position = Vector2(16, 210)
+	_dbg.add_theme_font_size_override("font_size", 15)
+	_dbg.add_theme_color_override("font_color", Color(0.85, 1.0, 0.7))
+	_dbg.add_theme_constant_override("outline_size", 6)
+	_dbg.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_root.add_child(_dbg)
 
 	_build_timing_panel()
 	_minimap = MinimapWidget.new()
@@ -90,6 +102,21 @@ func _process(dt: float) -> void:
 		_lap_flash_timer -= dt
 		if _lap_flash_timer <= 0.0:
 			_lap_flash.visible = false
+
+
+## 调试信息（F3）
+func toggle_debug() -> bool:
+	_dbg.visible = not _dbg.visible
+	return _dbg.visible
+
+
+func debug_visible() -> bool:
+	return _dbg != null and _dbg.visible
+
+
+func set_debug(text: String) -> void:
+	if _dbg != null:
+		_dbg.text = text
 
 
 func show_only(name: String) -> void:
@@ -647,7 +674,7 @@ func _build_roam_hud() -> void:
 	screen.add_child(hint)
 
 	var keys := Label.new()
-	keys.text = "Esc 回车库 · R 复位到道路 · C 切换镜头 · M 静音"
+	keys.text = "Esc 回车库 · R 复位到道路 · C 切换镜头 · M 静音 · I 调试信息"
 	keys.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	keys.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	keys.position = Vector2(18, -20)

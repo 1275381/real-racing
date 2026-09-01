@@ -45,6 +45,9 @@ func _run() -> void:
 				"heading": pv0.heading, "idx": null})
 		print("车高度覆盖为 %.2f" % sy.to_float())
 
+	if OS.get_environment("RR_DBG") == "1":
+		g.hud.toggle_debug()
+
 	_apply_toggles(g)
 
 	if OS.get_environment("RR_SEQ") == "1":
