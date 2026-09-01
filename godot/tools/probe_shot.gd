@@ -135,6 +135,24 @@ func _apply_toggles(g: Node) -> void:
 		for k in ["top_color", "mid_color", "bot_color"]:
 			g.env._sky_mat.set_shader_parameter(k, Color(1, 0, 1))
 		print("天空已改为洋红")
+	var hide := OS.get_environment("RR_HIDE")
+	if hide != "" and g.freeroam != null:
+		var want := {"deck": Color("#9aa0a8"), "rail": Color("#c9ced4"),
+				"walk": Color("#787e88"), "pillar": Color("#8f959c")}
+		var n_hid := 0
+		for ch in g.freeroam.get_children():
+			var mat: Material = null
+			if ch is MeshInstance3D:
+				mat = ch.material_override
+				if mat == null and ch.mesh != null and ch.mesh.get_surface_count() > 0:
+					mat = ch.mesh.surface_get_material(0)
+			elif ch is MultiMeshInstance3D and ch.multimesh.mesh != null:
+				mat = ch.multimesh.mesh.surface_get_material(0)
+			if mat is StandardMaterial3D and want.has(hide):
+				if (mat as StandardMaterial3D).albedo_color.is_equal_approx(want[hide]):
+					ch.visible = false
+					n_hid += 1
+		print("已隐藏 %s：%d 个节点" % [hide, n_hid])
 	if OS.get_environment("RR_NOMIP") == "1":
 		var gm2: StandardMaterial3D = (g.env._ground.mesh as PlaneMesh).material
 		gm2.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR

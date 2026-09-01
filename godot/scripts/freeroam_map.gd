@@ -26,6 +26,7 @@ const STREET_Y := 0.03        # 网格街统一标高：路口靠拼块拼接，
 # 建筑排布
 const BLOCK_CELL := 12.0     # 禁建区位图格边长
 const TERR_CELL := 50.0      # 地形高程场格边长（与区域地面网格同步）
+const DECK_CELL := 8.0       # 桥体占位网格格边长
 const BLK_FRONT := 13.0      # 楼正面距街道中心线：街半宽 8 + 人行道 2.2 + 退让 2.8
 const BLK_DEEP_MIN := 14.0
 const BLK_DEEP_MAX := 22.0
@@ -43,6 +44,8 @@ var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
 var _bld := {}             # 12m 网格：楼体顶高（相机避让查询用）
+var _deck := {}            # 8m 网格：高架桥体底面高（相机避让查询用）
+var _deck_top := {}        # 8m 网格：高架桥体顶面高（含防撞墙）
 var pillar_pts := PackedVector3Array()   # 桥墩 (x, 柱顶高, z)，供体检探针核对
                                          # （headless 的 dummy 渲染器不保存
                                          #   MultiMesh 缓冲，读不回实例变换）
@@ -830,7 +833,10 @@ func _build_road_meshes() -> void:
 					ra + Vector3(rla.x * w, 0, rla.y * w),
 					Vector3.UP, Color.WHITE,
 					Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
-			if road.elevated and (road.surf_skip.size() != cnt
+			# 离地不足 2m 的桥段不建箱梁：那里等于平地路，底板既无意义
+			# 又会在视线高度横出一片白板
+			if road.elevated and minf(pi.y, pj.y) > 2.0 \
+					and (road.surf_skip.size() != cnt
 					or not (road.surf_skip[i] or road.surf_skip[j])):
 				# 箱梁：底板（朝下）+ 两侧腹板，厚 0.7m，稍宽于路面
 				var dt := 0.7
@@ -902,6 +908,27 @@ func _build_road_meshes() -> void:
 	# 两侧也让不开才沿桥前后挪，最后才放弃。
 	# 原来完全不做检查，桥墩会立在路口正中、也会穿过下层桥面；
 	# 而只做「被占就跳过」又会让两条正压在街道上方的快速路一根柱子都不剩。
+	# 桥底占位网格：车开到桥下时要把相机也压到桥底以下
+	for road in roads:
+		if not road.elevated:
+			continue
+		var rc2 := int(ceil((road.half_w + 1.0) / DECK_CELL))
+		for i in range(0, road.pts.size(), 2):
+			var p := road.pts[i]
+			if p.y < 2.5:
+				continue
+			var bot: float = p.y - 0.7
+			var top: float = p.y + 0.6      # 桥面 + 防撞墙
+			var cx2 := int(floor(p.x / DECK_CELL))
+			var cz2 := int(floor(p.z / DECK_CELL))
+			for ox in range(-rc2, rc2 + 1):
+				for oz in range(-rc2, rc2 + 1):
+					var dk := Vector2i(cx2 + ox, cz2 + oz)
+					if bot < float(_deck.get(dk, 1e9)):
+						_deck[dk] = bot
+					if top > float(_deck_top.get(dk, -1e9)):
+						_deck_top[dk] = top
+
 	var pillar_list: Array[Transform3D] = []
 	var beam_list: Array[Transform3D] = []
 	for road in roads:
@@ -1822,6 +1849,21 @@ func _place_buildings() -> void:
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）
+## 该点高架桥体的底面高（相机避让用）；无桥返回极大值
+func deck_bottom(x: float, z: float) -> float:
+	return float(_deck.get(Vector2i(int(floor(x / DECK_CELL)),
+			int(floor(z / DECK_CELL))), 1e9))
+
+
+## 该点该高度是否落在高架桥体内部（相机避让用）。
+## 箱梁腹板在掠射角下会铺满大半个屏幕，车开进去就被挡住了。
+func deck_blocks(x: float, z: float, y: float) -> bool:
+	var k := Vector2i(int(floor(x / DECK_CELL)), int(floor(z / DECK_CELL)))
+	if not _deck.has(k):
+		return false
+	return y >= float(_deck[k]) and y <= float(_deck_top.get(k, -1e9))
+
+
 ## 该点的楼体顶高（相机避让用）；无楼返回 0
 func building_top(x: float, z: float) -> float:
 	return float(_bld.get(Vector2i(int(floor(x / BLOCK_CELL)),

@@ -1088,7 +1088,16 @@ func _update_camera(dt: float) -> void:
 			want_fov = 63.0 + spd_ratio * 14.0
 		# 兜底：相机不得低于车辆所在路面（高架/盘山上尤其重要）
 		var cam_p := _cam_pos
-		cam_p.y = maxf(cam_p.y, pv.pos.y + 0.9)
+		# 高度限位：不得低于车所在路面；车钻到高架桥下时，相机也必须压到
+		# 桥底以下 —— 否则相机留在桥外，箱梁底板正好把车整个挡住
+		var y_min: float = pv.pos.y + 0.9
+		var y_max := INF
+		if state == ST.ROAM and freeroam != null:
+			var dk: float = freeroam.deck_bottom(pv.pos.x, pv.pos.z)
+			if pv.pos.y < dk - 0.6:
+				y_max = dk - 0.8
+				y_min = minf(y_min, y_max)
+		cam_p.y = clampf(cam_p.y, y_min, y_max)
 		# 楼体遮挡：从车位向目标机位步进，取最后一个不在楼里的比例。
 		# 楼是 MultiMesh / 独立 MeshInstance，都没有碰撞体，用占位网格查询。
 		# 原来 8.2m 吊臂在窄街里转弯时整个钻进沿街楼。
@@ -1097,7 +1106,10 @@ func _update_camera(dt: float) -> void:
 		if mode != 2:
 			for si in 16:
 				var sp := pivot.lerp(cam_p, float(si + 1) / 16.0)
-				if _building_top_at(sp.x, sp.z) > sp.y - 0.6:
+				var blocked := _building_top_at(sp.x, sp.z) > sp.y - 0.6
+				if not blocked and state == ST.ROAM and freeroam != null:
+					blocked = freeroam.deck_blocks(sp.x, sp.z, sp.y)
+				if blocked:
 					t_ok = float(si) / 16.0
 					break
 		# 必须平滑收放：直接用逐帧的二值判定当机位，相机会在楼缘每帧阶跃数米
