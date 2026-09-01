@@ -22,9 +22,8 @@ func _init() -> void:
 					break
 			var key := ("压街道" if on_street else "空地") + ("（<2.5m）" if p.y < 2.5 else "（2.5~5m）")
 			bins[key] = int(bins.get(key, 0)) + 1
-			if on_street and samples.size() < 8:
-				samples.append("  road%d 采样 %d 在 (%.0f, y=%.2f, %.0f)：桥体底 %.2f、墙顶 %.2f"
-						% [ri, i, p.x, p.y, p.z, p.y - 0.7, p.y + 0.6])
+			if p.y > 3.0 and p.y < 5.0 and samples.size() < 6:
+				samples.append("  road%d 在 (%.1f, y=%.2f, %.1f) 桥底 %.2f" % [ri, p.x, p.y, p.z, p.y - 0.7])
 	print("=== 贴地桥体分布（每 3m 一个采样）===")
 	for k in bins:
 		print("  %-16s %d 个采样 ≈ %.0fm" % [k, bins[k], bins[k] * 3.0])

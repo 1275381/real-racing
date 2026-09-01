@@ -37,6 +37,14 @@ func _run() -> void:
 	else:
 		await g.enter_roam()
 
+	var sy := OS.get_environment("RR_SPAWNY")
+	if sy != "" and g.freeroam != null:
+		var pv0 = g.player.veh
+		g.freeroam.vehicle_y = sy.to_float()
+		pv0.place_at({"pos": Vector3(pv0.pos.x, sy.to_float(), pv0.pos.z),
+				"heading": pv0.heading, "idx": null})
+		print("车高度覆盖为 %.2f" % sy.to_float())
+
 	_apply_toggles(g)
 
 	if OS.get_environment("RR_SEQ") == "1":
@@ -70,6 +78,10 @@ func _run() -> void:
 		var cp := cam_env.split(",")
 		_cam.position = Vector3(cp[0].to_float(), cp[1].to_float(), cp[2].to_float())
 		_cam.look_at(Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float()), Vector3.UP)
+		if g.freeroam != null:
+			# 让遮挡淡出按覆盖后的机位与注视点计算
+			g.freeroam.update_occluder_fade(_cam.position,
+					Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float()))
 	var fov_env := OS.get_environment("RR_FOV")
 	if fov_env != "":
 		_cam.fov = fov_env.to_float()

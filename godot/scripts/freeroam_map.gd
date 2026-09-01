@@ -26,7 +26,50 @@ const STREET_Y := 0.03        # 网格街统一标高：路口靠拼块拼接，
 # 建筑排布
 const BLOCK_CELL := 12.0     # 禁建区位图格边长
 const TERR_CELL := 50.0      # 地形高程场格边长（与区域地面网格同步）
-const DECK_CELL := 8.0       # 桥体占位网格格边长
+
+const FADE_SHADER := """
+shader_type spatial;
+render_mode cull_disabled;
+
+uniform vec3 albedo : source_color = vec3(0.6, 0.63, 0.66);
+uniform vec3 cam_w = vec3(0.0);
+uniform vec3 plr_w = vec3(0.0);
+uniform float fade_r = 5.5;   // 淡出半径（米）
+
+varying vec3 v_world;
+
+void vertex() {
+	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+
+void fragment() {
+	vec3 d = plr_w - cam_w;
+	float L = length(d);
+	if (L > 0.5) {
+		vec3 dir = d / L;
+		float t = dot(v_world - cam_w, dir);
+		// 只淡出「在相机与车之间」的部分，车后面的桥体照常遮挡
+		if (t > 0.15 && t < L - 0.6) {
+			float perp = length((v_world - cam_w) - dir * t);
+			float fade = 1.0 - smoothstep(fade_r * 0.45, fade_r, perp);
+			if (fade > 0.02) {
+				vec2 fp = mod(FRAGCOORD.xy, 4.0);
+				int bi = int(fp.y) * 4 + int(fp.x);
+				float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+						3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+				if (fade > (m[bi] + 0.5) / 16.0) {
+					discard;
+				}
+			}
+		}
+	}
+	ALBEDO = albedo;
+	ROUGHNESS = 0.9;
+	SPECULAR = 0.0;
+}
+"""
+
+
 const BLK_FRONT := 13.0      # 楼正面距街道中心线：街半宽 8 + 人行道 2.2 + 退让 2.8
 const BLK_DEEP_MIN := 14.0
 const BLK_DEEP_MAX := 22.0
@@ -43,9 +86,8 @@ var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
-var _bld := {}             # 12m 网格：楼体顶高（相机避让查询用）
-var _deck := {}            # 8m 网格：高架桥体底面高（相机避让查询用）
-var _deck_top := {}        # 8m 网格：高架桥体顶面高（含防撞墙）
+var _fade_shader: Shader
+var _fade_mats: Array = []   # 需要每帧写入相机/车位的遮挡淡出材质
 var pillar_pts := PackedVector3Array()   # 桥墩 (x, 柱顶高, z)，供体检探针核对
                                          # （headless 的 dummy 渲染器不保存
                                          #   MultiMesh 缓冲，读不回实例变换）
@@ -768,6 +810,27 @@ func _flush_deck(mat: Material) -> void:
 	_d_nrm = PackedVector3Array()
 
 
+## 遮挡淡出材质：落在「相机 → 车」这条线附近、且在车前面的片元按有序抖动
+## 逐步丢弃。用 discard 而不是半透明，是为了留在不透明管线里、深度正确，
+## 避免整块桥体进透明队列后自相排序错乱。
+func _fade_material(col: Color) -> ShaderMaterial:
+	if _fade_shader == null:
+		_fade_shader = Shader.new()
+		_fade_shader.code = FADE_SHADER
+	var m := ShaderMaterial.new()
+	m.shader = _fade_shader
+	m.set_shader_parameter("albedo", col)
+	_fade_mats.append(m)
+	return m
+
+
+## 每帧由 game 写入相机与车的世界坐标
+func update_occluder_fade(cam_pos: Vector3, plr_pos: Vector3) -> void:
+	for m in _fade_mats:
+		(m as ShaderMaterial).set_shader_parameter("cam_w", cam_pos)
+		(m as ShaderMaterial).set_shader_parameter("plr_w", plr_pos)
+
+
 func _build_road_meshes() -> void:
 	_mark_rail_skips()
 	_mark_surf_skips()
@@ -781,12 +844,10 @@ func _build_road_meshes() -> void:
 	walk_mat.roughness = 0.9
 	walk_mat.metallic_specular = 0.0
 	# 桥体（箱梁底板 + 腹板）：路面四边形是单面的，站在桥下抬头看是空的 ——
-	# 必须补出底面与侧面，否则高架就是一张飘着的纸
-	var deck_mat := StandardMaterial3D.new()
-	deck_mat.albedo_color = Color("#9aa0a8")
-	deck_mat.roughness = 0.9
-	deck_mat.metallic_specular = 0.0
-	deck_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# 必须补出底面与侧面，否则高架就是一张飘着的纸。
+	# 但桥体一旦挡在相机与车之间，车就看不见了。这里不动相机（挪相机会
+	# 让视距忽远忽近），改成让挡住的那部分桥体自己淡出。
+	var deck_mat := _fade_material(Color("#9aa0a8"))
 	var rail_mat := StandardMaterial3D.new()
 	rail_mat.albedo_color = Color("#c9ced4")
 	rail_mat.metallic = 0.0
@@ -908,27 +969,6 @@ func _build_road_meshes() -> void:
 	# 两侧也让不开才沿桥前后挪，最后才放弃。
 	# 原来完全不做检查，桥墩会立在路口正中、也会穿过下层桥面；
 	# 而只做「被占就跳过」又会让两条正压在街道上方的快速路一根柱子都不剩。
-	# 桥底占位网格：车开到桥下时要把相机也压到桥底以下
-	for road in roads:
-		if not road.elevated:
-			continue
-		var rc2 := int(ceil((road.half_w + 1.0) / DECK_CELL))
-		for i in range(0, road.pts.size(), 2):
-			var p := road.pts[i]
-			if p.y < 2.5:
-				continue
-			var bot: float = p.y - 0.7
-			var top: float = p.y + 0.6      # 桥面 + 防撞墙
-			var cx2 := int(floor(p.x / DECK_CELL))
-			var cz2 := int(floor(p.z / DECK_CELL))
-			for ox in range(-rc2, rc2 + 1):
-				for oz in range(-rc2, rc2 + 1):
-					var dk := Vector2i(cx2 + ox, cz2 + oz)
-					if bot < float(_deck.get(dk, 1e9)):
-						_deck[dk] = bot
-					if top > float(_deck_top.get(dk, -1e9)):
-						_deck_top[dk] = top
-
 	var pillar_list: Array[Transform3D] = []
 	var beam_list: Array[Transform3D] = []
 	for road in roads:
@@ -982,7 +1022,7 @@ func _build_road_meshes() -> void:
 	if not beam_list.is_empty():
 		var beam_mesh := BoxMesh.new()
 		beam_mesh.size = Vector3.ONE
-		beam_mesh.material = pillar_mat
+		beam_mesh.material = _fade_material(Color("#8f959c"))   # 横梁同样淡出
 		var bmm := MultiMesh.new()
 		bmm.transform_format = MultiMesh.TRANSFORM_3D
 		bmm.mesh = beam_mesh
@@ -1570,12 +1610,16 @@ uniform vec3 roof_color : source_color = vec3(0.30, 0.31, 0.33);
 uniform vec3 podium_color : source_color = vec3(0.19, 0.21, 0.25);
 uniform float podium_h = 4.6;
 uniform float parapet_h = 1.2;
+uniform vec3 cam_w = vec3(0.0);      // 遮挡淡出：相机世界坐标
+uniform vec3 plr_w = vec3(0.0);      // 遮挡淡出：车世界坐标
+uniform float fade_r = 5.5;
 
 varying vec3 v_tint;
 varying float v_kind;   // 实例类型（见上）
 varying float v_face;   // >0.5 为水平面（屋顶 / 底面）
 varying float v_up;     // 距该体块底面的高度（米）
 varying float v_hgt;    // 该体块总高（米）
+varying vec3 v_wpos;    // 世界坐标（遮挡淡出用）
 
 void vertex() {
 	// MultiMesh 每实例的缩放：从 MODEL_MATRIX 各列长度取（朝向严格正交，无剪切）
@@ -1599,9 +1643,31 @@ void vertex() {
 	}
 	v_tint = COLOR.rgb;
 	v_kind = COLOR.a;
+	v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
+	// 挡在相机与车之间的楼体按有序抖动丢弃，车才不会被沿街楼吃掉。
+	// 用淡出而不是把相机拉近 —— 后者会让视距忽远忽近。
+	vec3 fd = plr_w - cam_w;
+	float fl = length(fd);
+	if (fl > 0.5) {
+		vec3 fdir = fd / fl;
+		float ft = dot(v_wpos - cam_w, fdir);
+		if (ft > 0.15 && ft < fl - 0.6) {
+			float fperp = length((v_wpos - cam_w) - fdir * ft);
+			float ff = 1.0 - smoothstep(fade_r * 0.45, fade_r, fperp);
+			if (ff > 0.02) {
+				vec2 fpx = mod(FRAGCOORD.xy, 4.0);
+				int fbi = int(fpx.y) * 4 + int(fpx.x);
+				float fm[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+						3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+				if (ff > (fm[fbi] + 0.5) / 16.0) {
+					discard;
+				}
+			}
+		}
+	}
 	vec3 c;
 	if (v_face > 0.5) {
 		c = roof_color;
@@ -1629,6 +1695,7 @@ void fragment() {
 	var m := ShaderMaterial.new()
 	m.shader = sh
 	m.set_shader_parameter("wall_tex", RRTextures.building_wall())
+	_fade_mats.append(m)          # 楼体也参与遮挡淡出，每帧写入相机/车位
 	return m
 
 
@@ -1689,16 +1756,6 @@ func _place_buildings() -> void:
 		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
 				Vector3(cx, h * 0.5, cz)))
 		cols.append(tint)
-		# 记进占位网格，供相机避让查询（楼是 MultiMesh，没有碰撞体）
-		var bx0 := int(floor((cx - w * 0.5) / BLOCK_CELL))
-		var bx1 := int(floor((cx + w * 0.5) / BLOCK_CELL))
-		var bz0 := int(floor((cz - dep * 0.5) / BLOCK_CELL))
-		var bz1 := int(floor((cz + dep * 0.5) / BLOCK_CELL))
-		for gx2 in range(bx0, bx1 + 1):
-			for gz2 in range(bz0, bz1 + 1):
-				var bk := Vector2i(gx2, gz2)
-				if h > float(_bld.get(bk, 0.0)):
-					_bld[bk] = h
 		var top := h
 		var tw := w
 		var td := dep
@@ -1849,27 +1906,6 @@ func _place_buildings() -> void:
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）
-## 该点高架桥体的底面高（相机避让用）；无桥返回极大值
-func deck_bottom(x: float, z: float) -> float:
-	return float(_deck.get(Vector2i(int(floor(x / DECK_CELL)),
-			int(floor(z / DECK_CELL))), 1e9))
-
-
-## 该点该高度是否落在高架桥体内部（相机避让用）。
-## 箱梁腹板在掠射角下会铺满大半个屏幕，车开进去就被挡住了。
-func deck_blocks(x: float, z: float, y: float) -> bool:
-	var k := Vector2i(int(floor(x / DECK_CELL)), int(floor(z / DECK_CELL)))
-	if not _deck.has(k):
-		return false
-	return y >= float(_deck[k]) and y <= float(_deck_top.get(k, -1e9))
-
-
-## 该点的楼体顶高（相机避让用）；无楼返回 0
-func building_top(x: float, z: float) -> float:
-	return float(_bld.get(Vector2i(int(floor(x / BLOCK_CELL)),
-			int(floor(z / BLOCK_CELL))), 0.0))
-
-
 func _build_minimap() -> void:
 	var size := 600
 	var img := Image.create(size, size, false, Image.FORMAT_RGB8)
