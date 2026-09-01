@@ -37,8 +37,13 @@ uniform vec3 albedo : source_color = vec3(0.6, 0.63, 0.66);
 uniform float rough = 0.9;
 uniform vec3 cam_w = vec3(0.0);
 uniform vec3 plr_w = vec3(0.0);
-uniform float fade_r = 5.5;   // 淡出半径（米）
-uniform float over_r = 15.0;  // 车过高架下方时，头顶桥体的淡出半径（米）
+uniform vec2 plr_dir = vec2(0.0, 1.0);  // 车头方向（XZ 单位向量）
+uniform float fade_r = 5.5;     // 淡出半径（米）
+uniform float over_en = 0.0;    // 1.0 = 高架类材质（主线桥面/箱梁/护栏/墩/梁）：启用前向走廊
+uniform float over_y = 1.6;     // 通道二高度阈值（米，相对 plr_w）：护栏 0.9 / 其余高架类 0.3 / 路面类 1.6
+uniform float over_r = 15.0;    // 头顶高架淡出：车周近距半径（米）
+uniform float over_w = 14.5;    // 头顶高架淡出：前向走廊半宽（米）
+uniform float over_len = 150.0; // 头顶高架淡出：前向走廊长度（米）
 
 varying vec3 v_world;
 
@@ -62,12 +67,27 @@ void fragment() {
 			}
 		}
 	}
-	// 通道二：车顶上方近距的高架。通道一管不到它 —— 车在地面时高架横在
-	// 前上方 7m+，片元到相机-车视线的垂距远超 fade_r，但它挡的是前方视野。
-	// 高度条件（明显高于车顶）保证地面片元与车自己脚下的桥面都不触发。
-	if (v_world.y > plr_w.y + 1.6) {
-		float hd = distance(v_world.xz, plr_w.xz);
-		fade = max(fade, 1.0 - smoothstep(over_r * 0.45, over_r, hd));
+	// 通道二：车顶上方的高架。通道一管不到它 —— 车在地面时高架横在
+	// 前上方 7m+，到相机-车视线的垂距远超 fade_r，但它挡的是前方视野。
+	// 分档（over_en/over_y）：路面类材质（地面街/匝道/拼块）只镂车周近距、
+	// 阈值高 —— 前向走廊会把匝道自身的前方爬坡路面镂掉（60m 外坡道面
+	// 已高于车 3m）；高架类材质（主线桥面/箱梁/护栏/墩/梁）永远不是
+	// 「车脚下要开的路」，启用走廊 —— 车在匝道上时前方主线箱梁只比
+	// 车高 1m，路面档 +1.6 够不着。护栏单独 +0.9：自身护栏顶（路面
+	// +0.55）不镂，前方主线护栏（高差 ≥1.8m）镂。
+	if (v_world.y > plr_w.y + over_y) {
+		vec2 rel = v_world.xz - plr_w.xz;
+		float f_near = 1.0 - smoothstep(over_r * 0.45, over_r, length(rel));
+		// 走廊全镂区（0.75×over_w ≈ 10.9m）必须罩住桥面外缘（半宽10+梁0.45），
+		// 否则桥两侧留一条只镂一半的边带，透视收缩后远看像「远处恢复实心」。
+		vec2 dir = normalize(plr_dir);
+		float fwd = dot(rel, dir);
+		float lat = abs(dot(rel, vec2(-dir.y, dir.x)));
+		float f_corr = over_en
+				* (1.0 - smoothstep(over_w * 0.75, over_w, lat))
+				* (1.0 - smoothstep(over_len * 0.75, over_len, max(fwd, 0.0)))
+				* step(-6.0, fwd);
+		fade = max(fade, max(f_near, f_corr));
 	}
 	if (fade > 0.02) {
 		vec2 fp = mod(FRAGCOORD.xy, 4.0);
@@ -117,6 +137,7 @@ class Road:
 	var xsec_cut := false                 # 网格街：路口方块内不铺面（由路口拼块接管）
 	var along_x := false                  # 沿 X 走（水平街）
 	var elevated := false
+	var mono := false                     # 等高主线高架（环线/快速路）：桥面单独材质走淡出走廊档
 	var wall := 10.0
 	var grid := {}                        # Vector2i -> PackedInt32Array
 	var rail_skip := []                  # 护栏修剪掩码（并线段，i -> bool）
@@ -158,6 +179,9 @@ func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bo
 	road.half_w = half_w
 	road.closed = closed
 	road.elevated = elevated
+	# 等高主线高架（环线/两条快速路）：桥面与匝道/地面街分材质 —— 匝道
+	# 桥面是「车要开上去的路」，不能进前向走廊；主线桥面是遮挡物，要进。
+	road.mono = elevated and (closed or ys.size() == 1)
 	road.wall = (half_w + 0.15) if elevated else (half_w + 2.6)
 	var m := cps.size()
 
@@ -827,12 +851,61 @@ func _flush_deck(mat: Material) -> void:
 	_d_nrm = PackedVector3Array()
 
 
+## 主线高架桥面四边形暂存（与地面/匝道路面同贴图、不同淡出档，单独 flush）。
+## Packed 数组是值类型拿不到引用，只能照 _quad 再写一份直写版本。
+var _u_pos := PackedVector3Array()
+var _u_nrm := PackedVector3Array()
+var _u_col := PackedColorArray()
+var _u_uv := PackedVector2Array()
+
+
+func _mono_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3,
+		uv_a: Vector2, uv_b: Vector2, uv_c: Vector2, uv_d: Vector2) -> void:
+	_u_pos.append(a)
+	_u_pos.append(c)
+	_u_pos.append(b)
+	_u_pos.append(a)
+	_u_pos.append(d)
+	_u_pos.append(c)
+	for i in 6:
+		_u_nrm.append(nrm)
+		_u_col.append(Color.WHITE)
+	_u_uv.append(uv_a)
+	_u_uv.append(uv_c)
+	_u_uv.append(uv_b)
+	_u_uv.append(uv_a)
+	_u_uv.append(uv_d)
+	_u_uv.append(uv_c)
+
+
+func _flush_mono(mat: Material) -> void:
+	if _u_pos.is_empty():
+		return
+	var am := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = _u_pos
+	arrays[Mesh.ARRAY_NORMAL] = _u_nrm
+	arrays[Mesh.ARRAY_COLOR] = _u_col
+	arrays[Mesh.ARRAY_TEX_UV] = _u_uv
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	mi.material_override = mat
+	add_child(mi)
+	_u_pos = PackedVector3Array()
+	_u_nrm = PackedVector3Array()
+	_u_col = PackedColorArray()
+	_u_uv = PackedVector2Array()
+
+
 ## 遮挡淡出材质：挡在「相机 → 车」之间、且不低于车高的片元按 4×4 有序抖动
 ## 逐步丢弃。用 discard 而不是半透明，是为了留在不透明管线里、深度正确，
 ## 避免整块路面/桥体进透明队列后自相排序错乱。
 ## 所有可能挡住车的表面都必须用它 —— 沥青路面本身也会挡（车在匝道上、
 ## 环线就在头顶 1.8m 时，相机已经在环线上方，环线路面横在中间）。
-func _fade_material(col: Color, tex: Texture2D = null, rough := 0.9) -> ShaderMaterial:
+func _fade_material(col: Color, tex: Texture2D = null, rough := 0.9,
+		over_en := false, over_y := 1.6) -> ShaderMaterial:
 	if _fade_shader == null:
 		_fade_shader = Shader.new()
 		_fade_shader.code = FADE_SHADER
@@ -840,6 +913,8 @@ func _fade_material(col: Color, tex: Texture2D = null, rough := 0.9) -> ShaderMa
 	m.shader = _fade_shader
 	m.set_shader_parameter("albedo", col)
 	m.set_shader_parameter("rough", rough)
+	m.set_shader_parameter("over_en", 1.0 if over_en else 0.0)
+	m.set_shader_parameter("over_y", over_y)
 	if tex != null:
 		m.set_shader_parameter("tex", tex)
 		m.set_shader_parameter("use_tex", 1.0)
@@ -847,24 +922,37 @@ func _fade_material(col: Color, tex: Texture2D = null, rough := 0.9) -> ShaderMa
 	return m
 
 
-## 每帧由 game 写入相机与车的世界坐标
-func update_occluder_fade(cam_pos: Vector3, plr_pos: Vector3) -> void:
+## 每帧由 game 写入相机与车的世界坐标、车头方向（XZ 单位向量）
+func update_occluder_fade(cam_pos: Vector3, plr_pos: Vector3,
+		plr_dir := Vector2(0.0, 1.0)) -> void:
 	for m in _fade_mats:
 		(m as ShaderMaterial).set_shader_parameter("cam_w", cam_pos)
 		(m as ShaderMaterial).set_shader_parameter("plr_w", plr_pos)
+		(m as ShaderMaterial).set_shader_parameter("plr_dir", plr_dir)
 
 
 func _build_road_meshes() -> void:
 	_mark_rail_skips()
 	_mark_surf_skips()
+	# 淡出分档（见 FADE_SHADER 通道二）：
+	#   路面类（over_en=0, +1.6）：地面街 / 匝道 / 城外公路路面 —— 匝道前方
+	#     爬坡路面是「车要开的路」，绝不能进前向走廊；
+	#   主线桥面（+0.3）：环线 / 快速路桥面 —— 是遮挡物，车在地面或匝道上
+	#     时它横在前上方，必须低阈值 + 走廊（车在匝道上时它只比车高 1m）；
+	#   箱梁 / 桥墩 / 门式墩横梁（+0.3）：同上，匝道自身箱梁因高差 <1m 不触发；
+	#   护栏（+0.9）：自身护栏顶 = 路面+0.55，不镂；前方主线护栏高差 ≥1.8m，镂。
+	# 注：人行道 / 护栏必须各自单独 flush —— 原来 _quad 共用一套累积数组，
+	# 循环后连续 _flush(road/walk/rail) 只有第一个拿到几何，人行道和护栏
+	# 全混进了路面 mesh（walk/rail 材质从未生效，护栏还因此走错淡出档）。
 	var road_mat := _fade_material(Color.WHITE, RRTextures.asphalt(), 0.92)
+	var hi_mat := _fade_material(Color.WHITE, RRTextures.asphalt(), 0.92, true, 0.3)
 	var walk_mat := _fade_material(Color("#787e88"))
 	# 桥体（箱梁底板 + 腹板）：路面四边形是单面的，站在桥下抬头看是空的 ——
 	# 必须补出底面与侧面，否则高架就是一张飘着的纸。
 	# 但桥体一旦挡在相机与车之间，车就看不见了。这里不动相机（挪相机会
 	# 让视距忽远忽近），改成让挡住的那部分桥体自己淡出。
-	var deck_mat := _fade_material(Color("#9aa0a8"))
-	var rail_mat := _fade_material(Color("#c9ced4"), null, 0.85)
+	var deck_mat := _fade_material(Color("#9aa0a8"), null, 0.9, true, 0.3)
+	var rail_mat := _fade_material(Color("#c9ced4"), null, 0.85, true, 0.9)
 
 	for road in roads:
 		var cnt := road.pts.size()
@@ -880,16 +968,13 @@ func _build_road_meshes() -> void:
 			var w := road.half_w
 			var u0 := float(i) / float(cnt) * rep
 			var u1 := float(i + 1) / float(cnt) * rep
-			# 网格街在路口处裁剪：路面裁到 ±GRID_HALF_W，人行道裁到 ±(GRID_HALF_W+2.2)，
+			# 网格街在路口处裁剪：路面裁到 ±GRID_HALF_W，
 			# 空出来的方块与四个转角由 _build_intersections 精确填上。
-			# 两者裁剪边界不同，否则两条街的人行道会在转角互相叠面。
 			var sp_r := Vector2(0.0, 1.0)
-			var sp_w := Vector2(0.0, 1.0)
 			if road.xsec_cut:
 				var sa: float = pi.x if road.along_x else pi.z
 				var sb: float = pj.x if road.along_x else pj.z
 				sp_r = _xsec_span(sa, sb, GRID_HALF_W)
-				sp_w = _xsec_span(sa, sb, GRID_HALF_W + 2.2)
 			# 主路面（同层共面重叠段跳过：由覆盖路面的沥青接管，如高架十字交叉）
 			if sp_r.x < sp_r.y and (road.surf_skip.size() != cnt
 					or not (road.surf_skip[i] or road.surf_skip[j])):
@@ -899,13 +984,22 @@ func _build_road_meshes() -> void:
 				var rlb := li.lerp(lj, sp_r.y)
 				var ru0 := lerpf(u0, u1, sp_r.x)
 				var ru1 := lerpf(u0, u1, sp_r.y)
-				_quad(
-					ra + Vector3(-rla.x * w, 0, -rla.y * w),
-					rb + Vector3(-rlb.x * w, 0, -rlb.y * w),
-					rb + Vector3(rlb.x * w, 0, rlb.y * w),
-					ra + Vector3(rla.x * w, 0, rla.y * w),
-					Vector3.UP, Color.WHITE,
-					Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
+				if road.mono:
+					_mono_quad(
+						ra + Vector3(-rla.x * w, 0, -rla.y * w),
+						rb + Vector3(-rlb.x * w, 0, -rlb.y * w),
+						rb + Vector3(rlb.x * w, 0, rlb.y * w),
+						ra + Vector3(rla.x * w, 0, rla.y * w),
+						Vector3.UP,
+						Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
+				else:
+					_quad(
+						ra + Vector3(-rla.x * w, 0, -rla.y * w),
+						rb + Vector3(-rlb.x * w, 0, -rlb.y * w),
+						rb + Vector3(rlb.x * w, 0, rlb.y * w),
+						ra + Vector3(rla.x * w, 0, rla.y * w),
+						Vector3.UP, Color.WHITE,
+						Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
 			# 离地不足 2m 的桥段不建箱梁：那里等于平地路，底板既无意义
 			# 又会在视线高度横出一片白板
 			if road.elevated and minf(pi.y, pj.y) > 2.0 \
@@ -926,54 +1020,87 @@ func _build_road_meshes() -> void:
 					var b0 := pi + Vector3(li.x * o, -dt, li.y * o)
 					var b1 := pj + Vector3(lj.x * o, -dt, lj.y * o)
 					_deck_quad(b0, b1, t1, t0, Vector3(li.x * side, 0, li.y * side))
-			if not road.elevated:
-				# 路缘人行道（略高于路面）
-				if sp_w.x < sp_w.y:
-					var wa := pi.lerp(pj, sp_w.x)
-					var wb := pi.lerp(pj, sp_w.y)
-					var wla := li.lerp(lj, sp_w.x)
-					var wlb := li.lerp(lj, sp_w.y)
-					for side in [-1.0, 1.0]:
-						var a := wa + Vector3(wla.x * side * (w + 0.06), 0.05,
-								wla.y * side * (w + 0.06))
-						var b := wb + Vector3(wlb.x * side * (w + 0.06), 0.05,
-								wlb.y * side * (w + 0.06))
-						var c := wb + Vector3(wlb.x * side * (w + 2.2), 0.05,
-								wlb.y * side * (w + 2.2))
-						var d := wa + Vector3(wla.x * side * (w + 2.2), 0.05,
-								wla.y * side * (w + 2.2))
-						_quad(a, b, c, d, Vector3.UP, Color.WHITE)
-			else:
-				# 高架防撞墙：0.55m 高实体墙（内壁 + 顶面 + 外壁），哑光混凝土
-				for side in [-1.0, 1.0]:
-					if road.rail_skip[i] or road.rail_skip[j]:
-						continue   # 并入主线段：不建墙，避免护栏横穿桥面
-					var oi: float = (w + 0.10) * side
-					var oo: float = (w + 0.45) * side
-					var a := pi + Vector3(li.x * oi, 0.05, li.y * oi)
-					var b := pj + Vector3(lj.x * oi, 0.05, lj.y * oi)
-					var a2 := pi + Vector3(li.x * oo, 0.05, li.y * oo)
-					var b2 := pj + Vector3(lj.x * oo, 0.05, lj.y * oo)
-					var ai := a + Vector3(0, 0.55, 0)
-					var bi := b + Vector3(0, 0.55, 0)
-					var ao := a2 + Vector3(0, 0.55, 0)
-					var bo := b2 + Vector3(0, 0.55, 0)
-					var n_in := Vector3(-li.x * side, 0, -li.y * side)
-					var n_out := Vector3(li.x * side, 0, li.y * side)
-					_quad(a, b, bi, ai, n_in, Color.WHITE)
-					_quad(a2, b2, bo, ao, n_out, Color.WHITE)
-					_quad(ai, bi, bo, ao, Vector3.UP, Color.WHITE)
 	_flush(road_mat)
-	_flush(walk_mat)
-	_flush(rail_mat)
+	_flush_mono(hi_mat)
 	_flush_deck(deck_mat)
+
+	# 高架防撞墙：0.55m 高实体墙（内壁 + 顶面 + 外壁），哑光混凝土。
+	# 单独一遍循环、单独 flush —— 原来护栏与人行道混进路面批，
+	# rail/walk 材质的 flush 拿到空数组从未生效（护栏色错、淡出档也错）。
+	for road in roads:
+		if not road.elevated:
+			continue
+		var rc := road.pts.size()
+		for i in (rc if road.closed else rc - 1):
+			var j := (i + 1) % rc
+			var pi := road.pts[i]
+			var pj := road.pts[j]
+			var li := road.left[i]
+			var lj := road.left[j]
+			var w := road.half_w
+			for side in [-1.0, 1.0]:
+				if road.rail_skip[i] or road.rail_skip[j]:
+					continue   # 并入主线段：不建墙，避免护栏横穿桥面
+				var oi: float = (w + 0.10) * side
+				var oo: float = (w + 0.45) * side
+				var a := pi + Vector3(li.x * oi, 0.05, li.y * oi)
+				var b := pj + Vector3(lj.x * oi, 0.05, lj.y * oi)
+				var a2 := pi + Vector3(li.x * oo, 0.05, li.y * oo)
+				var b2 := pj + Vector3(lj.x * oo, 0.05, lj.y * oo)
+				var ai := a + Vector3(0, 0.55, 0)
+				var bi := b + Vector3(0, 0.55, 0)
+				var ao := a2 + Vector3(0, 0.55, 0)
+				var bo := b2 + Vector3(0, 0.55, 0)
+				var n_in := Vector3(-li.x * side, 0, -li.y * side)
+				var n_out := Vector3(li.x * side, 0, li.y * side)
+				_quad(a, b, bi, ai, n_in, Color.WHITE)
+				_quad(a2, b2, bo, ao, n_out, Color.WHITE)
+				_quad(ai, bi, bo, ao, Vector3.UP, Color.WHITE)
+	_flush(rail_mat)
+
+	# 路缘人行道（略高于路面，非高架路才有）：单独一批，原因同上。
+	# 网格街的人行道裁到 ±(GRID_HALF_W+2.2)，与路面裁剪边界不同，
+	# 否则两条街的人行道会在转角互相叠面。
+	for road in roads:
+		if road.elevated:
+			continue
+		var wc := road.pts.size()
+		for i in (wc if road.closed else wc - 1):
+			var j := (i + 1) % wc
+			var pi := road.pts[i]
+			var pj := road.pts[j]
+			var li := road.left[i]
+			var lj := road.left[j]
+			var w := road.half_w
+			var sp_w := Vector2(0.0, 1.0)
+			if road.xsec_cut:
+				var sa: float = pi.x if road.along_x else pi.z
+				var sb: float = pj.x if road.along_x else pj.z
+				sp_w = _xsec_span(sa, sb, GRID_HALF_W + 2.2)
+			if sp_w.x >= sp_w.y:
+				continue
+			var wa := pi.lerp(pj, sp_w.x)
+			var wb := pi.lerp(pj, sp_w.y)
+			var wla := li.lerp(lj, sp_w.x)
+			var wlb := li.lerp(lj, sp_w.y)
+			for side in [-1.0, 1.0]:
+				var a := wa + Vector3(wla.x * side * (w + 0.06), 0.05,
+						wla.y * side * (w + 0.06))
+				var b := wb + Vector3(wlb.x * side * (w + 0.06), 0.05,
+						wlb.y * side * (w + 0.06))
+				var c := wb + Vector3(wlb.x * side * (w + 2.2), 0.05,
+						wlb.y * side * (w + 2.2))
+				var d := wa + Vector3(wla.x * side * (w + 2.2), 0.05,
+						wla.y * side * (w + 2.2))
+				_quad(a, b, c, d, Vector3.UP, Color.WHITE)
+	_flush(walk_mat)
 
 	# 高架桥墩（每 ~45m 一根，从地面顶到桥面）
 	var pillar_mesh := CylinderMesh.new()
 	pillar_mesh.top_radius = 1.1
 	pillar_mesh.bottom_radius = 1.5
 	pillar_mesh.height = 1.0
-	var pillar_mat := _fade_material(Color("#8f959c"), null, 0.85)
+	var pillar_mat := _fade_material(Color("#8f959c"), null, 0.85, true, 0.3)
 	pillar_mesh.material = pillar_mat
 	# 桥墩：优先桥下中央单柱；正下方是马路时改成门式墩（两侧立柱 + 横梁），
 	# 两侧也让不开才沿桥前后挪，最后才放弃。
@@ -1032,7 +1159,7 @@ func _build_road_meshes() -> void:
 	if not beam_list.is_empty():
 		var beam_mesh := BoxMesh.new()
 		beam_mesh.size = Vector3.ONE
-		beam_mesh.material = _fade_material(Color("#8f959c"))   # 横梁同样淡出
+		beam_mesh.material = _fade_material(Color("#8f959c"), null, 0.9, true, 0.3)   # 横梁同样淡出
 		var bmm := MultiMesh.new()
 		bmm.transform_format = MultiMesh.TRANSFORM_3D
 		bmm.mesh = beam_mesh

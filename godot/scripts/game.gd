@@ -1118,9 +1118,10 @@ func _update_camera(dt: float) -> void:
 			(randf() - 0.5) * a * 0.7,
 			(randf() - 0.5) * a)
 	camera.fov = RRUtil.damp(camera.fov, want_fov, 4.0, dt)
-	# 把相机/车位写给桥体与楼体的遮挡淡出着色器
+	# 把相机/车位/车头方向写给桥体与楼体的遮挡淡出着色器
 	if state == ST.ROAM and freeroam != null:
-		freeroam.update_occluder_fade(camera.position, pv.pos + Vector3(0, 0.7, 0))
+		freeroam.update_occluder_fade(camera.position, pv.pos + Vector3(0, 0.7, 0),
+				Vector2(sin(pv.heading), cos(pv.heading)))
 	if hud.debug_visible():
 		_update_debug_text()
 

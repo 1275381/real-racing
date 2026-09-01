@@ -82,9 +82,10 @@ func _run() -> void:
 		_cam.position = Vector3(cp[0].to_float(), cp[1].to_float(), cp[2].to_float())
 		_cam.look_at(Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float()), Vector3.UP)
 		if g.freeroam != null:
-			# 让遮挡淡出按覆盖后的机位与注视点计算
-			g.freeroam.update_occluder_fade(_cam.position,
-					Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float()))
+			# 让遮挡淡出按覆盖后的机位与注视点计算（走廊方向 = 相机注视方向）
+			var look := Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float())
+			g.freeroam.update_occluder_fade(_cam.position, look,
+					Vector2(look.x - _cam.position.x, look.z - _cam.position.z))
 	var fov_env := OS.get_environment("RR_FOV")
 	if fov_env != "":
 		_cam.fov = fov_env.to_float()
