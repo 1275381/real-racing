@@ -48,14 +48,14 @@ func emit_skid(veh: Vehicle, strength: float) -> void:
 			continue
 		var prev = rec.get(key)
 		if prev != null and prev.distance_to(wp) > 0.35:
-			_add_mark(prev, wp, strength)
+			_add_mark(prev, wp, strength, veh.pos.y + 0.045)
 			rec[key] = wp
 		elif prev == null:
 			rec[key] = wp
 	_last_pos[veh] = rec
 
 
-func _add_mark(a: Vector2, b: Vector2, strength: float) -> void:
+func _add_mark(a: Vector2, b: Vector2, strength: float, y: float) -> void:
 	if _skid_count >= MAX_MARKS:
 		_skid_mesh.clear_surfaces()
 		_skid_count = 0
@@ -71,7 +71,7 @@ func _add_mark(a: Vector2, b: Vector2, strength: float) -> void:
 	_skid_mesh.surface_set_color(col)
 	for tri in [[pa, pb, pc], [pa, pc, pd]]:
 		for v in tri:
-			_skid_mesh.surface_add_vertex(Vector3(v.x, 0.045, v.y))
+			_skid_mesh.surface_add_vertex(Vector3(v.x, y, v.y))
 	_skid_count += 1
 
 
@@ -104,7 +104,9 @@ func surface_effects(veh: Vehicle) -> void:
 func _rear_world(veh: Vehicle, side: float) -> Vector3:
 	var s := sin(veh.heading)
 	var c := cos(veh.heading)
-	return Vector3(veh.pos.x + s * -1.7 + c * side, 0.25, veh.pos.z + c * -1.7 - s * side)
+	# 高度必须跟着车走：写死 0.25 时，高架上漂移的烟尘会掉到桥下的地面街道
+	return Vector3(veh.pos.x + s * -1.7 + c * side, veh.pos.y + 0.25,
+			veh.pos.z + c * -1.7 - s * side)
 
 
 func _pool_get(veh: Vehicle, kind: String) -> CPUParticles3D:

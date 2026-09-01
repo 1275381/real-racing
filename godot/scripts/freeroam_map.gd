@@ -42,6 +42,10 @@ var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
+var _bld := {}             # 12m 网格：楼体顶高（相机避让查询用）
+var pillar_pts := PackedVector3Array()   # 桥墩 (x, 柱顶高, z)，供体检探针核对
+                                         # （headless 的 dummy 渲染器不保存
+                                         #   MultiMesh 缓冲，读不回实例变换）
 
 class Road:
 	var pts := PackedVector3Array()       # 中心线（y = 路面海拔）
@@ -292,7 +296,7 @@ func _make_ramps() -> void:
 		_make_road([
 			Vector2(hx - 150.0 * sx, -16.5), Vector2(hx - 40.0 * sx, -16.5),
 			Vector2(hx + 40.0 * sx, -30.0), Vector2(hx + 75.0 * sx, -80.0),
-			Vector2(hx + 80.0 * sx, -190.0), Vector2(hx + 80.0 * sx, -330.0),
+			Vector2(hx + 80.0 * sx, -190.0), Vector2(hx + 80.0 * sx, -349.5),
 		], [CROSS_ELEV_EW, CROSS_ELEV_EW, 17.0, 13.0, 4.0, STREET_Y],
 				false, 6.0, true)
 	for sz in [-1.0, 1.0]:
@@ -301,7 +305,7 @@ func _make_ramps() -> void:
 		_make_road([
 			Vector2(16.5, hz - 150.0 * sz), Vector2(16.5, hz - 40.0 * sz),
 			Vector2(30.0, hz + 40.0 * sz), Vector2(80.0, hz + 75.0 * sz),
-			Vector2(190.0, hz + 80.0 * sz), Vector2(330.0, hz + 80.0 * sz),
+			Vector2(190.0, hz + 80.0 * sz), Vector2(349.5, hz + 80.0 * sz),
 		], [CROSS_ELEV, CROSS_ELEV, 12.5, 9.0, 3.0, STREET_Y], false, 6.0, true)
 
 
@@ -355,11 +359,34 @@ func get_spawn() -> Dictionary:
 func query_rescue(x: float, z: float) -> Dictionary:
 	vehicle_y = 0.0   # 复位优先回到地面层
 	var q := query(x, z, null)
-	var p := _global_pt(q["idx"])
-	return {"pos": Vector3(p.x, p.y + 0.2, p.z), "ang": q["ang"]}
+	var gidx: int = q["idx"]
+	if gidx < 0:
+		gidx = _nearest_sample(x, z)   # 超出所有道路搜索半径时全局兜底
+	var r := gidx / 100000
+	var i := gidx % 100000
+	var p := roads[r].pts[i]
+	return {"pos": Vector3(p.x, p.y + 0.2, p.z), "ang": roads[r].ang[i]}
+
+
+## 全局最近采样（粗扫，只在复位兜底时调用）
+func _nearest_sample(x: float, z: float) -> int:
+	var best := 0
+	var bd := INF
+	for r in roads.size():
+		var pts := roads[r].pts
+		for i in range(0, pts.size(), 8):
+			var dx := pts[i].x - x
+			var dz := pts[i].z - z
+			var d := dx * dx + dz * dz
+			if d < bd:
+				bd = d
+				best = r * 100000 + i
+	return best
 
 
 func _global_pt(gidx: int) -> Vector3:
+	if gidx < 0:
+		return Vector3.ZERO
 	var r := gidx / 100000
 	var i := gidx % 100000
 	if r < 0 or r >= roads.size() or i >= roads[r].pts.size():
@@ -384,8 +411,9 @@ func query(x: float, z: float, hint) -> Dictionary:
 	var best_road := -1
 	var best_i := 0
 	var best_cost := INF
-	var best_d2 := INF
+	var best_dist := INF
 	var road_cost := {}          # 每条候选路的代价（用于重叠区域取最宽软墙）
+	var road_bi := {}            # 每条候选路的最近采样（软墙抑制用）
 	for r in roads.size():
 		var road := roads[r]
 		var bi := -1
@@ -417,25 +445,41 @@ func query(x: float, z: float, hint) -> Dictionary:
 							bi = i
 		if bi < 0:
 			continue
-		var cost := sqrt(bd2) + absf(road.pts[bi].y - vehicle_y) * 6.0   # 高度迟滞
+		# 开放路端点之外：把纵向过冲重重计入距离。原来只看到最近采样的
+		# 直线距离，驶出断头高架后最近采样仍是端点，车会沿用桥面高度
+		# 在空中平地行驶 20 多米才掉下去。
+		var dist := sqrt(bd2)
+		if not road.closed and (bi == 0 or bi == road.pts.size() - 1):
+			var tv := Vector2(sin(road.ang[bi]), cos(road.ang[bi]))
+			var lon: float = (x - road.pts[bi].x) * tv.x + (z - road.pts[bi].z) * tv.y
+			var over: float = (-lon) if bi == 0 else lon
+			if over > 0.0:
+				dist += over * 10.0
+		var cost := dist + absf(road.pts[bi].y - vehicle_y) * 6.0   # 高度迟滞
 		if r == hint_road:
 			cost -= 2.0   # 当前路粘性，避免并线/重叠处来回跳层
 		road_cost[r] = cost
+		road_bi[r] = bi
 		if cost < best_cost:
 			best_cost = cost
 			best_road = r
 			best_i = bi
-			best_d2 = bd2
+			best_dist = dist
 
-	if best_road < 0 or best_d2 > pow(roads[best_road].half_w + 16.0, 2.0):
-		# 路网外：草地
-		_scratch["idx"] = 0
+	if best_road < 0 or best_dist > roads[best_road].half_w + 16.0:
+		# 路网外：草地。idx 保留「最近的那条路」，找不到任何路才用 -1。
+		# 原来硬写 0，而 0 恰好是 road0 的第 0 个采样（x=-900,z=-900 那条街
+		# 的起点）：按 R 复位会被瞬移到地图西南角，hint 也会一直给 road0
+		# 加粘性，越野时物理一直挂在那条街上。
+		_scratch["idx"] = (best_road * 100000 + best_i) if best_road >= 0 else -1
+		_scratch["road"] = best_road
 		_scratch["lat_off"] = 999.0
+		_scratch["ang"] = roads[best_road].ang[best_i] if best_road >= 0 else 0.0
 		_scratch["surf"] = "grass"
 		_scratch["height"] = 0.0
 		_scratch["slope"] = 0.0
 		_scratch["wall"] = 10000.0
-		_scratch["dist_sq"] = best_d2
+		_scratch["dist_sq"] = best_dist * best_dist
 		return _scratch
 
 	# 重叠路段（匝道口/并线段/路口）取相近候选中最宽的软墙，消除隐形墙
@@ -451,6 +495,22 @@ func query(x: float, z: float, hint) -> Dictionary:
 	var l := road.left[best_i]
 	var lat := (x - p.x) * l.x + (z - p.z) * l.y
 	var al := absf(lat)
+	# 软墙抑制：只要车还在另一条同层邻近道路的走廊之内，就不该被推。
+	# 贴着软墙过十字路口时 hint 粘性会让车穿过后仍挂在横街上，横街的
+	# 横向轴于是变成一道纵向栅栏，把车正面撞停（实测 +22.6 → -6.3 m/s）。
+	if al > wall:
+		for rr2 in road_cost:
+			if rr2 == best_road or road_cost[rr2] > best_cost + 12.0:
+				continue
+			var o: Road = roads[rr2]
+			var oi: int = road_bi[rr2]
+			var op := o.pts[oi]
+			if absf(op.y - p.y) > 3.0:
+				continue
+			var ol := o.left[oi]
+			if absf((x - op.x) * ol.x + (z - op.z) * ol.y) <= o.wall:
+				wall = al + 2.0
+				break
 	_scratch["idx"] = best_road * 100000 + best_i
 	_scratch["road"] = best_road
 	_scratch["lat_off"] = lat
@@ -837,6 +897,7 @@ func _build_road_meshes() -> void:
 					if not _pillar_blocked(road, p):
 						pillar_list.append(Transform3D(Basis.from_scale(Vector3(1, p.y, 1)),
 								Vector3(p.x, p.y * 0.5, p.z)))
+						pillar_pts.append(Vector3(p.x, p.y, p.z))
 						placed = true
 						break
 					# 门式墩：立柱退到桥面外侧 1.6m，柱顶收到横梁底下
@@ -849,6 +910,7 @@ func _build_road_meshes() -> void:
 						for c in [pa, pb]:
 							pillar_list.append(Transform3D(Basis.from_scale(Vector3(1, ch, 1)),
 									Vector3(c.x, ch * 0.5, c.z)))
+							pillar_pts.append(Vector3(c.x, ch, c.z))
 						# 横梁：沿横向跨过桥面，藏在桥底
 						var bx := Vector3(lat.x, 0, lat.y) * (off * 2.0 + 1.4)
 						var bz := Vector3(-lat.y, 0, lat.x) * 1.8
@@ -1560,6 +1622,16 @@ func _place_buildings() -> void:
 		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
 				Vector3(cx, h * 0.5, cz)))
 		cols.append(tint)
+		# 记进占位网格，供相机避让查询（楼是 MultiMesh，没有碰撞体）
+		var bx0 := int(floor((cx - w * 0.5) / BLOCK_CELL))
+		var bx1 := int(floor((cx + w * 0.5) / BLOCK_CELL))
+		var bz0 := int(floor((cz - dep * 0.5) / BLOCK_CELL))
+		var bz1 := int(floor((cz + dep * 0.5) / BLOCK_CELL))
+		for gx2 in range(bx0, bx1 + 1):
+			for gz2 in range(bz0, bz1 + 1):
+				var bk := Vector2i(gx2, gz2)
+				if h > float(_bld.get(bk, 0.0)):
+					_bld[bk] = h
 		var top := h
 		var tw := w
 		var td := dep
@@ -1710,15 +1782,25 @@ func _place_buildings() -> void:
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）
+## 该点的楼体顶高（相机避让用）；无楼返回 0
+func building_top(x: float, z: float) -> float:
+	return float(_bld.get(Vector2i(int(floor(x / BLOCK_CELL)),
+			int(floor(z / BLOCK_CELL))), 0.0))
+
+
 func _build_minimap() -> void:
 	var size := 600
 	var img := Image.create(size, size, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.045, 0.055, 0.08))
-	# 分区底色：西海 / 东沙漠 / 北山地 / 城市核心
-	_fill_zone(img, size, -2800, -1080, -2800, 2800, Color(0.1, 0.28, 0.5))
-	_fill_zone(img, size, 1080, 2800, -2100, 2100, Color(0.66, 0.55, 0.35))
-	_fill_zone(img, size, -2800, 2800, -2800, -1080, Color(0.16, 0.26, 0.18))
-	_fill_zone(img, size, -950, 950, -950, 950, Color(0.2, 0.22, 0.26))
+	img.fill(Color(0.17, 0.23, 0.15))   # 底色 = 草地（与 _zone_color 的兜底一致）
+	# 分区底色的叠放顺序必须与 _zone_color 的判定优先级一致
+	# （海 > 沙滩 > 沙漠 > 山地 > 城市），阈值也要对齐。
+	# 原来先画海再用「整条北带」的山地盖上去，西北角世界里是海、
+	# 小地图却是山地；东沙漠的阈值也写成 1080（实际是 950）。
+	_fill_zone(img, size, -2800, 2800, -2800, -1080, Color(0.16, 0.26, 0.18))   # 北山地
+	_fill_zone(img, size, 950, 2800, -2800, 2800, Color(0.66, 0.55, 0.35))      # 东沙漠
+	_fill_zone(img, size, -1080, -980, -2800, 2800, Color(0.72, 0.66, 0.50))    # 西沙滩
+	_fill_zone(img, size, -2800, -1080, -2800, 2800, Color(0.1, 0.28, 0.5))     # 西海
+	_fill_zone(img, size, -950, 950, -950, 950, Color(0.2, 0.22, 0.26))         # 城市核心
 	var scale := float(size) / (MAP_LIMIT * 2.0)
 	for road in roads:
 		var col := Color(0.62, 0.66, 0.72) if road.elevated else Color(0.30, 0.33, 0.38)

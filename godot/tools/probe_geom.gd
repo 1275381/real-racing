@@ -1,4 +1,5 @@
 extends SceneTree
+const RING_Y := 10.0
 ## 几何体检：环线曲率 / 盘山公路离地 / 城郊楼压街 / 匝道与主线重叠
 func _init() -> void:
 	var m := FreeroamMap.new()
@@ -46,8 +47,17 @@ func _init() -> void:
 			if p.y > 3.0:
 				above += 1
 			maxh = maxf(maxh, p.y)
-		print("盘山公路：%d/%d 个采样离地 >3m（共 %.0fm），最高 %.1fm，桥墩/山体支撑：无"
-				% [above, mtn.pts.size(), above * FreeroamMap.SAMPLE_DS, maxh])
+		# 用地形高程场核对路面离地净高（应当很小 —— 路是切在山脊上的）
+		var worst_gap := 0.0
+		var gap_at := Vector2.ZERO
+		for p2 in mtn.pts:
+			var g := p2.y - m._terrain_h(p2.x, p2.z)
+			if g > worst_gap:
+				worst_gap = g
+				gap_at = Vector2(p2.x, p2.z)
+		print("盘山公路：%d/%d 个采样海拔 >3m（共 %.0fm，最高 %.1fm）；"
+				% [above, mtn.pts.size(), above * FreeroamMap.SAMPLE_DS, maxh]
+				+ "路面到地形的最大净高 = %.1fm @(%.0f,%.0f)" % [worst_gap, gap_at.x, gap_at.y])
 
 	# --- 匝道与主线是否仍有同高重叠 ---
 	var over := 0
@@ -86,27 +96,23 @@ func _init() -> void:
 	for p2 in ring.pts:
 		mx = maxf(mx, maxf(absf(p2.x), absf(p2.z)))
 	print("环线包络 max|x|,|z| = %.1f（±720 是网格街，需要 >11m 余量）" % mx)
-	var pil: MultiMesh = null
-	for ch in m.get_children():
-		if ch is MultiMeshInstance3D and ch.multimesh.mesh is CylinderMesh:
-			var cm: CylinderMesh = ch.multimesh.mesh
-			if absf(cm.bottom_radius - 1.5) < 0.01:
-				pil = ch.multimesh
-				break
-	if pil != null:
-		var gap_max := 0.0
-		var at := Vector2.ZERO
-		for i in n:
-			var p3 := ring.pts[i]
-			var best := 1e9
-			for j in pil.instance_count:
-				var o := pil.get_instance_transform(j).origin
-				if absf(o.y * 2.0 - p3.y) > 3.0 and absf(o.y * 2.0 - (p3.y - 1.0)) > 3.0:
-					continue
-				best = minf(best, Vector2(o.x - p3.x, o.z - p3.z).length())
-			if best > gap_max:
-				gap_max = best
-				at = Vector2(p3.x, p3.z)
-		print("环线上任一点到最近桥墩的最大距离 = %.0fm （即最大无支撑半跨）@(%.0f,%.0f)"
-				% [gap_max, at.x, at.y])
+	var pil := m.pillar_pts
+	print("  桥墩实例=%d" % pil.size())
+	var near_ring := []
+	for j in pil.size():
+		if absf(pil[j].y - RING_Y) < 2.0:
+			near_ring.append(Vector2(pil[j].x, pil[j].z))
+	print("  环线高度附近的柱子 = %d 根" % near_ring.size())
+	var gap_max := 0.0
+	var at := Vector2.ZERO
+	for i in range(0, n, 4):
+		var p3 := ring.pts[i]
+		var best := 1e9
+		for o2 in near_ring:
+			best = minf(best, (o2 - Vector2(p3.x, p3.z)).length())
+		if best > gap_max:
+			gap_max = best
+			at = Vector2(p3.x, p3.z)
+	print("环线上任一点到最近桥墩的最大距离 = %.0fm （即最大无支撑半跨）@(%.0f,%.0f)"
+			% [gap_max, at.x, at.y])
 	quit()

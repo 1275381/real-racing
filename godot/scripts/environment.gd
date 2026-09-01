@@ -104,6 +104,11 @@ void sky() {
 	_env.tonemap_exposure = 1.0
 	_env.fog_enabled = true
 	_env.fog_mode = Environment.FOG_MODE_DEPTH
+	# FOG_MODE_DEPTH 下 fog_density 就是「到达 fog_depth_end 时的不透明度」，
+	# 默认只有 0.01 —— 等于雾根本不起作用，远景到裁剪面时还是清晰的，
+	# 地平线因此是一条硬色边。
+	_env.fog_density = 1.0
+	_env.fog_depth_curve = 1.35
 	_env.fog_sky_affect = 0.0   # 深度雾不遮天空（天空在无穷远，否则整片天被雾色糊白）
 	# 环境光与反射都不取自天空：Compatibility 下 BG_SKY 会把天空辐照喂进
 	# 环境光/反射，整个场景（地面、路面）被染成蓝色 —— 俯视时尤其明显。

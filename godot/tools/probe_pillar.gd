@@ -8,28 +8,17 @@ func _init() -> void:
 	var map := FreeroamMap.new()
 	map.build()
 
-	# 找到桥墩 MultiMesh
-	var pillars: MultiMesh = null
-	for c in map.get_children():
-		if c is MultiMeshInstance3D and c.multimesh.mesh is CylinderMesh:
-			var cm: CylinderMesh = c.multimesh.mesh
-			if absf(cm.bottom_radius - 1.5) < 0.01:
-				pillars = c.multimesh
-				break
-	if pillars == null:
-		print("未找到桥墩 MultiMesh")
-		quit()
-		return
-	print("桥墩总数 = %d" % pillars.instance_count)
+	# 直接读地图记录的桥墩表：headless 下 MultiMesh 缓冲读不回来
+	var pillars := map.pillar_pts
+	print("桥墩总数 = %d" % pillars.size())
 
 	var grid_n := 22
 	var kinds := {}
 	var samples := []
-	for i in pillars.instance_count:
-		var xf := pillars.get_instance_transform(i)
-		var px: float = xf.origin.x
-		var pz: float = xf.origin.z
-		var top: float = xf.origin.y * 2.0        # 缩放后总高 = 中心 y × 2
+	for i in pillars.size():
+		var px: float = pillars[i].x
+		var pz: float = pillars[i].z
+		var top: float = pillars[i].y
 		for ri in map.roads.size():
 			var road: FreeroamMap.Road = map.roads[ri]
 			# 桥墩自己那条路不算
@@ -48,8 +37,10 @@ func _init() -> void:
 						var q := road.pts[j]
 						if Vector2(q.x - px, q.z - pz).length() >= lim:
 							continue
-						# 桥墩从地面 0 长到 top；只要该路面高度落在这个区间就是穿模
-						if q.y < top - 0.5 and q.y > -1.0:
+						# 桥墩从地面 0 长到 top；路面落在柱身内即穿模。
+						# 阈值 1.5m 用来排除「这根柱子自己撑的那条路」——
+						# 中央墩柱顶=桥面、门式墩柱顶=桥面-1
+						if q.y < top - 1.5 and q.y > -1.0:
 							hit = true
 							hy = q.y
 							break

@@ -425,7 +425,10 @@ func enter_roam() -> void:
 		t.visible = false
 	env.set_theme("city")
 	env.set_race_props_visible(false)
-	env.set_fog_range(900.0, 6500.0)   # 大世界：雾距拉远，山海沙漠可见
+	# 雾终点必须落在相机远裁剪面（2800）之内，否则远景在雾还没浓起来时
+	# 就被硬裁掉，地平线是一条硬边
+	env.set_fog_range(700.0, 2700.0)
+	fx.clear_skids()                   # 上一场比赛的胎痕不该铺到城市街道上
 	env.set_ground_visible(false)      # 全局面让位给漫游分区地面
 	state = ST.ROAM
 	for i in cars.size():
@@ -450,6 +453,8 @@ func enter_roam() -> void:
 
 
 func exit_roam() -> void:
+	player.visual.rotation.x = 0.0   # 漫游里写过车身俯仰角，不复位会一直歪着
+	fx.clear_skids()
 	if freeroam != null:
 		freeroam.visible = false
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
@@ -1074,8 +1079,21 @@ func _update_camera(dt: float) -> void:
 			_cam_look = _cam_look.lerp(lead, 1.0 - exp(-7.5 * dt))
 			want_fov = 63.0 + spd_ratio * 14.0
 		# 兜底：相机不得低于车辆所在路面（高架/盘山上尤其重要）
-		_cam_pos.y = maxf(_cam_pos.y, pv.pos.y + 0.9)
-		camera.position = _cam_pos
+		var cam_p := _cam_pos
+		cam_p.y = maxf(cam_p.y, pv.pos.y + 0.9)
+		# 楼体遮挡：从车位向目标机位步进，停在最后一个不在楼里的采样点。
+		# 楼是 MultiMesh 没有碰撞体，用 freeroam 的占位网格查询。
+		# 原来 8.2m 吊臂在窄街里转弯时整个钻进沿街楼。
+		if state == ST.ROAM and freeroam != null and mode != 2:
+			var from_p := pv.pos + Vector3(0, 1.2, 0)
+			var ok_p := from_p
+			for si in 10:
+				var sp := from_p.lerp(cam_p, float(si + 1) / 10.0)
+				if freeroam.building_top(sp.x, sp.z) > sp.y - 0.6:
+					break
+				ok_p = sp
+			cam_p = ok_p
+		camera.position = cam_p
 		camera.look_at(_cam_look, Vector3.UP)
 
 		# 入场运镜：从车正上方 40m 俯视缓降到车后追车位。
@@ -1084,7 +1102,7 @@ func _update_camera(dt: float) -> void:
 			var s01 := clampf(_intro_t / INTRO_DUR, 0.0, 1.0)
 			var e := s01 * s01 * (3.0 - 2.0 * s01)          # smoothstep
 			var high := pv.pos + Vector3(0, 40.0, 0) - f * 12.0
-			camera.position = _cam_pos.lerp(high, e)
+			camera.position = cam_p.lerp(high, e)
 			camera.look_at(_cam_look.lerp(pv.pos + Vector3(0, 0.6, 0), e), Vector3.UP)
 			want_fov = lerpf(want_fov, 74.0, e)
 
