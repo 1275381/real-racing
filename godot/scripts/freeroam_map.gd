@@ -449,10 +449,14 @@ func query(x: float, z: float, hint) -> Dictionary:
 		# 直线距离，驶出断头高架后最近采样仍是端点，车会沿用桥面高度
 		# 在空中平地行驶 20 多米才掉下去。
 		var dist := sqrt(bd2)
-		if not road.closed and (bi == 0 or bi == road.pts.size() - 1):
-			var tv := Vector2(sin(road.ang[bi]), cos(road.ang[bi]))
-			var lon: float = (x - road.pts[bi].x) * tv.x + (z - road.pts[bi].z) * tv.y
-			var over: float = (-lon) if bi == 0 else lon
+		# 注意 road.grid 只索引偶数下标采样，bi 取不到 cnt-1 ——
+		# 判据必须放宽到「靠近任一端」，纵向过冲再按真实端点算
+		if not road.closed and (bi <= 1 or bi >= road.pts.size() - 2):
+			var ei: int = 0 if bi <= 1 else road.pts.size() - 1
+			var ep := road.pts[ei]
+			var tv := Vector2(sin(road.ang[ei]), cos(road.ang[ei]))
+			var lon: float = (x - ep.x) * tv.x + (z - ep.z) * tv.y
+			var over: float = (-lon) if ei == 0 else lon
 			if over > 0.0:
 				dist += over * 10.0
 		var cost := dist + absf(road.pts[bi].y - vehicle_y) * 6.0   # 高度迟滞
