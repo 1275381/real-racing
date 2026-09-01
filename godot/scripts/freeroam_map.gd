@@ -480,7 +480,10 @@ func query(x: float, z: float, hint) -> Dictionary:
 		_scratch["lat_off"] = 999.0
 		_scratch["ang"] = roads[best_road].ang[best_i] if best_road >= 0 else 0.0
 		_scratch["surf"] = "grass"
-		_scratch["height"] = 0.0
+		# 越野高度必须取地形高程：地面网格已按 _terr 抬起（盘山一带到 72m），
+		# 这里再返回 0 的话车会从山体内部穿过去，进入某条路的判定范围时
+		# 又被一帧抬升几十米
+		_scratch["height"] = terrain_height(x, z)
 		_scratch["slope"] = 0.0
 		_scratch["wall"] = 10000.0
 		_scratch["dist_sq"] = best_dist * best_dist
@@ -499,9 +502,16 @@ func query(x: float, z: float, hint) -> Dictionary:
 	var l := road.left[best_i]
 	var lat := (x - p.x) * l.x + (z - p.z) * l.y
 	var al := absf(lat)
-	# 软墙抑制：只要车还在另一条同层邻近道路的走廊之内，就不该被推。
+	# 软墙抑制：best_road 会推挤，但车其实还在另一条「同标高」邻近道路的
+	# 走廊之内 —— 这时改用那条路来报（换参照系），而不是把 wall 放宽。
 	# 贴着软墙过十字路口时 hint 粘性会让车穿过后仍挂在横街上，横街的
 	# 横向轴于是变成一道纵向栅栏，把车正面撞停（实测 +22.6 → -6.3 m/s）。
+	#
+	# 两个关键约束：
+	# · 高度阈值必须收到车身量级（0.6m）。放宽到 3m 会把环线护栏一起关掉 ——
+	#   4 条环线匝道从环线正下方仅 0.9~2.4m 处穿过，会被误判为「同层」。
+	# · 只换参照系、不放宽 wall。原来写 wall = al + 2.0 是无上限值，
+	#   抑制失效那一帧会把车横向瞬移好几米。
 	if al > wall:
 		for rr2 in road_cost:
 			if rr2 == best_road or road_cost[rr2] > best_cost + 12.0:
@@ -509,11 +519,18 @@ func query(x: float, z: float, hint) -> Dictionary:
 			var o: Road = roads[rr2]
 			var oi: int = road_bi[rr2]
 			var op := o.pts[oi]
-			if absf(op.y - p.y) > 3.0:
+			if absf(op.y - p.y) > 0.6:
 				continue
 			var ol := o.left[oi]
-			if absf((x - op.x) * ol.x + (z - op.z) * ol.y) <= o.wall:
-				wall = al + 2.0
+			var olat: float = (x - op.x) * ol.x + (z - op.z) * ol.y
+			if absf(olat) <= o.wall:
+				best_road = rr2
+				best_i = oi
+				road = o
+				p = op
+				l = ol
+				lat = olat
+				al = absf(olat)
 				break
 	_scratch["idx"] = best_road * 100000 + best_i
 	_scratch["road"] = best_road
@@ -1023,6 +1040,25 @@ func _build_terrain_field() -> void:
 						h = base * (0.5 + 0.5 * cos(PI * (d - inner) / (OUTER - inner)))
 					if h > float(_terr.get(key, 0.0)):
 						_terr[key] = h
+
+
+## 地形高程（双线性插值，与 _build_zone_ground 建出的可见网格一致）。
+## _terrain_h 是「取最近格」，只适合建面顶点（顶点正好落在格心）；
+## 物理查询落在格与格之间，必须插值，否则地板是 50m 的台阶。
+func terrain_height(x: float, z: float) -> float:
+	if _terr.is_empty():
+		return 0.0
+	var fx := x / TERR_CELL
+	var fz := z / TERR_CELL
+	var ix := int(floor(fx))
+	var iz := int(floor(fz))
+	var tx := fx - float(ix)
+	var tz := fz - float(iz)
+	var h00 := float(_terr.get(Vector2i(ix, iz), 0.0))
+	var h10 := float(_terr.get(Vector2i(ix + 1, iz), 0.0))
+	var h01 := float(_terr.get(Vector2i(ix, iz + 1), 0.0))
+	var h11 := float(_terr.get(Vector2i(ix + 1, iz + 1), 0.0))
+	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
 
 
 func _terrain_h(x: float, z: float) -> float:

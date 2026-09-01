@@ -51,6 +51,7 @@ var _cam_pos := Vector3.ZERO
 var _cam_look := Vector3.ZERO
 var _cam_init := false
 var _intro_t := 0.0        # 入场运镜剩余时长（开赛 / 进漫游）
+var _cam_occl := 1.0       # 相机遮挡收放比例（平滑用）
 
 
 class CarRec:
@@ -1028,6 +1029,13 @@ func _apply_roam_pitch(dt: float) -> void:
 
 # ================= 相机 =================
 
+## 该点楼体顶高：漫游查自由地图的占位网格，比赛查环境的赛道楼群
+func _building_top_at(x: float, z: float) -> float:
+	if state == ST.ROAM:
+		return freeroam.building_top(x, z) if freeroam != null else 0.0
+	return env.building_top(x, z)
+
+
 func _update_camera(dt: float) -> void:
 	var pv := player.veh
 	var f := pv.forward_dir()
@@ -1081,18 +1089,22 @@ func _update_camera(dt: float) -> void:
 		# 兜底：相机不得低于车辆所在路面（高架/盘山上尤其重要）
 		var cam_p := _cam_pos
 		cam_p.y = maxf(cam_p.y, pv.pos.y + 0.9)
-		# 楼体遮挡：从车位向目标机位步进，停在最后一个不在楼里的采样点。
-		# 楼是 MultiMesh 没有碰撞体，用 freeroam 的占位网格查询。
+		# 楼体遮挡：从车位向目标机位步进，取最后一个不在楼里的比例。
+		# 楼是 MultiMesh / 独立 MeshInstance，都没有碰撞体，用占位网格查询。
 		# 原来 8.2m 吊臂在窄街里转弯时整个钻进沿街楼。
-		if state == ST.ROAM and freeroam != null and mode != 2:
-			var from_p := pv.pos + Vector3(0, 1.2, 0)
-			var ok_p := from_p
-			for si in 10:
-				var sp := from_p.lerp(cam_p, float(si + 1) / 10.0)
-				if freeroam.building_top(sp.x, sp.z) > sp.y - 0.6:
+		var pivot := pv.pos + Vector3(0, 1.2, 0)
+		var t_ok := 1.0
+		if mode != 2:
+			for si in 16:
+				var sp := pivot.lerp(cam_p, float(si + 1) / 16.0)
+				if _building_top_at(sp.x, sp.z) > sp.y - 0.6:
+					t_ok = float(si) / 16.0
 					break
-				ok_p = sp
-			cam_p = ok_p
+		# 必须平滑收放：直接用逐帧的二值判定当机位，相机会在楼缘每帧阶跃数米
+		# —— 那等于把「穿楼」换成「瞬移」。
+		_cam_occl = RRUtil.damp(_cam_occl, t_ok, 14.0, dt)
+		if _cam_occl < 0.999:
+			cam_p = pivot.lerp(cam_p, _cam_occl)
 		camera.position = cam_p
 		camera.look_at(_cam_look, Vector3.UP)
 

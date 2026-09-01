@@ -73,4 +73,31 @@ func _init() -> void:
 			lost = zz
 			break
 	print("  地图查询：桥面高度在 z=%.1f 处消失（过冲 %.1fm）" % [lost, lost - 900.0])
+
+	# --- 回归：环线护栏不能被从其正下方 1~2.5m 穿过的匝道抑制掉 ---
+	var ring: FreeroamMap.Road = map.roads[22]
+	var bad := 0
+	var worst_s := ""
+	for i in range(0, ring.pts.size(), 3):
+		var rp := ring.pts[i]
+		var rl := ring.left[i]
+		for sgn in [-1.0, 1.0]:
+			var qx: float = rp.x + rl.x * sgn * 10.4
+			var qz: float = rp.z + rl.y * sgn * 10.4
+			map.vehicle_y = rp.y
+			var qq := map.query(qx, qz, null)
+			if float(qq["wall"]) > 10.2 or absf(float(qq["height"]) - rp.y) > 1.0:
+				bad += 1
+				if bad <= 4:
+					worst_s += "
+    @(%.0f,%.0f) 落到 road%d surf=%s lat=%.2f height=%.2f wall=%.2f" % [
+							qx, qz, int(qq["road"]), qq["surf"],
+							float(qq["lat_off"]), float(qq["height"]), float(qq["wall"])]
+	print("环线护栏回归：软墙外一点点(lat=10.4) 被抑制/串层的采样 = %d 个 %s" % [bad, worst_s])
+
+	# --- 回归：越野高度必须跟地形 ---
+	map.vehicle_y = 0.0
+	var qt := map.query(400.0, -2350.0, null)
+	print("地形回归：(400,-2350) query surf=%s height=%.1f（可见地面 %.1f）"
+			% [qt["surf"], float(qt["height"]), map.terrain_height(400.0, -2350.0)])
 	quit()

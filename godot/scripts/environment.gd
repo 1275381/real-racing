@@ -40,6 +40,7 @@ var _mtn_mmi: MultiMeshInstance3D
 var _mesa_mat: StandardMaterial3D
 var _trees: Array[Node3D] = []
 var _buildings: Node3D
+var _bld_grid := {}        # 12m 网格：赛道楼群顶高（相机避让查询用）
 var _desert_props: Node3D
 var _clouds: Array[Sprite3D] = []
 var _rng := RRUtil.Mulberry.new(2024)
@@ -276,6 +277,14 @@ void sky() {
 			b.rotation.y = _rng.next() * PI
 			b.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			_buildings.add_child(b)
+			# 记进占位网格供相机避让（楼没有碰撞体）
+			for gx in range(int(floor((x - w * 0.5) / 12.0)),
+					int(floor((x + w * 0.5) / 12.0)) + 1):
+				for gz in range(int(floor((z - d * 0.5) / 12.0)),
+						int(floor((z + d * 0.5) / 12.0)) + 1):
+					var bk := Vector2i(gx, gz)
+					if h > float(_bld_grid.get(bk, 0.0)):
+						_bld_grid[bk] = h
 			placed_b += 1
 
 	# ---- 沙漠道具：三针仙人掌 + 红岩平顶山 ----
@@ -408,6 +417,14 @@ var _cur_theme := "country"
 
 
 ## 漫游模式：隐藏比赛赛道走廊楼宇与岩石（避免与漫游城市重叠）
+## 该点赛道楼群顶高（相机避让用）；楼群隐藏时返回 0
+func building_top(x: float, z: float) -> float:
+	if _buildings == null or not _buildings.visible:
+		return 0.0
+	return float(_bld_grid.get(Vector2i(int(floor(x / 12.0)),
+			int(floor(z / 12.0))), 0.0))
+
+
 func set_race_props_visible(v: bool) -> void:
 	_race_props_on = v
 	_buildings.visible = v and _cur_theme == "city"
