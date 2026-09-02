@@ -16,6 +16,8 @@ var power := 60.0                 # 低速最大加速度基准（实际受抓�
 var brake_power := 18.0           # 制动减速度基准 (m/s²)
 var accel_cap := 11.0             # 牵引上限 (m/s²)：抓地能给的起步加速度
 var no_shift := false             # 电驱单速变速箱：无换挡切断，起步线性猛
+var inertia_drift := false        # 惯性漂移：手刹只负责起漂，松开后漂移自持
+var _drift_hold := false          # 惯性漂移自持标志
 var drag_k2 := 7.5e-4             # 空气阻力二次项系数（按极速标定：极速处风阻=牵引上限）
 
 var pos := Vector3.ZERO
@@ -76,6 +78,7 @@ func _init(trk, opts: Dictionary = {}) -> void:
 	brake_power = opts.get("brake", 18.0)
 	accel_cap = opts.get("accel_cap", 11.0)
 	no_shift = opts.get("no_shift", false)
+	inertia_drift = opts.get("inertia_drift", false)
 	_recalc_drag()
 
 
@@ -114,6 +117,7 @@ func place_at(pose: Dictionary) -> void:
 	rpm_norm = 0.12
 	shift_timer = 0.0
 	drifting = false
+	_drift_hold = false
 	hit_impulse = 0.0
 	finished = false
 	vy = 0.0
@@ -203,14 +207,24 @@ func step(dt: float) -> void:
 	# 轮胎横向抓地（腾空时几乎无抓地）。
 	# 未起漂（|vl| < 阈值）：速度矢量完全吸附车头方向 → 转弯抓地走线、零侧滑；
 	# 起漂后（手刹触发，|vl| ≥ 阈值）：抓地回收降至 30% + 漂移辅助，滑移得以保持。
-	var grip_rate := Tuning.GRIP_RATE * grip * (0.05 if not grounded else 1.0) \
-			* (0.30 if input_handbrake else 1.0)
+	var grip_mul := (0.30 if input_handbrake else 1.0)
+	if inertia_drift and _drift_hold:
+		grip_mul = minf(grip_mul, 0.22)   # 惯性漂移自持：低抓地让甩尾持续，油门控姿
+	var grip_rate := Tuning.GRIP_RATE * grip * grip_mul * (0.05 if not grounded else 1.0)
 	if grounded and absf(vl) < Tuning.DRIFT_THRESH and not input_handbrake:
 		var spd_total := sqrt(vf * vf + vl * vl)
 		vf = (signf(vf) if vf != 0.0 else 1.0) * spd_total
 		vl = 0.0
 	else:
 		vl *= exp(-grip_rate * dt)
+
+	# 惯性漂移状态机：手刹+方向+速度 → 起漂；松手刹后只要保持油门且
+	# 侧滑未耗尽，漂移持续自持（收油/救回/撞墙大减速才退出）
+	if inertia_drift:
+		if input_handbrake and spd > 8.0 and absf(input_steer) > 0.15:
+			_drift_hold = true
+		elif _drift_hold and (absf(vl) < 2.2 or input_throttle <= 0.05 or spd < 5.0):
+			_drift_hold = false
 
 	drifting = absf(vl) > 3.0 or (input_handbrake and spd > 9.0)
 	slip_amount = RRUtil.damp(slip_amount, clampf(absf(vl) / 9.0, 0.0, 1.0), 6.0, dt)

@@ -28,6 +28,9 @@ var difficulty := "normal"
 var cam_mode := 0
 var dual_mode := "top"     # 双组别车的当前模式（accel 加速 / top 极速）
 var _del_arm := false      # 删除自定义赛道的二次确认
+var _rec_lap := []         # 走线录制：本圈样本 [{b, lat, hit}]
+var _rec_tick := 0
+var _input_clear := false   # 窗口失焦后封锁行驶输入，直到玩家重新按键（防丢键卡死）
 
 var sim_time := 0.0
 var count_t := 0.0
@@ -126,6 +129,7 @@ func _ready() -> void:
 			"brake": st.get("brake", 18.0),
 			"accel_cap": st.get("accel", 11.0),
 			"no_shift": st.get("no_shift", false),
+			"inertia_drift": TrackData.model_by_id(model).get("inertia_drift", false),
 		})
 		var rec := CarRec.new()
 		rec.veh = veh
@@ -191,6 +195,32 @@ func _ready() -> void:
 		start_from_garage.call_deferred()
 
 
+## 走线录制：比赛模式每 3 帧采一个玩家样本（桶=赛道进度，lat=横向偏移，hit=撞墙）。
+## 必须在碰撞消费之前调用 —— 撞墙帧的 hit_impulse 尚未被清零。
+func _record_player_line() -> void:
+	if state != ST.RACING:
+		return
+	_rec_tick += 1
+	if _rec_tick % 3 != 0:
+		return
+	var pv := player.veh
+	var trk_n := float(track.n)
+	if trk_n <= 0.0:
+		return
+	var b := wrapi(int(round(pv.cont_idx / trk_n * float(RRLearnedLines.BUCKETS))),
+			0, int(RRLearnedLines.BUCKETS))
+	var hit := pv.hit_impulse > 0.015 or absf(pv.lat_off) > track.wall_lat - 0.3
+	_rec_lap.append({"b": b, "lat": pv.lat_off, "hit": hit})
+
+
+## 玩家过线：提交本圈样本进学习线（多圈自动融合 + 撞墙段绕开）
+func _commit_player_lap() -> void:
+	if _rec_lap.is_empty():
+		return
+	RRLearnedLines.record_lap(track.track_id, _rec_lap)
+	_rec_lap.clear()
+
+
 ## 进入地图编译器
 func open_map_editor() -> void:
 	get_tree().change_scene_to_file("res://scenes/map_editor.tscn")
@@ -224,6 +254,22 @@ func _on_del_track_pressed() -> void:
 	_bind_track_selector()
 	_update_del_track_btn()
 	hud.show_center("已删除自定义赛道", "", 1200)
+
+
+func _notification(what: int) -> void:
+	# 失焦期间松开的键 Godot 收不到 keyup —— 键状态会永久卡在「按下」，
+	# 表现为松手后车仍自动加速。失焦时封锁行驶输入并释放全部动作。
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_input_clear = true
+		for a in ["rr_throttle", "rr_brake", "rr_left", "rr_right", "rr_handbrake"]:
+			Input.action_release(a)
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		pass   # 恢复由 _input 里玩家真实按键触发
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		_input_clear = false   # 玩家重新按键 → 解除封锁
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -263,18 +309,33 @@ func _register_inputs() -> void:
 
 
 func _sample_input(dt: float) -> Dictionary:
+	# 行驶输入直接采样物理键状态：action 状态机会被系统 echo 事件在
+	# release 后重新拉起（长按 W 连发），或因失焦丢 keyup 卡死——
+	# 两者都表现为「松手仍加速」。物理键状态不受这两种情况影响。
+	var blocked := _input_clear
+	var thr := false
+	var brk := false
+	var st_l := false
+	var st_r := false
+	var hb := false
+	if not blocked:
+		thr = Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP)
+		brk = Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN)
+		st_l = Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)
+		st_r = Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT)
+		hb = Input.is_physical_key_pressed(KEY_SPACE)
 	var steer_target := 0.0
-	if Input.is_action_pressed("rr_left"):
+	if st_l:
 		steer_target += 1.0
-	if Input.is_action_pressed("rr_right"):
+	if st_r:
 		steer_target -= 1.0
 	var rate := 10.0 if steer_target == 0.0 else Tuning.STEER_RATE
 	_in_steer = move_toward(_in_steer, steer_target, rate * dt)
 	return {
-		"throttle": 1.0 if Input.is_action_pressed("rr_throttle") else 0.0,
-		"brake": 1.0 if Input.is_action_pressed("rr_brake") else 0.0,
+		"throttle": 1.0 if thr else 0.0,
+		"brake": 1.0 if brk else 0.0,
 		"steer": _in_steer,
-		"handbrake": Input.is_action_pressed("rr_handbrake"),
+		"handbrake": hb,
 	}
 
 
@@ -499,6 +560,7 @@ func start_race() -> void:
 	player_finish_time = null
 	fx.clear_skids()
 	count_t = 3.99
+	_rec_lap.clear()
 	track.set_lamp_stage(0)
 	lap_num_display = 1
 	state = ST.COUNTDOWN
@@ -597,6 +659,7 @@ func set_car_model(id: String) -> void:
 		"brake": st.get("brake", 18.0),
 		"accel_cap": st.get("accel", 11.0),
 		"no_shift": st.get("no_shift", false),
+		"inertia_drift": TrackData.model_by_id(id).get("inertia_drift", false),
 	})
 	veh.pos = old.pos
 	veh.heading = old.heading
@@ -694,6 +757,7 @@ func _process(dt_real: float) -> void:
 	audio.update_wind(clampf(absf(pv.vf) / pv.top_speed, 0.0, 1.0))
 	audio.update_rumble(state in [ST.RACING, ST.ROAM] and pv.surface != "road", absf(pv.vf))
 
+	_record_player_line()
 	_consume_collisions()
 	# 落地冲击（腾空后着陆）
 	var land := pv.consume_land_impact()
@@ -837,6 +901,7 @@ func _step_sim(h: float) -> void:
 func _on_lap_for_car(nf: int, idx: int) -> void:
 	var r: CarRec = cars[idx]
 	if r.team_idx == 0:
+		_commit_player_lap()   # 先把刚跑完的这圈提交给 AI 学习线
 		_on_lap_complete(nf)
 		return
 	var now_ms := sim_time * 1000.0

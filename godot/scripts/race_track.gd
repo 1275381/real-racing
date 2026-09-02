@@ -8,6 +8,7 @@ const TENSION := 0.55          # three.js CatmullRomCurve3 'catmullrom' 张力
 const _SEG_SAMPLES := 24       # 每个样条段的密集采样数（用于弧长重采样）
 
 var theme := "country"
+var track_id := ""
 var half_w := TrackData.ROAD_HALF_W
 var wall_lat := TrackData.ROAD_HALF_W + 2.05   # 软墙限位（护栏内侧）
 
@@ -35,6 +36,7 @@ var _scratch := {"idx": 0, "lat_off": 0.0, "ang": 0.0, "surf": "road", "dist_sq"
 
 func build(def: Dictionary) -> void:
 	theme = def.get("theme", "country")
+	track_id = def.get("id", "")
 	var cps: Array = def["points"]
 	var m := cps.size()
 

@@ -128,6 +128,7 @@ func build() -> void:
 	_mark_road_blocks()
 	_build_road_meshes()
 	print("[map] 路面网格 %dms" % [Time.get_ticks_msec() - t0])
+	_build_merge_fills()
 	_build_zones()
 	print("[map] 区域场景 %dms" % [Time.get_ticks_msec() - t0])
 	_build_intersections()
@@ -313,10 +314,10 @@ func _make_ramps() -> void:
 		var crown_y := maxf(_street_h(8, false), _street_h(8, true)) + 0.20
 		var street_back := Vector2(-signf(d[0]), 0.0) if on_x \
 				else Vector2(0.0, -signf(d[1]))
-		# 并线尾段：沿环线外侧平行。名义 16.5 = 环半宽10 + 0.5缝 + 匝道半宽6，
-		# 但样条会把实际间距拉回到 14.8m（< 半宽和 16）造成同高重叠，
-		# 留 2m 余量取 18.5。
-		var merge_c := rxz + outward * 18.5
+		# 并线尾段：沿环线外侧平行。样条会把标称间距拉回约 2m（实测 18.5 名义
+		# 只剩 14.8 实际，< 半宽和 16 仍同高重叠闪烁）—— 标称取 20.5，
+		# 实际 ≈16.8 > 16，边对边不叠面。
+		var merge_c := rxz + outward * 20.5
 		var cps := [
 			g + street_back * 30.0,
 			g,
@@ -1386,6 +1387,105 @@ func _desert_props() -> void:
 		mmi.multimesh = mm
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		add_child(mmi)
+
+
+## 并线缝隙垫层：匝道与主线边对边并行之间的空隙（~3m）铺同色沥青，
+## 消除「两路之间露出地面」的观感问题；材质用纯沥青底色（无标线纹理）
+func _build_merge_fills() -> void:
+	var asph := StandardMaterial3D.new()
+	asph.albedo_color = Color("#33353a")
+	asph.roughness = 0.92
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var quads := 0
+	for ri in range(25, 33):
+		if ri >= roads.size():
+			continue
+		var ramp: Road = roads[ri]
+		if not ramp.elevated:
+			continue
+		# 找主线：距匝道尾段最近的高架
+		var tp: Vector3 = ramp.pts[ramp.pts.size() - 1]
+		var main_i := -1
+		var main_d := 1e9
+		var mid: Vector3 = ramp.pts[maxi(0, ramp.pts.size() - 25)]
+		for oi in roads.size():
+			if oi == ri or not roads[oi].elevated:
+				continue
+			var near: Vector3 = _nearest_on_road(roads[oi], mid.x, mid.z)
+			var d := Vector2(near.x - mid.x, near.z - mid.z).length()
+			if d < main_d:
+				main_d = d
+				main_i = oi
+		if main_i < 0:
+			continue
+		var main: Road = roads[main_i]
+		# 沿匝道尾段逐采样对铺连接带（匝道内缘 → 主线内缘，y+0.04 防叠面）
+		var i0: int = maxi(0, ramp.pts.size() - 70)
+		var prev_main: Vector3 = Vector3.INF
+		var prev_edge: Vector3 = Vector3.INF
+		for i in range(i0, ramp.pts.size()):
+			var pa: Vector3 = ramp.pts[i]
+			var lr: Vector2 = ramp.left[i % ramp.left.size()]
+			var ma: Vector3 = _nearest_on_road(main, pa.x, pa.z)
+			var dist: float = Vector2(pa.x - ma.x, pa.z - ma.z).length()
+			if dist > ramp.half_w + main.half_w + 6.0:
+				prev_main = Vector3.INF
+				prev_edge = Vector3.INF
+				continue
+			if Vector2(ma.x - pa.x, ma.z - pa.z).length() > ramp.half_w + main.half_w + 6.0:
+				continue
+			# 匝道靠主线一侧的边缘（取距主线近者）
+			var rc1 := pa + Vector3(lr.x * (ramp.half_w - 0.15), 0.04, lr.y * (ramp.half_w - 0.15))
+			var rc2 := pa - Vector3(lr.x * (ramp.half_w - 0.15), 0.04, lr.y * (ramp.half_w - 0.15))
+			var edge_r := rc1 if rc1.distance_to(ma) < rc2.distance_to(ma) else rc2
+			var ml: Vector2 = main.left[i % main.left.size()] if i < main.left.size() else main.left[0]
+			var mc1 := ma + Vector3(ml.x * (main.half_w - 0.4), 0.04, ml.y * (main.half_w - 0.4))
+			var mc2 := ma - Vector3(ml.x * (main.half_w - 0.4), 0.04, ml.y * (main.half_w - 0.4))
+			var edge_m := mc1 if mc1.distance_to(edge_r) < mc2.distance_to(edge_r) else mc2
+			if prev_main != Vector3.INF:
+				st.set_color(Color.WHITE); st.add_vertex(prev_edge)
+				st.set_color(Color.WHITE); st.add_vertex(edge_m)
+				st.set_color(Color.WHITE); st.add_vertex(edge_r)
+				st.set_color(Color.WHITE); st.add_vertex(prev_edge)
+				st.set_color(Color.WHITE); st.add_vertex(prev_main)
+				st.set_color(Color.WHITE); st.add_vertex(edge_m)
+				quads += 2
+			prev_main = ma
+			prev_edge = edge_r
+			prev_edge = edge_m
+			prev_main = Vector3(ma.x, ma.y, ma.z)
+	if quads > 0:
+		var mi := MeshInstance3D.new()
+		mi.mesh = st.commit()
+		var mat2 := StandardMaterial3D.new()
+		mat2.albedo_color = Color("#33353a")
+		mat2.roughness = 0.92
+		mi.material_override = mat2
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+	print("[map] 并线垫层 %d 段" % quads)
+
+
+## 道路上距 (x,z) 最近的中心线采样点
+func _nearest_on_road(road: Road, x: float, z: float) -> Vector3:
+	var bd := 1e9
+	var bp: Vector3 = road.pts[0]
+	var rr := int(ceil((road.half_w + 40.0) / CELL)) + 1
+	var gx := int(x / CELL)
+	var gz := int(z / CELL)
+	for cxi in range(gx - rr, gx + rr + 1):
+		for czi in range(gz - rr, gz + rr + 1):
+			var key := Vector2i(cxi, czi)
+			if not road.grid.has(key):
+				continue
+			for i in road.grid[key]:
+				var p := road.pts[i]
+				var d := Vector2(p.x - x, p.z - z).length_squared()
+				if d < bd:
+					bd = d
+					bp = p
+	return bp
 
 
 ## 十字路口：斑马线 + 红绿灯

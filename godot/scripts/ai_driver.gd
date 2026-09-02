@@ -12,12 +12,17 @@ var lane_offset := 0.0
 var target_lane := 0.0
 var stuck_timer := 0.0
 var reverse_timer := 0.0
+var learned: Array = []            # 学习线（玩家走线优化版）：每桶横向偏移
+var learned_size := 0
 
 
 func _init(v: Vehicle, trk, opts: Dictionary = {}) -> void:
 	veh = v
 	track = trk
 	skill = opts.get("skill", 1.0)
+	if trk != null and trk.get("track_id") != null:
+		learned = RRLearnedLines.line_for(str(trk.get("track_id")))
+		learned_size = learned.size()
 	base_lane = opts.get("base_lane", 0.0)
 	lane_offset = base_lane
 	target_lane = base_lane
@@ -54,9 +59,10 @@ func update(dt: float, others: Array) -> void:
 		stuck_timer = maxf(0.0, stuck_timer - dt)
 
 	# ---- 目标点：前瞻 + 变线偏移 ----
-	var la := 6.0 + absf(v.vf) * 0.55
+	var la := 8.0 + absf(v.vf) * 0.72
 	var ti: int = trk.ahead_idx(v.q_idx if v.q_idx != null else 0, la)
 	# 平滑变换走线（超越时横移）
+	# 目标横向偏移优先级：避让 > 学习线（绕开玩家撞墙点）> 弯心切弯 > 中线
 	lane_offset = RRUtil.damp(lane_offset, target_lane, 1.4, dt)
 	var tp: Vector2 = trk.pts[ti]
 	var tl: Vector2 = trk.left_v[ti]
@@ -65,17 +71,17 @@ func update(dt: float, others: Array) -> void:
 
 	var desired := atan2(tx - v.pos.x, tz - v.pos.z)
 	var err := RRUtil.wrap_angle(desired - v.heading)
-	v.input_steer = clampf(err * 3.0 - v.yaw_rate * 0.12, -1.0, 1.0)
+	v.input_steer = clampf(err * 4.2 - v.yaw_rate * 0.15, -1.0, 1.0)
 
 	# ---- 前方曲率 → 允许速度（含刹车距离约束）----
 	var v_allow := v.top_speed
-	var mu_a := 10.2 * skill
+	var mu_a := 13.5 * skill
 	for j in range(0, 64, 3):
 		var idx: int = trk.ahead_idx(v.q_idx if v.q_idx != null else 0, 8.0 + j * 3.0)
 		var k := maxf(absf(trk.curv[idx]), 1e-5)
-		var vc := sqrt(mu_a / k) + 2.5
+		var vc := sqrt(mu_a / k) + 1.2
 		var d := 8.0 + j * 3.0
-		var allowed := sqrt(vc * vc + 2.0 * 17.0 * d)
+		var allowed := sqrt(vc * vc + 2.0 * 19.0 * d)
 		v_allow = minf(v_allow, allowed)
 	v_allow *= skill * (1.0 + rubber)
 	v_allow = minf(v_allow, v.top_speed * skill * (1.0 + rubber))
@@ -91,6 +97,25 @@ func update(dt: float, others: Array) -> void:
 	else:
 		v.input_throttle = 0.4
 		v.input_brake = 0.0
+
+	# ---- 弯心切弯走线：按前方曲率向弯内侧偏移（左转 curv>0 → 弯心在左）----
+	# 仅作缺省走线：有学习线时被学习线取代，避让时被避让偏移覆盖
+	var la_c: int = trk.ahead_idx(v.q_idx if v.q_idx != null else 0, maxf(12.0, v.vf * 0.5))
+	var racing_lane: float = clampf(trk.curv[la_c] * 250.0, -4.2, 4.2)
+
+	# ---- 目标横向偏移：优先级 避让 > 学习线（绕开玩家撞墙点）> 弯心切弯 ----
+	var lat_goal: float
+	if learned_size > 0:
+		var bi := wrapi(int(float(ti) / float(trk.n) * float(learned_size)), 0, learned_size)
+		lat_goal = clampf(learned[bi] + base_lane,
+				-(trk.half_w - 1.2), trk.half_w - 1.2)
+	elif absf(racing_lane) > 0.1:
+		lat_goal = racing_lane
+	else:
+		lat_goal = 0.0
+	if absf(target_lane) > 0.1:
+		lat_goal = target_lane   # 避让最高优先
+	lane_offset = RRUtil.damp(lane_offset, lat_goal, 1.4, dt)
 
 	# ---- 简单避让：前车太近则变线并收油 ----
 	if not others.is_empty():

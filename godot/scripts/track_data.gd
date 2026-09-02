@@ -134,6 +134,10 @@ const CAR_MODELS := [
 			"accel": {"label": "加速模式", "top": 87.0, "power": 72.0, "accel": 14.2, "grip": 1.09, "brake": 20.0},
 			"top": {"label": "极速模式", "top": 96.0, "power": 64.0, "accel": 11.8, "grip": 1.07, "brake": 19.2},
 		}},
+	# 惯性漂移特化车：点一次手刹+方向起漂，松手刹后漂移自持（油门维持），仅此车拥有
+	{"id": "aie86", "name": "AI 86 漂移", "file": "res://assets/cars/car_tripo_i.glb", "desc": "AI 生成 · 藤原配色 · 惯性漂移：点一次手刹+方向起漂，油门维持漂移", "yaw_deg": 0.0, "scale": 4.6,
+		"class": "street", "inertia_drift": true,
+		"stats": {"top": 84.0, "power": 58.0, "accel": 11.6, "grip": 0.94, "brake": 18.0}},
 ]
 
 const DEFAULT_MODEL := "gt3"
@@ -255,6 +259,7 @@ static func delete_custom_track(id: String) -> void:
 	var path := CUSTOM_DIR + "/" + id + ".json"
 	if FileAccess.file_exists(path):
 		DirAccess.remove_absolute(path)
+	RRLearnedLines.remove(id)   # 同步清理该赛道的学习线
 	reload_custom_tracks()
 
 
