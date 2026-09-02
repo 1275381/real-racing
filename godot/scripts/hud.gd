@@ -57,7 +57,7 @@ func build(colors: Array) -> void:
 
 	# 调试信息层：F3 开关。常驻最上层，任何模式都能看。
 	_dbg = Label.new()
-	_dbg.visible = true          # 默认开着，方便截图定位；I / F3 关掉
+	_dbg.visible = false         # I / F3 开关（默认关：它每帧要扫一遍全路网）
 	_dbg.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_dbg.position = Vector2(16, 210)
 	_dbg.add_theme_font_size_override("font_size", 15)

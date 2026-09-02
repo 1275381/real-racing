@@ -86,7 +86,8 @@ void fragment() {
 		float f_corr = over_en
 				* (1.0 - smoothstep(over_w * 0.75, over_w, lat))
 				* (1.0 - smoothstep(over_len * 0.75, over_len, max(fwd, 0.0)))
-				* step(-6.0, fwd);
+				// 原为 step(-6.0, fwd)：车后 6m 处一条随转向扫动的锐利切边
+				* smoothstep(-10.0, -4.0, fwd);
 		fade = max(fade, max(f_near, f_corr));
 	}
 	if (fade > 0.02) {
@@ -823,40 +824,14 @@ func _xsec_span(a: float, b: float, half: float) -> Vector2:
 
 
 ## 桥体四边形暂存（与路面不同材质，需单独 flush）
-var _d_pos := PackedVector3Array()
-var _d_nrm := PackedVector3Array()
-
-
-func _deck_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3) -> void:
-	for v in [a, c, b, a, d, c]:
-		_d_pos.append(v)
-		_d_nrm.append(nrm)
-
-
-func _flush_deck(mat: Material) -> void:
-	if _d_pos.is_empty():
-		return
-	var am := ArrayMesh.new()
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = _d_pos
-	arrays[Mesh.ARRAY_NORMAL] = _d_nrm
-	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mi := MeshInstance3D.new()
-	mi.mesh = am
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	add_child(mi)
-	_d_pos = PackedVector3Array()
-	_d_nrm = PackedVector3Array()
-
-
-## 主线高架桥面四边形暂存（与地面/匝道路面同贴图、不同淡出档，单独 flush）。
-## Packed 数组是值类型拿不到引用，只能照 _quad 再写一份直写版本。
 var _u_pos := PackedVector3Array()
 var _u_nrm := PackedVector3Array()
 var _u_col := PackedColorArray()
 var _u_uv := PackedVector2Array()
+var _d_pos := PackedVector3Array()
+var _d_nrm := PackedVector3Array()
+var _e_pos := PackedVector3Array()   # 匝道箱梁：不进前向走廊
+var _e_nrm := PackedVector3Array()
 
 
 func _mono_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3,
@@ -897,6 +872,50 @@ func _flush_mono(mat: Material) -> void:
 	_u_nrm = PackedVector3Array()
 	_u_col = PackedColorArray()
 	_u_uv = PackedVector2Array()
+
+
+## 遮挡淡出材质：挡在「相机 → 车」之间、且不低于车高的片元按 4×4 有序抖动
+## 逐步丢弃。用 discard 而不是半透明，是为了留在不透明管线里、深度正确，
+## 避免整块路面/桥体进透明队列后自相排序错乱。
+## 所有可能挡住车的表面都必须用它 —— 沥青路面本身也会挡（车在匝道上、
+## 环线就在头顶 1.8m 时，相机已经在环线上方，环线路面横在中间）。
+
+
+func _deck_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3,
+		hi := true) -> void:
+	# hi = 主线高架（环线 / 快速路）；匝道单独一批，否则前向走廊会把车
+	# 自己正要开上去的那段匝道的箱梁抹掉
+	for v in [a, c, b, a, d, c]:
+		if hi:
+			_d_pos.append(v)
+			_d_nrm.append(nrm)
+		else:
+			_e_pos.append(v)
+			_e_nrm.append(nrm)
+
+
+func _flush_deck(mat: Material, hi := true) -> void:
+	var pos := _d_pos if hi else _e_pos
+	var nrm := _d_nrm if hi else _e_nrm
+	if pos.is_empty():
+		return
+	var am := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_NORMAL] = nrm
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(mi)
+	if hi:
+		_d_pos = PackedVector3Array()
+		_d_nrm = PackedVector3Array()
+	else:
+		_e_pos = PackedVector3Array()
+		_e_nrm = PackedVector3Array()
 
 
 ## 遮挡淡出材质：挡在「相机 → 车」之间、且不低于车高的片元按 4×4 有序抖动
@@ -954,8 +973,13 @@ func _build_road_meshes() -> void:
 	# 必须补出底面与侧面，否则高架就是一张飘着的纸。
 	# 但桥体一旦挡在相机与车之间，车就看不见了。这里不动相机（挪相机会
 	# 让视距忽远忽近），改成让挡住的那部分桥体自己淡出。
+	# 主线（mono）与匝道两套：匝道是「车脚下正在开的路」，不能进前向走廊
 	var deck_mat := _fade_material(Color("#9aa0a8"), null, 0.9, true, 0.3)
-	var rail_mat := _fade_material(Color.WHITE, RRTextures.asphalt(), 0.92, true, 0.9)
+	var deck_lo_mat := _fade_material(Color("#9aa0a8"), null, 0.9, false, 1.6)
+	# 护栏用纯沥青色。原来挂 asphalt() 贴图，但护栏 quad 一个 UV 都没写，
+	# 全是 (0,0)，实际只采到贴图角上一个 texel —— 等价于纯色，白挂一张图
+	var rail_mat := _fade_material(Color("#33353a"), null, 0.92, true, 0.9)
+	var rail_lo_mat := _fade_material(Color("#33353a"), null, 0.92, false, 1.6)
 
 	for road in roads:
 		var cnt := road.pts.size()
@@ -1015,23 +1039,25 @@ func _build_road_meshes() -> void:
 				var s1 := pj + Vector3(-lj.x * eo, -dt, -lj.y * eo)
 				var s2 := pj + Vector3(lj.x * eo, -dt, lj.y * eo)
 				var s3 := pi + Vector3(li.x * eo, -dt, li.y * eo)
-				_deck_quad(s3, s2, s1, s0, Vector3.DOWN)
+				_deck_quad(s3, s2, s1, s0, Vector3.DOWN, road.mono)
 				for side in [-1.0, 1.0]:
 					var o: float = eo * side
 					var t0 := pi + Vector3(li.x * o, 0.05, li.y * o)
 					var t1 := pj + Vector3(lj.x * o, 0.05, lj.y * o)
 					var b0 := pi + Vector3(li.x * o, -dt, li.y * o)
 					var b1 := pj + Vector3(lj.x * o, -dt, lj.y * o)
-					_deck_quad(b0, b1, t1, t0, Vector3(li.x * side, 0, li.y * side))
+					_deck_quad(b0, b1, t1, t0, Vector3(li.x * side, 0, li.y * side),
+							road.mono)
 	_flush(road_mat)
 	_flush_mono(hi_mat)
-	_flush_deck(deck_mat)
+	_flush_deck(deck_mat, true)
+	_flush_deck(deck_lo_mat, false)
 
 	# 高架防撞墙：0.55m 高实体墙（内壁 + 顶面 + 外壁），哑光混凝土。
 	# 单独一遍循环、单独 flush —— 原来护栏与人行道混进路面批，
 	# rail/walk 材质的 flush 拿到空数组从未生效（护栏色错、淡出档也错）。
 	for road in roads:
-		if not road.elevated:
+		if not road.elevated or not road.mono:
 			continue
 		var rc := road.pts.size()
 		for i in (rc if road.closed else rc - 1):
@@ -1060,6 +1086,40 @@ func _build_road_meshes() -> void:
 				_quad(a2, b2, bo, ao, n_out, Color.WHITE)
 				_quad(ai, bi, bo, ao, Vector3.UP, Color.WHITE)
 	_flush(rail_mat)
+
+	# 同上，但只建匝道的护栏 —— 匝道护栏不进前向走廊。
+	# 单独一遍循环、单独 flush —— 原来护栏与人行道混进路面批，
+	# rail/walk 材质的 flush 拿到空数组从未生效（护栏色错、淡出档也错）。
+	for road in roads:
+		if not road.elevated or road.mono:
+			continue
+		var rc := road.pts.size()
+		for i in (rc if road.closed else rc - 1):
+			var j := (i + 1) % rc
+			var pi := road.pts[i]
+			var pj := road.pts[j]
+			var li := road.left[i]
+			var lj := road.left[j]
+			var w := road.half_w
+			for side in [-1.0, 1.0]:
+				if road.rail_skip[i] or road.rail_skip[j]:
+					continue   # 并入主线段：不建墙，避免护栏横穿桥面
+				var oi: float = (w + 0.10) * side
+				var oo: float = (w + 0.45) * side
+				var a := pi + Vector3(li.x * oi, 0.05, li.y * oi)
+				var b := pj + Vector3(lj.x * oi, 0.05, lj.y * oi)
+				var a2 := pi + Vector3(li.x * oo, 0.05, li.y * oo)
+				var b2 := pj + Vector3(lj.x * oo, 0.05, lj.y * oo)
+				var ai := a + Vector3(0, 0.55, 0)
+				var bi := b + Vector3(0, 0.55, 0)
+				var ao := a2 + Vector3(0, 0.55, 0)
+				var bo := b2 + Vector3(0, 0.55, 0)
+				var n_in := Vector3(-li.x * side, 0, -li.y * side)
+				var n_out := Vector3(li.x * side, 0, li.y * side)
+				_quad(a, b, bi, ai, n_in, Color.WHITE)
+				_quad(a2, b2, bo, ao, n_out, Color.WHITE)
+				_quad(ai, bi, bo, ao, Vector3.UP, Color.WHITE)
+	_flush(rail_lo_mat)
 
 	# 路缘人行道（略高于路面，非高架路才有）：单独一批，原因同上。
 	# 网格街的人行道裁到 ±(GRID_HALF_W+2.2)，与路面裁剪边界不同，
@@ -1099,18 +1159,16 @@ func _build_road_meshes() -> void:
 	_flush(walk_mat)
 
 	# 高架桥墩（每 ~45m 一根，从地面顶到桥面）
-	var pillar_mesh := CylinderMesh.new()
-	pillar_mesh.top_radius = 1.1
-	pillar_mesh.bottom_radius = 1.5
-	pillar_mesh.height = 1.0
 	var pillar_mat := _fade_material(Color("#8f959c"), null, 0.85, true, 0.3)
-	pillar_mesh.material = pillar_mat
+	var pillar_lo_mat := _fade_material(Color("#8f959c"), null, 0.85, false, 1.6)
 	# 桥墩：优先桥下中央单柱；正下方是马路时改成门式墩（两侧立柱 + 横梁），
 	# 两侧也让不开才沿桥前后挪，最后才放弃。
 	# 原来完全不做检查，桥墩会立在路口正中、也会穿过下层桥面；
 	# 而只做「被占就跳过」又会让两条正压在街道上方的快速路一根柱子都不剩。
 	var pillar_list: Array[Transform3D] = []
 	var beam_list: Array[Transform3D] = []
+	var pillar_lo: Array[Transform3D] = []
+	var beam_lo: Array[Transform3D] = []
 	for road in roads:
 		if not road.elevated:
 			continue
@@ -1122,8 +1180,10 @@ func _build_road_meshes() -> void:
 			for tries in 10:
 				var p := road.pts[idx]
 				if p.y >= 1.5:
+					var plist: Array[Transform3D] = pillar_list if road.mono else pillar_lo
+					var blist: Array[Transform3D] = beam_list if road.mono else beam_lo
 					if not _pillar_blocked(road, p):
-						pillar_list.append(Transform3D(Basis.from_scale(Vector3(1, p.y, 1)),
+						plist.append(Transform3D(Basis.from_scale(Vector3(1, p.y, 1)),
 								Vector3(p.x, p.y * 0.5, p.z)))
 						pillar_pts.append(Vector3(p.x, p.y, p.z))
 						placed = true
@@ -1136,43 +1196,58 @@ func _build_road_meshes() -> void:
 					if not _pillar_blocked(road, pa) and not _pillar_blocked(road, pb):
 						var ch := p.y - 1.0
 						for c in [pa, pb]:
-							pillar_list.append(Transform3D(Basis.from_scale(Vector3(1, ch, 1)),
+							plist.append(Transform3D(Basis.from_scale(Vector3(1, ch, 1)),
 									Vector3(c.x, ch * 0.5, c.z)))
 							pillar_pts.append(Vector3(c.x, ch, c.z))
 						# 横梁：沿横向跨过桥面，藏在桥底
 						var bx := Vector3(lat.x, 0, lat.y) * (off * 2.0 + 1.4)
 						var bz := Vector3(-lat.y, 0, lat.x) * 1.8
-						beam_list.append(Transform3D(Basis(bx, Vector3(0, 1.0, 0), bz),
+						blist.append(Transform3D(Basis(bx, Vector3(0, 1.0, 0), bz),
 								Vector3(p.x, p.y - 0.6, p.z)))
 						placed = true
 						break
 				idx = mini(idx + 3, cnt - 1)
 			if not placed:
 				continue
-	if not pillar_list.is_empty():
+	# 主线与匝道各一批：匝道的墩/梁不进前向走廊，否则车爬匝道时
+	# 前方自己的桥墩会被抹掉，桥面变成没有柱子的悬空带
+	for pack in [[pillar_list, pillar_mat], [pillar_lo, pillar_lo_mat]]:
+		var plist: Array = pack[0]
+		if plist.is_empty():
+			continue
+		var pm := CylinderMesh.new()
+		pm.top_radius = 1.1
+		pm.bottom_radius = 1.5
+		pm.height = 1.0
+		pm.material = pack[1]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = pillar_mesh
-		mm.instance_count = pillar_list.size()
-		for i in pillar_list.size():
-			mm.set_instance_transform(i, pillar_list[i])
+		mm.mesh = pm
+		mm.instance_count = plist.size()
+		for i in plist.size():
+			mm.set_instance_transform(i, plist[i])
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		add_child(mmi)
-	if not beam_list.is_empty():
+	for pack in [[beam_list, pillar_mat], [beam_lo, pillar_lo_mat]]:
+		var blist: Array = pack[0]
+		if blist.is_empty():
+			continue
 		var beam_mesh := BoxMesh.new()
 		beam_mesh.size = Vector3.ONE
-		beam_mesh.material = _fade_material(Color("#8f959c"), null, 0.9, true, 0.3)   # 横梁同样淡出
+		beam_mesh.material = pack[1]
 		var bmm := MultiMesh.new()
 		bmm.transform_format = MultiMesh.TRANSFORM_3D
 		bmm.mesh = beam_mesh
-		bmm.instance_count = beam_list.size()
-		for i in beam_list.size():
-			bmm.set_instance_transform(i, beam_list[i])
+		bmm.instance_count = blist.size()
+		for i in blist.size():
+			bmm.set_instance_transform(i, blist[i])
 		var bmmi := MultiMeshInstance3D.new()
 		bmmi.multimesh = bmm
 		add_child(bmmi)
-	print("[map] 桥墩 %d 根（含门式墩）+ 横梁 %d 道" % [pillar_list.size(), beam_list.size()])
+	print("[map] 桥墩 %d 根（主线 %d + 匝道 %d，含门式墩）+ 横梁 %d 道"
+			% [pillar_list.size() + pillar_lo.size(), pillar_list.size(),
+			pillar_lo.size(), beam_list.size() + beam_lo.size()])
 
 
 ## 四大区域地面与景观：顶点色大网格（城市/草地/沙漠/山地/沙滩同一层，无深度冲突）
