@@ -45,6 +45,9 @@ func _run() -> void:
 				"heading": pv0.heading, "idx": null})
 		print("车高度覆盖为 %.2f" % sy.to_float())
 
+	if OS.get_environment("RR_DBG") == "1":
+		g.hud.toggle_debug()
+
 	_apply_toggles(g)
 
 	if OS.get_environment("RR_SEQ") == "1":
@@ -79,9 +82,13 @@ func _run() -> void:
 		_cam.position = Vector3(cp[0].to_float(), cp[1].to_float(), cp[2].to_float())
 		_cam.look_at(Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float()), Vector3.UP)
 		if g.freeroam != null:
-			# 让遮挡淡出按覆盖后的机位与注视点计算
+			# 必须用「真实车位 + 真实车头方向」，与 game.gd 每帧写入的完全一致。
+			# 早先这里把注视点当车位、相机注视方向当车头方向，RR_CAM 出的
+			# 验收图用的根本不是游戏里的 uniform，据此得出的结论不可信。
+			var pv2 = g.player.veh
 			g.freeroam.update_occluder_fade(_cam.position,
-					Vector3(cp[3].to_float(), cp[4].to_float(), cp[5].to_float()))
+					pv2.pos + Vector3(0, 0.7, 0),
+					Vector2(sin(pv2.heading), cos(pv2.heading)))
 	var fov_env := OS.get_environment("RR_FOV")
 	if fov_env != "":
 		_cam.fov = fov_env.to_float()

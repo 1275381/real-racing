@@ -20,3 +20,7 @@ godot/.godot/
 
 # 日志
 *.log
+
+# 诊断探针的渲染输出（probe_shot.gd），不入库
+godot/tools/out/shot_*
+godot/tools/out/seq_*
