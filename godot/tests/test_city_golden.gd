@@ -102,7 +102,8 @@ func _init() -> void:
 	for i in mini(recs.size(), gb.size()):
 		var r: Dictionary = recs[i]
 		var e: Dictionary = gb[i]
-		var ok: bool = (nearq(r["x"], e["x"], 0.001) and nearq(r["z"], e["z"], 0.001)
+		var ok: bool = (String(r["id"]) == String(e["id"])
+				and nearq(r["x"], e["x"], 0.001) and nearq(r["z"], e["z"], 0.001)
 				and nearq(r["w"], e["w"], 0.001) and nearq(r["dep"], e["dep"], 0.001)
 				and nearq(r["h"], e["h"], 0.001)
 				and nearq(r["tint"].r, e["t"][0], 0.00001)
@@ -125,7 +126,15 @@ func _init() -> void:
 			bad += 1
 			if bad_at < 0:
 				bad_at = i
-	check("建筑逐栋逐字段", bad == 0, "不符 %d 栋，首个 #%d" % [bad, bad_at])
+	check("建筑逐栋逐字段（含稳定 id）", bad == 0,
+			"不符 %d 栋，首个 #%d" % [bad, bad_at])
+	var ids := {}
+	var dup := 0
+	for r in recs:
+		if ids.has(r["id"]):
+			dup += 1
+		ids[r["id"]] = true
+	check("建筑 id 唯一", dup == 0, "重复 %d 个" % dup)
 
 	# ---- 建筑记录 → 实例的展开 ----
 	var inst: Dictionary = m._building_instances(recs)

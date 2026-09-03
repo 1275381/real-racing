@@ -66,7 +66,8 @@ func _init() -> void:
 	var recs: Array = m._gen_buildings()
 	var bld := []
 	for r in recs:
-		var e := {"x": snappedf(r["x"], 0.001), "z": snappedf(r["z"], 0.001),
+		var e := {"id": r["id"],
+				"x": snappedf(r["x"], 0.001), "z": snappedf(r["z"], 0.001),
 				"w": snappedf(r["w"], 0.001), "dep": snappedf(r["dep"], 0.001),
 				"h": snappedf(r["h"], 0.001),
 				"t": [snappedf(r["tint"].r, 0.00001), snappedf(r["tint"].g, 0.00001),

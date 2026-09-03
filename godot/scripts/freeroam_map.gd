@@ -148,6 +148,10 @@ var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
 var _road_ix := {}         # road.id -> roads[] 下标
+var _city: Dictionary = {}   # 当前城市存档（补丁层）；空 = 默认城市
+var orphans: Array = []      # 找不到宿主的补丁，交给编辑器提示用户
+
+const CityData := preload("res://scripts/city_data.gd")
 var _fade_shader: Shader
 var _fade_mats: Array = []   # 需要每帧写入相机/车位的遮挡淡出材质
 var pillar_pts := PackedVector3Array()   # 桥墩 (x, 柱顶高, z)，供体检探针核对
@@ -182,7 +186,9 @@ func _init() -> void:
 #  路网数据
 # ============================================================
 
-func build() -> void:
+## city 为空字典 = 默认城市，行为与改造前逐位相同（golden 测试守着这条）
+func build(city := {}) -> void:
+	_city = city
 	var t0 := Time.get_ticks_msec()
 	_make_grid_roads()
 	_make_ring()
@@ -2009,14 +2015,16 @@ func _gen_buildings() -> Array:
 	# 产出「一栋逻辑楼」的记录而不是直接产实例：编辑器要能逐栋操作，
 	# 而一栋楼在渲染上是 1~3 个盒 + 0~1 根天线，分散在两个 MultiMesh 里。
 	# 随机数消费顺序与产实例的旧版逐笔一致（append 不消费随机数）。
-	var put := func(cx: float, cz: float, w: float, dep: float, h: float) -> void:
+	var put := func(bid: String, cx: float, cz: float, w: float, dep: float,
+			h: float) -> void:
 		if not buildable.call(cx, cz, w * 0.5, dep * 0.5):
 			return
 		var tint: Color = palette[mini(int(rng.next() * palette.size()), palette.size() - 1)]
 		var j := rng.range(-0.05, 0.05)
 		tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
 				clampf(tint.b + j, 0, 1), 1.0)
-		var rec := {"x": cx, "z": cz, "w": w, "dep": dep, "h": h, "tint": tint}
+		var rec := {"id": bid, "x": cx, "z": cz, "w": w, "dep": dep, "h": h,
+				"tint": tint}
 		var top := h
 		var tw := w
 		var td := dep
@@ -2048,6 +2056,9 @@ func _gen_buildings() -> Array:
 			var x1: float = GRID_COORDS[bi + 1]
 			var z0: float = GRID_COORDS[bj]
 			var z1: float = GRID_COORDS[bj + 1]
+			# 街区标识用两条边界街的 id，不用下标 —— 插一条新街时，
+			# 只有它所在的那个街区会分裂，其余街区的楼补丁全部存活
+			var blk_id := "blk/ns%d/ew%d" % [bi, bj]
 
 			# 四角角楼：转角有楼，街道才闭合
 			for c in 4:
@@ -2058,7 +2069,8 @@ func _gen_buildings() -> Array:
 				var ccz: float = (z0 + BLK_FRONT + dcz * 0.5) if (c == 0 or c == 1) \
 						else (z1 - BLK_FRONT - dcz * 0.5)
 				var ch: float = zone_h.call(ccx, ccz)
-				put.call(ccx, ccz, dcx, dcz, ch * rng.range(0.80, 1.25))
+				put.call("bld/%s/c%d" % [blk_id, c], ccx, ccz, dcx, dcz,
+						ch * rng.range(0.80, 1.25))
 
 			# 四条沿街排（同一排高度相近，真实街道就是这样）
 			for e in 4:
@@ -2070,6 +2082,7 @@ func _gen_buildings() -> Array:
 				var mid_z: float = (((z0 + BLK_FRONT + 18.0) if e == 0 \
 						else (z1 - BLK_FRONT - 18.0)) if horiz else (z0 + z1) * 0.5)
 				var base_h: float = zone_h.call(mid_x, mid_z)
+				var slot := 0
 				var cur := run_a
 				while cur < run_b - 12.0:
 					var w := minf(rng.range(12.0, 30.0), run_b - cur)
@@ -2089,8 +2102,10 @@ func _gen_buildings() -> Array:
 					var hh: float = base_h * rng.range(0.72, 1.32)
 					if maxf(absf(bx), absf(bz)) < 300.0 and rng.next() < 0.10:
 						hh *= 1.45          # 市中心偶尔冒一根超高
-					put.call(bx, bz, w if horiz else dep, dep if horiz else w,
+					put.call("bld/%s/e%d_%d" % [blk_id, e, slot], bx, bz,
+							w if horiz else dep, dep if horiz else w,
 							minf(hh, 165.0))
+					slot += 1
 					cur += w + rng.range(0.8, 4.5)
 
 			# 街区内部低层填充（留出与沿街排的间距）
@@ -2100,7 +2115,8 @@ func _gen_buildings() -> Array:
 			var hi_z := z1 - BLK_CORNER - 18.0
 			if hi_x > lo_x and hi_z > lo_z:
 				for k in int(rng.range(0.0, 2.6)):
-					put.call(rng.range(lo_x, hi_x), rng.range(lo_z, hi_z),
+					put.call("bld/%s/f%d" % [blk_id, k],
+							rng.range(lo_x, hi_x), rng.range(lo_z, hi_z),
 							rng.range(12.0, 24.0), rng.range(12.0, 24.0),
 							rng.range(7.0, 15.0))
 
@@ -2115,7 +2131,8 @@ func _gen_buildings() -> Array:
 		if occ.has(cell):
 			continue
 		occ[cell] = true
-		put.call(sx, sz, rng.range(11.0, 20.0), rng.range(11.0, 20.0),
+		put.call("bld/sub/%d" % guard, sx, sz,
+				rng.range(11.0, 20.0), rng.range(11.0, 20.0),
 				rng.range(6.0, 15.0))
 
 	return recs
@@ -2216,7 +2233,18 @@ func _emit_buildings(recs: Array) -> void:
 
 
 func _place_buildings() -> void:
-	_emit_buildings(_gen_buildings())
+	# 底板取烘焙快照而不是现跑生成器：生成器的随机流是数据相关的，
+	# 任何常量一改就会让之后每一栋楼重排，按 id 挂靠的补丁会张冠李戴。
+	# 烘焙缺失时回退到生成器（默认城市下两者逐位相同，golden 守着）。
+	var base: Array = CityData.base_buildings()
+	if base.is_empty():
+		push_warning("[map] 取不到烘焙底板，回退到现跑生成器")
+		base = _gen_buildings()
+	var res: Dictionary = CityData.apply_patches(base, _city)
+	orphans = res["orphans"]
+	if not orphans.is_empty():
+		print("[map] ⚠ %d 条补丁找不到宿主（底板变过？）" % orphans.size())
+	_emit_buildings(res["recs"])
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）
