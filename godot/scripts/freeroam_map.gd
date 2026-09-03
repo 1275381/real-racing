@@ -1911,11 +1911,9 @@ void fragment() {
 ## + 城郊散点；高层带退台、屋顶设备房与天线。朝向与街道网格严格正交
 ## （旧版 rng.range(0, PI) 随机转，楼歪着站，而且 Basis.scaled 是先转后按世界轴
 ## 缩放，非 90° 倍数时盒子会被剪切成平行六面体）。
-func _place_buildings() -> void:
+func _gen_buildings() -> Array:
 	var rng := RRUtil.Mulberry.new(20260830)
-	var xfs: Array[Transform3D] = []
-	var cols: Array[Color] = []
-	var ants: Array[Transform3D] = []
+	var recs: Array = []
 
 	# 冷玻璃 / 暖混凝土 / 深灰石材 / 浅色面砖 / 灰绿
 	var palette := [
@@ -1954,6 +1952,9 @@ func _place_buildings() -> void:
 		return rng.range(7.0, 16.0)
 
 	# 放一栋：主体 →（退台）→（屋顶设备房）→（天线）
+	# 产出「一栋逻辑楼」的记录而不是直接产实例：编辑器要能逐栋操作，
+	# 而一栋楼在渲染上是 1~3 个盒 + 0~1 根天线，分散在两个 MultiMesh 里。
+	# 随机数消费顺序与产实例的旧版逐笔一致（append 不消费随机数）。
 	var put := func(cx: float, cz: float, w: float, dep: float, h: float) -> void:
 		if not buildable.call(cx, cz, w * 0.5, dep * 0.5):
 			return
@@ -1961,9 +1962,7 @@ func _place_buildings() -> void:
 		var j := rng.range(-0.05, 0.05)
 		tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
 				clampf(tint.b + j, 0, 1), 1.0)
-		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
-				Vector3(cx, h * 0.5, cz)))
-		cols.append(tint)
+		var rec := {"x": cx, "z": cz, "w": w, "dep": dep, "h": h, "tint": tint}
 		var top := h
 		var tw := w
 		var td := dep
@@ -1973,26 +1972,20 @@ func _place_buildings() -> void:
 			var uh := h * rng.range(0.20, 0.42)
 			tw = w * k
 			td = dep * k
-			# 底面埋进主体 0.5m，不与主体顶面共面
-			xfs.append(Transform3D(Basis.from_scale(Vector3(tw, uh, td)),
-					Vector3(cx, h + uh * 0.5 - 0.5, cz)))
-			cols.append(Color(tint.r, tint.g, tint.b, 0.5))
+			rec["sb"] = {"k": k, "uh": uh}
 			top = h + uh - 0.5
-		# 屋顶设备房
+		# 屋顶设备房（mw/md/ox/oz 依赖退台后的 tw/td，故存钳制后的终值）
 		if top > 16.0 and rng.next() < 0.5:
 			var mw := minf(rng.range(4.0, 9.0), tw * 0.5)
 			var md := minf(rng.range(4.0, 9.0), td * 0.5)
 			var mh := rng.range(2.4, 4.2)
 			var ox := rng.range(-1.0, 1.0) * maxf(tw * 0.5 - mw * 0.5 - 0.8, 0.0)
 			var oz := rng.range(-1.0, 1.0) * maxf(td * 0.5 - md * 0.5 - 0.8, 0.0)
-			xfs.append(Transform3D(Basis.from_scale(Vector3(mw, mh, md)),
-					Vector3(cx + ox, top + mh * 0.5 - 0.5, cz + oz)))
-			cols.append(Color(0.55, 0.56, 0.58, 0.0))
+			rec["rf"] = {"mw": mw, "md": md, "mh": mh, "ox": ox, "oz": oz}
 		# 天线：只给最高的那批
 		if top > 78.0 and rng.next() < 0.65:
-			var ah := rng.range(9.0, 24.0)
-			ants.append(Transform3D(Basis.from_scale(Vector3(1.0, ah, 1.0)),
-					Vector3(cx, top + ah * 0.5, cz)))
+			rec["ant"] = rng.range(9.0, 24.0)
+		recs.append(rec)
 
 	# ---- 逐街区排布（11 条街 → 10×10 个 180m 街区）----
 	for bi in GRID_COORDS.size() - 1:
@@ -2071,6 +2064,60 @@ func _place_buildings() -> void:
 		put.call(sx, sz, rng.range(11.0, 20.0), rng.range(11.0, 20.0),
 				rng.range(6.0, 15.0))
 
+	return recs
+
+
+## 建筑记录 → 渲染实例（纯函数）。一栋逻辑楼展开成 1~3 个盒 + 0~1 根天线：
+## 主体 →（退台，底面埋进主体 0.5m 不共面）→（屋顶设备房）→（天线）。
+## 单独拆出来是因为 headless 的 dummy 渲染器不保存 MultiMesh 实例数据
+## （回读全是零），烘焙与 golden 断言必须有明文数组可比。
+func _building_instances(recs: Array) -> Dictionary:
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var ants: Array[Transform3D] = []
+	for r in recs:
+		var cx: float = r["x"]
+		var cz: float = r["z"]
+		var w: float = r["w"]
+		var dep: float = r["dep"]
+		var h: float = r["h"]
+		var tint: Color = r["tint"]
+		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
+				Vector3(cx, h * 0.5, cz)))
+		cols.append(tint)
+		var top := h
+		var tw := w
+		var td := dep
+		if r.has("sb"):
+			var k: float = r["sb"]["k"]
+			var uh: float = r["sb"]["uh"]
+			tw = w * k
+			td = dep * k
+			xfs.append(Transform3D(Basis.from_scale(Vector3(tw, uh, td)),
+					Vector3(cx, h + uh * 0.5 - 0.5, cz)))
+			cols.append(Color(tint.r, tint.g, tint.b, 0.5))
+			top = h + uh - 0.5
+		if r.has("rf"):
+			var rf: Dictionary = r["rf"]
+			var mh: float = rf["mh"]
+			xfs.append(Transform3D(
+					Basis.from_scale(Vector3(rf["mw"], mh, rf["md"])),
+					Vector3(cx + float(rf["ox"]), top + mh * 0.5 - 0.5,
+					cz + float(rf["oz"]))))
+			cols.append(Color(0.55, 0.56, 0.58, 0.0))
+		if r.has("ant"):
+			var ah: float = r["ant"]
+			ants.append(Transform3D(Basis.from_scale(Vector3(1.0, ah, 1.0)),
+					Vector3(cx, top + ah * 0.5, cz)))
+	return {"xfs": xfs, "cols": cols, "ants": ants}
+
+
+## 建筑记录 → MultiMesh（楼体一个、天线一个）
+func _emit_buildings(recs: Array) -> void:
+	var inst := _building_instances(recs)
+	var xfs: Array[Transform3D] = inst["xfs"]
+	var cols: Array[Color] = inst["cols"]
+	var ants: Array[Transform3D] = inst["ants"]
 	if xfs.is_empty():
 		return
 	var bmesh := BoxMesh.new()
@@ -2088,7 +2135,8 @@ func _place_buildings() -> void:
 	mmi.multimesh = mm
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mmi)
-	print("[map] 楼 %d 体块（含退台/设备房）+ %d 天线" % [xfs.size(), ants.size()])
+	print("[map] 楼 %d 栋 / %d 体块（含退台/设备房）+ %d 天线"
+			% [recs.size(), xfs.size(), ants.size()])
 
 	if ants.is_empty():
 		return
@@ -2111,6 +2159,10 @@ func _place_buildings() -> void:
 	ammi.multimesh = amm
 	ammi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ammi)
+
+
+func _place_buildings() -> void:
+	_emit_buildings(_gen_buildings())
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）
