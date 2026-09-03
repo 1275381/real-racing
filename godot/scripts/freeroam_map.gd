@@ -150,6 +150,9 @@ var _terr := {}            # 50m 网格：地形高程场（盘山公路下方�
 var _road_ix := {}         # road.id -> roads[] 下标
 var _city: Dictionary = {}   # 当前城市存档（补丁层）；空 = 默认城市
 var orphans: Array = []      # 找不到宿主的补丁，交给编辑器提示用户
+var bld_recs: Array = []     # 当前建筑记录（编辑器直接操作这一份）
+var bld_mmi: MultiMeshInstance3D   # 楼体 MultiMesh，编辑后就地刷新
+var ant_mmi: MultiMeshInstance3D   # 天线 MultiMesh
 
 const CityData := preload("res://scripts/city_data.gd")
 var _fade_shader: Shader
@@ -2206,6 +2209,7 @@ func _emit_buildings(recs: Array) -> void:
 	mmi.multimesh = mm
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mmi)
+	bld_mmi = mmi
 	print("[map] 楼 %d 栋 / %d 体块（含退台/设备房）+ %d 天线"
 			% [recs.size(), xfs.size(), ants.size()])
 
@@ -2230,6 +2234,7 @@ func _emit_buildings(recs: Array) -> void:
 	ammi.multimesh = amm
 	ammi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ammi)
+	ant_mmi = ammi
 
 
 func _place_buildings() -> void:
@@ -2244,7 +2249,39 @@ func _place_buildings() -> void:
 	orphans = res["orphans"]
 	if not orphans.is_empty():
 		print("[map] ⚠ %d 条补丁找不到宿主（底板变过？）" % orphans.size())
-	_emit_buildings(res["recs"])
+	bld_recs = res["recs"]
+	_emit_buildings(bld_recs)
+
+
+## 编辑器改完建筑后就地刷新两个 MultiMesh（2450 实例，几毫秒）。
+## 复用已有节点而不是 queue_free 再建：queue_free 是延迟的，连续多次编辑
+## 会让旧节点在本帧继续渲染、叠出陈的画面，而且白白制造节点churn。
+func refresh_buildings(recs_in: Array) -> void:
+	bld_recs = recs_in
+	if bld_mmi == null:
+		_emit_buildings(recs_in)
+		return
+	var inst: Dictionary = _building_instances(recs_in)
+	var xfs: Array = inst["xfs"]
+	var cols: Array = inst["cols"]
+	var ants: Array = inst["ants"]
+	var mm := bld_mmi.multimesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	if ant_mmi != null:
+		var am := ant_mmi.multimesh
+		am.instance_count = ants.size()
+		for i in ants.size():
+			am.set_instance_transform(i, ants[i])
+
+
+## 编辑器初始化时调：遮挡淡出的通道二没有「相机离车足够远」的保护，
+## plr_w 保持默认 vec3(0) 时会把原点 15m 内、高于 1.6m 的几何全 discard
+## —— 而两条高架快速路正好在 (0,0) 交叉，一进编辑器就看见立交中心有个洞。
+func disable_occluder_fade() -> void:
+	update_occluder_fade(Vector3(0, -1e5, 0), Vector3(0, -1e5, 0), Vector2(0, 1))
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）

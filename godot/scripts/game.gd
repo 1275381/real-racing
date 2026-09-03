@@ -18,6 +18,8 @@ var hud: RRHud
 var fx: RREffects
 var audio: RRAudio
 var freeroam: FreeroamMap   # 漫游大地图（首次进入漫游时生成）
+var roam_city_id := ""      # 当前漫游城市存档 id；变了要重建，否则看到旧城
+const CityData := preload("res://scripts/city_data.gd")
 
 var cars: Array = []               # CarRec 列表
 var player: CarRec
@@ -183,6 +185,10 @@ func _ready() -> void:
 			var ti := TrackData.track_index_by_id(tid)
 			set_track.call_deferred(ti)
 
+	# 城市编辑器「试驾」：直接进那张城市漫游
+	if CityData.pending_map_id != "":
+		enter_roam.call_deferred()
+
 	# 地图编译器「试驾」：直接开编译好的赛道
 	if TrackData.pending_track_id != "":
 		var pi := TrackData.track_index_by_id(TrackData.pending_track_id)
@@ -192,6 +198,10 @@ func _ready() -> void:
 
 
 ## 进入地图编译器
+func open_city_editor() -> void:
+	get_tree().change_scene_to_file("res://scenes/city_editor.tscn")
+
+
 func open_map_editor() -> void:
 	get_tree().change_scene_to_file("res://scenes/map_editor.tscn")
 
@@ -329,6 +339,7 @@ func _wire_menu() -> void:
 	hud.btn_again.pressed.connect(start_race)
 	hud.btn_quit_results.pressed.connect(to_garage)
 	hud.btn_editor.pressed.connect(open_map_editor)
+	hud.btn_city.pressed.connect(open_city_editor)
 	hud.btn_del_track.pressed.connect(_on_del_track_pressed)
 
 
@@ -414,13 +425,22 @@ func enter_roam() -> void:
 		return
 	audio.ensure()
 	hud.show_only("roam")
+	# 城市存档换了就必须重建：原来只判 freeroam == null，从编辑器试驾一次、
+	# 回去再改、再试驾，看到的还是旧城
+	var want_city := CityData.pending_map_id if CityData.pending_map_id != "" \
+			else roam_city_id
+	if freeroam != null and want_city != roam_city_id:
+		freeroam.queue_free()
+		freeroam = null
 	if freeroam == null:
 		hud.show_center("正在生成城市…", "首次进入需要一点时间", 4000)
 		await get_tree().process_frame
 		await get_tree().process_frame
 		freeroam = FreeroamMap.new()
 		add_child(freeroam)
-		freeroam.build()
+		roam_city_id = want_city
+		freeroam.build(CityData.map_by_id(want_city) if want_city != "" else {})
+	CityData.pending_map_id = ""
 	freeroam.visible = true
 	for t in tracks:
 		t.visible = false
