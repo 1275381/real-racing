@@ -3,10 +3,11 @@ extends SceneTree
 func _init() -> void:
 	var m := FreeroamMap.new()
 	m.build()
-	var grid_n := 22
 	var bins := {}
 	var samples := []
-	for ri in range(grid_n, m.roads.size()):
+	for ri in m.roads.size():
+		if m.roads[ri].kind == "grid":
+			continue
 		var road: FreeroamMap.Road = m.roads[ri]
 		if not road.elevated:
 			continue

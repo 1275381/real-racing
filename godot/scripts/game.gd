@@ -1144,8 +1144,7 @@ func _update_debug_text() -> void:
 		var kind := "?"
 		if ri >= 0:
 			var rd: FreeroamMap.Road = freeroam.roads[ri]
-			kind = ("网格街" if ri < FreeroamMap.GRID_COORDS.size() * 2
-					else ("高架" if rd.elevated else "城外公路"))
+			kind = FreeroamMap.KIND_LABEL.get(rd.kind, "?")
 		lines.append("路 road%d(%s) 路面高 %.2f 车离路面 %+.2f 横向 %+.2f 软墙 %.2f 表面 %s" % [
 				ri, kind, float(q["height"]), v.pos.y - float(q["height"]),
 				float(q["lat_off"]), float(q["wall"]), q["surf"]])

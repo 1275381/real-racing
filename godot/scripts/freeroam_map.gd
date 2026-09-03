@@ -21,6 +21,31 @@ const CROSS_ELEV := 14.0      # 南北快速路
 const CROSS_ELEV_EW := 19.0   # 东西快速路：与南北在 (0,0) 立体交叉，净空 5m
                               # （原来两条都是 14m，在 (0,0) 完全同高，
                               #   surf_skip 裁掉一条后合成一个平面十字 —— 不是立交）
+## 地形分区：3D 顶点色与小地图的唯一数据源。
+## 顺序 = 判定优先级（从高到低），这个顺序本身是契约：
+## 3D 正序取首个命中；小地图逆序铺色（后画覆盖先画 == 正序首个命中）。
+## 原来这张表在 _zone_color 与 _build_minimap 里各写一份，
+## 上次不同步的后果是「西北角世界里是海、小地图画成山地」，
+## 东沙漠阈值还写成了 1080（实际 950）。
+const ZONE_INF := 1e9
+const ZONES := [
+	{"id": "sea", "rect": [-ZONE_INF, -1080.0, -ZONE_INF, ZONE_INF],
+			"col": Color(0.10, 0.33, 0.56), "mini": Color(0.10, 0.28, 0.50)},
+	{"id": "beach", "rect": [-ZONE_INF, -980.0, -ZONE_INF, ZONE_INF],
+			"col": Color(0.85, 0.78, 0.60), "mini": Color(0.72, 0.66, 0.50)},
+	{"id": "desert", "rect": [950.0, ZONE_INF, -ZONE_INF, ZONE_INF],
+			"col": Color(0.80, 0.68, 0.44), "mini": Color(0.66, 0.55, 0.35)},
+	{"id": "mount", "rect": [-ZONE_INF, ZONE_INF, -ZONE_INF, -1080.0],
+			"col": Color(0.28, 0.40, 0.26), "mini": Color(0.16, 0.26, 0.18)},
+	{"id": "city", "rect": [-950.0, 950.0, -950.0, 950.0],
+			"col": Color(0.44, 0.46, 0.49), "mini": Color(0.20, 0.22, 0.26)},
+	{"id": "grass", "rect": null,   # 兜底
+			"col": Color(0.42, 0.55, 0.33), "mini": Color(0.17, 0.23, 0.15)},
+]
+
+## 路类中文名：调试 HUD 与各探针共用，避免各写一份 if-else
+const KIND_LABEL := {"grid": "网格街", "ring": "高架环线", "hw": "高架快速路",
+		"ramp": "匝道", "out": "城外公路"}
 const STREET_Y := 0.03        # 网格街统一标高：路口靠拼块拼接，不再靠错高避让
 
 # 建筑排布
@@ -122,6 +147,7 @@ var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
+var _road_ix := {}         # road.id -> roads[] 下标
 var _fade_shader: Shader
 var _fade_mats: Array = []   # 需要每帧写入相机/车位的遮挡淡出材质
 var pillar_pts := PackedVector3Array()   # 桥墩 (x, 柱顶高, z)，供体检探针核对
@@ -137,6 +163,8 @@ class Road:
 	var closed := false                   # 闭环（仅环线）；开放路不可首尾相连
 	var xsec_cut := false                 # 网格街：路口方块内不铺面（由路口拼块接管）
 	var along_x := false                  # 沿 X 走（水平街）
+	var id := ""                          # 稳定标识：数组下标是隐式契约，散落在 9 个文件里
+	var kind := ""                        # grid / ring / hw / ramp / out
 	var elevated := false
 	var mono := false                     # 等高主线高架（环线/快速路）：桥面单独材质走淡出走廊档
 	var wall := 10.0
@@ -175,8 +203,11 @@ func build() -> void:
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
 
-func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bool) -> Road:
+func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bool,
+		rid := "", rkind := "") -> Road:
 	var road := Road.new()
+	road.id = rid
+	road.kind = rkind
 	road.half_w = half_w
 	road.closed = closed
 	road.elevated = elevated
@@ -268,6 +299,8 @@ func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bo
 			road.grid[key] = PackedInt32Array()
 		road.grid[key].append(i)
 
+	if road.id != "":
+		_road_ix[road.id] = roads.size()
 	roads.append(road)
 	n += cnt
 	return road
@@ -285,10 +318,10 @@ func _make_grid_roads() -> void:
 	for k in GRID_COORDS.size():
 		var c: float = GRID_COORDS[k]
 		var rv := _make_road([Vector2(c, -900.0), Vector2(c, 900.0)],
-				[STREET_Y], false, GRID_HALF_W, false)
+				[STREET_Y], false, GRID_HALF_W, false, "ns%d" % k, "grid")
 		rv.xsec_cut = true
 		var rh := _make_road([Vector2(-900.0, c), Vector2(900.0, c)],
-				[STREET_Y], false, GRID_HALF_W, false)
+				[STREET_Y], false, GRID_HALF_W, false, "ew%d" % k, "grid")
 		rh.xsec_cut = true
 		rh.along_x = true
 
@@ -313,17 +346,19 @@ func _make_ring() -> void:
 		for i in 6:                        # 圆角每 15° 一个控制点
 			var th: float = arc_a0[q] + PI * 0.5 * float(i) / 6.0
 			cps.append(arc_c[q] + Vector2(cos(th), sin(th)) * r)
-	_make_road(cps, [RING_ELEV], true, 10.0, true)
+	_make_road(cps, [RING_ELEV], true, 10.0, true, "ring", "ring")
 
 
 func _make_cross_highways() -> void:
 	# 东西 19m / 南北 14m / 环线 10m —— 三层互不同高，才是立交
-	_make_road([Vector2(-900.0, 0.0), Vector2(900.0, 0.0)], [CROSS_ELEV_EW], false, 10.0, true)
-	_make_road([Vector2(0.0, -900.0), Vector2(0.0, 900.0)], [CROSS_ELEV], false, 10.0, true)
+	_make_road([Vector2(-900.0, 0.0), Vector2(900.0, 0.0)], [CROSS_ELEV_EW],
+			false, 10.0, true, "hw_ew", "hw")
+	_make_road([Vector2(0.0, -900.0), Vector2(0.0, 900.0)], [CROSS_ELEV],
+			false, 10.0, true, "hw_ns", "hw")
 
 
 func _make_ramps() -> void:
-	var ring := roads[22]   # 网格 22 条之后紧接环线
+	var ring := road_by_id("ring")
 	var rn := ring.pts.size()
 	# 4 条环线匝道：东北/西北/东南/西南
 	for d in [[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]]:
@@ -366,7 +401,7 @@ func _make_ramps() -> void:
 			merge_c + rtan * 10.0,
 		]
 		_make_road(cps, [g_y, crown_y, 5.0, 8.5, RING_ELEV, RING_ELEV],
-				false, 6.0, true)
+				false, 6.0, true, "ramp/ring/%d%d" % [int(d[0]), int(d[1])], "ramp")
 	# 4 条快速路匝道（东西向 2 条 + 南北向 2 条）
 	for sx in [-1.0, 1.0]:
 		var hx: float = 560.0 * sx
@@ -383,7 +418,7 @@ func _make_ramps() -> void:
 			Vector2(hx + 40.0 * sx, -30.0), Vector2(hx + 75.0 * sx, -80.0),
 			Vector2(hx + 80.0 * sx, -190.0), Vector2(hx + 80.0 * sx, -349.5),
 		], [CROSS_ELEV_EW, CROSS_ELEV_EW, 17.0, 13.0, 4.0, STREET_Y],
-				false, 6.0, true)
+				false, 6.0, true, "ramp/hw_ew/%d" % int(sx), "ramp")
 	for sz in [-1.0, 1.0]:
 		var hz: float = 560.0 * sz
 		# 同上：16.5 = 主线半宽 10 + 0.5 缝 + 匝道半宽 6
@@ -391,7 +426,8 @@ func _make_ramps() -> void:
 			Vector2(16.5, hz - 150.0 * sz), Vector2(16.5, hz - 40.0 * sz),
 			Vector2(30.0, hz + 40.0 * sz), Vector2(80.0, hz + 75.0 * sz),
 			Vector2(190.0, hz + 80.0 * sz), Vector2(349.5, hz + 80.0 * sz),
-		], [CROSS_ELEV, CROSS_ELEV, 12.5, 9.0, 3.0, STREET_Y], false, 6.0, true)
+		], [CROSS_ELEV, CROSS_ELEV, 12.5, 9.0, 3.0, STREET_Y],
+				false, 6.0, true, "ramp/hw_ns/%d" % int(sz), "ramp")
 
 
 ## 城市外的四大区域路网：北盘山 / 西海岸 / 东沙漠 / 南郊野
@@ -405,21 +441,26 @@ func _make_outskirts_roads() -> void:
 		Vector2(880, -1660), Vector2(830, -1500), Vector2(920, -1340), Vector2(870, -1180),
 		Vector2(900, -1020), Vector2(900, -900),
 	], [0.1, 1.5, 5.0, 10.0, 16.0, 23.0, 30.0, 38.0, 47.0, 56.0, 65.0, 72.0,
-		70.0, 60.0, 48.0, 38.0, 28.0, 19.0, 11.0, 5.0, 1.0, 0.1], false, 7.0, false)
+		70.0, 60.0, 48.0, 38.0, 28.0, 19.0, 11.0, 5.0, 1.0, 0.1],
+			false, 7.0, false, "out/mountain", "out")
 
 	# ---- 西：海岸大道（西侧是海）+ 城市联络线 ----
 	_make_road([
 		Vector2(-1040, -1150), Vector2(-1020, -800), Vector2(-1060, -400),
 		Vector2(-1020, 0), Vector2(-1060, 400), Vector2(-1020, 800), Vector2(-1040, 1150),
-	], [0.03], false, 8.0, false)
-	_make_road([Vector2(-900, -540), Vector2(-1020, -540)], [0.03], false, 6.0, false)
-	_make_road([Vector2(-900, 540), Vector2(-1020, 540)], [0.03], false, 6.0, false)
+	], [0.03], false, 8.0, false, "out/coast", "out")
+	_make_road([Vector2(-900, -540), Vector2(-1020, -540)], [0.03],
+			false, 6.0, false, "out/link_w_s", "out")
+	_make_road([Vector2(-900, 540), Vector2(-1020, 540)], [0.03],
+			false, 6.0, false, "out/link_w_n", "out")
 	# 接到 x=-180 那条街，而不是 x=0 —— 盘山公路正是从 (0,-900) 起步，
 	# 原来两条路在那里重合约 100m 且高差 0.6m，车开过去会陷进路面
 	_make_road([Vector2(-1040, -1150), Vector2(-880, -1150), Vector2(-300, -1140),
-			Vector2(-180, -1010), Vector2(-180, -900)], [0.03], false, 6.0, false)
+			Vector2(-180, -1010), Vector2(-180, -900)], [0.03],
+			false, 6.0, false, "out/link_nw", "out")
 	_make_road([Vector2(-1040, 1150), Vector2(-880, 1150), Vector2(-300, 1140),
-			Vector2(-150, 1020), Vector2(-150, 900)], [0.03], false, 6.0, false)
+			Vector2(-150, 1020), Vector2(-150, 900)], [0.03],
+			false, 6.0, false, "out/link_sw", "out")
 
 	# ---- 东：沙漠环线（沙丘缓起伏，峰谷 3~9m）----
 	_make_road([
@@ -427,17 +468,25 @@ func _make_outskirts_roads() -> void:
 		Vector2(1800, -560), Vector2(2100, -420), Vector2(2350, -150),
 		Vector2(2400, 150), Vector2(2250, 480), Vector2(1950, 560), Vector2(1650, 460),
 		Vector2(1350, 560), Vector2(1100, 480), Vector2(900, 540),
-	], [0.03, 2.0, 5.0, 3.0, 7.0, 4.0, 8.0, 5.0, 9.0, 4.0, 7.0, 3.0, 0.03], false, 8.0, false)
+	], [0.03, 2.0, 5.0, 3.0, 7.0, 4.0, 8.0, 5.0, 9.0, 4.0, 7.0, 3.0, 0.03],
+			false, 8.0, false, "out/desert", "out")
 
 	# ---- 南：郊野线 ----
 	_make_road([Vector2(0, 900), Vector2(0, 1150), Vector2(-120, 1400),
 			Vector2(-80, 1700), Vector2(120, 1900), Vector2(400, 2000)],
-			[0.03], false, 7.0, false)
+			[0.03], false, 7.0, false, "out/south", "out")
 	_make_road([Vector2(-540, 900), Vector2(-540, 1250), Vector2(-420, 1500)],
-			[0.03], false, 6.0, false)
+			[0.03], false, 6.0, false, "out/south_w", "out")
 
 
 ## 出生点：x=180 的南北向街道，朝 +Z（北）
+## 按稳定标识取路。原来靠 roads[22] 这种硬编码下标找环线，
+## 路网一旦可编辑（增删道路）索引布局立刻失效，而且是静默失效。
+func road_by_id(rid: String) -> Road:
+	var i: int = _road_ix.get(rid, -1)
+	return roads[i] if i >= 0 else null
+
+
 func get_spawn() -> Dictionary:
 	return {"pos": Vector3(180.0, _street_h(6, false), -540.0), "heading": 0.0}
 
@@ -1401,21 +1450,22 @@ func _build_zone_ground() -> void:
 
 
 ## 区域配色：海 / 沙滩 / 沙漠 / 山地 / 城市水泥 / 草地（+ 噪声抖动）
+## 正序取首个命中的分区
+func zone_at(x: float, z: float) -> Dictionary:
+	for zn in ZONES:
+		var r = zn["rect"]
+		if r == null:
+			return zn
+		if x >= r[0] and x < r[1] and z >= r[2] and z < r[3]:
+			return zn
+	return ZONES[-1]
+
+
 func _zone_color(x: float, z: float, rng: RRUtil.Mulberry) -> Color:
+	# rng.next() 必须仍是第一行、无条件执行：_build_zone_ground 对 320×320
+	# 网格每格调 4 次（约 41 万笔），挪位置或加 early-return 会让地面顶点色全变
 	var n := (rng.next() - 0.5) * 0.06
-	var c: Color
-	if x < -1080.0:
-		c = Color(0.10, 0.33, 0.56)      # 海
-	elif x < -980.0:
-		c = Color(0.85, 0.78, 0.60)      # 沙滩
-	elif x > 950.0:
-		c = Color(0.80, 0.68, 0.44)      # 沙漠
-	elif z < -1080.0:
-		c = Color(0.28, 0.40, 0.26)      # 山地
-	elif absf(x) < 950.0 and absf(z) < 950.0:
-		c = Color(0.44, 0.46, 0.49)      # 城市水泥（中灰防过曝）
-	else:
-		c = Color(0.42, 0.55, 0.33)      # 草地
+	var c: Color = zone_at(x, z)["col"]
 	return Color(clampf(c.r + n, 0, 1), clampf(c.g + n, 0, 1), clampf(c.b + n, 0, 1))
 
 
@@ -1788,9 +1838,13 @@ func _street_y(cx: float, cz: float) -> float:
 ## 旧版对「所有」道路各标 ±2 格 × 24m ≈ 60m，而街距只有 180m，
 ## 楼全被推到街区正中，沿街两侧空荡荡 —— 城市不像城市的主因。
 func _mark_road_blocks() -> void:
-	var grid_roads := GRID_COORDS.size() * 2   # 前 22 条是网格街道
-	for ri in range(grid_roads, roads.size()):
-		var road: Road = roads[ri]
+	# 网格街不入表：沿街楼按街区边界精确排布，不靠位图掩码。
+	# 原来写 range(GRID_COORDS.size()*2, ...) 依赖「前 22 条是网格街」的
+	# 索引布局 —— _block[key]=true 是幂等插入、与顺序无关，改按 kind 过滤
+	# 后产出完全相同，还额外获得了顺序无关性。
+	for road in roads:
+		if road.kind == "grid":
+			continue
 		var rad: float = road.half_w + (16.0 if road.elevated else 7.0)
 		var rc := int(ceil(rad / BLOCK_CELL))
 		for i in range(0, road.pts.size(), 4):
@@ -2169,16 +2223,15 @@ func _place_buildings() -> void:
 func _build_minimap() -> void:
 	var size := 600
 	var img := Image.create(size, size, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.17, 0.23, 0.15))   # 底色 = 草地（与 _zone_color 的兜底一致）
-	# 分区底色的叠放顺序必须与 _zone_color 的判定优先级一致
-	# （海 > 沙滩 > 沙漠 > 山地 > 城市），阈值也要对齐。
-	# 原来先画海再用「整条北带」的山地盖上去，西北角世界里是海、
-	# 小地图却是山地；东沙漠的阈值也写成 1080（实际是 950）。
-	_fill_zone(img, size, -2800, 2800, -2800, -1080, Color(0.16, 0.26, 0.18))   # 北山地
-	_fill_zone(img, size, 950, 2800, -2800, 2800, Color(0.66, 0.55, 0.35))      # 东沙漠
-	_fill_zone(img, size, -1080, -980, -2800, 2800, Color(0.72, 0.66, 0.50))    # 西沙滩
-	_fill_zone(img, size, -2800, -1080, -2800, 2800, Color(0.1, 0.28, 0.5))     # 西海
-	_fill_zone(img, size, -950, 950, -950, 950, Color(0.2, 0.22, 0.26))         # 城市核心
+	# 与 3D 共用 ZONES 一张表，逆序铺（后画覆盖先画 == 正序首个命中）
+	for zi in range(ZONES.size() - 1, -1, -1):
+		var zn: Dictionary = ZONES[zi]
+		var r = zn["rect"]
+		if r == null:
+			img.fill(zn["mini"])
+			continue
+		_fill_zone(img, size, maxf(r[0], -MAP_LIMIT), minf(r[1], MAP_LIMIT),
+				maxf(r[2], -MAP_LIMIT), minf(r[3], MAP_LIMIT), zn["mini"])
 	var scale := float(size) / (MAP_LIMIT * 2.0)
 	for road in roads:
 		var col := Color(0.62, 0.66, 0.72) if road.elevated else Color(0.30, 0.33, 0.38)

@@ -4,10 +4,9 @@ const RING_Y := 10.0
 func _init() -> void:
 	var m := FreeroamMap.new()
 	m.build()
-	var grid_n := 22
 
 	# --- 环线曲率：转角是否折成尖角 ---
-	var ring: FreeroamMap.Road = m.roads[grid_n]
+	var ring: FreeroamMap.Road = m.road_by_id("ring")
 	var n := ring.pts.size()
 	var worst := 1e9
 	var worst_at := Vector2.ZERO
@@ -31,7 +30,9 @@ func _init() -> void:
 
 	# --- 盘山公路离地 ---
 	var mtn: FreeroamMap.Road = null
-	for r in range(grid_n, m.roads.size()):
+	for r in m.roads.size():
+		if m.roads[r].kind == "grid":
+			continue
 		if m.roads[r].elevated:
 			continue
 		var hi := 0.0
@@ -61,7 +62,9 @@ func _init() -> void:
 
 	# --- 匝道与主线是否仍有同高重叠 ---
 	var over := 0
-	for a in range(grid_n, m.roads.size()):
+	for a in m.roads.size():
+		if m.roads[a].kind == "grid":
+			continue
 		for b in range(a + 1, m.roads.size()):
 			var ra: FreeroamMap.Road = m.roads[a]
 			var rb: FreeroamMap.Road = m.roads[b]

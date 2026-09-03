@@ -75,7 +75,7 @@ func _init() -> void:
 	print("  地图查询：桥面高度在 z=%.1f 处消失（过冲 %.1fm）" % [lost, lost - 900.0])
 
 	# --- 回归：环线护栏不能被从其正下方 1~2.5m 穿过的匝道抑制掉 ---
-	var ring: FreeroamMap.Road = map.roads[22]
+	var ring: FreeroamMap.Road = map.road_by_id("ring")
 	var bad := 0
 	var worst_s := ""
 	for i in range(0, ring.pts.size(), 3):

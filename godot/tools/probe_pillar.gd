@@ -12,7 +12,6 @@ func _init() -> void:
 	var pillars := map.pillar_pts
 	print("桥墩总数 = %d" % pillars.size())
 
-	var grid_n := 22
 	var kinds := {}
 	var samples := []
 	for i in pillars.size():
@@ -49,8 +48,7 @@ func _init() -> void:
 				if hit:
 					break
 			if hit:
-				var t := ("网格街" if ri < grid_n else
-						("高架" if road.elevated else "城外公路"))
+				var t: String = FreeroamMap.KIND_LABEL.get(road.kind, "?")
 				kinds[t] = int(kinds.get(t, 0)) + 1
 				if samples.size() < 12:
 					samples.append("  桥墩(%.0f, 顶%.1f, %.0f) 压在 road%d(%s, 面高%.2f, 半宽%.1f) 上"
