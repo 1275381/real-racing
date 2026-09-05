@@ -129,7 +129,7 @@ func place_at(pose: Dictionary) -> void:
 
 func step(dt: float) -> void:
 	var trk = track
-	var q: Dictionary = trk.query(pos.x, pos.z, q_idx)
+	var q: Dictionary = trk.query(pos.x, pos.z, q_idx, pos.y)
 	var tn: int = trk.n
 	q_idx = q["idx"]
 	lat_off = q["lat_off"]

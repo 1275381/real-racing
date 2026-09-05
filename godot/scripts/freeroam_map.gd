@@ -510,7 +510,7 @@ var _scratch := {"idx": 0, "lat_off": 0.0, "ang": 0.0, "surf": "road", "dist_sq"
 		"height": 0.0, "slope": 0.0, "wall": 9.0, "road": 0}
 
 
-func query(x: float, z: float, hint) -> Dictionary:
+func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 	var hint_road := -1
 	var hint_i := -1
 	if hint != null:
@@ -567,7 +567,8 @@ func query(x: float, z: float, hint) -> Dictionary:
 			var over: float = (-lon) if ei == 0 else lon
 			if over > 0.0:
 				dist += over * 10.0
-		var cost := dist + absf(road.pts[bi].y - vehicle_y) * 6.0   # 高度迟滞
+		var vyy: float = vy if vy > -1.0e8 else vehicle_y
+		var cost := dist + absf(road.pts[bi].y - vyy) * 6.0   # 高度迟滞
 		if r == hint_road:
 			cost -= 2.0   # 当前路粘性，避免并线/重叠处来回跳层
 		road_cost[r] = cost

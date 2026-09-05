@@ -74,6 +74,16 @@ func build(def: Dictionary) -> void:
 		pts[i] = Vector2(p3.x, p3.z)
 		heights[i] = p3.y
 
+	# ---- 高度平滑：Catmull-Rom 在非单调 y 控制点间会过冲出毛刺
+	#      （相邻采样高度差可达数米，车经过被垂直弹起）。
+	#      1-2-1 卷积两轮压平毛刺，60m 级的整体坡形不受影响 ----
+	for pass_i in 2:
+		var hs := PackedFloat32Array(heights)
+		for i in n:
+			var ip: int = (i - 1 + n) % n if closed else maxi(i - 1, 0)
+			var inn: int = (i + 1) % n if closed else mini(i + 1, n - 1)
+			heights[i] = (hs[ip] + 2.0 * hs[i] + hs[inn]) * 0.25
+
 	var next_of := func(i: int) -> int:
 		return (i + 1) % n if closed else mini(i + 1, n - 1)
 	var prev_of := func(i: int) -> int:
@@ -115,6 +125,56 @@ func build(def: Dictionary) -> void:
 		finish_idx = n - 15      # 终点冲线采样（末端缓冲区内）
 	_build_all_meshes()
 	_build_canyon_terrain()
+
+
+var _canyon_grid := {}   # 20m 网格 → [idx, x, z, h]：山体在邻段走廊内让路钳制用
+
+func _build_canyon_grid() -> void:
+	_canyon_grid.clear()
+	const CELL := 20.0
+	for i in n:
+		var key := Vector2i(int(floor(pts[i].x / CELL)), int(floor(pts[i].y / CELL)))
+		if not _canyon_grid.has(key):
+			_canyon_grid[key] = []
+		_canyon_grid[key].append([i, pts[i].x, pts[i].y, heights[i]])
+
+
+## 山体/装饰在「其他段赛道」走廊内的让路钳制：S 弯与发卡的相邻路段相距
+## 不足一条山体条带（260m）时，A 段的大山会整个压在 B 段路面上挡死视野。
+## 距任一非本段采样 <26m 的地形，一律压到那条路的路面以下 2m，
+## 在山体上切出与路面等高的垭口。自身段豁免 ±16 采样（≈±32m 弧长，
+## 弧长超过它的采样空间距离必然 >26m，不会误伤本段路肩）。
+## 26~56m 为平滑过渡带（越靠近走廊压得越狠），避免钳制边界出现新断崖。
+## own_d = 距自身路段的侧向距离：≤14m 是本段路肩/坡脚，豁免钳制 ——
+## 否则相邻腿的走廊地板会切进本段路肩，最近腿翻转时地面高度来回跳变
+func _terrain_pass_clear(x: float, z: float, y: float, own: int, own_d: float) -> float:
+	if own_d <= 14.0:
+		return y
+	const CELL := 20.0
+	const CLEAR := 26.0
+	const RAMP := 30.0
+	const OWN_WIN := 16
+	var cx := int(floor(x / CELL))
+	var cz := int(floor(z / CELL))
+	var best_d := INF
+	var best_road := 0.0
+	for gx in range(cx - 2, cx + 3):
+		for gz in range(cz - 2, cz + 3):
+			var arr: Array = _canyon_grid.get(Vector2i(gx, gz), [])
+			for s in arr:
+				if absi(int(s[0]) - own) <= OWN_WIN:
+					continue
+				var dd: float = sqrt((s[1] - x) * (s[1] - x) + (s[2] - z) * (s[2] - z))
+				if dd < best_d:
+					best_d = dd
+					best_road = float(s[3])
+	if best_d >= CLEAR + RAMP:
+		return y
+	var floor_y := best_road - 2.0
+	if best_d < CLEAR:
+		return minf(y, floor_y)
+	var t := clampf(1.0 - (best_d - CLEAR) / RAMP, 0.0, 1.0)
+	return lerpf(y, minf(y, floor_y), t)
 
 
 func _build_spatial_grid() -> void:
@@ -213,7 +273,9 @@ func canyon_side_height(h: float, d: float, phase: float) -> float:
 	if d <= 8.0:
 		return h + 0.05   # 路肩
 	if d <= 60.0:
-		return lerpf(h * 0.96, h * 0.35, (d - 8.0) / 52.0)
+		# 从路肩实际高度（h+0.05）连续下切 —— 旧版从 h*0.96 起跳，
+		# d=8 处有 4%·h 的垂直断崖，车冲出路肩瞬间掉落弹跳
+		return lerpf(h + 0.05, h * 0.35, (d - 8.0) / 52.0)
 	if d <= 130.0:
 		return lerpf(h * 0.35, maxf(h * 0.06, 0.0), (d - 60.0) / 70.0)
 	# 谷底之外：对面大山（路高 + 60~115m 的山壁高原）
@@ -222,33 +284,46 @@ func canyon_side_height(h: float, d: float, phase: float) -> float:
 			+ 2.0 * sin(d * 0.05 + phase)
 
 
-## 赛道侧向 d 米处的地形高度（秋名山樱花树/装饰落位用）
+## 赛道侧向 d 米处的地形高度（秋名山樱花树/装饰落位用）——
+## 同样应用邻段走廊让路钳制，树不会浮在被切开的山体上
 func side_height(i: int, d: float) -> float:
 	var l := left_v[i]
-	return canyon_side_height(heights[i], absf(d), float(i) * 0.05)
+	var x := pts[i].x + l.x * d
+	var z := pts[i].y + l.y * d
+	var y := canyon_side_height(heights[i], absf(d), float(i) * 0.05)
+	if _canyon_grid.is_empty():
+		_build_canyon_grid()
+	return _terrain_pass_clear(x, z, y, i, absf(d))
 
 
-func query(x: float, z: float, hint) -> Dictionary:
+func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 	var bi := 0
 	var bd := INF
+	# 高度迟滞代价：秋名山发卡/回头弯的两条腿在搜索窗内并存时，
+	# 纯距离最近会在两腿间翻转 —— 两腿高差十几米，地面高度瞬移把车弹飞。
+	# 样本高差 1m 罚 4m 距离，本腿样本恒赢（与 freeroam.query 同思路）
 	if hint == null:
 		for i in n:
 			var dx := pts[i].x - x
 			var dz := pts[i].y - z
-			var d := dx * dx + dz * dz
-			if d < bd:
-				bd = d
+			var d2 := dx * dx + dz * dz
+			var dyh := heights[i] - vy
+			var cost := d2 + dyh * dyh * 16.0 if vy > -1.0e8 else d2
+			if cost < bd:
+				bd = cost
 				bi = i
 	else:
 		var win := 46
 		var h: int = hint
 		for o in range(-win, win + 1):
-			var i := posmod(h + o, n)
+			var i := posmod(h + o, n) if closed else clampi(h + o, 0, n - 1)
 			var dx := pts[i].x - x
 			var dz := pts[i].y - z
-			var d := dx * dx + dz * dz
-			if d < bd:
-				bd = d
+			var d2 := dx * dx + dz * dz
+			var dyh := heights[i] - vy
+			var cost := d2 + dyh * dyh * 16.0 if vy > -1.0e8 else d2
+			if cost < bd:
+				bd = cost
 				bi = i
 	var p := pts[bi]
 	var l := left_v[bi]
@@ -263,12 +338,16 @@ func query(x: float, z: float, hint) -> Dictionary:
 	_scratch["height"] = heights[bi]
 	_scratch["slope"] = slope[bi]
 	_scratch["wall"] = wall_lat
-	# 秋名山峡谷：路外地面接峡谷剖面 —— 冲出护栏滚落山坡、被对面大山挡住
+	# 秋名山峡谷：路外地面接峡谷剖面 —— 冲出护栏滚落山坡、被对面大山挡住。
+	# 剖面同样应用邻段走廊让路钳制，物理地面与视觉山体保持一致
 	if theme == "akina" and al > half_w - 0.35:
 		var side := signf(lat) if lat != 0.0 else 1.0
 		var d := absf(lat) - half_w
 		var ph := float(bi) * 0.05
-		_scratch["height"] = canyon_side_height(heights[bi], maxf(d, 0.0), ph)
+		if _canyon_grid.is_empty():
+			_build_canyon_grid()
+		_scratch["height"] = _terrain_pass_clear(x, z,
+				canyon_side_height(heights[bi], maxf(d, 0.0), ph), bi, maxf(d, 0.0))
 		var ddz := 0.4   # 侧向坡度（数值近似）
 		_scratch["slope"] = -ddz * 0.5 * signf(slope[bi] if slope[bi] != 0.0 else 1.0)
 	return _scratch
@@ -582,15 +661,18 @@ func set_lamp_stage(stage: int) -> void:
 
 ## 看台
 ## 秋名山峡谷山体：沿赛道两侧生成「路肩→山坡→谷底→大山」顶点色条带，
-## 与 query 的峡谷剖面同源 —— 赛道被两座大山夹在中间，不再悬空
+## 与 query 的峡谷剖面同源 —— 赛道被两座大山夹在中间，不再悬空。
+## 邻段走廊内自动让路下切（_terrain_pass_clear），S 弯不互相盖路
 func _build_canyon_terrain() -> void:
 	if theme != "akina":
 		return
+	_build_canyon_grid()
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var rng := RRUtil.Mulberry.new(20260904)
 	var profile := [8.0, 20.0, 40.0, 80.0, 130.0, 190.0, 260.0]
 	var step := 4
+	var clamped := 0
 	var side_rows := {"m1": [], "p1": []}   # 左/右两侧各自独立的截面行
 	for i in range(0, n + step, step):
 		var ii: int = clampi(i, 0, n - 1) if not closed else (i % n)
@@ -601,9 +683,13 @@ func _build_canyon_terrain() -> void:
 			var side := -1.0 if sk == "m1" else 1.0
 			var row: Array = []   # 采样点 [{p: Vector3, c: Color} × 段数]
 			for prof in profile:
-				var y: float = canyon_side_height(h, prof, phase)
 				var x: float = pts[ii].x + li.x * prof * side
 				var z: float = pts[ii].y + li.y * prof * side
+				var y: float = canyon_side_height(h, prof, phase)
+				var yc: float = _terrain_pass_clear(x, z, y, ii, prof)
+				if yc < y - 0.5:
+					clamped += 1
+				y = yc
 				var nz: float = (rng.next() - 0.5) * 0.10
 				var c: Color
 				if prof <= 8.0:
@@ -650,6 +736,8 @@ func _build_canyon_terrain() -> void:
 	terrain_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mi.material_override = terrain_mat
 	add_child(mi)
+	print("[akina] 峡谷山体 %d 顶点，邻段走廊让路钳制 %d 处" % [
+			side_rows["m1"].size() * side_rows["m1"][0].size() * 2, clamped])
 
 
 func _build_stands() -> void:
