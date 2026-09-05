@@ -45,6 +45,8 @@ var heli_spot: SpotLight3D
 var heli_tracer: MeshInstance3D
 var heli_angle := 0.0
 var heli_fire_t := 0.0
+var heli_q_t := 0.0
+var heli_ground := 0.0
 var _wanted_t := 0.0
 var _esc_t := 0.0
 var _bust_t := 0.0
@@ -339,9 +341,9 @@ func _build_heli() -> void:
 		heli_rotor.add_child(bmi)
 	# 探照灯（锥形光束打向玩家）
 	heli_spot = SpotLight3D.new()
-	heli_spot.spot_range = 90.0
+	heli_spot.spot_range = 55.0
 	heli_spot.spot_angle = 16.0
-	heli_spot.light_energy = 6.0
+	heli_spot.light_energy = 4.0
 	heli_spot.light_color = Color(1.0, 0.97, 0.85)
 	heli_spot.shadow_enabled = false
 	heli_vis.add_child(heli_spot)
@@ -367,9 +369,13 @@ func _update_heli(dt: float) -> void:
 	var radius := 26.0 + 7.0 * sin(_t * 0.3)
 	var px := player_pos.x + sin(heli_angle) * radius
 	var pz := player_pos.z + cos(heli_angle) * radius
-	var q: Dictionary = fm.query(px, pz, null, player_pos.y)
-	var ground: float = maxf(q["height"], player_pos.y)
-	heli_vis.position = Vector3(px, maxf(ground + 26.0, player_pos.y + 24.0), pz)
+	# 地面高度查询限频 0.4s（query 带空 hint 是全量扫描，每帧跑会拖垮帧率）
+	heli_q_t += dt
+	if heli_q_t > 0.4:
+		heli_q_t = 0.0
+		var q: Dictionary = fm.query(px, pz, null, player_pos.y)
+		heli_ground = maxf(float(q["height"]), player_pos.y)
+	heli_vis.position = Vector3(px, maxf(heli_ground + 26.0, player_pos.y + 24.0), pz)
 	# 机头沿盘旋切线方向
 	heli_vis.rotation.y = heli_angle + PI * 0.5
 	heli_rotor.rotation.y += 42.0 * dt
@@ -420,11 +426,14 @@ func _clear_wanted() -> void:
 	heli_active = false
 	heli_dist = 999.0
 	min_police_dist = 999.0
-	heli_tracer.visible = false
+	if heli_tracer != null:
+		heli_tracer.visible = false
 	for u in police:
-		u["vis"].queue_free()
+		if u["vis"] != null and is_instance_valid(u["vis"]):
+			u["vis"].queue_free()
 	police.clear()
-	heli_vis.queue_free()
+	if heli_vis != null and is_instance_valid(heli_vis):
+		heli_vis.queue_free()
 
 
 # ================= 每帧更新 =================
@@ -454,10 +463,14 @@ func _update_car(car: Dictionary, dt: float, i: int) -> void:
 			car["idx"] = posmod(car["idx"], float(pts.size() - 1))
 		else:
 			_respawn_car_near_player(car)
+	var cpos: Vector3 = car["pos"]
+	# LOD：250m 外只推进弧长不写变换（保持原姿态，远处看不出）
+	if Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z).length_squared() \
+			> 250.0 * 250.0:
+		return
 	_place_car(car, i)
 	# 与玩家实体碰撞：互推 + 被撞靠边停 3 秒
 	if solid:
-		var cpos: Vector3 = car["pos"]
 		var d := Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z)
 		var dist := d.length()
 		if dist < 2.3 and dist > 0.01:
@@ -503,6 +516,17 @@ func _update_peds(dt: float) -> void:
 		else:
 			dodge = move_toward(dodge, 0.0, dt * 2.0)
 		ped["dodge"] = dodge
+		# 撞到行人判定（廉价距离门合并进同一轮）
+		var hit: bool = player_speed > 4.0 and ped["knock_t"] <= 0.0 \
+				and base.distance_to(player_pos) < 1.5
+		if hit:
+			ped["knock_t"] = 2.5
+			ped_hit.emit()
+			trigger_wanted()
+		# LOD：150m 内才写 6 个部件变换（远处保持姿态，肉眼不可辨）
+		if to_p.length_squared() > 110.0 * 110.0:
+			i += 1
+			continue
 		var dir_f: float = ped["dir"]
 		var walk_dir := axis * dir_f
 		var yaw := atan2(walk_dir.x, walk_dir.y)
@@ -535,18 +559,6 @@ func _update_peds(dt: float) -> void:
 		mm_l.set_instance_transform(i * 2, root * hip_l * leg_off)
 		mm_l.set_instance_transform(i * 2 + 1, root * hip_r * leg_off)
 		i += 1
-	# 撞到行人判定
-	if player_speed > 4.0:
-		for ped in peds:
-			if ped["knock_t"] > 0.0:
-				continue
-			var axis2: Vector2 = ped["axis"]
-			var base2: Vector3 = ped["origin"] + Vector3(axis2.x, 0, axis2.y) * float(ped["off"])
-			if base2.distance_to(player_pos) < 1.5:
-				ped["knock_t"] = 2.5
-				ped_hit.emit()
-				trigger_wanted()
-				break
 
 
 func tilt_sway(t: float, phase: float) -> float:

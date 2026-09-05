@@ -126,10 +126,12 @@ func _process(dt: float) -> void:
 	if wanted_on:
 		_wanted_blink_t += dt
 		wanted_label.modulate.a = 0.55 + 0.45 * absf(sin(_wanted_blink_t * 6.0))
+		var pct := int(wanted_progress * 10.0) * 10   # 10% 一档，避免每帧重排文字
 		var txt := "通缉中 · 甩开警察！（距离 180m 以上持续 6 秒）"
-		if wanted_progress > 0.02:
-			txt += "  摆脱中 %d%%" % roundi(wanted_progress * 100.0)
-		wanted_label.text = txt
+		if pct > 0:
+			txt += "  摆脱中 %d%%" % pct
+		if txt != wanted_label.text:
+			wanted_label.text = txt
 
 
 ## 通缉指示（npc_traffic 驱动）
