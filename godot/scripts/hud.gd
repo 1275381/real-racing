@@ -321,6 +321,7 @@ class TachWidget:
 	var drifting := false
 	var speed_ratio := 0.0          # 全程速度进程（0..1），驱动档位进程指针
 	var lap_text := "--:--.--"      # 右侧功能数字：本圈时间 / 漫游行驶时长
+	var lap_label := "本圈"
 
 	func _draw() -> void:
 		var font := RRFont.get_font()
@@ -360,7 +361,7 @@ class TachWidget:
 		# ---- 右侧功能数字：本圈时间 ----
 		draw_string(font, Vector2(w - 170, h * 0.4), lap_text,
 				HORIZONTAL_ALIGNMENT_CENTER, 144, 21, Color(0.9, 0.93, 0.97))
-		draw_string(font, Vector2(w - 170, h * 0.4 + 18), "本圈",
+		draw_string(font, Vector2(w - 170, h * 0.4 + 18), lap_label,
 				HORIZONTAL_ALIGNMENT_CENTER, 144, 11, Color(0.6, 0.66, 0.72))
 		if drifting:
 			draw_string(font, Vector2(w - 170, h * 0.4 + 40), "DRIFT",
@@ -368,13 +369,14 @@ class TachWidget:
 
 
 func draw_tach(speed: float, gear_label: String, rpm_norm: float, drifting: bool,
-		speed_ratio: float, lap_text: String) -> void:
+		speed_ratio: float, lap_text: String, lap_label := "本圈") -> void:
 	_tach.speed_kmh = speed
 	_tach.gear_label = gear_label
 	_tach.rpm = rpm_norm
 	_tach.drifting = drifting
 	_tach.speed_ratio = speed_ratio
 	_tach.lap_text = lap_text
+	_tach.lap_label = lap_label
 	_tach.queue_redraw()
 
 
@@ -562,7 +564,7 @@ func _build_garage() -> void:
 	box.add_child(btn_editor)
 
 	var hint := Label.new()
-	hint.text = "W/↑ 油门 · S/↓ 刹车 · A D/← → 转向 · 空格 手刹漂移\nC 切换镜头 · R 回到赛道 · P/Esc 暂停 · M 静音"
+	hint.text = "W/↑ 油门 · S/↓ 刹车 · A D/← → 转向 · 空格 手刹漂移\nC 切换镜头 · R 回到赛道 · P/Esc 暂停 · M 静音\n车库菜单按 W/↑ 直接出发：出生在卷帘门车库，踩油门顶门驶出"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", Color(0.55, 0.6, 0.66))
@@ -648,6 +650,15 @@ func update_car_label(car_name: String, car_dsc: String) -> void:
 	car_desc_label.text = car_dsc
 
 
+## 单圈制赛道：圈数选择禁用并显示固定圈数
+func set_laps_locked(locked: bool, laps: int) -> void:
+	laps_sel.disabled = locked
+	if locked:
+		laps_sel.clear()
+		laps_sel.add_item("%d 圈（单圈制）" % laps, laps)
+		laps_sel.select(0)
+
+
 func update_track_desc(text: String) -> void:
 	track_desc.text = text
 
@@ -663,7 +674,7 @@ func _build_roam_hud() -> void:
 	_screens["roam"] = screen
 
 	var hint := Label.new()
-	hint.text = "自由漫游 · 不比赛 · 想去哪就去哪"
+	hint.text = "自由漫游 · 出生卷帘门车库 · 踩油门顶门驶出"
 	hint.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.grow_horizontal = Control.GROW_DIRECTION_BOTH

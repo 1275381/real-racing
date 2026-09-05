@@ -151,6 +151,29 @@ static func building() -> ImageTexture:
 	for yy in rows:
 		img.fill_rect(Rect2i(0, yy * rh + rh - 4, S, 4), Color(40 / 255.0, 44 / 255.0, 50 / 255.0, 0.5))
 	return _tex("building", img)
+
+
+## 卷帘门：横向金属板条 + 板间凹槽阴影 + 轻微磨损噪点
+static func roll_door() -> ImageTexture:
+	if _cache.has("rolldoor"):
+		return _cache["rolldoor"]
+	var W := 256
+	var H := 256
+	var img := _img(W, H)
+	img.fill(Color("#a7abb0"))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 37
+	for i in 2600:
+		var v := rng.randf() * 0.09
+		img.set_pixel(int(rng.randf() * W) % W, int(rng.randf() * H) % H,
+				Color(v + 0.62, v + 0.64, v + 0.67, 0.5))
+	var slat := 26
+	for y0 in range(0, H, slat):
+		img.fill_rect(Rect2i(0, y0, W, 2), Color(0.40, 0.42, 0.45, 1.0))       # 凹槽
+		img.fill_rect(Rect2i(0, y0 + 2, W, 2), Color(0.80, 0.82, 0.85, 1.0))   # 板条受光
+	return _tex("rolldoor", img)
+
+
 ## 路口铺装：与 asphalt() 完全相同的底噪 + 车辙，只是不画任何车道线 ——
 ## 真实路口中间是不画线的。底色必须一致，否则路口会明显比路面暗一块。
 static func asphalt_plain() -> ImageTexture:

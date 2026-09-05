@@ -437,7 +437,13 @@ func _update_garage_labels() -> void:
 	var desc: String = car["desc"] + (" · 组别：%s" % cls["name"] if not cls.is_empty() else "")
 	hud.update_car_label(car["name"], desc)
 	var def: Dictionary = TrackData.get_tracks()[track_idx]
-	hud.update_track_desc(def["name"] + " · " + def["desc"])
+	var tdesc: String = def["name"] + " · " + def["desc"]
+	if def.has("fixed_laps"):
+		tdesc += " · 单圈制"
+		hud.set_laps_locked(true, def["fixed_laps"])
+	else:
+		hud.set_laps_locked(false, total_laps)
+	hud.update_track_desc(tdesc)
 	_apply_engine_profile()
 
 
@@ -504,6 +510,7 @@ func enter_roam() -> void:
 		spawn = {"pos": Vector3(parts[0].to_float(), 20.0, parts[1].to_float()),
 				"heading": parts[2].to_float()}
 	player.veh.place_at({"pos": spawn["pos"], "heading": spawn["heading"], "idx": null})
+	freeroam.reset_garage()   # 卷帘门落回：出生在车库内，踩油门顶门出发
 	_in_steer = 0.0
 	_cam_init = false
 	_intro_t = INTRO_DUR
@@ -533,6 +540,7 @@ func exit_roam() -> void:
 
 
 func start_race() -> void:
+	total_laps = TrackData.get_tracks()[track_idx].get("fixed_laps", total_laps)
 	var skills: Array = TrackData.DIFF_PRESETS[difficulty]["skills"]
 	# 技能分配：最快的排杆位，玩家末位发车
 	var slots := [[1, 0], [2, 1], [3, 2], [0, 3]]   # [carIdx, gridSlot]
@@ -743,6 +751,7 @@ func _process(dt_real: float) -> void:
 	env.update_clouds(dt)
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
+		freeroam.resolve_obstacles(player.veh)   # 楼房/桥墩碰撞（路边无空气墙）
 
 	# 音效参数
 	var pv := player.veh
@@ -800,6 +809,8 @@ func _handle_hotkeys() -> void:
 			toggle_pause()
 	if Input.is_action_just_pressed("rr_start") and state == ST.GARAGE:
 		start_from_garage()
+	if Input.is_action_just_pressed("rr_throttle") and state == ST.GARAGE:
+		enter_roam()   # 车库里按 W/↑：直接从卷帘门车库出发漫游
 	if Input.is_action_just_pressed("rr_dual"):
 		_toggle_dual_mode()
 
@@ -853,6 +864,7 @@ func _step_sim(h: float) -> void:
 		pin.input_steer = inp_r["steer"]
 		pin.input_handbrake = inp_r["handbrake"]
 		freeroam.vehicle_y = pin.pos.y
+		freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
 		pin.step(h)
 		_roam_bound(pin)
 		sim_time += h
@@ -1256,12 +1268,14 @@ func _update_hud(dt: float) -> void:
 	# 仪表盘：档位进程比例 + 功能数字（比赛=本圈时间，漫游=行驶时长）
 	var ratio := clampf(absf(pv.vf) / pv.top_speed, 0.0, 1.0)
 	var lap_text := "--:--.--"
+	var lap_label := "本圈"
 	if state == ST.RACING or state == ST.FINISHED:
 		lap_text = RRUtil.format_time(sim_time * 1000.0 - player.lap_stamp)
 	elif state == ST.ROAM:
 		lap_text = RRUtil.format_time(sim_time * 1000.0)
+		lap_label = "行驶"
 	hud.draw_tach(pv.speed_kmh, gear_label, maxf(0.04, pv.rpm_norm), pv.drifting,
-			ratio, lap_text)
+			ratio, lap_text, lap_label)
 
 	if state == ST.ROAM:
 		# 漫游：只有转速表 + 整图小地图 + 车辆位置点

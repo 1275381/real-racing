@@ -116,11 +116,27 @@ var n := 0                 # 采样总数（vehicle 进度计算用）
 var ds := SAMPLE_DS
 var start_idx := 0
 var wall_lat := 9.0
+var soft_walls_enabled := false   # 自由漫游：路边软墙关闭（越野自由）
+var closed := true                # 漫游路网视为闭环（vehicle 开线判定用不到，占位兼容）
+var _obst_hit := 0.0              # 本帧障碍撞击强度（供音效/震屏消费）
 var minimap_tex: ImageTexture
 var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 
+# —— 卷帘门车库（漫游出生点）：x=180 街东侧街区，西门洞正对街道 ——
+const GAR_C := Vector2(198.5, -540.0)   # 车库中心
+const GAR_W := 16.0
+const GAR_D := 14.0
+const GAR_H := 5.5
+const GAR_DOOR_H := 4.6                 # 门洞净高
+const GAR_DOOR_HW := 4.0                # 门洞半宽（z 向 8m 通畅）
+var _door_panel: MeshInstance3D         # 卷帘门板（升起 = 底边收进门楣）
+var _door_base_y := 0.0
+var _door_open := 0.0                   # 0=落下 1=全开
+var _door_piece := {}                   # 门体碰撞块（关门时才在 obstacles_box 里）
+
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
+var obstacles_box := []    # 楼房碰撞体 [{c: Vector2, hx, hz, rot}]（含旋转的 OBB）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
 var _fade_shader: Shader
 var _fade_mats: Array = []   # 需要每帧写入相机/车位的遮挡淡出材质
@@ -172,6 +188,7 @@ func build() -> void:
 	print("[map] 路口 %dms" % [Time.get_ticks_msec() - t0])
 	_place_buildings()
 	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - t0])
+	_make_garage()
 	_build_minimap()
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
@@ -438,9 +455,11 @@ func _make_outskirts_roads() -> void:
 			[0.03], false, 6.0, false)
 
 
-## 出生点：x=180 的南北向街道，朝 +Z（北）
+## 出生点：卷帘门车库内（x=180 街东侧），车头朝西正对门洞——
+## 菜单按 W/↑ 或点「自由漫游」进来后，踩油门顶开卷帘门即出发
 func get_spawn() -> Dictionary:
-	return {"pos": Vector3(180.0, _street_h(6, false), -540.0), "heading": 0.0}
+	return {"pos": Vector3(GAR_C.x, _street_h(6, false), GAR_C.y),
+			"heading": -PI * 0.5}
 
 
 ## 复位到最近道路中心
@@ -626,6 +645,8 @@ func query(x: float, z: float, hint) -> Dictionary:
 	_scratch["ang"] = road.ang[best_i]
 	_scratch["height"] = p.y
 	_scratch["slope"] = road.slope[best_i]
+	if not soft_walls_enabled:
+		wall = 100000.0   # 自由漫游：路边无空气墙
 	_scratch["wall"] = wall
 	_scratch["surf"] = "grass" if al > road.half_w + 1.2 \
 			else ("curb" if al > road.half_w else "road")
@@ -648,6 +669,86 @@ func is_clear_of_roads(x: float, z: float, clearance: float) -> bool:
 					if dx * dx + dz * dz < clearance * clearance:
 						return false
 	return true
+
+
+## 自由漫游障碍碰撞：车辆圆 vs 楼房 OBB / 高架桥墩圆柱。
+## 推出障碍并按法向速度反弹（撞强置 hit_impulse 驱动音效/震屏）
+func resolve_obstacles(v: Vehicle) -> void:
+	_obst_hit = 0.0   # 每帧重置：hit_impulse 只反映「本帧」的新撞击
+	var r := 1.5
+	# 楼房 OBB（粗过滤：中心距 < 楼对角 + 车半径）
+	for ob in obstacles_box:
+		var dx: float = v.pos.x - ob["c"].x
+		var dz: float = v.pos.z - ob["c"].y
+		if dx * dx + dz * dz > 90.0 * 90.0:
+			continue
+		var ca: float = cos(ob["rot"])
+		var sa: float = sin(ob["rot"])
+		var lx: float = ca * dx + sa * dz
+		var lz: float = -sa * dx + ca * dz
+		var cx := clampf(lx, -ob["hx"], ob["hx"])
+		var cz := clampf(lz, -ob["hz"], ob["hz"])
+		var ddx := lx - cx
+		var ddz := lz - cz
+		var d2 := ddx * ddx + ddz * ddz
+		if d2 > r * r:
+			continue
+		var d := sqrt(d2)
+		var n_lx: float
+		var n_lz: float
+		if d > 0.001:
+			n_lx = ddx / d
+			n_lz = ddz / d
+		else:   # 车心在楼内：沿最浅轴推出
+			var px: float = ob["hx"] - absf(lx)
+			var pz: float = ob["hz"] - absf(lz)
+			if px < pz:
+				n_lx = signf(lx) if lx != 0.0 else 1.0
+				n_lz = 0.0
+			else:
+				n_lx = 0.0
+				n_lz = signf(lz) if lz != 0.0 else 1.0
+			d = maxf(d, 0.01)
+		var wx: float = ca * n_lx - sa * n_lz
+		var wz: float = sa * n_lx + ca * n_lz
+		var push: float = r - d
+		v.pos.x += wx * push
+		v.pos.z += wz * push
+		_obstacle_bounce(v, wx, wz)
+	# 高架桥墩（pillar_pts 已含门式墩双柱）
+	for pp in pillar_pts:
+		var dx: float = v.pos.x - pp.x
+		var dz: float = v.pos.z - pp.z
+		var rr: float = 1.5 + r
+		var d2 := dx * dx + dz * dz
+		if d2 > rr * rr or d2 < 1e-6:
+			continue
+		var d := sqrt(d2)
+		var nx := dx / d
+		var nz := dz / d
+		var push := rr - d
+		v.pos.x += nx * push
+		v.pos.z += nz * push
+		_obstacle_bounce(v, nx, nz)
+	v.hit_impulse = maxf(v.hit_impulse, _obst_hit)
+
+
+func _obstacle_bounce(v: Vehicle, nx: float, nz: float) -> void:
+	var s := sin(v.heading)
+	var c := cos(v.heading)
+	var vx: float = s * v.vf + c * v.vl
+	var vz: float = c * v.vf - s * v.vl
+	var vn := vx * nx + vz * nz
+	if vn >= 0.0:
+		return
+	vx -= nx * vn * 0.3   # 30% 回弹：撞一下弹开，不反复撞击
+	vz -= nz * vn * 0.3
+	v.vf = vx * s + vz * c
+	v.vl = vx * c - vz * s
+	# 只有明显的撞击（法向 closing > 2m/s）才记为撞墙反馈，
+	# 顶住/轻蹭不触发音效震屏 —— 否则贴着障碍会持续震动不停
+	if absf(vn) > 2.0:
+		_obst_hit = maxf(_obst_hit, minf(absf(vn) / 13.0, 1.0))
 
 
 func update_signals(t: float) -> void:
@@ -2027,6 +2128,9 @@ func _place_buildings() -> void:
 	var buildable := func(cx: float, cz: float, hw: float, hd: float) -> bool:
 		if absf(cx) < 150.0 and absf(cz) < 150.0:
 			return false                       # 中心广场留空
+		if absf(cx - GAR_C.x) < GAR_W * 0.5 + hw + 1.0 \
+				and absf(cz - GAR_C.y) < GAR_D * 0.5 + hd + 1.0:
+			return false                       # 卷帘门车库保留地
 		# 楼脚不能越过人行道外缘（街半宽 8 + 人行道 2.2）。
 		# 沿街排本身就退到 13m，只有城郊散点会撞上这条 —— 原来它只用
 		# absf(sx) < 905 挡外圈街道，而街道人行道外缘在 910.2m，楼直接骑上去
@@ -2057,6 +2161,8 @@ func _place_buildings() -> void:
 	var put := func(cx: float, cz: float, w: float, dep: float, h: float) -> void:
 		if not buildable.call(cx, cz, w * 0.5, dep * 0.5):
 			return
+		# 楼房碰撞体（轴对齐 OBB，供漫游车辆撞墙反馈）
+		obstacles_box.append({"c": Vector2(cx, cz), "hx": w * 0.5, "hz": dep * 0.5, "rot": 0.0})
 		var tint: Color = palette[mini(int(rng.next() * palette.size()), palette.size() - 1)]
 		var j := rng.range(-0.05, 0.05)
 		tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
@@ -2211,6 +2317,115 @@ func _place_buildings() -> void:
 	ammi.multimesh = amm
 	ammi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ammi)
+
+
+## 卷帘门车库：出生点建筑，西门洞（8m 宽 × 4.6m 高）正对 x=180 街。
+## 墙体碰撞按门洞分块（障碍碰撞是 2D 推出，门楣/屋顶不给碰撞）；
+## 卷帘门贴图 + 升起动画，门体碰撞随门落下/升起挂摘。
+func _make_garage() -> void:
+	var y := STREET_Y
+	var cx := GAR_C.x
+	var cz := GAR_C.y
+	# ---- 楼体（复用建筑 shader，随遮挡走廊一起淡出）----
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var tint := Color(0.80, 0.81, 0.83, 0.5)   # a<0.25 走素面，a≈0.5 走墙砖纹理
+	var wall_h := GAR_H
+	var put_box := func(px: float, pz: float, sx: float, sy: float, sz: float,
+			col: Color, base_y: float = -1.0) -> void:
+		var by := y if base_y < 0.0 else base_y   # 盒底标高（默认贴地）
+		xfs.append(Transform3D(Basis.from_scale(Vector3(sx, sy, sz)),
+				Vector3(px, by + sy * 0.5, pz)))
+		cols.append(col)
+	# 北墙 / 南墙（z=±(GAR_D/2-0.3)）
+	put_box.call(cx, cz - GAR_D * 0.5 + 0.3, GAR_W, wall_h, 0.6, tint)
+	put_box.call(cx, cz + GAR_D * 0.5 - 0.3, GAR_W, wall_h, 0.6, tint)
+	# 东墙（封死）
+	put_box.call(cx + GAR_W * 0.5 - 0.3, cz, 0.6, wall_h, GAR_D - 1.2, tint)
+	# 西墙门洞两侧余段（门洞 z ∈ [cz-4, cz+4]）
+	put_box.call(cx - GAR_W * 0.5 + 0.3, cz - GAR_DOOR_HW - 1.35, 0.6, wall_h, 2.7, tint)
+	put_box.call(cx - GAR_W * 0.5 + 0.3, cz + GAR_DOOR_HW + 1.35, 0.6, wall_h, 2.7, tint)
+	# 门楣（门洞上方 0.9m）+ 平屋顶（都架在高处）
+	put_box.call(cx - GAR_W * 0.5 + 0.3, cz, 0.6, 0.9, GAR_DOOR_HW * 2.0, tint,
+			y + GAR_DOOR_H)
+	put_box.call(cx, cz, GAR_W + 0.6, 0.3, GAR_D + 0.6, Color(0.5, 0.52, 0.55, 0.0),
+			y + GAR_H - 0.3)
+	var bmesh := BoxMesh.new()
+	bmesh.size = Vector3.ONE
+	bmesh.material = _building_material()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = bmesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(mmi)
+	# ---- 墙体碰撞（分块留门洞；无高度判定，门楣/屋顶不参与）----
+	obstacles_box.append({"c": Vector2(cx, cz - GAR_D * 0.5 + 0.3),
+			"hx": GAR_W * 0.5, "hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx, cz + GAR_D * 0.5 - 0.3),
+			"hx": GAR_W * 0.5, "hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + GAR_W * 0.5 - 0.3, cz),
+			"hx": 0.3, "hz": GAR_D * 0.5 - 0.6, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - GAR_W * 0.5 + 0.3,
+			cz - GAR_DOOR_HW - 1.35), "hx": 0.3, "hz": 1.35, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - GAR_W * 0.5 + 0.3,
+			cz + GAR_DOOR_HW + 1.35), "hx": 0.3, "hz": 1.35, "rot": 0.0})
+	# ---- 卷帘门板 + 门体碰撞 ----
+	var dm := BoxMesh.new()
+	dm.size = Vector3(0.3, GAR_DOOR_H, GAR_DOOR_HW * 2.0 + 0.2)
+	var dmat := StandardMaterial3D.new()
+	dmat.albedo_texture = RRTextures.roll_door()
+	dmat.roughness = 0.55
+	dmat.metallic = 0.25
+	dm.material = dmat
+	_door_panel = MeshInstance3D.new()
+	_door_panel.mesh = dm
+	_door_base_y = y
+	_door_panel.position = Vector3(cx - GAR_W * 0.5 + 0.3, y + GAR_DOOR_H * 0.5, cz)
+	add_child(_door_panel)
+	_door_piece = {"c": Vector2(cx - GAR_W * 0.5 + 0.3, cz),
+			"hx": 0.2, "hz": GAR_DOOR_HW, "rot": 0.0}
+	obstacles_box.append(_door_piece)
+
+
+## 车库卷帘门：油门状态下 40m 内升起，或贴近门洞 6.5m（从外面回来）自动开；
+## 离开范围落回。升起 0.7s，开过一半即摘掉门体碰撞。
+func step_garage(dt: float, plr: Vector3, thr: bool) -> void:
+	if _door_panel == null:
+		return
+	var dx := plr.x - (GAR_C.x - GAR_W * 0.5 + 0.3)
+	var dz := plr.z - GAR_C.y
+	var dd := sqrt(dx * dx + dz * dz)
+	var target := 1.0 if ((thr and dd < 40.0) or dd < 6.5) else 0.0
+	if _door_open == target:
+		return
+	_door_open = move_toward(_door_open, target, dt / 0.7)
+	var h := maxf(GAR_DOOR_H * (1.0 - _door_open), 0.15)
+	_door_panel.scale.y = h / GAR_DOOR_H
+	_door_panel.position.y = _door_base_y + GAR_DOOR_H - h * 0.5
+	var blocking := _door_open < 0.55
+	var has_piece: bool = obstacles_box.has(_door_piece)
+	if blocking and not has_piece:
+		obstacles_box.append(_door_piece)
+	elif not blocking and has_piece:
+		obstacles_box.erase(_door_piece)
+
+
+## 每次进漫游把卷帘门落回原位（出生在车库内，踩油门顶门出发）
+func reset_garage() -> void:
+	if _door_panel == null:
+		return
+	_door_open = 0.0
+	_door_panel.scale.y = 1.0
+	_door_panel.position.y = _door_base_y + GAR_DOOR_H * 0.5
+	if not obstacles_box.has(_door_piece):
+		obstacles_box.append(_door_piece)
 
 
 ## 小地图贴图：整张路网俯视图（高架更亮，山海沙漠分区底色）
