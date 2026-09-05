@@ -548,6 +548,8 @@ func start_race() -> void:
 	for i in range(1, cars.size()):
 		if cars[i].ai != null:
 			cars[i].ai.skill = skills[i - 1]
+			# 轻松模式：AI 不学玩家走线，用自己的简单路线（中线 + 弯心切弯）
+			cars[i].ai.set_learned(difficulty != "easy")
 			cars[i].ai.reset()
 	for slot in slots:
 		var rec: CarRec = cars[slot[0]]

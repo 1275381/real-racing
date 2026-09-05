@@ -20,12 +20,20 @@ func _init(v: Vehicle, trk, opts: Dictionary = {}) -> void:
 	veh = v
 	track = trk
 	skill = opts.get("skill", 1.0)
-	if trk != null and trk.get("track_id") != null:
-		learned = RRLearnedLines.line_for(str(trk.get("track_id")))
-		learned_size = learned.size()
 	base_lane = opts.get("base_lane", 0.0)
 	lane_offset = base_lane
 	target_lane = base_lane
+
+
+## 按难度开关学习线：轻松模式关闭 = AI 用自己的简单走线（中线 + 弯心切弯），
+## 标准/硬核开启 = 跟随玩家走线（绕开撞墙点）。开启时按当前赛道重载，
+## 顺带修掉换赛道后学习线缓存仍指旧图的问题
+func set_learned(on: bool) -> void:
+	learned = []
+	learned_size = 0
+	if on and track != null and track.get("track_id") != null:
+		learned = RRLearnedLines.line_for(str(track.get("track_id")))
+		learned_size = learned.size()
 
 
 ## 新一局开始时清空跨局残留状态
