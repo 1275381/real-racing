@@ -182,6 +182,57 @@ const DIFF_PRESETS := {
 
 const CAM_MODES := ["追尾远", "追尾近", "车头盖"]
 
+# ============================================================
+#  配件店：金币奖励 + 配件目录
+#  stats 键约定：*_mul 乘到基础值、*_add 加到基础值、
+#  drift_hold 为漂移胎专用（滑移中的侧滑回收系数，越小甩尾越持久）
+# ============================================================
+const RACE_REWARDS := [500, 300, 200, 100]   # 名次→金币：P1/P2/P3/其他完赛
+
+const PART_SLOTS := [
+	{"id": "engine", "name": "发动机"},
+	{"id": "tires", "name": "轮胎"},
+	{"id": "drift", "name": "漂移胎", "drift_only": true},   # 仅惯性漂移车（AE86/RX-7）
+]
+
+const PART_OPTIONS := {
+	"engine": [
+		{"id": "stock", "name": "原厂引擎", "desc": "标准动力输出", "price": 0,
+			"stats": {}},
+		{"id": "sport", "name": "运动引擎", "desc": "动力 +6% · 牵引 +0.3", "price": 600,
+			"stats": {"power_mul": 1.06, "accel_add": 0.3}},
+		{"id": "race", "name": "竞技引擎", "desc": "动力 +12% · 牵引 +0.6 · 极速 +2%", "price": 1500,
+			"stats": {"power_mul": 1.12, "accel_add": 0.6, "top_mul": 1.02}},
+		{"id": "pro", "name": "职业级引擎", "desc": "动力 +20% · 牵引 +1.0 · 极速 +4% · 制动 +0.5", "price": 3000,
+			"stats": {"power_mul": 1.20, "accel_add": 1.0, "top_mul": 1.04, "brake_add": 0.5}},
+	],
+	"tires": [
+		{"id": "stock", "name": "原厂轮胎", "desc": "标准抓地", "price": 0,
+			"stats": {}},
+		{"id": "sport", "name": "运动轮胎", "desc": "抓地 +5% · 制动 +0.6", "price": 500,
+			"stats": {"grip_mul": 1.05, "brake_add": 0.6}},
+		{"id": "comp", "name": "竞赛轮胎", "desc": "抓地 +10% · 制动 +1.2", "price": 1200,
+			"stats": {"grip_mul": 1.10, "brake_add": 1.2}},
+		{"id": "slick", "name": "热熔轮胎", "desc": "抓地 +14% · 制动 +1.8 · 极速 -2%", "price": 2500,
+			"stats": {"grip_mul": 1.14, "brake_add": 1.8, "top_mul": 0.98}},
+	],
+	"drift": [
+		{"id": "none", "name": "无", "desc": "普通轮胎", "price": 0,
+			"stats": {}},
+		{"id": "drift", "name": "漂移胎", "desc": "抓地 -5% · 起漂更顺 · 甩尾更持久", "price": 1000,
+			"stats": {"grip_mul": 0.95, "drift_hold": 0.85}},
+		{"id": "drift_pro", "name": "竞技漂移胎", "desc": "抓地 -8% · 甩尾最持久", "price": 2200,
+			"stats": {"grip_mul": 0.92, "drift_hold": 0.78}},
+	],
+}
+
+
+static func part_option(slot: String, opt_id: String) -> Dictionary:
+	for o in PART_OPTIONS[slot]:
+		if o["id"] == opt_id:
+			return o
+	return PART_OPTIONS[slot][0]
+
 
 static func model_by_id(id: String) -> Dictionary:
 	for m in CAR_MODELS:

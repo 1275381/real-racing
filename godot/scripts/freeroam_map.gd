@@ -125,6 +125,13 @@ var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 # —— 卷帘门车库（漫游出生点）：x=180 街东侧、z=-540 街北侧的沿街地块，
 # 西门洞正对 x=180 街；楼体不压任何路面（南缘距 z=-540 街中心 13m）——
 const GAR_C := Vector2(198.5, -520.0)   # 车库中心（= 楼底层的中心）
+
+# —— 配件店（自由漫游可进入购买）：中心广场 (34,34)，西门洞/店门朝路口 ——
+const SHOP_POS := Vector2(34.0, 34.0)       # 配件店建筑中心（小地图标记用）
+const SHOP_DOOR := Vector2(21.0, 34.0)      # 店门口（进入判定点）
+const SHOP_W := 20.0
+const SHOP_D := 14.0
+const SHOP_H := 8.0
 const GAR_W := 16.0
 const GAR_D := 14.0
 const GAR_H := 5.5
@@ -190,6 +197,7 @@ func build() -> void:
 	_place_buildings()
 	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - t0])
 	_make_garage()
+	_make_parts_shop()
 	_build_minimap()
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
@@ -2425,6 +2433,74 @@ func step_garage(dt: float, plr: Vector3, thr: bool) -> void:
 		obstacles_box.append(_door_piece)
 	elif not blocking and has_piece:
 		obstacles_box.erase(_door_piece)
+
+
+## 中心广场配件店：实体建筑（玻璃门脸 + 招牌），整栋 OBB 碰撞；
+## 距店门 14m 内可在漫游中按 Enter 进店购买（game.gd 判定）
+func _make_parts_shop() -> void:
+	var y := STREET_Y
+	var cx := SHOP_POS.x
+	var cz := SHOP_POS.y
+	# 楼体（建筑 shader，随遮挡走廊淡出）：四面墙 + 平顶
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var put_box := func(px: float, pz: float, sx: float, sy: float, sz: float,
+			col: Color, base_y: float = -1.0) -> void:
+		var by := y if base_y < 0.0 else base_y
+		xfs.append(Transform3D(Basis.from_scale(Vector3(sx, sy, sz)),
+				Vector3(px, by + sy * 0.5, pz)))
+		cols.append(col)
+	var tint := Color(0.85, 0.78, 0.62, 0.5)   # 暖黄面砖（商店感）
+	var wall_h := SHOP_H
+	put_box.call(cx, cz - SHOP_D * 0.5 + 0.3, SHOP_W, wall_h, 0.6, tint)   # 北墙
+	put_box.call(cx, cz + SHOP_D * 0.5 - 0.3, SHOP_W, wall_h, 0.6, tint)   # 南墙
+	put_box.call(cx + SHOP_W * 0.5 - 0.3, cz, 0.6, wall_h, SHOP_D - 1.2, tint)  # 东墙
+	# 西墙（店门面）：门洞 z∈[cz-3, cz+3]，两侧余段 + 门楣
+	put_box.call(cx - SHOP_W * 0.5 + 0.3, cz - 4.5, 0.6, wall_h, 3.0, tint)
+	put_box.call(cx - SHOP_W * 0.5 + 0.3, cz + 4.5, 0.6, wall_h, 3.0, tint)
+	put_box.call(cx - SHOP_W * 0.5 + 0.3, cz, 0.6, 1.4, 6.0,
+			Color(0.12, 0.15, 0.19, 0.0), y + wall_h - 1.4)
+	put_box.call(cx, cz, SHOP_W + 0.6, 0.3, SHOP_D + 0.6,
+			Color(0.5, 0.52, 0.55, 0.0), y + SHOP_H - 0.3)   # 平屋顶
+	var bmesh := BoxMesh.new()
+	bmesh.size = Vector3.ONE
+	bmesh.material = _building_material()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = bmesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(mmi)
+	# 墙体碰撞（整栋实心 + 西门凹进的门斗不留碰撞——进店靠走近按键，无需进门洞）
+	obstacles_box.append({"c": Vector2(cx, cz - SHOP_D * 0.5 + 0.3),
+			"hx": SHOP_W * 0.5, "hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx, cz + SHOP_D * 0.5 - 0.3),
+			"hx": SHOP_W * 0.5, "hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + SHOP_W * 0.5 - 0.3, cz),
+			"hx": 0.3, "hz": SHOP_D * 0.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - SHOP_W * 0.5 + 0.3, cz - 4.5),
+			"hx": 0.3, "hz": 1.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - SHOP_W * 0.5 + 0.3, cz + 4.5),
+			"hx": 0.3, "hz": 1.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - SHOP_W * 0.5 + 0.3, cz),
+			"hx": 0.3, "hz": 3.0, "rot": 0.0})   # 门洞玻璃（进门按键，不通行）
+	# 招牌
+	var sign := Label3D.new()
+	sign.text = "配 件 店"
+	sign.font_size = 460
+	sign.pixel_size = 0.01
+	sign.modulate = Color(1.0, 0.82, 0.25)
+	sign.outline_size = 48
+	sign.outline_modulate = Color(0.1, 0.1, 0.12)
+	sign.position = Vector3(cx - SHOP_W * 0.5 - 0.4, y + SHOP_H - 1.2, cz)
+	sign.rotation_degrees.y = -90.0
+	add_child(sign)
 
 
 ## 每次进漫游把卷帘门落回原位（出生在车库内，踩油门顶门出发）

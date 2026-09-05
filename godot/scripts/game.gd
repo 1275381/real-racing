@@ -122,6 +122,9 @@ func _ready() -> void:
 		var visual := CarVisual.create(model, team["color"], team["accent"])
 		add_child(visual)
 		var st: Dictionary = TrackData.model_by_id(model).get("stats", {})
+		# 玩家车吃配件加成（每车独立）；AI 恒原厂数值
+		if i == 0:
+			st = _effective_stats(model, st)
 		var veh := Vehicle.new(track, {
 			"is_player": i == 0,
 			"top_speed": st.get("top", 92.0),
@@ -132,6 +135,8 @@ func _ready() -> void:
 			"no_shift": st.get("no_shift", false),
 			"inertia_drift": TrackData.model_by_id(model).get("inertia_drift", false),
 		})
+		if i == 0:
+			veh.drift_tire = _player_drift_hold()
 		var rec := CarRec.new()
 		rec.veh = veh
 		rec.visual = visual
@@ -353,6 +358,9 @@ func _load_settings() -> void:
 		total_laps = cf.get_value("settings", "laps", 3)
 		difficulty = cf.get_value("settings", "diff", "normal")
 		_saved_track_idx = TrackData.track_index_by_id(cf.get_value("settings", "track", "circuit"))
+		coins = cf.get_value("settings", "coins", 0)
+		parts_owned = cf.get_value("parts", "owned", {})
+		parts_equipped = cf.get_value("parts", "equipped", {})
 		if cf.has_section_key("records", "best_lap"):
 			var b = cf.get_value("records", "best_lap")
 			if b != null and is_finite(float(b)) and float(b) > 0.0:
@@ -365,8 +373,103 @@ func _save_settings() -> void:
 	cf.set_value("settings", "laps", total_laps)
 	cf.set_value("settings", "diff", difficulty)
 	cf.set_value("settings", "track", TrackData.get_tracks()[track_idx]["id"])
+	cf.set_value("settings", "coins", coins)
+	cf.set_value("parts", "owned", parts_owned)
+	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
 	cf.save(SETTINGS_PATH)
+
+
+# ================= 配件店 =================
+
+var coins := 0                     # 金币：完赛按名次奖励，配件店消费
+var parts_owned := {}              # model_id → Array[已购配件 id]
+var parts_equipped := {}           # model_id → {slot: opt_id}
+var shop_open := false             # 配件店界面开着（漫游中冻结车辆）
+
+
+## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
+func _is_drift_model(model_id: String) -> bool:
+	return TrackData.model_by_id(model_id).get("inertia_drift", false)
+
+
+## 某车的装备表（缺省全原厂）
+func _equipped(model_id: String) -> Dictionary:
+	if not parts_equipped.has(model_id):
+		parts_equipped[model_id] = {}
+	return parts_equipped[model_id]
+
+
+## 某车的已购配件集合（原厂件永远视为已拥有）
+func _owned(model_id: String) -> Array:
+	if not parts_owned.has(model_id):
+		parts_owned[model_id] = []
+	return parts_owned[model_id]
+
+
+func _part_owned(model_id: String, opt_id: String) -> bool:
+	return opt_id == "stock" or opt_id == "none" or _owned(model_id).has(opt_id)
+
+
+## 基础 stats 叠加已装备配件（*_mul 乘 / *_add 加），返回可喂给 apply_stats 的字典
+func _effective_stats(model_id: String, base: Dictionary) -> Dictionary:
+	var st := base.duplicate()
+	for slot in TrackData.PART_SLOTS:
+		var sid: String = slot["id"]
+		var eq: Dictionary = _equipped(model_id)
+		if not eq.has(sid):
+			continue
+		var opt: Dictionary = TrackData.part_option(sid, eq[sid])
+		for k in opt["stats"]:
+			var val = opt["stats"][k]
+			if k.ends_with("_mul"):
+				st[k.trim_suffix("_mul")] = st.get(k.trim_suffix("_mul"), 1.0) * val
+			elif k.ends_with("_add"):
+				st[k.trim_suffix("_add")] = st.get(k.trim_suffix("_add"), 0.0) + val
+			elif k == "drift_hold":
+				pass   # 漂移胎滑移系数不经 stats，set_part 里直接写 veh.drift_tire
+	return st
+
+
+## 玩家车当前漂移胎滑移系数（未装=1.0）
+func _player_drift_hold() -> float:
+	var eq: Dictionary = _equipped(car_model_id)
+	if eq.has("drift"):
+		return TrackData.part_option("drift", eq["drift"]).get("stats", {}).get("drift_hold", 1.0)
+	return 1.0
+
+
+## 把当前配件效果热应用到玩家车（商店里买/换装立即生效）
+func _apply_player_parts() -> void:
+	var pv := player.veh
+	var m: Dictionary = TrackData.model_by_id(car_model_id)
+	var base: Dictionary = m.get("stats", {})
+	if m.has("modes"):
+		base = m["modes"][dual_mode]
+	pv.apply_stats(_effective_stats(car_model_id, base))
+	pv.drift_tire = _player_drift_hold()
+
+
+func buy_part(slot: String, opt_id: String) -> bool:
+	var opt: Dictionary = TrackData.part_option(slot, opt_id)
+	if _part_owned(car_model_id, opt_id):
+		equip_part(slot, opt_id)
+		return true
+	if coins < opt["price"]:
+		return false
+	coins -= opt["price"]
+	_owned(car_model_id).append(opt_id)
+	equip_part(slot, opt_id)
+	_save_settings()
+	return true
+
+
+func equip_part(slot: String, opt_id: String) -> void:
+	if not _part_owned(car_model_id, opt_id):
+		return
+	_equipped(car_model_id)[slot] = opt_id
+	_save_settings()
+	_apply_player_parts()
 
 
 # ================= 车库绑定 =================
@@ -392,6 +495,99 @@ func _wire_menu() -> void:
 	hud.btn_quit_results.pressed.connect(to_garage)
 	hud.btn_editor.pressed.connect(open_map_editor)
 	hud.btn_del_track.pressed.connect(_on_del_track_pressed)
+	hud.btn_shop.pressed.connect(open_shop)
+	hud.btn_carinfo.pressed.connect(open_carinfo)
+	hud.shop_equip.connect(_on_shop_equip)
+	hud.shop_back.connect(close_shop)
+
+
+# ================= 配件店 / 车辆数据 =================
+
+var shop_from_roam := false        # 从漫游实体店进入（关闭时回到漫游）
+var _near_shop := false            # 漫游中是否在配件店门口
+
+
+func open_shop() -> void:
+	if state != ST.GARAGE and state != ST.ROAM:
+		return
+	shop_from_roam = state == ST.ROAM
+	shop_open = shop_from_roam
+	_refresh_shop_ui()
+	hud.show_only("shop")
+
+
+func open_carinfo() -> void:
+	if state != ST.GARAGE:
+		return
+	hud.refresh_carinfo(_carinfo_header(), _carinfo_text())
+	hud.show_only("carinfo")
+
+
+func close_shop() -> void:
+	shop_open = false
+	hud.set_shop_hint(false)
+	hud.show_only("roam" if shop_from_roam else "garage")
+
+
+func _on_shop_equip(slot: String, opt_id: String) -> void:
+	if _part_owned(car_model_id, opt_id):
+		equip_part(slot, opt_id)
+	else:
+		var opt: Dictionary = TrackData.part_option(slot, opt_id)
+		if not buy_part(slot, opt_id):
+			hud.show_center("金币不足", "还差 %d 金币" % (opt["price"] - coins), 1500)
+			return
+	_refresh_shop_ui()
+
+
+func _refresh_shop_ui() -> void:
+	var m: Dictionary = TrackData.model_by_id(car_model_id)
+	hud.refresh_shop(m["name"], coins, _equipped(car_model_id),
+			_owned(car_model_id), _is_drift_model(car_model_id))
+
+
+func _carinfo_header() -> String:
+	return "当前车辆：%s" % TrackData.model_by_id(car_model_id)["name"]
+
+
+## 车辆数据明细：基础（原厂）→ 当前（含配件），▲配件增益 ▼配件减益
+func _carinfo_text() -> String:
+	var m: Dictionary = TrackData.model_by_id(car_model_id)
+	var base: Dictionary = m.get("stats", {})
+	if m.has("modes"):
+		base = m["modes"][dual_mode]
+	var cur: Dictionary = _effective_stats(car_model_id, base)
+	var lines := [
+		"马力    %d → %d %s" % [roundi(base.get("power", 0) * 10.0),
+			roundi(cur.get("power", 0) * 10.0), _arrow(cur.power, base.power)],
+		"极速    %d km/h → %d km/h %s" % [roundi(base.get("top", 0) * 3.6),
+			roundi(cur.get("top", 0) * 3.6), _arrow(cur.top, base.top)],
+		"牵引    %.1f → %.1f m/s² %s" % [base.get("accel", 0.0),
+			cur.get("accel", 0.0), _arrow(cur.accel, base.accel)],
+		"抓地    %d%% → %d%% %s" % [roundi(base.get("grip", 1.0) * 100.0),
+			roundi(cur.get("grip", 1.0) * 100.0), _arrow(cur.grip, base.grip)],
+		"制动    %.1f → %.1f m/s² %s" % [base.get("brake", 0.0),
+			cur.get("brake", 0.0), _arrow(cur.brake, base.brake)],
+	]
+	# 配件清单
+	var eq: Dictionary = _equipped(car_model_id)
+	var eq_lines := []
+	for slot in TrackData.PART_SLOTS:
+		var sid: String = slot["id"]
+		if _is_drift_model(car_model_id) or sid != "drift":
+			var oid: String = eq.get(sid, "stock" if sid != "drift" else "none")
+			eq_lines.append("%s：%s" % [slot["name"], TrackData.part_option(sid, oid)["name"]])
+	lines.append("")
+	lines.append_array(eq_lines)
+	return "\n".join(lines)
+
+
+func _arrow(cur: float, base: float) -> String:
+	if cur > base + 0.001:
+		return "▲"
+	if cur < base - 0.001:
+		return "▼"
+	return ""
 
 
 func _bind_track_selector() -> void:
@@ -465,7 +661,8 @@ func _toggle_dual_mode() -> void:
 		return
 	dual_mode = "accel" if dual_mode == "top" else "top"
 	var m: Dictionary = car["modes"][dual_mode]
-	player.veh.apply_stats(m)
+	player.veh.apply_stats(_effective_stats(car_model_id, m))   # 配件加成同样作用于双模
+	player.veh.drift_tire = _player_drift_hold()
 	hud.show_center("⚡ %s" % m["label"], "", 1200)
 
 
@@ -518,6 +715,7 @@ func enter_roam() -> void:
 	hud.init_roam_minimap(freeroam.minimap_tex,
 			Vector2(-FreeroamMap.MAP_LIMIT, -FreeroamMap.MAP_LIMIT),
 			Vector2(FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
+	hud.set_map_marker(FreeroamMap.SHOP_POS.x, FreeroamMap.SHOP_POS.y, "店")
 	hud.set_roam_tach()
 	hud.show_center("", "", 0)
 
@@ -662,8 +860,9 @@ func set_car_model(id: String) -> void:
 	rec.visual = CarVisual.create(id, rec.team["color"], rec.team["accent"])
 	add_child(rec.visual)
 	# 不同车型有不同 stats：重建车辆物理实例，迁移位置与行驶状态
+	# 玩家车吃自己名下配件的加成
 	var old := rec.veh
-	var st: Dictionary = TrackData.model_by_id(id).get("stats", {})
+	var st: Dictionary = _effective_stats(id, TrackData.model_by_id(id).get("stats", {}))
 	var veh := Vehicle.new(track, {
 		"is_player": true,
 		"top_speed": st.get("top", 92.0),
@@ -674,6 +873,7 @@ func set_car_model(id: String) -> void:
 		"no_shift": st.get("no_shift", false),
 		"inertia_drift": TrackData.model_by_id(id).get("inertia_drift", false),
 	})
+	veh.drift_tire = _player_drift_hold()
 	veh.pos = old.pos
 	veh.heading = old.heading
 	veh.vf = old.vf
@@ -807,12 +1007,20 @@ func _handle_hotkeys() -> void:
 		audio.set_muted(not audio.muted)
 		hud.show_center("已静音" if audio.muted else "声音开启", "", 700)
 	if Input.is_action_just_pressed("rr_pause"):
-		if state == ST.ROAM or state == ST.FINISHED:
+		if state == ST.ROAM and shop_open:
+			close_shop()   # 漫游店里 Esc/P 先关店，不直接回车库
+		elif state == ST.ROAM or state == ST.FINISHED:
 			to_garage()
 		elif state in [ST.RACING, ST.COUNTDOWN, ST.PAUSED]:
 			toggle_pause()
 	if Input.is_action_just_pressed("rr_start") and state == ST.GARAGE:
 		start_from_garage()
+	if state == ST.ROAM and not shop_open:
+		_near_shop = Vector2(player.veh.pos.x - FreeroamMap.SHOP_DOOR.x,
+				player.veh.pos.z - FreeroamMap.SHOP_DOOR.y).length() < 14.0
+		hud.set_shop_hint(_near_shop)
+		if _near_shop and Input.is_action_just_pressed("rr_start"):
+			open_shop()   # 漫游实体配件店：走近按 Enter 进店
 	if Input.is_action_just_pressed("rr_throttle") and state == ST.GARAGE:
 		enter_roam()   # 车库里按 W/↑：直接从卷帘门车库出发漫游
 	if Input.is_action_just_pressed("rr_dual"):
@@ -881,6 +1089,8 @@ func _step_sim(h: float) -> void:
 
 	# ROAM：只有玩家车，物理照常（立体物理对路网高度自动生效）
 	if s == ST.ROAM:
+		if shop_open:
+			return   # 配件店里：冻结车辆，买完继续跑
 		var inp_r := _sample_input(h)
 		var pin := player.veh
 		pin.input_throttle = inp_r["throttle"]
@@ -975,10 +1185,14 @@ func _on_player_finished() -> void:
 	state = ST.FINISHED
 	_build_results()
 	var pos_num := _player_position()
+	# 完赛金币：名次越好越多（漫游无奖励，这里只在比赛状态触发）
+	var reward: int = TrackData.RACE_REWARDS[mini(pos_num - 1, TrackData.RACE_REWARDS.size() - 1)]
+	coins += reward
+	_save_settings()
 	var text := "🏆 冠军！" if pos_num == 1 else "以第 %d 名完赛" % pos_num
 	# 延迟展示，让玩家先看到冲线
 	get_tree().create_timer(0.3).timeout.connect(
-		func(): hud.show_center(text, "", 2600))
+		func(): hud.show_center(text, "金币 +%d（现有 %d）" % [reward, coins], 2600))
 
 
 func _player_position() -> int:

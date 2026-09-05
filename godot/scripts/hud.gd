@@ -26,7 +26,20 @@ var btn_again: Button
 var btn_quit_results: Button
 var btn_editor: Button
 var btn_del_track: Button
+var btn_shop: Button
+var btn_carinfo: Button
 var results_grid: GridContainer
+
+# --- 配件店 / 车辆数据 ---
+signal shop_equip(slot: String, opt_id: String)
+signal shop_back
+var shop_car_label: Label
+var shop_coins_label: Label
+var _carinfo_car_label: Label
+var _shop_rows := {}        # "slot|opt" -> {btn: Button, note: Label}
+var _shop_slot_boxes := {}  # slot -> VBoxContainer（漂移胎分区按车型显隐）
+var info_rows: Label        # 车辆数据明细文本
+var shop_hint_label: Label  # 漫游靠近配件店提示
 
 var _root: Control
 var _screens := {}          # name -> Control
@@ -86,6 +99,8 @@ func build(colors: Array) -> void:
 	_root.add_child(_tach)
 	_build_center_labels()
 	_build_garage()
+	_build_shop()
+	_build_carinfo()
 	_build_roam_hud()
 	_build_pause()
 	_build_results()
@@ -413,6 +428,12 @@ class MinimapWidget:
 		_cars = cars
 		queue_redraw()
 
+	var marker := {}   # 固定地标 {"x","z","label"}（如自由漫游的配件店）
+
+	func set_marker(x: float, z: float, label: String) -> void:
+		marker = {"x": x, "z": z, "label": label}
+		queue_redraw()
+
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_RESIZED:
 			_transformed = PackedVector2Array()
@@ -460,6 +481,16 @@ class MinimapWidget:
 			else:
 				draw_circle(sp, 4.0, Color(0, 0, 0, 0.5))
 				draw_circle(sp, 3.4, col)
+		if not marker.is_empty():
+			var mp := _map(Vector2(marker["x"], marker["z"]))
+			var ms := 7.0
+			draw_rect(Rect2(mp - Vector2(ms, ms), Vector2(ms * 2.0, ms * 2.0)),
+					Color(0.12, 0.12, 0.14, 0.9))
+			draw_rect(Rect2(mp - Vector2(ms - 1.5, ms - 1.5), Vector2((ms - 1.5) * 2.0,
+					(ms - 1.5) * 2.0)), Color(1.0, 0.82, 0.25))
+			draw_string(ThemeDB.fallback_font, mp + Vector2(ms + 2.0, 5.0),
+					str(marker["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+					Color(1.0, 0.86, 0.4))
 
 
 func init_minimap(track: RaceTrack) -> void:
@@ -472,6 +503,11 @@ func init_roam_minimap(tex: Texture2D, wmin: Vector2, wmax: Vector2) -> void:
 
 func draw_minimap(cars: Array) -> void:
 	_minimap.set_cars(cars)
+
+
+## 漫游小地图固定地标（配件店）
+func set_map_marker(x: float, z: float, label: String) -> void:
+	_minimap.set_marker(x, z, label)
 
 
 # ================= 车库（选车 + 选比赛） =================
@@ -556,6 +592,18 @@ func _build_garage() -> void:
 	btn_roam.custom_minimum_size = Vector2(0, 40)
 	btn_roam.add_theme_font_size_override("font_size", 18)
 	box.add_child(btn_roam)
+
+	btn_shop = Button.new()
+	btn_shop.text = "配 件 店"
+	btn_shop.custom_minimum_size = Vector2(0, 40)
+	btn_shop.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_shop)
+
+	btn_carinfo = Button.new()
+	btn_carinfo.text = "车 辆 数 据"
+	btn_carinfo.custom_minimum_size = Vector2(0, 40)
+	btn_carinfo.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_carinfo)
 
 	btn_editor = Button.new()
 	btn_editor.text = "地 图 编 译 器"
@@ -645,6 +693,172 @@ func set_best_lap_menu(ms) -> void:
 		garage_best.text = "本作最快圈：暂无纪录"
 
 
+## 配件店界面：三分区（发动机/轮胎/漂移胎）选项行 + 返回
+## 状态由 game.refresh_shop(...) 驱动；选项点击发 shop_equip(slot, opt)
+func _build_shop() -> void:
+	var screen := Control.new()
+	screen.name = "shop"
+	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(screen)
+	_screens["shop"] = screen
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _panel_stylebox())
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	screen.add_child(panel)
+
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(430, 0)
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+
+	var title := Label.new()
+	title.text = "配 件 店"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	box.add_child(title)
+
+	shop_car_label = Label.new()
+	shop_car_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	shop_car_label.add_theme_font_size_override("font_size", 16)
+	shop_car_label.add_theme_color_override("font_color", Color(0.85, 0.88, 0.95))
+	box.add_child(shop_car_label)
+
+	shop_coins_label = Label.new()
+	shop_coins_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	shop_coins_label.add_theme_font_size_override("font_size", 17)
+	shop_coins_label.add_theme_color_override("font_color", Color(1.0, 0.82, 0.25))
+	box.add_child(shop_coins_label)
+
+	for slot in TrackData.PART_SLOTS:
+		var sid: String = slot["id"]
+		var sec := VBoxContainer.new()
+		sec.add_theme_constant_override("separation", 4)
+		box.add_child(sec)
+		_shop_slot_boxes[sid] = sec
+		var head := Label.new()
+		head.text = "【%s】" % slot["name"]
+		head.add_theme_font_size_override("font_size", 16)
+		head.add_theme_color_override("font_color", Color(0.98, 0.75, 0.25))
+		sec.add_child(head)
+		for opt in TrackData.PART_OPTIONS[sid]:
+			var oid: String = opt["id"]
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			sec.add_child(row)
+			var name_lab := Label.new()
+			name_lab.text = "%s · %s" % [opt["name"], opt["desc"]]
+			name_lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			name_lab.add_theme_font_size_override("font_size", 14)
+			name_lab.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+			row.add_child(name_lab)
+			var b := Button.new()
+			b.custom_minimum_size = Vector2(96, 30)
+			b.add_theme_font_size_override("font_size", 14)
+			b.pressed.connect(func(): shop_equip.emit(sid, oid))
+			row.add_child(b)
+			_shop_rows["%s|%s" % [sid, oid]] = {"btn": b, "note": name_lab}
+
+	var back := Button.new()
+	back.text = "返 回 车 库"
+	back.custom_minimum_size = Vector2(0, 42)
+	back.add_theme_font_size_override("font_size", 18)
+	back.pressed.connect(func(): shop_back.emit())
+	box.add_child(back)
+
+
+## 刷新配件店各行状态（owned/equipped/价格/余额），漂移胎分区按车型显隐
+func refresh_shop(car_name: String, coins: int, equipped: Dictionary, owned: Array,
+		is_drift_car: bool) -> void:
+	shop_car_label.text = "当前车辆：" + car_name
+	shop_coins_label.text = "金币：%d" % coins
+	for slot in TrackData.PART_SLOTS:
+		var sid: String = slot["id"]
+		var sec: VBoxContainer = _shop_slot_boxes[sid]
+		sec.visible = is_drift_car or not slot.get("drift_only", false)
+		if sec.visible:
+			continue
+	for slot in TrackData.PART_SLOTS:
+		var sid2: String = slot["id"]
+		if not (_shop_slot_boxes[sid2] as VBoxContainer).visible:
+			continue
+		var eq_id: String = equipped.get(sid2, "stock" if sid2 != "drift" else "none")
+		for opt in TrackData.PART_OPTIONS[sid2]:
+			var oid: String = opt["id"]
+			var info: Dictionary = _shop_rows["%s|%s" % [sid2, oid]]
+			var b: Button = info["btn"]
+			var is_eq := eq_id == oid
+			var owned_here: bool = oid == "stock" or oid == "none" or owned.has(oid)
+			if is_eq:
+				b.text = "已装备"
+				b.disabled = true
+			elif owned_here:
+				b.text = "装 备"
+				b.disabled = false
+			else:
+				b.text = "%d 金币" % opt["price"]
+				b.disabled = coins < opt["price"]
+			info["note"].add_theme_color_override("font_color",
+					Color(0.55, 1.0, 0.55) if is_eq else Color(0.8, 0.84, 0.9))
+
+
+## 车辆数据界面：马力/极速/牵引/抓地/制动（基础 → 当前，配件加成标注）
+func _build_carinfo() -> void:
+	var screen := Control.new()
+	screen.name = "carinfo"
+	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(screen)
+	_screens["carinfo"] = screen
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _panel_stylebox())
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	screen.add_child(panel)
+
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(430, 0)
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+
+	var title := Label.new()
+	title.text = "车 辆 数 据"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	box.add_child(title)
+
+	var car_lab := Label.new()
+	car_lab.name = "CarinfoCar"
+	car_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	car_lab.add_theme_font_size_override("font_size", 16)
+	car_lab.add_theme_color_override("font_color", Color(0.85, 0.88, 0.95))
+	box.add_child(car_lab)
+	_carinfo_car_label = car_lab
+
+	info_rows = Label.new()
+	info_rows.text = ""
+	info_rows.add_theme_font_size_override("font_size", 16)
+	box.add_child(info_rows)
+
+	var back := Button.new()
+	back.text = "返 回 车 库"
+	back.custom_minimum_size = Vector2(0, 42)
+	back.add_theme_font_size_override("font_size", 18)
+	back.pressed.connect(func(): shop_back.emit())
+	box.add_child(back)
+
+
+## 刷新车辆数据文本（text 由 game.gd 组好：含基础→当前与颜色标注）
+func refresh_carinfo(car_name: String, text: String) -> void:
+	_carinfo_car_label.text = car_name
+	info_rows.text = text
+
+
 func update_car_label(car_name: String, car_dsc: String) -> void:
 	car_name_label.text = car_name
 	car_desc_label.text = car_dsc
@@ -694,6 +908,24 @@ func _build_roam_hud() -> void:
 	keys.add_theme_constant_override("outline_size", 6)
 	keys.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
 	screen.add_child(keys)
+
+	shop_hint_label = Label.new()
+	shop_hint_label.text = "按 Enter 进入配件店"
+	shop_hint_label.set_anchors_preset(Control.PRESET_CENTER)
+	shop_hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	shop_hint_label.grow_vertical = Control.GROW_DIRECTION_BOTH
+	shop_hint_label.position.y = 110
+	shop_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	shop_hint_label.add_theme_font_size_override("font_size", 22)
+	shop_hint_label.add_theme_constant_override("outline_size", 8)
+	shop_hint_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.75))
+	shop_hint_label.visible = false
+	screen.add_child(shop_hint_label)
+
+
+## 漫游靠近配件店时显示进入提示
+func set_shop_hint(on: bool) -> void:
+	shop_hint_label.visible = on
 
 
 # ================= 暂停 =================

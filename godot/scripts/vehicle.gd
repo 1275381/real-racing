@@ -17,6 +17,7 @@ var brake_power := 18.0           # 制动减速度基准 (m/s²)
 var accel_cap := 11.0             # 牵引上限 (m/s²)：抓地能给的起步加速度
 var no_shift := false             # 电驱单速变速箱：无换挡切断，起步线性猛
 var _ev_high := false             # 电驱虚拟段位（仅声浪用）：52% 极速处升段
+var drift_tire := 1.0             # 漂移胎滑移回收系数（1.0=无；越小甩尾越持久）
 var inertia_drift := false        # 惯性漂移：手刹只负责起漂，松开后漂移自持
 var _drift_hold := false          # 惯性漂移自持标志
 var drag_k2 := 7.5e-4             # 空气阻力二次项系数（按极速标定：极速处风阻=牵引上限）
@@ -212,7 +213,11 @@ func step(dt: float) -> void:
 	var grip_mul := (0.30 if input_handbrake else 1.0)
 	if inertia_drift and _drift_hold:
 		grip_mul = minf(grip_mul, 0.22)   # 惯性漂移自持：低抓地让甩尾持续，油门控姿
+		if drift_tire < 1.0:
+			grip_mul = minf(grip_mul, 0.22 * drift_tire)   # 漂移胎：自持抓地同步降低
 	var grip_rate := Tuning.GRIP_RATE * grip * grip_mul * (0.05 if not grounded else 1.0)
+	if drift_tire < 1.0 and (drifting or _drift_hold):
+		grip_rate *= drift_tire   # 漂移胎：滑移中侧滑回收更慢，甩尾更持久
 	if grounded and absf(vl) < Tuning.DRIFT_THRESH and not input_handbrake:
 		var spd_total := sqrt(vf * vf + vl * vl)
 		vf = (signf(vf) if vf != 0.0 else 1.0) * spd_total
