@@ -2,16 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bh6lrtuosvlp2"
-path="res://.godot/imported/bay.png-c2f22cfe697ac3e3857d8cca4774ed5e.ctex"
+uid="uid://bw1wbpjkyfg14"
+path="res://.godot/imported/car_tripo_j_ae86_basecolor.jpg-486671c9ac7fee7bf0ea942358690185.ctex"
 metadata={
 "vram_texture": false
+}
+generator_parameters={
+"md5": "7e8421d0776f0edb91a8e03fa243f21f"
 }
 
 [deps]
 
-source_file="res://tools/out/bay.png"
-dest_files=["res://.godot/imported/bay.png-c2f22cfe697ac3e3857d8cca4774ed5e.ctex"]
+source_file="res://assets/cars/car_tripo_j_ae86_basecolor.jpg"
+dest_files=["res://.godot/imported/car_tripo_j_ae86_basecolor.jpg-486671c9ac7fee7bf0ea942358690185.ctex"]
 
 [params]
 
@@ -23,7 +26,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
