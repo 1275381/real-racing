@@ -9,6 +9,8 @@ const _SEG_SAMPLES := 24       # 每个样条段的密集采样数（用于弧�
 
 var theme := "country"
 var track_id := ""
+var closed := true                # false = 点对点开放赛道（起终点分离，单圈制）
+var finish_idx := 0               # 开放赛道：终点冲线采样索引
 var half_w := TrackData.ROAD_HALF_W
 var wall_lat := TrackData.ROAD_HALF_W + 2.05   # 软墙限位（护栏内侧）
 
@@ -40,16 +42,19 @@ func build(def: Dictionary) -> void:
 	var cps: Array = def["points"]
 	var m := cps.size()
 
-	# ---- 闭式 Catmull-Rom 密集采样（支持 Vector2=平地 / Vector3=带高度，3D 弧长）----
-	var dense := TrackData.sample_closed_spline(cps, _SEG_SAMPLES)
+	# ---- Catmull-Rom 密集采样（支持 Vector2=平地 / Vector3=带高度，3D 弧长；
+	#      closed=false 时为点对点开放赛道：起终点分离、单圈制）----
+	closed = def.get("closed", true)
+	var dense := TrackData.sample_spline(cps, _SEG_SAMPLES, closed)
 
 	# ---- 累计弧长 -> 均匀重采样 ----
 	var cum := PackedFloat32Array()
+	var last := dense.size() - 1
 	cum.resize(dense.size() + 1)
 	cum[0] = 0.0
-	for i in dense.size():
-		cum[i + 1] = cum[i] + dense[i].distance_to(dense[(i + 1) % dense.size()])
-	length = cum[cum.size() - 1]
+	for i in last:
+		cum[i + 1] = cum[i] + dense[i].distance_to(dense[i + 1])
+	length = cum[dense.size() - 1]
 	n = maxi(700, roundi(length / 1.3))   # 约 1.3m 一个采样
 	ds = length / n
 
@@ -61,7 +66,7 @@ func build(def: Dictionary) -> void:
 	var j := 0
 	for i in n:
 		var target := length * float(i) / n
-		while j < dense.size() - 1 and cum[j + 1] < target:
+		while j < last and cum[j + 1] < target:
 			j += 1
 		var seg_len := maxf(cum[j + 1] - cum[j], 1e-6)
 		var f := clampf((target - cum[j]) / seg_len, 0.0, 1.0)
@@ -69,8 +74,12 @@ func build(def: Dictionary) -> void:
 		pts[i] = Vector2(p3.x, p3.z)
 		heights[i] = p3.y
 
+	var next_of := func(i: int) -> int:
+		return (i + 1) % n if closed else mini(i + 1, n - 1)
+	var prev_of := func(i: int) -> int:
+		return (i - 1 + n) % n if closed else maxi(i - 1, 0)
 	for i in n:
-		var tv := (pts[(i + 1) % n] - pts[i]).normalized()
+		var tv := (pts[next_of.call(i)] - pts[i]).normalized()
 		tang[i] = tv
 		left_v[i] = Vector2(tv.y, -tv.x)     # three: UP × t = (t.z, 0, -t.x)
 		ang[i] = atan2(tv.x, tv.y)
@@ -78,26 +87,34 @@ func build(def: Dictionary) -> void:
 	# ---- 沿切线坡度（车辆上下坡 / 坡顶腾空用）----
 	slope.resize(n)
 	for i in n:
-		slope[i] = (heights[(i + 1) % n] - heights[(i - 1 + n) % n]) / (2.0 * ds)
+		slope[i] = (heights[mini(i + 1, n - 1) if not closed else (i + 1) % n]
+				- heights[maxi(i - 1, 0) if not closed else (i - 1 + n) % n]) / (2.0 * ds)
 
 	# ---- 带符号曲率（平滑窗）----
 	var raw_k := PackedFloat32Array()
 	raw_k.resize(n)
 	for i in n:
 		var a := tang[i]
-		var b := tang[(i + 1) % n]
+		var b := tang[next_of.call(i)]
 		raw_k[i] = a.y * b.x - a.x * b.y
 	var w := 9
 	curv.resize(n)
 	for i in n:
 		var s := 0.0
 		for d in range(-w, w + 1):
-			s += raw_k[(i + d + n) % n]
+			var di := i + d
+			s += raw_k[clampi(di, 0, n - 1) if not closed else (di + n) % n]
 		curv[i] = s / float(2 * w + 1)
 
 	_build_spatial_grid()
-	_find_start_line()
+	if closed:
+		_find_start_line()
+	else:
+		start_idx = 0            # 点对点：起跑线 = 出发点
+		straight_behind = 46.0
+		finish_idx = n - 15      # 终点冲线采样（末端缓冲区内）
 	_build_all_meshes()
+	_build_canyon_terrain()
 
 
 func _build_spatial_grid() -> void:
@@ -168,13 +185,15 @@ func _find_start_line() -> void:
 
 
 func ahead_idx(idx: int, meters: float) -> int:
+	if not closed:
+		return clampi(idx + roundi(meters / ds), 0, n - 1)
 	return posmod(idx + roundi(meters / ds), n)
 
 
-## 发车位：startIdx 后方两列错开
+## 发车位：闭合赛道在起跑线后方两列错开；开放赛道在起跑线前方逐车排开（拉力式）
 func grid_pose(slot: int) -> Dictionary:
 	var back_d := 7.0 + slot * 5.0
-	var bi := ahead_idx(start_idx, -back_d)
+	var bi := ahead_idx(start_idx, -back_d if closed else back_d)
 	var side := -1.0 if slot % 2 == 0 else 1.0
 	var p := pts[bi]
 	var l := left_v[bi]
@@ -186,6 +205,29 @@ func grid_pose(slot: int) -> Dictionary:
 
 
 ## 运行时查询：最近采样点索引 / 横向偏移 / 路面类型。hint 传上次索引可局部搜索
+## 秋名山峡谷剖面：距路缘侧向 d 米处的地面高度（路高 h 的谷地地形）。
+## 视觉山体网格与车辆越界物理共用此函数，保证所见即所撞。
+## 剖面：路肩 → 山坡缓降（谷底）→ 对面大山陡升（以路高为基准 +60~115m 封顶，
+## 沿赛道方向有山峰/山坳低频起伏）—— 两山夹道，山比赛道高但不会包住赛道上空。
+func canyon_side_height(h: float, d: float, phase: float) -> float:
+	if d <= 8.0:
+		return h + 0.05   # 路肩
+	if d <= 60.0:
+		return lerpf(h * 0.96, h * 0.35, (d - 8.0) / 52.0)
+	if d <= 130.0:
+		return lerpf(h * 0.35, maxf(h * 0.06, 0.0), (d - 60.0) / 70.0)
+	# 谷底之外：对面大山（路高 + 60~115m 的山壁高原）
+	var top: float = h + 60.0 + 55.0 * (0.5 + 0.5 * sin(phase * 2.0))
+	return lerpf(maxf(h * 0.06, 0.0), top, clampf((d - 130.0) / 130.0, 0.0, 1.0)) \
+			+ 2.0 * sin(d * 0.05 + phase)
+
+
+## 赛道侧向 d 米处的地形高度（秋名山樱花树/装饰落位用）
+func side_height(i: int, d: float) -> float:
+	var l := left_v[i]
+	return canyon_side_height(heights[i], absf(d), float(i) * 0.05)
+
+
 func query(x: float, z: float, hint) -> Dictionary:
 	var bi := 0
 	var bd := INF
@@ -221,6 +263,14 @@ func query(x: float, z: float, hint) -> Dictionary:
 	_scratch["height"] = heights[bi]
 	_scratch["slope"] = slope[bi]
 	_scratch["wall"] = wall_lat
+	# 秋名山峡谷：路外地面接峡谷剖面 —— 冲出护栏滚落山坡、被对面大山挡住
+	if theme == "akina" and al > half_w - 0.35:
+		var side := signf(lat) if lat != 0.0 else 1.0
+		var d := absf(lat) - half_w
+		var ph := float(bi) * 0.05
+		_scratch["height"] = canyon_side_height(heights[bi], maxf(d, 0.0), ph)
+		var ddz := 0.4   # 侧向坡度（数值近似）
+		_scratch["slope"] = -ddz * 0.5 * signf(slope[bi] if slope[bi] != 0.0 else 1.0)
 	return _scratch
 
 
@@ -531,6 +581,77 @@ func set_lamp_stage(stage: int) -> void:
 
 
 ## 看台
+## 秋名山峡谷山体：沿赛道两侧生成「路肩→山坡→谷底→大山」顶点色条带，
+## 与 query 的峡谷剖面同源 —— 赛道被两座大山夹在中间，不再悬空
+func _build_canyon_terrain() -> void:
+	if theme != "akina":
+		return
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rng := RRUtil.Mulberry.new(20260904)
+	var profile := [8.0, 20.0, 40.0, 80.0, 130.0, 190.0, 260.0]
+	var step := 4
+	var side_rows := {"m1": [], "p1": []}   # 左/右两侧各自独立的截面行
+	for i in range(0, n + step, step):
+		var ii: int = clampi(i, 0, n - 1) if not closed else (i % n)
+		var phase := float(ii) * 0.05
+		var h: float = heights[ii]
+		var li: Vector2 = left_v[ii]
+		for sk in ["m1", "p1"]:
+			var side := -1.0 if sk == "m1" else 1.0
+			var row: Array = []   # 采样点 [{p: Vector3, c: Color} × 段数]
+			for prof in profile:
+				var y: float = canyon_side_height(h, prof, phase)
+				var x: float = pts[ii].x + li.x * prof * side
+				var z: float = pts[ii].y + li.y * prof * side
+				var nz: float = (rng.next() - 0.5) * 0.10
+				var c: Color
+				if prof <= 8.0:
+					c = Color(0.45, 0.56, 0.36)
+				elif prof <= 60.0:
+					c = Color(0.33, 0.45, 0.28)
+				elif prof <= 130.0:
+					c = Color(0.24, 0.36, 0.22)
+				else:
+					c = Color(0.42, 0.45, 0.42)
+				row.append({"p": Vector3(x, maxf(y + nz * prof * 0.02, y - 2.0), z),
+						"c": Color(c.r + nz, c.g + nz, c.b + nz)})
+			side_rows[sk].append(row)
+
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 1.0
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	for sk in ["m1", "p1"]:
+		var rows_side: Array = side_rows[sk]
+		var prev_row: Array = []
+		for row in rows_side:
+			if not prev_row.is_empty():
+				for r in row.size() - 1:
+					if r == 6:
+						continue   # 左右分界：不铺横穿赛道的条带
+					var quad: Array = [row[r], row[r + 1], prev_row[r + 1], prev_row[r]]
+					for pair in [[0, 1, 2], [0, 2, 3]]:
+						for vi in pair:
+							var smp: Dictionary = quad[vi]
+							st.set_normal(Vector3.UP)
+							st.set_color(smp["c"])
+							st.add_vertex(smp["p"])
+			prev_row = row
+
+	var mesh := st.commit()
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	var terrain_mat := StandardMaterial3D.new()
+	terrain_mat.vertex_color_use_as_albedo = true
+	terrain_mat.roughness = 1.0
+	terrain_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = terrain_mat
+	add_child(mi)
+
+
 func _build_stands() -> void:
 	# 1 号看台：起跑线一侧（沿行进方向另一侧），正对起跑线
 	var dir := Vector2(-tang[start_idx].y, tang[start_idx].x)   # right = tang × UP

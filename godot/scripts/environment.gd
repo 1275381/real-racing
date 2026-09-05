@@ -27,6 +27,11 @@ const THEMES := {
 		"fog": SKY_BOT, "fog_near": 300.0, "fog_far": 2000.0,
 		"mtn": Color("#b06f48"), "ambient": Color("#dce6f2"), "ground": 0.6,
 	},
+	"akina": {
+		"sky_top": SKY_TOP, "sky_mid": SKY_MID, "sky_bot": SKY_BOT,
+		"fog": SKY_BOT, "fog_near": 380.0, "fog_far": 3400.0,
+		"mtn": Color("#5f7a8c"), "ambient": Color("#d8e4f0"), "ground": 0.55,
+	},
 }
 
 var sun: DirectionalLight3D
@@ -38,6 +43,7 @@ var _ground_mats := {}
 var _mtn_mat: StandardMaterial3D
 var _mtn_mmi: MultiMeshInstance3D
 var _mesa_mat: StandardMaterial3D
+var _sakura_nodes: Array[Node3D] = []
 var _trees: Array[Node3D] = []
 var _buildings: Node3D
 var _desert_props: Node3D
@@ -122,7 +128,7 @@ void sky() {
 	add_child(we)
 
 	# ---- 地面（三种主题材质）----
-	for theme_name in ["country", "city", "desert"]:
+	for theme_name in ["country", "city", "desert", "akina"]:
 		var m := StandardMaterial3D.new()
 		match theme_name:
 			"country":
@@ -132,6 +138,9 @@ void sky() {
 				m.albedo_texture = RRTextures.concrete()
 			"desert":
 				m.albedo_texture = RRTextures.sand()
+			"akina":
+				m.albedo_texture = RRTextures.grass()
+				m.albedo_color = Color(0.5, 0.62, 0.46)   # 山地林绿
 		m.roughness = 1.0
 		# 干燥地面几乎没有镜面反射。默认 specular=0.5 会把整片天空反射上来，
 		# 俯视时地面直接变成亮蓝色（改用 Sky 背景后尤其明显）。
@@ -356,6 +365,90 @@ void sky() {
 				Vector3(cos(a) * r, hgt * 0.42, sin(a) * r))
 		mesas.set_instance_transform(i, xf)
 
+	# ---- 樱花树（秋名山专用）：沿赛道两侧密布，树干 + 三团粉冠 + 地面花瓣斑 ----
+	for trk in tracks:
+		if trk.theme != "akina":
+			continue
+		var sk_trunk_mat := StandardMaterial3D.new()
+		sk_trunk_mat.albedo_color = Color(0.35, 0.25, 0.2)
+		sk_trunk_mat.roughness = 1.0
+		var sk_trunk_m := CylinderMesh.new()
+		sk_trunk_m.top_radius = 0.22
+		sk_trunk_m.bottom_radius = 0.34
+		sk_trunk_m.height = 3.4
+		sk_trunk_m.radial_segments = 6
+		sk_trunk_m.material = sk_trunk_mat
+		var sk_bloom_m := SphereMesh.new()
+		sk_bloom_m.radius = 1.0
+		sk_bloom_m.height = 2.0
+		sk_bloom_m.radial_segments = 8
+		sk_bloom_m.rings = 4
+		var sk_bloom_mat := StandardMaterial3D.new()
+		sk_bloom_mat.albedo_color = Color(1.0, 0.72, 0.78)
+		sk_bloom_mat.roughness = 1.0
+		sk_bloom_m.material = sk_bloom_mat
+
+		var sk_trunks: Array[Transform3D] = []
+		var sk_blooms_a: Array[Transform3D] = []
+		var sk_blooms_b: Array[Transform3D] = []
+		var sk_blooms_c: Array[Transform3D] = []
+		var sk_petals: Array[Transform3D] = []
+		var sk_rng := RRUtil.Mulberry.new(20260903)
+		for i in range(0, trk.n, 18):
+			for side in [-1.0, 1.0]:
+				if sk_rng.next() < 0.25:
+					continue   # 随机留空，自然错落
+				var l: Vector2 = trk.left_v[i]
+				var off := 9.0 + sk_rng.next() * 6.0
+				var x: float = trk.pts[i].x + l.x * off * side
+				var z: float = trk.pts[i].y + l.y * off * side
+				var y: float = trk.side_height(i, off)   # 峡谷剖面上的坡面高度
+				var s := 0.85 + sk_rng.next() * 0.5
+				var base := Transform3D(
+						Basis(Quaternion(Vector3.UP, sk_rng.next() * 6.28)).scaled(
+								Vector3(s, s, s)), Vector3(x, y, z))
+				sk_trunks.append(base * Transform3D(Basis(), Vector3(0, 1.7, 0)))
+				sk_blooms_a.append(base * Transform3D(Basis(), Vector3(0, 4.2, 0)))
+				sk_blooms_b.append(base * Transform3D(
+						Basis(Quaternion(Vector3(1, 0, 0), 0.4)), Vector3(1.3, 3.8, 0.9)))
+				sk_blooms_c.append(base * Transform3D(
+						Basis(Quaternion(Vector3(0, 1, 0), 1.2)), Vector3(-1.1, 3.9, -0.8)))
+				sk_petals.append(Transform3D(Basis(), Vector3(x, y + 0.06, z)))
+
+		var sakura := Node3D.new()
+		sakura.name = "Sakura"
+		add_child(sakura)
+		_sakura_nodes.append(sakura)
+		for pack in [[sk_trunk_m, sk_trunk_mat, sk_trunks], [sk_bloom_m, sk_bloom_mat, sk_blooms_a],
+				[sk_bloom_m, sk_bloom_mat, sk_blooms_b], [sk_bloom_m, sk_bloom_mat, sk_blooms_c]]:
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = pack[0]
+			mm.instance_count = pack[2].size()
+			for i in pack[2].size():
+				mm.set_instance_transform(i, pack[2][i])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			sakura.add_child(mmi)
+		# 地面花瓣斑（树下半透明粉面）
+		var petal_mesh := PlaneMesh.new()
+		petal_mesh.size = Vector2(5, 5)
+		var petal_mat := StandardMaterial3D.new()
+		petal_mat.albedo_color = Color(1.0, 0.75, 0.8, 0.45)
+		petal_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		petal_mat.roughness = 1.0
+		petal_mesh.material = petal_mat
+		var pmm := MultiMesh.new()
+		pmm.transform_format = MultiMesh.TRANSFORM_3D
+		pmm.mesh = petal_mesh
+		pmm.instance_count = sk_petals.size()
+		for i in sk_petals.size():
+			pmm.set_instance_transform(i, sk_petals[i])
+		var pmi := MultiMeshInstance3D.new()
+		pmi.multimesh = pmm
+		sakura.add_child(pmi)
+
 	# ---- 云朵 ----
 	for i in 14:
 		var sp := Sprite3D.new()
@@ -444,6 +537,8 @@ func set_theme(name: String) -> void:
 	_env.ambient_light_energy = 0.65
 	_mtn_mat.albedo_color = t["mtn"]
 	_mesa_mat.albedo_color = Color("#b06f48") if name == "desert" else Color("#8a7a68")
+	for sak in _sakura_nodes:
+		sak.visible = name == "akina"
 	for tree_node in _trees:
 		tree_node.visible = name == "country"
 	_buildings.visible = (name == "city") and _race_props_on

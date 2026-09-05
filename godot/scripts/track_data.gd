@@ -81,6 +81,26 @@ const TRACKS := [
 			Vector2(-90, 148), Vector2(-175, 105), Vector2(-232, 15),
 		],
 	},
+	# 秋名山：点对点下山赛（山顶 → 山脚），单圈制。closed=false 开放赛道 + Vector3 控制点带海拔
+	{"id": "akina", "name": "秋名山", "desc": "单圈下山 · 连续 S 弯与五连发卡 · 樱花隧道", "theme": "akina",
+		"closed": false, "fixed_laps": 1,
+		"points": [
+			Vector3(0, 125, 0), Vector3(0, 124, 60), Vector3(30, 122, 120),
+			Vector3(-40, 118, 180), Vector3(-90, 112, 240), Vector3(-40, 106, 300),
+			Vector3(40, 100, 350), Vector3(-30, 94, 410), Vector3(-100, 88, 460),
+			Vector3(-60, 83, 520), Vector3(30, 79, 560), Vector3(80, 77, 620),
+			Vector3(40, 76, 680), Vector3(-30, 77, 660), Vector3(-120, 74, 640),
+			Vector3(-220, 71, 620), Vector3(-320, 68, 610), Vector3(-420, 66, 630),
+			Vector3(-470, 65, 580), Vector3(-430, 66, 520), Vector3(-480, 68, 470),
+			Vector3(-560, 64, 420), Vector3(-640, 58, 350), Vector3(-600, 52, 270),
+			Vector3(-520, 47, 220), Vector3(-560, 42, 150), Vector3(-640, 38, 100),
+			Vector3(-600, 34, 40), Vector3(-520, 30, 0), Vector3(-560, 26, -70),
+			Vector3(-640, 22, -120), Vector3(-700, 19, -180), Vector3(-660, 18, -240),
+			Vector3(-580, 18, -220), Vector3(-500, 16, -260), Vector3(-440, 13, -320),
+			Vector3(-480, 10, -390), Vector3(-420, 8, -450), Vector3(-330, 5, -480),
+			Vector3(-220, 3, -500), Vector3(-100, 1.5, -510), Vector3(30, 0.8, -515),
+			Vector3(160, 0.5, -520), Vector3(280, 0.3, -522), Vector3(380, 0.3, -524),
+		]},
 ]
 
 ## model 对应 CAR_MODELS 里的车型 id（玩家车型可在主菜单里改）
@@ -128,7 +148,7 @@ const CAR_MODELS := [
 		"class": "hybrid", "stats": {"top": 80.0, "power": 69.0, "accel": 14.0, "grip": 1.01, "brake": 19.0, "no_shift": true}},
 	# 双组别旗舰：燃油跑车 × 热芒耐力。modes 双模式（O 键切换）：
 	# accel 加速模式（高牵引） / top 极速模式（高极速），sound 为对应引擎声纹组别
-	{"id": "aidual", "name": "AI 赤焰双模", "file": "res://assets/cars/car_tripo_g.glb", "desc": "AI 生成 · 双组别旗舰 · O 键切换加速/极速模式", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aidual", "name": "AI 赤焰双模", "file": "res://assets/cars/car_tripo_g.glb", "desc": "AI 生成 · 双组别旗舰 · O 键切换加速/极速 · 惯性漂移", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "dual", "stats": {"top": 96.0, "power": 64.0, "accel": 11.8, "grip": 1.07, "brake": 19.2},
 		"modes": {
 			"accel": {"label": "加速模式", "top": 87.0, "power": 72.0, "accel": 14.2, "grip": 1.09, "brake": 20.0},
@@ -265,8 +285,13 @@ static func delete_custom_track(id: String) -> void:
 
 ## 闭合 Catmull-Rom 密集采样（与 RaceTrack.build 同一套公式），支持 Vector2/Vector3 混合
 static func sample_closed_spline(points: Array, per_seg := 12) -> PackedVector3Array:
+	return sample_spline(points, per_seg, true)
+
+
+## Catmull-Rom 密集采样（closed=false 时为首尾精确的开放曲线，用于点对点赛道）
+static func sample_spline(points: Array, per_seg: int, closed: bool) -> PackedVector3Array:
 	var m := points.size()
-	if m < 3:
+	if m < (3 if closed else 2):
 		return PackedVector3Array()
 	var cps := PackedVector3Array()
 	cps.resize(m)
@@ -277,13 +302,20 @@ static func sample_closed_spline(points: Array, per_seg := 12) -> PackedVector3A
 		else:
 			cps[i] = Vector3(p.x, 0.0, p.y)
 	const TENSION := 0.55
+	var seg_count := m if closed else m - 1
 	var dense := PackedVector3Array()
-	dense.resize(m * per_seg)
-	for i in m:
-		var p0 := cps[(i - 1 + m) % m]
+	dense.resize(seg_count * per_seg + (0 if closed else 1))
+	for i in seg_count:
+		var p0: Vector3
+		var p3: Vector3
+		if closed:
+			p0 = cps[(i - 1 + m) % m]
+			p3 = cps[(i + 2) % m]
+		else:
+			p0 = cps[maxi(i - 1, 0)]
+			p3 = cps[mini(i + 2, m - 1)]
 		var p1 := cps[i]
 		var p2 := cps[(i + 1) % m]
-		var p3 := cps[(i + 2) % m]
 		var v0 := (p2 - p0) * TENSION
 		var v1 := (p3 - p1) * TENSION
 		for k in per_seg:
@@ -294,6 +326,8 @@ static func sample_closed_spline(points: Array, per_seg := 12) -> PackedVector3A
 				(2.0 * p1 - 2.0 * p2 + v0 + v1) * t3
 				+ (3.0 * p2 - 3.0 * p1 - 2.0 * v0 - v1) * t2
 				+ v0 * t + p1)
+	if not closed:
+		dense[dense.size() - 1] = cps[m - 1]   # 开放曲线精确落在末点
 	return dense
 
 
