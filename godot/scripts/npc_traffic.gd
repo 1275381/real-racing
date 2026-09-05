@@ -20,6 +20,9 @@ const PED_CLOTHES := [
 const PED_SKIN := [
 	Color("#e8b48c"), Color("#c98e63"), Color("#8a5a3a"), Color("#f0c9a2"),
 ]
+const PED_PANTS := [
+	Color("#2c3038"), Color("#3a4a63"), Color("#4a3a2c"), Color("#26292e"),
+]
 const POLICE_FINE := 200
 
 var fm                     # FreeroamMap
@@ -39,8 +42,10 @@ var _step := {}            # 道路采样间距缓存
 var player_pos := Vector3.ZERO
 var player_vel := Vector3.ZERO
 var player_speed := 0.0
-var _ped_mm_body: MultiMeshInstance3D
 var _ped_mm_head: MultiMeshInstance3D
+var _ped_mm_torso: MultiMeshInstance3D
+var _ped_mm_arm: MultiMeshInstance3D
+var _ped_mm_leg: MultiMeshInstance3D
 var _traffic_body: MultiMesh
 var _traffic_wheel: MultiMesh
 
@@ -202,15 +207,30 @@ func _build_pedestrians() -> void:
 		spots.append({"origin": origin, "axis": axis, "range": 22.0})
 	while spots.size() > PED_TARGET:
 		spots.remove_at(rng.randi_range(0, spots.size() - 1))
-	# MultiMesh：胶囊身体（衣色）+ 球头（肤色）
-	var body_mesh := CapsuleMesh.new()
-	body_mesh.radius = 0.19
-	body_mesh.height = 1.12
+	# MultiMesh 完整人形：头 + 身体 + 双臂 + 双腿（每人 6 个实例）
 	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.135
-	head_mesh.height = 0.27
-	_ped_mm_body = _make_ped_mm(body_mesh, PED_CLOTHES, rng, spots.size())
-	_ped_mm_head = _make_ped_mm(head_mesh, PED_SKIN, rng, spots.size())
+	head_mesh.radius = 0.14
+	head_mesh.height = 0.28
+	var torso_mesh := BoxMesh.new()
+	torso_mesh.size = Vector3(0.42, 0.62, 0.24)
+	var arm_mesh := BoxMesh.new()
+	arm_mesh.size = Vector3(0.11, 0.52, 0.13)
+	var leg_mesh := BoxMesh.new()
+	leg_mesh.size = Vector3(0.15, 0.82, 0.17)
+	_ped_mm_head = _make_ped_mm(head_mesh, spots.size())
+	_ped_mm_torso = _make_ped_mm(torso_mesh, spots.size())
+	_ped_mm_arm = _make_ped_mm(arm_mesh, spots.size() * 2)
+	_ped_mm_leg = _make_ped_mm(leg_mesh, spots.size() * 2)
+	for s_i in spots.size():
+		var shirt: Color = PED_CLOTHES[rng.randi_range(0, PED_CLOTHES.size() - 1)]
+		var pants_c: Color = PED_PANTS[rng.randi_range(0, PED_PANTS.size() - 1)]
+		var skin: Color = PED_SKIN[rng.randi_range(0, PED_SKIN.size() - 1)]
+		_ped_mm_torso.multimesh.set_instance_color(s_i, shirt)
+		_ped_mm_head.multimesh.set_instance_color(s_i, skin)
+		_ped_mm_arm.multimesh.set_instance_color(s_i * 2, shirt)
+		_ped_mm_arm.multimesh.set_instance_color(s_i * 2 + 1, shirt)
+		_ped_mm_leg.multimesh.set_instance_color(s_i * 2, pants_c)
+		_ped_mm_leg.multimesh.set_instance_color(s_i * 2 + 1, pants_c)
 	for s in spots:
 		peds.append({
 			"origin": s["origin"], "axis": s["axis"],
@@ -222,15 +242,15 @@ func _build_pedestrians() -> void:
 		})
 
 
-func _make_ped_mm(mesh: Mesh, palette: Array, rng: RandomNumberGenerator,
-		count: int) -> MultiMeshInstance3D:
+func _make_ped_mm(mesh: Mesh, count: int) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
 	mm.mesh = mesh
 	mm.instance_count = count
-	for i in count:
-		mm.set_instance_color(i, palette[rng.randi_range(0, palette.size() - 1)])
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mesh.surface_set_material(0, mat)
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -368,18 +388,32 @@ func _update_peds(dt: float) -> void:
 		var yaw := atan2(walk_dir.x, walk_dir.y)
 		var dodge_v := Vector2(dodge, 0).rotated(atan2(axis.x, axis.y))
 		var pos := Vector2(base.x, base.z) + dodge_v
-		var bob := 0.0
-		var tilt := 0.0
-		if ped["knock_t"] > 0.0:
-			bob = 0.18
-			tilt = PI * 0.5   # 倒地
-		else:
-			bob = absf(sin(_t * 9.0 + float(ped["phase"]))) * 0.045
-			tilt = sin(_t * 9.0 + float(ped["phase"])) * 0.06
-		var xf := Transform3D(Basis.from_euler(Vector3(tilt, yaw, 0)),
-				Vector3(pos.x, float(ped["origin"].y) + bob, pos.y))
-		(_ped_mm_body.multimesh as MultiMesh).set_instance_transform(i, xf)
-		(_ped_mm_head.multimesh as MultiMesh).set_instance_transform(i, xf)
+		var walking: bool = ped["knock_t"] <= 0.0
+		var phase: float = float(ped["phase"])
+		var swing := sin(_t * 8.0 + phase) * 0.45 if walking else 0.0
+		var bob := absf(sin(_t * 8.0 + phase)) * 0.04 if walking else 0.0
+		# 根变换：位置 + 朝向（被撞倒地 → 绕 X 翻倒贴地）
+		var root_pos := Vector3(pos.x, float(ped["origin"].y) + bob, pos.y)
+		var root_rot := Vector3(PI * 0.5, yaw, 0) if not walking \
+				else Vector3(0, yaw, tilt_sway(_t, phase))
+		var root := Transform3D(Basis.from_euler(root_rot), root_pos)
+		# 各部件：root × 肩/髋枢轴 × 摆动 × 偏移
+		var hip_l := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)), Vector3(-0.11, 0.83, 0))
+		var hip_r := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)), Vector3(0.11, 0.83, 0))
+		var sh_l := Transform3D(Basis.from_euler(Vector3(-swing * 0.7, 0, 0)), Vector3(-0.27, 1.40, 0))
+		var sh_r := Transform3D(Basis.from_euler(Vector3(swing * 0.7, 0, 0)), Vector3(0.27, 1.40, 0))
+		var leg_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.41, 0))
+		var arm_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.26, 0))
+		var mm_t: MultiMesh = _ped_mm_torso.multimesh
+		var mm_h: MultiMesh = _ped_mm_head.multimesh
+		var mm_a: MultiMesh = _ped_mm_arm.multimesh
+		var mm_l: MultiMesh = _ped_mm_leg.multimesh
+		mm_t.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
+		mm_h.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
+		mm_a.set_instance_transform(i * 2, root * sh_l * arm_off)
+		mm_a.set_instance_transform(i * 2 + 1, root * sh_r * arm_off)
+		mm_l.set_instance_transform(i * 2, root * hip_l * leg_off)
+		mm_l.set_instance_transform(i * 2 + 1, root * hip_r * leg_off)
 		i += 1
 	# 撞到行人判定
 	if player_speed > 4.0:
@@ -393,6 +427,10 @@ func _update_peds(dt: float) -> void:
 				ped_hit.emit()
 				trigger_wanted()
 				break
+
+
+func tilt_sway(t: float, phase: float) -> float:
+	return sin(t * 9.0 + phase) * 0.06
 
 
 func _update_police(dt: float) -> void:
@@ -427,14 +465,16 @@ func _update_police(dt: float) -> void:
 		var blink := int(_wanted_t * 4.0) % 2 == 0
 		(u["light_r"] as MeshInstance3D).visible = blink
 		(u["light_b"] as MeshInstance3D).visible = not blink
-		# 卡死自救
+		# 卡死自救：按「速度 <1.5 m/s 持续 3 秒」判定 —— 原来按每帧位移 <1m
+		# 判定，而 26 m/s 每帧只走 0.43m，正常追击也被误判成卡死无限重置
 		var moved := (pos - (u["last"] as Vector3)).length()
-		u["stuck"] = 0.0 if moved > 1.0 else float(u["stuck"]) + dt
+		var spd_now := moved / maxf(dt, 0.001)
+		u["stuck"] = 0.0 if spd_now > 1.5 else float(u["stuck"]) + dt
 		u["last"] = pos
 		if float(u["stuck"]) > 3.0 and d < 120.0:
 			var ang := randf() * TAU
-			u["pos"] = Vector3(player_pos.x + sin(ang) * 100.0, pos.y,
-					player_pos.z + cos(ang) * 100.0)
+			u["pos"] = Vector3(player_pos.x + sin(ang) * 60.0, pos.y,
+					player_pos.z + cos(ang) * 60.0)
 			u["stuck"] = 0.0
 	# 被捕：贴身且玩家近乎停下，持续 1.5 秒
 	if _bust_t > 1.5:
