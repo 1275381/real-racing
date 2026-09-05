@@ -725,8 +725,12 @@ func resolve_obstacles(v: Vehicle) -> void:
 		v.pos.x += wx * push
 		v.pos.z += wz * push
 		_obstacle_bounce(v, wx, wz)
-	# 高架桥墩（pillar_pts 已含门式墩双柱）
+	# 高架桥墩（pillar_pts 已含门式墩双柱）。
+	# 高度判定：车在柱顶以上（桥面上开车）时柱子在脚下，不参与碰撞——
+	# 原来纯 2D 圆柱判定，桥面行驶压过桥墩正上方会被当成撞柱推停
 	for pp in pillar_pts:
+		if v.pos.y > pp.y - 1.0:
+			continue
 		var dx: float = v.pos.x - pp.x
 		var dz: float = v.pos.z - pp.z
 		var rr: float = 1.5 + r
@@ -1295,9 +1299,12 @@ func _build_road_meshes() -> void:
 					var plist: Array[Transform3D] = pillar_list if road.mono else pillar_lo
 					var blist: Array[Transform3D] = beam_list if road.mono else beam_lo
 					if not _pillar_blocked(road, p):
-						plist.append(Transform3D(Basis.from_scale(Vector3(1, p.y, 1)),
-								Vector3(p.x, p.y * 0.5, p.z)))
-						pillar_pts.append(Vector3(p.x, p.y, p.z))
+						# 柱顶收进桥面下方 0.9m（藏在箱梁里）：原来顶到路面标高，
+						# 竖曲率凸段/采样间隙会把柱头戳出桥面，车直接撞柱卡死
+						var ph: float = p.y - 0.9
+						plist.append(Transform3D(Basis.from_scale(Vector3(1, ph, 1)),
+								Vector3(p.x, ph * 0.5, p.z)))
+						pillar_pts.append(Vector3(p.x, ph, p.z))
 						placed = true
 						break
 					# 门式墩：立柱退到桥面外侧 1.6m，柱顶收到横梁底下
