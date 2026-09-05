@@ -158,6 +158,10 @@ const CAR_MODELS := [
 	{"id": "aie86", "name": "AI 86 漂移", "file": "res://assets/cars/car_tripo_i.glb", "desc": "AI 生成 · 藤原配色 · 惯性漂移：点一次手刹+方向起漂，油门维持漂移", "yaw_deg": 0.0, "scale": 4.6,
 		"class": "street", "inertia_drift": true,
 		"stats": {"top": 84.0, "power": 58.0, "accel": 11.6, "grip": 0.94, "brake": 18.0}},
+	# 跳灯跑车：白色旋翼双座，车头原生朝 +Z（yaw 0）
+	{"id": "aifd", "name": "AI 跳灯跑车", "file": "res://assets/cars/car_tripo_k.glb", "desc": "AI 生成 · 珠白旋翼 · 跳灯双座 + 大尾翼", "yaw_deg": 0.0, "scale": 4.6,
+		"class": "street",
+		"stats": {"top": 89.0, "power": 61.0, "accel": 12.0, "grip": 0.96, "brake": 18.2}},
 ]
 
 const DEFAULT_MODEL := "gt3"
