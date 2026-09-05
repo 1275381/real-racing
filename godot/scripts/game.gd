@@ -26,6 +26,7 @@ var car_model_id := "gt3"
 var total_laps := 3
 var difficulty := "normal"
 var cam_mode := 0
+var _hood_h := -1.0     # 车头盖视角锚高（按各车模型实际高度缓存，换车重算）
 var dual_mode := "top"     # 双组别车的当前模式（accel 加速 / top 极速）
 var _del_arm := false      # 删除自定义赛道的二次确认
 var _rec_lap := []         # 走线录制：本圈样本 [{b, lat, hit}]
@@ -653,6 +654,7 @@ func set_car_model(id: String) -> void:
 		return
 	car_model_id = id
 	_save_settings()
+	_hood_h = -1.0   # 模型高度变了，车头盖锚高下帧重算
 	var rec := player
 	rec.visual.queue_free()
 	rec.visual = CarVisual.create(id, rec.team["color"], rec.team["accent"])
@@ -813,6 +815,26 @@ func _handle_hotkeys() -> void:
 		enter_roam()   # 车库里按 W/↑：直接从卷帘门车库出发漫游
 	if Input.is_action_just_pressed("rr_dual"):
 		_toggle_dual_mode()
+
+
+## 车头盖视角锚高：按当前车模「车体」网格的实际顶高自适应（车顶 + 0.12m），
+## 结果缓存到换车为止。只统计纵向 >2m 的网格——贴影/装饰零厚面（z≈0）
+## 和车轮（z<1m）不算。兜底 1.32m（模型缺失/未进树时）
+func _hood_anchor_height() -> float:
+	if _hood_h > 0.0:
+		return _hood_h
+	var top := 1.2
+	var vis: CarVisual = player.visual
+	if vis != null and vis.is_inside_tree():
+		var inv := vis.global_transform.affine_inverse()
+		for mi in vis.find_children("*", "MeshInstance3D", true, false):
+			var m := mi as MeshInstance3D
+			var ab: AABB = inv * m.global_transform * m.get_aabb()
+			if ab.size.z < 2.0:
+				continue
+			top = maxf(top, ab.position.y + ab.size.y)
+	_hood_h = top + 0.12
+	return _hood_h
 
 
 func _step_sim(h: float) -> void:
@@ -1142,10 +1164,11 @@ func _update_camera(dt: float) -> void:
 			_cam_look = pv.pos + f * 7.0 + Vector3(0, 1.1, 0)
 			_cam_init = true
 		if mode == 2:   # 车头盖
-			# 高度必须跟着车走：原来写死绝对 1.06m，
-			# 开上 10~19m 的高架或 72m 的盘山公路时相机掉到桥面下方
+			# 锚高按各车模型实际顶高自适应（比车顶再高 0.12m）——
+			# 原来写死 1.02m，比多数车模的机盖/座舱还低，车头盖视角整个
+			# 埋进车壳里穿模挡视野。高度跟着车走，开上高架/盘山也不掉层
 			_cam_pos = Vector3(pv.pos.x + f.x * 0.55,
-					pv.pos.y + 1.02 + absf(pv.g_lat) * 0.15,
+					pv.pos.y + _hood_anchor_height() + absf(pv.g_lat) * 0.15,
 					pv.pos.z + f.z * 0.55)
 			_cam_look = pv.pos + f * 26.0
 			want_fov = 72.0 + spd_ratio * 12.0
