@@ -359,6 +359,7 @@ func _load_settings() -> void:
 		difficulty = cf.get_value("settings", "diff", "normal")
 		_saved_track_idx = TrackData.track_index_by_id(cf.get_value("settings", "track", "circuit"))
 		coins = cf.get_value("settings", "coins", 0)
+		npc_solid = cf.get_value("settings", "npc_solid", true)
 		parts_owned = cf.get_value("parts", "owned", {})
 		parts_equipped = cf.get_value("parts", "equipped", {})
 		if cf.has_section_key("records", "best_lap"):
@@ -374,6 +375,7 @@ func _save_settings() -> void:
 	cf.set_value("settings", "diff", difficulty)
 	cf.set_value("settings", "track", TrackData.get_tracks()[track_idx]["id"])
 	cf.set_value("settings", "coins", coins)
+	cf.set_value("settings", "npc_solid", npc_solid)
 	cf.set_value("parts", "owned", parts_owned)
 	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
@@ -386,6 +388,8 @@ var coins := 0                     # 金币：完赛按名次奖励，配件店�
 var parts_owned := {}              # model_id → Array[已购配件 id]
 var parts_equipped := {}           # model_id → {slot: opt_id}
 var shop_open := false             # 配件店界面开着（漫游中冻结车辆）
+var npc: NpcTraffic                # 漫游 NPC：交通车 + 行人 + 警察
+var npc_solid := true              # NPC 车与玩家实体碰撞（车库开关）
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -495,8 +499,15 @@ func _wire_menu() -> void:
 	hud.btn_quit_results.pressed.connect(to_garage)
 	hud.btn_editor.pressed.connect(open_map_editor)
 	hud.btn_del_track.pressed.connect(_on_del_track_pressed)
+	hud.set_npc_solid_label(npc_solid)
 	hud.btn_shop.pressed.connect(open_shop)
 	hud.btn_carinfo.pressed.connect(open_carinfo)
+	hud.btn_npc_solid.pressed.connect(func():
+		npc_solid = not npc_solid
+		if npc != null:
+			npc.solid = npc_solid
+		hud.set_npc_solid_label(npc_solid)
+		_save_settings())
 	hud.shop_equip.connect(_on_shop_equip)
 	hud.shop_back.connect(close_shop)
 
@@ -717,7 +728,21 @@ func enter_roam() -> void:
 			Vector2(FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
 	hud.set_map_marker(FreeroamMap.SHOP_POS.x, FreeroamMap.SHOP_POS.y, "店")
 	hud.set_roam_tach()
+	# NPC 交通 + 行人 + 警察
+	if npc == null:
+		npc = NpcTraffic.new()
+		add_child(npc)
+		npc.setup(freeroam, hud)
+		npc.busted.connect(_on_npc_busted)
+	npc.solid = npc_solid
+	npc.set_active(true)
 	hud.show_center("", "", 0)
+
+
+func _on_npc_busted(fine: int) -> void:
+	coins = maxi(0, coins - fine)
+	_save_settings()
+	hud.show_center("被警察逮捕", "罚金 -%d 金币（现有 %d）" % [fine, coins], 3000)
 
 
 func exit_roam() -> void:
@@ -725,6 +750,9 @@ func exit_roam() -> void:
 	fx.clear_skids()
 	if freeroam != null:
 		freeroam.visible = false
+	if npc != null:
+		npc.set_active(false)
+		hud.set_wanted(false, 0.0)
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
 	env.set_ground_visible(true)
 	env.set_race_props_visible(true)
@@ -1101,6 +1129,14 @@ func _step_sim(h: float) -> void:
 		freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
 		pin.step(h)
 		_roam_bound(pin)
+		# NPC 交通/行人/警察
+		if npc != null and npc.active:
+			npc.player_pos = pin.pos
+			npc.player_vel = Vector3(
+					sin(pin.heading) * pin.vf + cos(pin.heading) * pin.vl, 0.0,
+					cos(pin.heading) * pin.vf - sin(pin.heading) * pin.vl)
+			npc.player_speed = absf(pin.vf)
+			npc.update(h)
 		sim_time += h
 		return
 

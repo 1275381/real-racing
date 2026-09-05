@@ -28,6 +28,7 @@ var btn_editor: Button
 var btn_del_track: Button
 var btn_shop: Button
 var btn_carinfo: Button
+var btn_npc_solid: Button
 var results_grid: GridContainer
 
 # --- 配件店 / 车辆数据 ---
@@ -40,6 +41,10 @@ var _shop_rows := {}        # "slot|opt" -> {btn: Button, note: Label}
 var _shop_slot_boxes := {}  # slot -> VBoxContainer（漂移胎分区按车型显隐）
 var info_rows: Label        # 车辆数据明细文本
 var shop_hint_label: Label  # 漫游靠近配件店提示
+var wanted_label: Label     # 通缉指示（警察追捕）
+var wanted_on := false
+var wanted_progress := 0.0
+var _wanted_blink_t := 0.0
 
 var _root: Control
 var _screens := {}          # name -> Control
@@ -104,6 +109,7 @@ func build(colors: Array) -> void:
 	_build_roam_hud()
 	_build_pause()
 	_build_results()
+	_build_wanted()
 	show_only("garage")
 
 
@@ -117,6 +123,21 @@ func _process(dt: float) -> void:
 		_lap_flash_timer -= dt
 		if _lap_flash_timer <= 0.0:
 			_lap_flash.visible = false
+	if wanted_on:
+		_wanted_blink_t += dt
+		wanted_label.modulate.a = 0.55 + 0.45 * absf(sin(_wanted_blink_t * 6.0))
+		var txt := "通缉中 · 甩开警察！（距离 180m 以上持续 6 秒）"
+		if wanted_progress > 0.02:
+			txt += "  摆脱中 %d%%" % roundi(wanted_progress * 100.0)
+		wanted_label.text = txt
+
+
+## 通缉指示（npc_traffic 驱动）
+func set_wanted(on: bool, progress: float) -> void:
+	wanted_on = on
+	wanted_progress = progress
+	wanted_label.visible = on
+	_wanted_blink_t = 0.0
 
 
 ## 调试信息（F3）
@@ -605,6 +626,12 @@ func _build_garage() -> void:
 	btn_carinfo.add_theme_font_size_override("font_size", 18)
 	box.add_child(btn_carinfo)
 
+	btn_npc_solid = Button.new()
+	btn_npc_solid.text = "NPC 碰撞：开"
+	btn_npc_solid.custom_minimum_size = Vector2(0, 40)
+	btn_npc_solid.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_npc_solid)
+
 	btn_editor = Button.new()
 	btn_editor.text = "地 图 编 译 器"
 	btn_editor.custom_minimum_size = Vector2(0, 40)
@@ -926,6 +953,27 @@ func _build_roam_hud() -> void:
 ## 漫游靠近配件店时显示进入提示
 func set_shop_hint(on: bool) -> void:
 	shop_hint_label.visible = on
+
+
+## 通缉指示标签
+func _build_wanted() -> void:
+	wanted_label = Label.new()
+	wanted_label.text = "通缉中 · 甩开警察！"
+	wanted_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	wanted_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	wanted_label.position.y = 52
+	wanted_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wanted_label.add_theme_font_size_override("font_size", 24)
+	wanted_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.2))
+	wanted_label.add_theme_constant_override("outline_size", 8)
+	wanted_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	wanted_label.visible = false
+	_root.add_child(wanted_label)
+
+
+## 车库 NPC 碰撞开关按钮文字
+func set_npc_solid_label(on: bool) -> void:
+	btn_npc_solid.text = "NPC 碰撞：%s" % ("开" if on else "关")
 
 
 # ================= 暂停 =================
