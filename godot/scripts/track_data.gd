@@ -162,6 +162,14 @@ const CAR_MODELS := [
 	{"id": "aifd", "name": "AI 跳灯跑车", "file": "res://assets/cars/car_tripo_k.glb", "desc": "AI 生成 · 珠白旋翼 · 跳灯双座 + 大尾翼", "yaw_deg": 0.0, "scale": 4.6,
 		"class": "street",
 		"stats": {"top": 89.0, "power": 61.0, "accel": 12.0, "grip": 0.96, "brake": 18.2}},
+	# 白灰幽灵：柯尼塞格风格极速旗舰，全队最快
+	{"id": "aighost", "name": "AI 幽灵超跑", "file": "res://assets/cars/car_tripo_l.glb", "desc": "AI 生成 · 白刃车身 · 环刀尾翼 · 极速旗舰", "yaw_deg": -90.0, "scale": 4.6,
+		"class": "endurance",
+		"stats": {"top": 97.0, "power": 66.0, "accel": 12.0, "grip": 1.08, "brake": 19.4}},
+	# 奔驰 AMG：荧光绿涂装燃油街跑（源模型贴图名即「奔驰跑车」）
+	{"id": "aiamg", "name": "AI 奔驰 AMG", "file": "res://assets/cars/car_tripo_m.glb", "desc": "AI 生成 · 荧光绿涂装 · AMG 燃油街跑", "yaw_deg": -90.0, "scale": 4.6,
+		"class": "combustion",
+		"stats": {"top": 92.0, "power": 65.0, "accel": 11.7, "grip": 1.06, "brake": 19.0}},
 ]
 
 const DEFAULT_MODEL := "gt3"
