@@ -191,6 +191,7 @@ const RACE_REWARDS := [500, 300, 200, 100]   # 名次→金币：P1/P2/P3/其他
 
 const PART_SLOTS := [
 	{"id": "engine", "name": "发动机"},
+	{"id": "turbo", "name": "涡轮"},
 	{"id": "tires", "name": "轮胎"},
 	{"id": "drift", "name": "漂移胎", "drift_only": true},   # 仅惯性漂移车（AE86/RX-7）
 ]
@@ -205,6 +206,18 @@ const PART_OPTIONS := {
 			"stats": {"power_mul": 1.12, "accel_add": 0.6, "top_mul": 1.02}},
 		{"id": "pro", "name": "职业级引擎", "desc": "动力 +20% · 牵引 +1.0 · 极速 +4% · 制动 +0.5", "price": 3000,
 			"stats": {"power_mul": 1.20, "accel_add": 1.0, "top_mul": 1.04, "brake_add": 0.5}},
+	],
+	"turbo": [
+		{"id": "stock", "name": "无涡轮", "desc": "自然吸气", "price": 0,
+			"stats": {}},
+		{"id": "single", "name": "单涡轮", "desc": "动力 +5% · 极速 +1%", "price": 500,
+			"stats": {"power_mul": 1.05, "top_mul": 1.01}},
+		{"id": "twin", "name": "双涡轮", "desc": "动力 +10% · 牵引 +0.2", "price": 1100,
+			"stats": {"power_mul": 1.10, "accel_add": 0.2}},
+		{"id": "hs_single", "name": "高速涡轮", "desc": "极速 +4% · 动力 +4%", "price": 2000,
+			"stats": {"top_mul": 1.04, "power_mul": 1.04}},
+		{"id": "hs_twin", "name": "高速双涡轮", "desc": "极速 +6% · 动力 +14% · 牵引 +0.2", "price": 3600,
+			"stats": {"top_mul": 1.06, "power_mul": 1.14, "accel_add": 0.2}},
 	],
 	"tires": [
 		{"id": "stock", "name": "原厂轮胎", "desc": "标准抓地", "price": 0,
