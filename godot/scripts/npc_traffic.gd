@@ -277,7 +277,7 @@ func trigger_wanted() -> void:
 		var light_r := _make_light(Color(1, 0.1, 0.1), vis, -0.22)
 		var light_b := _make_light(Color(0.15, 0.3, 1), vis, 0.22)
 		police.append({"vis": vis, "light_r": light_r, "light_b": light_b,
-				"pos": Vector3(px, q["height"], pz), "last_idx": null,
+				"pos": Vector3(px, q["height"], pz), "speed": 24.0, "last_idx": null,
 				"last": Vector3.ZERO, "stuck": 0.0})
 	hud.set_wanted(true, 0.0)
 
@@ -441,7 +441,14 @@ func _update_police(dt: float) -> void:
 		to_p.y = 0.0
 		var d := to_p.length()
 		min_d = minf(min_d, d)
-		var spd := 26.0 if d > 60.0 else 20.0
+		# 追击动力：加速 16 m/s²，极速 165km/h 起步；玩家开得越快警车极速
+		# 水涨船高（玩家车速 +2），普通车甩不掉、顶配车靠弯道与技术仍可摆脱。
+		# 近身 20m 内收到「玩家速度 +6」，贴上去拦截而不是冲过头
+		var chase_top: float = maxf(46.0, player_speed + 2.0)
+		u["speed"] = minf(float(u["speed"]) + 16.0 * dt, chase_top)
+		if d < 20.0:
+			u["speed"] = minf(float(u["speed"]), player_speed + 6.0)
+		var spd: float = u["speed"]
 		if d > 2.0:
 			pos += to_p / d * spd * dt
 		var q: Dictionary = fm.query(pos.x, pos.z, u["last_idx"], pos.y)
