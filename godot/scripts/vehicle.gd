@@ -16,6 +16,7 @@ var power := 60.0                 # 低速最大加速度基准（实际受抓�
 var brake_power := 18.0           # 制动减速度基准 (m/s²)
 var accel_cap := 11.0             # 牵引上限 (m/s²)：抓地能给的起步加速度
 var no_shift := false             # 电驱单速变速箱：无换挡切断，起步线性猛
+var _ev_high := false             # 电驱虚拟段位（仅声浪用）：52% 极速处升段
 var inertia_drift := false        # 惯性漂移：手刹只负责起漂，松开后漂移自持
 var _drift_hold := false          # 惯性漂移自持标志
 var drag_k2 := 7.5e-4             # 空气阻力二次项系数（按极速标定：极速处风阻=牵引上限）
@@ -116,6 +117,7 @@ func place_at(pose: Dictionary) -> void:
 	gear = 1
 	rpm_norm = 0.12
 	shift_timer = 0.0
+	_ev_high = false
 	drifting = false
 	_drift_hold = false
 	hit_impulse = 0.0
@@ -343,8 +345,17 @@ func _update_drivetrain(dt: float) -> void:
 	var target_rpm := 0.10 if (v < 1.0 and input_throttle == 0.0) \
 			else clampf(0.16 + frac * 0.84 + input_throttle * 0.05, 0.0, 1.0)
 	if no_shift and v >= 1.0:
-		# 电驱特性：音调随全速域车速爬升，油门再叠加瞬态加成（即踩即起，松油即落）
-		target_rpm = clampf(0.16 + frac * 0.84 + input_throttle * 0.35, 0.1, 1.0)
+		# 电驱虚拟两段速：声浪在 52% 极速处「升段」——音调先爬满、回落、
+		# 再续升到极速，起伏感和其他组别的换挡一致；只改音调，
+		# 动力依旧单速无切断。94% 回差防边界振荡（与燃油换挡同规则）
+		var sp := top_speed * 3.6 * 0.52
+		if v >= sp and not _ev_high:
+			_ev_high = true
+		elif v < sp * 0.94 and _ev_high:
+			_ev_high = false
+		var frac_ev := clampf(v / maxf(1.0, sp), 0.0, 1.0) if not _ev_high \
+				else clampf((v - sp) / maxf(1.0, top_speed * 3.6 - sp), 0.0, 1.0)
+		target_rpm = clampf(0.16 + frac_ev * 0.84 + input_throttle * 0.35, 0.1, 1.0)
 	rpm_norm = RRUtil.damp(rpm_norm, target_rpm, 8.0, dt)
 	engine_load_smoothed = RRUtil.damp(engine_load_smoothed,
 			input_throttle * 0.7 + clampf(g_long * 9.81 / 13.0, 0.0, 0.5), 5.0, dt)
