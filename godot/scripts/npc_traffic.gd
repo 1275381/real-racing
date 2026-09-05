@@ -8,10 +8,10 @@ signal car_hit             # 实体模式下撞击 NPC 车（触发警察）
 signal busted(fine: int)   # 被警察逮捕（game 扣罚金）
 
 const CAR_COUNT := 20
-const PED_TARGET := 100
-const CAR_COLORS := [
-	Color("#c8ccd2"), Color("#22262c"), Color("#8a1f1f"), Color("#1f4f8a"),
-	Color("#d9b677"), Color("#3f7a4a"), Color("#e8eaee"), Color("#6b4f8a"),
+const PED_TARGET := 220
+const SEDAN_COLORS := [
+	Color("#d8d9dd"), Color("#b8bcc4"), Color("#23262c"), Color("#7d1f1f"),
+	Color("#1f4f8a"), Color("#c9b26b"), Color("#3f7a4a"), Color("#e0e2e6"),
 ]
 const PED_CLOTHES := [
 	Color("#c33a2f"), Color("#2f5ac3"), Color("#3f7a4a"), Color("#d9a13b"),
@@ -41,6 +41,8 @@ var player_vel := Vector3.ZERO
 var player_speed := 0.0
 var _ped_mm_body: MultiMeshInstance3D
 var _ped_mm_head: MultiMeshInstance3D
+var _traffic_body: MultiMesh
+var _traffic_wheel: MultiMesh
 
 
 ## 进入漫游时构建（freeroam 已 build）
@@ -70,29 +72,66 @@ func set_solid(on: bool) -> void:
 # ================= 交通车辆 =================
 
 func _build_cars() -> void:
-	var models := CarVisual.available_model_ids()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20260905
+	# 低多边形民用车（车身+座舱 一体，轮组独立深色）——不是跑车模型
+	var body_st := SurfaceTool.new()
+	body_st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var body := BoxMesh.new()
+	body.size = Vector3(1.78, 0.52, 4.35)
+	body_st.append_from(body, 0, Transform3D(Basis.IDENTITY, Vector3(0, 0.55, 0)))
+	var cabin := BoxMesh.new()
+	cabin.size = Vector3(1.6, 0.5, 2.05)
+	body_st.append_from(cabin, 0, Transform3D(Basis.IDENTITY, Vector3(0, 1.03, -0.28)))
+	var body_mm := MultiMesh.new()
+	body_mm.transform_format = MultiMesh.TRANSFORM_3D
+	body_mm.use_colors = true
+	body_mm.mesh = body_st.commit()
+	body_mm.instance_count = CAR_COUNT   # 必须先分配实例数，否则 set_instance_transform 全部无效
+	var wheel_st := SurfaceTool.new()
+	wheel_st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var wheel := CylinderMesh.new()
+	wheel.top_radius = 0.31
+	wheel.bottom_radius = 0.31
+	wheel.height = 0.24
+	var roll := Basis.from_euler(Vector3(0, 0, PI * 0.5))
+	for wx in [-0.82, 0.82]:
+		for wz in [-1.38, 1.38]:
+			wheel_st.append_from(wheel, 0, Transform3D(roll, Vector3(wx, 0.31, wz)))
+	var wheel_mm := MultiMesh.new()
+	wheel_mm.transform_format = MultiMesh.TRANSFORM_3D
+	wheel_mm.mesh = wheel_st.commit()
+	wheel_mm.instance_count = CAR_COUNT
+	var wmat := StandardMaterial3D.new()
+	wmat.albedo_color = Color(0.13, 0.13, 0.15)
+	wheel_mm.mesh.surface_set_material(0, wmat)
+	var bmat := StandardMaterial3D.new()
+	bmat.vertex_color_use_as_albedo = true
+	body_mm.mesh.surface_set_material(0, bmat)
+	var bmmi := MultiMeshInstance3D.new()
+	bmmi.multimesh = body_mm
+	bmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(bmmi)
+	var wmmi := MultiMeshInstance3D.new()
+	wmmi.multimesh = wheel_mm
+	wmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(wmmi)
+	_traffic_body = body_mm
+	_traffic_wheel = wheel_mm
 	for i in CAR_COUNT:
 		var r := rng.randi_range(0, fm.roads.size() - 1)
 		var pts: PackedVector3Array = fm.roads[r].pts
-		var model: String = models[rng.randi_range(0, models.size() - 1)]
-		var vis := CarVisual.create(model,
-				CAR_COLORS[rng.randi_range(0, CAR_COLORS.size() - 1)],
-				Color(0.14, 0.15, 0.18))
-		add_child(vis)
-		var car := {
-			"vis": vis, "r": r, "idx": rng.randf_range(0.0, pts.size() - 2.0),
+		body_mm.set_instance_color(i, SEDAN_COLORS[rng.randi_range(0, SEDAN_COLORS.size() - 1)])
+		cars.append({
+			"r": r, "idx": rng.randf_range(0.0, pts.size() - 2.0),
 			"dir": 1.0 if rng.randf() < 0.5 else -1.0,
 			"speed": rng.randf_range(8.0, 14.0), "stop_t": 0.0, "hit_cd": 0.0,
-		}
-		_place_car(car, true)
-		cars.append(car)
+		})
+		_place_car(cars[i], true)
 
 
-func _place_car(car: Dictionary, silent := false) -> void:
+func _place_car(car: Dictionary, i: int, silent := false) -> void:
 	var pts: PackedVector3Array = fm.roads[car["r"]].pts
-	var left: PackedVector2Array = fm.roads[car["r"]].left
 	var i0 := clampi(int(floor(car["idx"])), 0, pts.size() - 2)
 	var f: float = clampf(car["idx"] - float(i0), 0.0, 1.0)
 	var p: Vector3 = pts[i0].lerp(pts[i0 + 1], f)
@@ -100,9 +139,11 @@ func _place_car(car: Dictionary, silent := false) -> void:
 	var tv: Vector3 = (pts[i0 + 1] - pts[i0]).normalized() * dir_f
 	var right := Vector2(tv.z, -tv.x)   # 行进方向右侧（靠右行驶）
 	var pos := Vector3(p.x + right.x * 3.0, p.y, p.z + right.y * 3.0)
-	var vis: Node3D = car["vis"]
-	vis.position = pos
-	vis.rotation.y = atan2(tv.x, tv.y)
+	var yaw := atan2(tv.x, tv.y)
+	var xf := Transform3D(Basis.from_euler(Vector3(0, yaw, 0)), pos)
+	_traffic_body.set_instance_transform(i, xf)
+	_traffic_wheel.set_instance_transform(i, xf)
+	car["pos"] = pos
 
 
 func _respawn_car_near_player(car: Dictionary) -> void:
@@ -133,7 +174,7 @@ func _build_pedestrians() -> void:
 		if not road.xsec_cut:
 			continue
 		var pts: PackedVector3Array = road.pts
-		var k := maxi(1, roundi(30.0 / _step.get(r, 1.3)))
+		var k := maxi(1, roundi(14.0 / _step.get(r, 1.3)))
 		var side := 1.0
 		for i in range(0, pts.size(), k):
 			var p := pts[i]
@@ -152,7 +193,7 @@ func _build_pedestrians() -> void:
 			spots.append({"origin": origin, "axis": axis, "range": 26.0})
 			side = -side
 	# 中心广场/配件店周边加密
-	for i in 14:
+	for i in 20:
 		var a := rng.randf() * TAU
 		var d := 16.0 + rng.randf() * 34.0
 		var origin := Vector3(FreeroamMap.SHOP_POS.x + sin(a) * d, 0.05,
@@ -163,11 +204,11 @@ func _build_pedestrians() -> void:
 		spots.remove_at(rng.randi_range(0, spots.size() - 1))
 	# MultiMesh：胶囊身体（衣色）+ 球头（肤色）
 	var body_mesh := CapsuleMesh.new()
-	body_mesh.radius = 0.17
-	body_mesh.height = 1.05
+	body_mesh.radius = 0.19
+	body_mesh.height = 1.12
 	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.125
-	head_mesh.height = 0.25
+	head_mesh.radius = 0.135
+	head_mesh.height = 0.27
 	_ped_mm_body = _make_ped_mm(body_mesh, PED_CLOTHES, rng, spots.size())
 	_ped_mm_head = _make_ped_mm(head_mesh, PED_SKIN, rng, spots.size())
 	for s in spots:
@@ -252,8 +293,8 @@ func update(dt: float) -> void:
 	if not active:
 		return
 	_t += dt
-	for car in cars:
-		_update_car(car, dt)
+	for i in cars.size():
+		_update_car(cars[i], dt, i)
 	_update_peds(dt)
 	if wanted:
 		_update_police(dt)
@@ -261,7 +302,7 @@ func update(dt: float) -> void:
 		hud.set_wanted(true, _esc_t / 6.0)
 
 
-func _update_car(car: Dictionary, dt: float) -> void:
+func _update_car(car: Dictionary, dt: float, i: int) -> void:
 	car["hit_cd"] = maxf(0.0, car["hit_cd"] - dt)
 	var pts: PackedVector3Array = fm.roads[car["r"]].pts
 	if car["stop_t"] > 0.0:
@@ -273,19 +314,21 @@ func _update_car(car: Dictionary, dt: float) -> void:
 			car["idx"] = posmod(car["idx"], float(pts.size() - 1))
 		else:
 			_respawn_car_near_player(car)
-	_place_car(car)
+	_place_car(car, i)
 	# 与玩家实体碰撞：互推 + 被撞靠边停 3 秒
 	if solid:
-		var vis: Node3D = car["vis"]
-		var d := Vector2(vis.position.x - player_pos.x, vis.position.z - player_pos.z)
+		var cpos: Vector3 = car["pos"]
+		var d := Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z)
 		var dist := d.length()
 		if dist < 2.3 and dist > 0.01:
 			var n := d / dist
 			var push := 2.3 - dist
 			player_pos.x += n.x * push * 0.6
 			player_pos.z += n.y * push * 0.6
-			vis.position.x -= n.x * push * 0.4
-			vis.position.z -= n.y * push * 0.4
+			cpos.x -= n.x * push * 0.4
+			cpos.z -= n.y * push * 0.4
+			car["pos"] = cpos
+			_place_car(car, i)
 			if car["hit_cd"] <= 0.0 and player_speed > 3.0:
 				car["stop_t"] = 3.0   # 被撞后靠边停一会儿
 				car["hit_cd"] = 1.0
@@ -378,7 +421,8 @@ func _update_police(dt: float) -> void:
 		u["pos"] = pos
 		var vis: Node3D = u["vis"]
 		vis.position = pos
-		vis.rotation.y = atan2(to_p.x, to_p.y)
+		# 车头指向行驶方向（原来误用被清零的 to_p.y，恒朝东西向=原地平移）
+		vis.rotation.y = atan2(to_p.x, to_p.z)
 		# 警灯交替闪烁
 		var blink := int(_wanted_t * 4.0) % 2 == 0
 		(u["light_r"] as MeshInstance3D).visible = blink
