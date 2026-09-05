@@ -2350,6 +2350,14 @@ func _make_garage() -> void:
 			y + GAR_DOOR_H)
 	put_box.call(cx, cz, GAR_W + 0.6, 0.3, GAR_D + 0.6, Color(0.5, 0.52, 0.55, 0.0),
 			y + GAR_H - 0.3)
+	# ---- 塔楼主体：车库就是这栋楼的底层（嵌在楼里），从屋顶直接长上去 ----
+	# 主层：与车库外墙齐平（16×14），高 33m；退台层再收 0.72 竖 9.5m
+	put_box.call(cx, cz, GAR_W, 33.0, GAR_D, Color(0.74, 0.76, 0.79, 0.5),
+			y + GAR_H + 0.03)
+	put_box.call(cx, cz, GAR_W * 0.72, 9.5, GAR_D * 0.72, Color(0.78, 0.80, 0.83, 0.5),
+			y + GAR_H + 33.0)
+	# 塔楼不占碰撞：障碍推出是 2D（无高度），整栋 footprint 的碰撞体会把门洞
+	# 一起封死；地面周界就是车库墙的分块碰撞，车永远够不到高层
 	var bmesh := BoxMesh.new()
 	bmesh.size = Vector3.ONE
 	bmesh.material = _building_material()

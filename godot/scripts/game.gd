@@ -513,7 +513,7 @@ func enter_roam() -> void:
 	freeroam.reset_garage()   # 卷帘门落回：出生在车库内，踩油门顶门出发
 	_in_steer = 0.0
 	_cam_init = false
-	_intro_t = INTRO_DUR
+	_intro_t = 0.0   # 漫游直达：不要入场运镜，出生即车库内追尾视角，油门就走出门
 	hud.init_roam_minimap(freeroam.minimap_tex,
 			Vector2(-FreeroamMap.MAP_LIMIT, -FreeroamMap.MAP_LIMIT),
 			Vector2(FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
