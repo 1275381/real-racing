@@ -218,8 +218,8 @@ func step(dt: float) -> void:
 	else:
 		vl *= exp(-grip_rate * dt)
 
-	# 惯性漂移状态机：手刹+方向+速度 → 起漂；松手刹后只要保持油门且
-	# 侧滑未耗尽，漂移持续自持（收油/救回/撞墙大减速才退出）
+	# 惯性漂移状态机：手刹+方向+速度 → 起漂；松手刹后靠低抓地自然滑一段，
+	# 侧滑耗尽 / 收油 / 失速才退出
 	if inertia_drift:
 		if input_handbrake and spd > 8.0 and absf(input_steer) > 0.15:
 			_drift_hold = true
@@ -284,6 +284,13 @@ func step(dt: float) -> void:
 			laps_done = nf
 			if on_lap_complete.is_valid() and not finished:
 				on_lap_complete.call(nf)
+		# 点对点开放赛道：越过终点冲线采样即完成（单圈制）
+		if trk.closed == false and laps_done == 0:
+			var fin: int = trk.n - 15
+			if q["idx"] >= fin:
+				laps_done = 1
+				if on_lap_complete.is_valid() and not finished:
+					on_lap_complete.call(1)
 	q_prev_idx = q["idx"]
 
 	# ---- 垂直：贴地跟随 / 坡顶腾空 / 重力落地 ----
