@@ -103,6 +103,79 @@ func set_muted(m: bool) -> void:
 	AudioServer.set_bus_mute(0, m)
 
 
+# ---------------- 警笛 / 直升机 ----------------
+
+var _siren_player: AudioStreamPlayer
+var _heli_player: AudioStreamPlayer
+
+## 追捕音效：警笛双音 wail + 直升机旋翼扑动，音量随距离衰减（active 关闭即停止）
+func set_pursuit_audio(active: bool, police_dist: float, heli: bool,
+		heli_dist: float) -> void:
+	if _siren_player == null:
+		_make_pursuit_players()
+	if active:
+		if not _siren_player.playing:
+			_siren_player.play()
+		_siren_player.volume_db = lerpf(-2.0, -30.0,
+				clampf((police_dist - 20.0) / 280.0, 0.0, 1.0))
+	elif _siren_player.playing:
+		_siren_player.stop()
+	if heli:
+		if not _heli_player.playing:
+			_heli_player.play()
+		_heli_player.volume_db = lerpf(0.0, -34.0,
+				clampf((heli_dist - 15.0) / 240.0, 0.0, 1.0))
+	elif _heli_player != null and _heli_player.playing:
+		_heli_player.stop()
+
+
+func _make_pursuit_players() -> void:
+	var sr := MIX_RATE
+	# 警笛：双音 wail（两音各 0.7s 交替；频率和取 1795.2 使相位在循环点无缝）
+	var f1 := 718.0
+	var f2 := 1077.2
+	var n := int(sr * 1.4)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var phase := 0.0
+	for i in n:
+		var t := float(i) / sr
+		phase += TAU * (f1 if fmod(t, 1.4) < 0.7 else f2) / sr
+		var v := int(sin(phase) * 0.4 * 32000.0)
+		data.encode_s16(i * 2, v)
+	_siren_player = AudioStreamPlayer.new()
+	_siren_player.stream = _looped_wav(data, n)
+	add_child(_siren_player)
+	# 直升机旋翼：30Hz 低频扑动 + 少量噪声（0.5s = 恰好 15 个扑动周期，无缝）
+	var n2 := int(sr * 0.5)
+	var data2 := PackedByteArray()
+	data2.resize(n2 * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 41
+	var period := 1.0 / 30.0
+	for i in n2:
+		var frac := fmod(float(i) / sr, period) / period
+		var thump := sin(frac * PI) * 0.8
+		var v2 := int(clampf(thump * 0.75 + (rng.randf() * 2.0 - 1.0) * 0.22,
+				-1.0, 1.0) * 32000.0)
+		data2.encode_s16(i * 2, v2)
+	_heli_player = AudioStreamPlayer.new()
+	_heli_player.stream = _looped_wav(data2, n2)
+	add_child(_heli_player)
+
+
+func _looped_wav(data: PackedByteArray, frames: int) -> AudioStreamWAV:
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = MIX_RATE
+	wav.stereo = false
+	wav.data = data
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_begin = 0
+	wav.loop_end = frames
+	return wav
+
+
 # ---------------- 引擎 ----------------
 
 ## 组别引擎声纹：同一套合成器，不同波形/频率/滤波参数 → 截然不同的声浪

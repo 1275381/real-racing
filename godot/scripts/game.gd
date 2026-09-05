@@ -734,6 +734,7 @@ func enter_roam() -> void:
 		add_child(npc)
 		npc.setup(freeroam, hud)
 		npc.busted.connect(_on_npc_busted)
+		npc.heli_fire.connect(func(): shake = maxf(shake, 0.5))
 	npc.solid = npc_solid
 	npc.set_active(true)
 	hud.show_center("", "", 0)
@@ -753,6 +754,7 @@ func exit_roam() -> void:
 	if npc != null:
 		npc.set_active(false)
 		hud.set_wanted(false, 0.0)
+	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
 	env.set_ground_visible(true)
 	env.set_race_props_visible(true)
@@ -1137,6 +1139,10 @@ func _step_sim(h: float) -> void:
 					cos(pin.heading) * pin.vf - sin(pin.heading) * pin.vl)
 			npc.player_speed = absf(pin.vf)
 			npc.update(h)
+			# 警笛 + 直升机旋翼音（随距离衰减）
+			audio.set_pursuit_audio(npc.wanted and npc.min_police_dist < 400.0,
+					npc.min_police_dist, npc.heli_active and npc.heli_dist < 350.0,
+					npc.heli_dist)
 		sim_time += h
 		return
 

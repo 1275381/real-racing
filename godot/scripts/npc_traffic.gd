@@ -6,8 +6,10 @@ extends Node3D
 signal ped_hit              # 撞到行人（触发警察）
 signal car_hit             # 实体模式下撞击 NPC 车（触发警察）
 signal busted(fine: int)   # 被警察逮捕（game 扣罚金）
+signal heli_fire           # 武装直升机开火（game 做镜头震动）
 
 const CAR_COUNT := 20
+const POLICE_COUNT := 4
 const PED_TARGET := 220
 const SEDAN_COLORS := [
 	Color("#d8d9dd"), Color("#b8bcc4"), Color("#23262c"), Color("#7d1f1f"),
@@ -32,8 +34,17 @@ var active := false
 
 var cars: Array = []       # {vis, r, idx, dir, speed, stop_t, hit_cd}
 var peds: Array = []       # {origin, axis, off, dir, range, speed, dodge: float, dodge_sign, knock_t, phase}
-var police: Array = []     # {vis, light_r, light_b, pos, last_idx, last: Vector3, stuck: float}
+var police: Array = []     # {vis, light_r, light_b, pos, speed, last_idx, last: Vector3, stuck: float}
 var wanted := false
+var heli_active := false
+var heli_dist := 999.0
+var min_police_dist := 999.0
+var heli_vis: Node3D
+var heli_rotor: Node3D
+var heli_spot: SpotLight3D
+var heli_tracer: MeshInstance3D
+var heli_angle := 0.0
+var heli_fire_t := 0.0
 var _wanted_t := 0.0
 var _esc_t := 0.0
 var _bust_t := 0.0
@@ -266,8 +277,8 @@ func trigger_wanted() -> void:
 	wanted = true
 	_esc_t = 0.0
 	_bust_t = 0.0
-	for i in 2:
-		var ang := randf() * TAU
+	for i in POLICE_COUNT:
+		var ang := float(i) / float(POLICE_COUNT) * TAU + randf() * 0.5
 		var px := player_pos.x + sin(ang) * 80.0
 		var pz := player_pos.z + cos(ang) * 80.0
 		var q: Dictionary = fm.query(px, pz, null, player_pos.y)
@@ -279,7 +290,111 @@ func trigger_wanted() -> void:
 		police.append({"vis": vis, "light_r": light_r, "light_b": light_b,
 				"pos": Vector3(px, q["height"], pz), "speed": 24.0, "last_idx": null,
 				"last": Vector3.ZERO, "stuck": 0.0})
+	_build_heli()
 	hud.set_wanted(true, 0.0)
+
+
+## 武装直升机：机体 + 主旋翼/尾桨 + 探照灯，盘旋在玩家上空定期开火
+func _build_heli() -> void:
+	heli_active = true
+	heli_vis = Node3D.new()
+	add_child(heli_vis)
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.10, 0.16, 0.30)
+	var mid := StandardMaterial3D.new()
+	mid.albedo_color = Color(0.16, 0.24, 0.42)
+	var glass := StandardMaterial3D.new()
+	glass.albedo_color = Color(0.55, 0.75, 0.9, 0.7)
+	glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var add_box := func(size: Vector3, pos: Vector3, mat: Material) -> MeshInstance3D:
+		var bm := BoxMesh.new()
+		bm.size = size
+		bm.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.position = pos
+		heli_vis.add_child(mi)
+		return mi
+	add_box.call(Vector3(1.7, 1.5, 4.4), Vector3(0, 0, 0.4), mid)          # 机身
+	add_box.call(Vector3(1.4, 1.0, 1.5), Vector3(0, 0.1, 1.9), glass)      # 座舱玻璃
+	add_box.call(Vector3(0.34, 0.34, 3.6), Vector3(0, 0.35, -3.6), dark)   # 尾梁
+	add_box.call(Vector3(0.12, 1.3, 0.9), Vector3(0, 0.9, -5.1), dark)     # 尾翼
+	add_box.call(Vector3(0.1, 0.55, 0.16), Vector3(0.15, -1.0, -5.15), dark)  # 尾桨
+	add_box.call(Vector3(0.12, 0.1, 3.2), Vector3(-0.8, -0.95, 0.3), dark)  # 橇
+	add_box.call(Vector3(0.12, 0.1, 3.2), Vector3(0.8, -0.95, 0.3), dark)
+	# 主旋翼（双叶十字，快速旋转）
+	heli_rotor = Node3D.new()
+	heli_rotor.position = Vector3(0, 1.05, 0.2)
+	heli_vis.add_child(heli_rotor)
+	var rotor_mat := StandardMaterial3D.new()
+	rotor_mat.albedo_color = Color(0.14, 0.15, 0.18)
+	rotor_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	for blade_rot in [0.0, PI * 0.5]:
+		var blade := BoxMesh.new()
+		blade.size = Vector3(0.34, 0.05, 9.2)
+		blade.material = rotor_mat
+		var bmi := MeshInstance3D.new()
+		bmi.mesh = blade
+		bmi.rotation.y = blade_rot
+		heli_rotor.add_child(bmi)
+	# 探照灯（锥形光束打向玩家）
+	heli_spot = SpotLight3D.new()
+	heli_spot.spot_range = 90.0
+	heli_spot.spot_angle = 16.0
+	heli_spot.light_energy = 6.0
+	heli_spot.light_color = Color(1.0, 0.97, 0.85)
+	heli_spot.shadow_enabled = false
+	heli_vis.add_child(heli_spot)
+	# 开火曳光条（开火时短暂显示）
+	heli_tracer = MeshInstance3D.new()
+	var tm := BoxMesh.new()
+	tm.size = Vector3(0.08, 0.08, 1.0)
+	var tmat := StandardMaterial3D.new()
+	tmat.albedo_color = Color(1.0, 0.85, 0.3)
+	tmat.emission_enabled = true
+	tmat.emission = Color(1.0, 0.75, 0.2)
+	tmat.emission_energy_multiplier = 3.0
+	tm.material = tmat
+	heli_tracer.mesh = tm
+	heli_tracer.visible = false
+	add_child(heli_tracer)
+	heli_angle = randf() * TAU
+	heli_fire_t = 3.0
+
+
+func _update_heli(dt: float) -> void:
+	heli_angle += 0.5 * dt
+	var radius := 26.0 + 7.0 * sin(_t * 0.3)
+	var px := player_pos.x + sin(heli_angle) * radius
+	var pz := player_pos.z + cos(heli_angle) * radius
+	var q: Dictionary = fm.query(px, pz, null, player_pos.y)
+	var ground: float = maxf(q["height"], player_pos.y)
+	heli_vis.position = Vector3(px, maxf(ground + 26.0, player_pos.y + 24.0), pz)
+	# 机头沿盘旋切线方向
+	heli_vis.rotation.y = heli_angle + PI * 0.5
+	heli_rotor.rotation.y += 42.0 * dt
+	# 探照灯瞄准玩家
+	heli_spot.look_at_from_position(heli_spot.global_position,
+			Vector3(player_pos.x, player_pos.y + 0.8, player_pos.z), Vector3(1, 0, 0))
+	heli_dist = heli_vis.position.distance_to(player_pos)
+	# 开火：每 5.5 秒一轮 4 连发，曳光条指向玩家 + 信号给 game 做镜头震动
+	heli_fire_t += dt
+	if heli_fire_t > 5.5:
+		var burst := fmod(heli_fire_t - 5.5, 0.12) < 0.05
+		if heli_fire_t > 6.0:
+			heli_fire_t = 0.0
+			heli_fire.emit()
+		heli_tracer.visible = burst and heli_fire_t < 6.0
+		if heli_tracer.visible:
+			var from := heli_vis.global_position + Vector3(0, -1.2, 0)
+			var to := player_pos + Vector3(0, 0.7, 0)
+			var mid := (from + to) * 0.5
+			var lenv := from.distance_to(to)
+			heli_tracer.global_position = mid
+			heli_tracer.look_at_from_position(mid, to, Vector3(1, 0, 0))
+			heli_tracer.scale = Vector3(1, 1, lenv)
+	else:
+		heli_tracer.visible = false
 
 
 func _make_light(col: Color, vis: Node3D, x_off: float) -> MeshInstance3D:
@@ -302,9 +417,14 @@ func _clear_wanted() -> void:
 	wanted = false
 	_esc_t = 0.0
 	_bust_t = 0.0
+	heli_active = false
+	heli_dist = 999.0
+	min_police_dist = 999.0
+	heli_tracer.visible = false
 	for u in police:
 		u["vis"].queue_free()
 	police.clear()
+	heli_vis.queue_free()
 
 
 # ================= 每帧更新 =================
@@ -435,6 +555,7 @@ func tilt_sway(t: float, phase: float) -> float:
 
 func _update_police(dt: float) -> void:
 	var min_d := INF
+	_update_heli(dt)
 	for u in police:
 		var pos: Vector3 = u["pos"]
 		var to_p := player_pos - pos
@@ -483,6 +604,7 @@ func _update_police(dt: float) -> void:
 			u["pos"] = Vector3(player_pos.x + sin(ang) * 60.0, pos.y,
 					player_pos.z + cos(ang) * 60.0)
 			u["stuck"] = 0.0
+	min_police_dist = min_d   # 每帧更新（供音效距离衰减），不受摆脱分支 return 影响
 	# 被捕：贴身且玩家近乎停下，持续 1.5 秒
 	if _bust_t > 1.5:
 		_clear_wanted()
@@ -499,3 +621,4 @@ func _update_police(dt: float) -> void:
 	else:
 		_esc_t = 0.0
 	hud.set_wanted(true, clampf(_esc_t / 6.0, 0.0, 1.0))
+	min_police_dist = min_d
