@@ -166,10 +166,10 @@ const CAR_MODELS := [
 	{"id": "aighost", "name": "AI 幽灵超跑", "file": "res://assets/cars/car_tripo_l.glb", "desc": "AI 生成 · 白刃车身 · 环刀尾翼 · 极速旗舰", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "endurance",
 		"stats": {"top": 97.0, "power": 66.0, "accel": 12.0, "grip": 1.08, "brake": 19.4}},
-	# 奔驰 AMG：荧光绿涂装燃油街跑（源模型贴图名即「奔驰跑车」）
-	{"id": "aiamg", "name": "AI 奔驰 AMG", "file": "res://assets/cars/car_tripo_m.glb", "desc": "AI 生成 · 荧光绿涂装 · AMG 燃油街跑", "yaw_deg": -90.0, "scale": 4.6,
-		"class": "combustion",
-		"stats": {"top": 92.0, "power": 65.0, "accel": 11.7, "grip": 1.06, "brake": 19.0}},
+	# 奔驰 AMG：荧光绿涂装混动电驱（源模型贴图名即「奔驰跑车」）
+	{"id": "aiamg", "name": "AI 奔驰 AMG", "file": "res://assets/cars/car_tripo_m.glb", "desc": "AI 生成 · 荧光绿涂装 · AMG 混动电驱", "yaw_deg": -90.0, "scale": 4.6,
+		"class": "hybrid",
+		"stats": {"top": 92.0, "power": 65.0, "accel": 11.7, "grip": 1.06, "brake": 19.0, "no_shift": true}},
 ]
 
 const DEFAULT_MODEL := "gt3"
