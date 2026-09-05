@@ -122,8 +122,9 @@ var _obst_hit := 0.0              # 本帧障碍撞击强度（供音效/震屏�
 var minimap_tex: ImageTexture
 var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 
-# —— 卷帘门车库（漫游出生点）：x=180 街东侧街区，西门洞正对街道 ——
-const GAR_C := Vector2(198.5, -540.0)   # 车库中心
+# —— 卷帘门车库（漫游出生点）：x=180 街东侧、z=-540 街北侧的沿街地块，
+# 西门洞正对 x=180 街；楼体不压任何路面（南缘距 z=-540 街中心 13m）——
+const GAR_C := Vector2(198.5, -520.0)   # 车库中心（= 楼底层的中心）
 const GAR_W := 16.0
 const GAR_D := 14.0
 const GAR_H := 5.5
