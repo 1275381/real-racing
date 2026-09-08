@@ -176,6 +176,72 @@ func _looped_wav(data: PackedByteArray, frames: int) -> AudioStreamWAV:
 	return wav
 
 
+# ---------------- 步枪 ----------------
+
+var _shot_player: AudioStreamPlayer
+var _shot_stream: AudioStreamWAV
+var _reload_player: AudioStreamPlayer
+
+## 步枪枪声：白噪声爆发（指数衰减）+ 120Hz 低频冲击
+func play_shot() -> void:
+	if _shot_player == null:
+		var sr := MIX_RATE
+		var n := int(sr * 0.16)
+		var data := PackedByteArray()
+		data.resize(n * 2)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 71
+		var phase := 0.0
+		for i in n:
+			var t := float(i) / sr
+			var env := exp(-t * 26.0)
+			phase += TAU * 120.0 / sr
+			var v := ((rng.randf() * 2.0 - 1.0) * 0.8 + sin(phase) * 0.5) * env
+			data.encode_s16(i * 2, int(clampf(v, -1.0, 1.0) * 32000.0))
+		_shot_stream = _looped_wav(data, n)
+		_shot_stream.loop_mode = AudioStreamWAV.LOOP_DISABLED
+		_shot_player = AudioStreamPlayer.new()
+		_shot_player.stream = _shot_stream
+		_shot_player.volume_db = -2.0
+		add_child(_shot_player)
+	_shot_player.volume_db = -2.0   # 警枪弱化音量后复位
+	_shot_player.pitch_scale = randf_range(0.9, 1.1)
+	_shot_player.play()
+
+
+## 换弹：两声短促金属咔哒
+func play_reload() -> void:
+	if _reload_player == null:
+		var sr := MIX_RATE
+		var n := int(sr * 0.22)
+		var data := PackedByteArray()
+		data.resize(n * 2)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 87
+		for i in n:
+			var t := float(i) / sr
+			var click := 0.0
+			if t < 0.03 or (0.1 < t and t < 0.13):
+				click = (rng.randf() * 2.0 - 1.0) * exp(-t * 60.0)
+			data.encode_s16(i * 2, int(click * 32000.0))
+		var wav := _looped_wav(data, n)
+		wav.loop_mode = AudioStreamWAV.LOOP_DISABLED
+		_reload_player = AudioStreamPlayer.new()
+		_reload_player.stream = wav
+		_reload_player.volume_db = -6.0
+		add_child(_reload_player)
+	_reload_player.pitch_scale = randf_range(0.95, 1.05)
+	_reload_player.play()
+
+
+## 警察开枪（远处，音量按距离弱化）
+func play_police_shot(dist: float) -> void:
+	if dist > 120.0:
+		return
+	play_shot()
+	_shot_player.volume_db = lerpf(-4.0, -22.0, clampf(dist / 120.0, 0.0, 1.0))
+
+
 # ---------------- 引擎 ----------------
 
 ## 组别引擎声纹：同一套合成器，不同波形/频率/滤波参数 → 截然不同的声浪

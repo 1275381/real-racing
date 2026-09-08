@@ -45,6 +45,13 @@ var wanted_label: Label     # 通缉指示（警察追捕）
 var wanted_on := false
 var wanted_progress := 0.0
 var _wanted_blink_t := 0.0
+var gun_overlay: Control       # 步行 HUD：准星/三倍镜遮罩/血条/弹药
+var _gun_scope := false
+var _gun_hp := 100.0
+var _gun_ammo := 30
+var _gun_reload := 0.0
+var _dmg_flash_t := 0.0
+var _dmg_rect: ColorRect
 
 var _root: Control
 var _screens := {}          # name -> Control
@@ -110,6 +117,7 @@ func build(colors: Array) -> void:
 	_build_pause()
 	_build_results()
 	_build_wanted()
+	_build_gun_overlay()
 	show_only("garage")
 
 
@@ -123,6 +131,11 @@ func _process(dt: float) -> void:
 		_lap_flash_timer -= dt
 		if _lap_flash_timer <= 0.0:
 			_lap_flash.visible = false
+	if _dmg_flash_t > 0.0:
+		_dmg_flash_t -= dt
+		_dmg_rect.visible = _dmg_flash_t > 0.0
+		_dmg_rect.modulate.a = clampf(_dmg_flash_t / 0.25, 0.0, 1.0) * 0.45
+	_process_gun(dt)
 	if wanted_on:
 		_wanted_blink_t += dt
 		wanted_label.modulate.a = 0.55 + 0.45 * absf(sin(_wanted_blink_t * 6.0))
@@ -1101,3 +1114,87 @@ func show_results(rows: Array) -> void:
 
 func hide_loading() -> void:
 	pass   # Godot 版无加载遮罩，保留接口兼容
+
+
+## 步行模式 HUD：准星/三倍镜遮罩 + 血条 + 弹药
+func _build_gun_overlay() -> void:
+	gun_overlay = Control.new()
+	gun_overlay.name = "GunHud"
+	gun_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	gun_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gun_overlay.draw.connect(_draw_gun_overlay.bind(gun_overlay))
+	_root.add_child(gun_overlay)
+	_dmg_rect = ColorRect.new()
+	_dmg_rect.color = Color(0.8, 0.05, 0.05)
+	_dmg_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_dmg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_dmg_rect.visible = false
+	_root.add_child(_dmg_rect)
+	gun_overlay.visible = false
+
+
+func _draw_gun_overlay(cv: Control) -> void:
+	var sz: Vector2 = cv.size
+	var cx := sz.x * 0.5
+	var cy := sz.y * 0.5
+	if _gun_scope:
+		# 三倍镜：圆形视野遮罩 + 十字线
+		var r := minf(sz.x, sz.y) * 0.42
+		cv.draw_circle(Vector2(cx, cy), r + 400.0, Color(0, 0, 0, 0.96))
+		cv.draw_arc(Vector2(cx, cy), r, 0, TAU, 64, Color(0.1, 0.1, 0.1), 6.0)
+		cv.draw_line(Vector2(cx - r, cy), Vector2(cx + r, cy), Color(0.1, 0.1, 0.1, 0.8), 1.5)
+		cv.draw_line(Vector2(cx, cy - r), Vector2(cx, cy + r), Color(0.1, 0.1, 0.1, 0.8), 1.5)
+		cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.9, 0.15, 0.1))
+	else:
+		# 腰射准星：四段短线 + 中点
+		cv.draw_circle(Vector2(cx, cy), 2.0, Color(1, 1, 1, 0.9))
+		for d in [Vector2(-10, 0), Vector2(10, 0), Vector2(0, -10), Vector2(0, 10)]:
+			cv.draw_line(Vector2(cx, cy) + d * 0.6, Vector2(cx, cy) + d, Color(1, 1, 1, 0.85), 2.0)
+	# 血条（左下）
+	var bw := 190.0
+	var bh := 12.0
+	var bx := 20.0
+	var by := sz.y - 34.0
+	cv.draw_rect(Rect2(bx - 2, by - 2, bw + 4, bh + 4), Color(0, 0, 0, 0.55))
+	var ratio := clampf(_gun_hp / 100.0, 0.0, 1.0)
+	var col := Color(0.35, 0.9, 0.3) if ratio > 0.35 else Color(0.95, 0.25, 0.2)
+	cv.draw_rect(Rect2(bx, by, bw * ratio, bh), col)
+	cv.draw_string(ThemeDB.fallback_font, Vector2(bx, by - 6), "生命",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.92, 0.95))
+	# 弹药（右下）
+	var ammo_txt := "换弹中…" if _gun_reload > 0.0 else "%d / ∞" % _gun_ammo
+	cv.draw_string(ThemeDB.fallback_font, Vector2(sz.x - 130.0, sz.y - 40.0),
+			ammo_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1.0, 0.85, 0.35))
+
+
+func _process_gun(dt: float) -> void:
+	if _gun_reload > 0.0:
+		_gun_reload = maxf(0.0, _gun_reload - dt)
+	if gun_overlay.visible:
+		gun_overlay.queue_redraw()
+
+
+func set_onfoot(on: bool) -> void:
+	gun_overlay.visible = on
+	if not on:
+		_gun_scope = false
+
+
+func set_scope(on: bool) -> void:
+	_gun_scope = on
+	gun_overlay.queue_redraw()
+
+
+func set_health(hp: float) -> void:
+	_gun_hp = hp
+	gun_overlay.queue_redraw()
+
+
+func set_ammo(ammo: int, reloading: float) -> void:
+	_gun_ammo = ammo
+	_gun_reload = reloading
+	gun_overlay.queue_redraw()
+
+
+func damage_flash() -> void:
+	_dmg_flash_t = 0.25

@@ -7,9 +7,11 @@ signal ped_hit              # 撞到行人（触发警察）
 signal car_hit             # 实体模式下撞击 NPC 车（触发警察）
 signal busted(fine: int)   # 被警察逮捕（game 扣罚金）
 signal heli_fire           # 武装直升机开火（game 做镜头震动）
+signal police_shot(dmg: float)   # 警察向步行玩家开枪（game 扣血）
 
 const CAR_COUNT := 20
 const POLICE_COUNT := 4
+const POLICE_MAX := 6
 const PED_TARGET := 220
 const SEDAN_COLORS := [
 	Color("#d8d9dd"), Color("#b8bcc4"), Color("#23262c"), Color("#7d1f1f"),
@@ -32,10 +34,14 @@ var hud                    # RRHud（通缉指示）
 var solid := true          # NPC 车与玩家是否实体碰撞（车库开关）
 var active := false
 
-var cars: Array = []       # {vis, r, idx, dir, speed, stop_t, hit_cd}
-var peds: Array = []       # {origin, axis, off, dir, range, speed, dodge: float, dodge_sign, knock_t, phase}
-var police: Array = []     # {vis, light_r, light_b, pos, speed, last_idx, last: Vector3, stuck: float}
+var cars: Array = []       # {r, idx, dir, speed, stop_t, hit_cd, pos, hp, disabled}
+var peds: Array = []       # {origin, axis, off, dir, range, speed, dodge, dodge_sign, knock_t, phase, dead, pos}
+var police: Array = []     # {vis, light_r, light_b, pos, speed, hp, last_idx, last, stuck}
 var wanted := false
+var player_on_foot := false
+var escalated := false
+var heli_fire_interval := 5.5
+var police_respawn_cd := 0.0
 var heli_active := false
 var heli_dist := 999.0
 var min_police_dist := 999.0
@@ -59,6 +65,7 @@ var _ped_mm_head: MultiMeshInstance3D
 var _ped_mm_torso: MultiMeshInstance3D
 var _ped_mm_arm: MultiMeshInstance3D
 var _ped_mm_leg: MultiMeshInstance3D
+var _dbg_once := false
 var _traffic_body: MultiMesh
 var _traffic_wheel: MultiMesh
 
@@ -144,6 +151,7 @@ func _build_cars() -> void:
 			"r": r, "idx": rng.randf_range(0.0, pts.size() - 2.0),
 			"dir": 1.0 if rng.randf() < 0.5 else -1.0,
 			"speed": rng.randf_range(8.0, 14.0), "stop_t": 0.0, "hit_cd": 0.0,
+			"hp": 4.0, "disabled": false,
 		})
 		_place_car(cars[i], true)
 
@@ -251,7 +259,7 @@ func _build_pedestrians() -> void:
 			"dir": 1.0 if rng.randf() < 0.5 else -1.0,
 			"range": s["range"], "speed": rng.randf_range(1.2, 1.6),
 			"dodge": 0.0, "dodge_sign": 1.0, "knock_t": 0.0,
-			"phase": rng.randf() * TAU,
+			"phase": rng.randf() * TAU, "dead": false, "pos": Vector3.ZERO,
 		})
 
 
@@ -290,8 +298,8 @@ func trigger_wanted() -> void:
 		var light_r := _make_light(Color(1, 0.1, 0.1), vis, -0.22)
 		var light_b := _make_light(Color(0.15, 0.3, 1), vis, 0.22)
 		police.append({"vis": vis, "light_r": light_r, "light_b": light_b,
-				"pos": Vector3(px, q["height"], pz), "speed": 24.0, "last_idx": null,
-				"last": Vector3.ZERO, "stuck": 0.0})
+				"pos": Vector3(px, q["height"], pz), "speed": 24.0, "hp": 5.0,
+				"last_idx": null, "last": Vector3.ZERO, "stuck": 0.0, "fire_cd": 0.0})
 	_build_heli()
 	hud.set_wanted(true, 0.0)
 
@@ -385,11 +393,13 @@ func _update_heli(dt: float) -> void:
 	heli_dist = heli_vis.position.distance_to(player_pos)
 	# 开火：每 5.5 秒一轮 4 连发，曳光条指向玩家 + 信号给 game 做镜头震动
 	heli_fire_t += dt
-	if heli_fire_t > 5.5:
-		var burst := fmod(heli_fire_t - 5.5, 0.12) < 0.05
-		if heli_fire_t > 6.0:
+	if heli_fire_t > heli_fire_interval:
+		var burst := fmod(heli_fire_t - heli_fire_interval, 0.12) < 0.05
+		if heli_fire_t > heli_fire_interval + 0.5:
 			heli_fire_t = 0.0
 			heli_fire.emit()
+			if player_on_foot:
+				police_shot.emit(8.0)
 		heli_tracer.visible = burst and heli_fire_t < 6.0
 		if heli_tracer.visible:
 			var from := heli_vis.global_position + Vector3(0, -1.2, 0)
@@ -491,10 +501,14 @@ func _update_car(car: Dictionary, dt: float, i: int) -> void:
 
 func _update_peds(dt: float) -> void:
 	var i := 0
+	if _dbg_once == false:
+		_dbg_once = true
+		print("[npcdbg] _update_peds 首帧执行 人数=%d ped0origin=%s" % [peds.size(),
+				str(peds[0]["origin"]) if peds.size() > 0 else "-"])
 	for ped in peds:
 		if ped["knock_t"] > 0.0:
 			ped["knock_t"] -= dt
-		else:
+		elif not ped["dead"]:
 			ped["off"] += ped["dir"] * ped["speed"] * dt
 			if absf(ped["off"]) > ped["range"]:
 				ped["dir"] = -ped["dir"]
@@ -502,10 +516,11 @@ func _update_peds(dt: float) -> void:
 		var axis: Vector2 = ped["axis"]
 		var off: float = ped["off"]
 		var base: Vector3 = ped["origin"] + Vector3(axis.x, 0, axis.y) * off
+		ped["pos"] = Vector3(base.x, float(ped["origin"].y), base.z)
 		var to_p := Vector2(base.x - player_pos.x, base.z - player_pos.z)
 		var dist := to_p.length()
 		var dodge: float = ped["dodge"]
-		if ped["knock_t"] <= 0.0 and dist < 9.0 and dist > 0.1:
+		if ped["knock_t"] <= 0.0 and not ped["dead"] and dist < 9.0 and dist > 0.1:
 			var vn := Vector2(player_vel.x, player_vel.z)
 			if vn.length() > 2.0 and vn.normalized().dot(to_p / dist) > 0.4:
 				var perp := Vector2(-vn.y, vn.x).normalized()
@@ -594,8 +609,15 @@ func _update_police(dt: float) -> void:
 			player_pos.z -= n.y * (2.4 - d) * 0.5
 			pos.x += n.x * (2.4 - d) * 0.5
 			pos.z += n.y * (2.4 - d) * 0.5
-		if d < 3.5 and player_speed < 3.0:
+		if not player_on_foot and d < 3.5 and player_speed < 3.0:
 			_bust_t += dt
+		# 步行玩家：60m 内警车开枪还击
+		if player_on_foot and d < 60.0:
+			u["fire_cd"] = maxf(0.0, float(u.get("fire_cd", 0.0)) - dt)
+			if float(u["fire_cd"]) <= 0.0:
+				u["fire_cd"] = 1.2
+				var dmg := randf_range(6.0, 10.0)
+				police_shot.emit(dmg)
 		u["pos"] = pos
 		var vis: Node3D = u["vis"]
 		vis.position = pos
@@ -634,3 +656,118 @@ func _update_police(dt: float) -> void:
 		_esc_t = 0.0
 	hud.set_wanted(true, clampf(_esc_t / 6.0, 0.0, 1.0))
 	min_police_dist = min_d
+
+
+# ================= 射击命中（onfoot 步枪） =================
+
+## 步枪射线：返回最近的命中 {"type": "ped"/"traffic"/"police"/"wall", "i", "point", "d"}
+func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
+	var best := {"type": "", "i": -1, "d": max_d, "point": from + dir * max_d}
+	# 行人（胸口高度，半径 0.5）
+	for i in peds.size():
+		if peds[i].get("dead", false):
+			continue
+		var c: Vector3 = peds[i]["pos"] + Vector3(0, 1.05, 0)
+		var t: float = (c - from).dot(dir)
+		if t < 0.5 or t > best["d"]:
+			continue
+		var perp: float = (c - from - dir * t).length()
+		if perp < 0.55:
+			best = {"type": "ped", "i": i, "d": t, "point": from + dir * t}
+	# 交通轿车（半径 1.45）
+	for i in cars.size():
+		if cars[i].get("disabled", false):
+			continue
+		var c: Vector3 = cars[i]["pos"] + Vector3(0, 0.6, 0)
+		var t: float = (c - from).dot(dir)
+		if t < 1.0 or t > best["d"]:
+			continue
+		var perp: float = (c - from - dir * t).length()
+		if perp < 1.45:
+			best = {"type": "traffic", "i": i, "d": t, "point": from + dir * t}
+	# 警车（半径 1.45）
+	for i in police.size():
+		var c: Vector3 = police[i]["pos"] + Vector3(0, 0.6, 0)
+		var t: float = (c - from).dot(dir)
+		if t < 1.0 or t > best["d"]:
+			continue
+		var perp: float = (c - from - dir * t).length()
+		if perp < 1.45:
+			best = {"type": "police", "i": i, "d": t, "point": from + dir * t}
+	# 楼房阻挡：沿射线 3m 步进检查点是否在 OBB 内
+	var t2 := 2.0
+	while t2 < best["d"]:
+		var p: Vector3 = from + dir * t2
+		for ob in fm.obstacles_box:
+			var dx: float = p.x - ob["c"].x
+			var dz: float = p.z - ob["c"].y
+			if dx * dx + dz * dz > 8100.0:
+				continue
+			if p.y > 40.0:
+				continue
+			var ca: float = cos(ob["rot"])
+			var sa: float = sin(ob["rot"])
+			var lx: float = ca * dx + sa * dz
+			var lz: float = -sa * dx + ca * dz
+			if absf(lx) <= ob["hx"] and absf(lz) <= ob["hz"]:
+				best = {"type": "wall", "i": -1, "d": t2, "point": p}
+				t2 = best["d"] + 1.0
+				break
+		t2 += 3.0
+	return best
+
+
+## 步枪击杀行人（倒地不起）
+func kill_ped(i: int) -> void:
+	if i < 0 or i >= peds.size():
+		return
+	peds[i]["dead"] = true
+	peds[i]["knock_t"] = 1.0e9
+	trigger_wanted()
+
+
+## 步枪伤害交通轿车：4 发打停（永久趴窝）
+func damage_traffic(i: int, dmg: float) -> void:
+	if i < 0 or i >= cars.size():
+		return
+	cars[i]["hp"] = float(cars[i]["hp"]) - dmg
+	if cars[i]["hp"] <= 0.0 and not cars[i]["disabled"]:
+		cars[i]["disabled"] = true
+		cars[i]["stop_t"] = 1.0e9
+	trigger_wanted()
+
+
+## 步枪伤害警车：5 发击毁 → 通缉升级（补充至 6 台 + 直升机加速开火）
+func damage_police(i: int, dmg: float) -> void:
+	if i < 0 or i >= police.size():
+		return
+	police[i]["hp"] = float(police[i]["hp"]) - dmg
+	if float(police[i]["hp"]) <= 0.0:
+		var u: Dictionary = police[i]
+		if u["vis"] != null and is_instance_valid(u["vis"]):
+			u["vis"].queue_free()
+		police.remove_at(i)
+		escalate()
+
+
+## 通缉升级：目标警车 4→6、直升机开火间隔 5.5→3.5s，立即补齐缺口
+func escalate() -> void:
+	if not wanted:
+		trigger_wanted()
+	escalated = true
+	heli_fire_interval = 3.5
+	while police.size() < POLICE_MAX:
+		var ang := randf() * TAU
+		var px := player_pos.x + sin(ang) * 60.0
+		var pz := player_pos.z + cos(ang) * 60.0
+		var q: Dictionary = fm.query(px, pz, null, player_pos.y)
+		var vis := CarVisual.create("gt3", Color(0.95, 0.95, 0.97), Color(0.08, 0.1, 0.14))
+		add_child(vis)
+		var light_r := _make_light(Color(1, 0.1, 0.1), vis, -0.22)
+		var light_b := _make_light(Color(0.15, 0.3, 1), vis, 0.22)
+		police.append({"vis": vis, "light_r": light_r, "light_b": light_b,
+				"pos": Vector3(px, q["height"], pz), "speed": 30.0, "hp": 5.0,
+				"last_idx": null, "last": Vector3.ZERO, "stuck": 0.0, "fire_cd": 0.0})
+
+
+## 交通车是否已趴窝（射线排除）

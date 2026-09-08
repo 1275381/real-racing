@@ -279,6 +279,11 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# 步行模式：鼠标相对位移 → 视角（鼠标已捕获）
+	if on_foot and onfoot != null and event is InputEventMouseMotion \
+			and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		onfoot.add_look(event.relative)
+		return
 	# 车库里按住左键拖动 → 旋转展台环视爱车
 	if state != ST.GARAGE:
 		return
@@ -303,6 +308,7 @@ func _register_inputs() -> void:
 		"rr_pause": [KEY_P, KEY_ESCAPE],
 		"rr_start": [KEY_ENTER],
 		"rr_dual": [KEY_O],
+		"rr_interact": [KEY_F],
 		"rr_debug": [KEY_I, KEY_F3],   # macOS 上 F3 会被 Mission Control 吃掉
 	}
 	for action in defs:
@@ -390,6 +396,10 @@ var parts_equipped := {}           # model_id → {slot: opt_id}
 var shop_open := false             # 配件店界面开着（漫游中冻结车辆）
 var npc: NpcTraffic                # 漫游 NPC：交通车 + 行人 + 警察
 var npc_solid := true              # NPC 车与玩家实体碰撞（车库开关）
+var onfoot: OnFoot                 # 下车人模式（第一人称持枪）
+var on_foot := false               # 是否处于步行状态
+var player_hp := 100.0             # 步行状态血量（警车/直升机开枪扣血）
+var _no_dmg_t := 0.0               # 未受击计时（6 秒后缓慢回血）
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -523,6 +533,8 @@ func open_shop() -> void:
 		return
 	shop_from_roam = state == ST.ROAM
 	shop_open = shop_from_roam
+	if shop_open and on_foot:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_refresh_shop_ui()
 	hud.show_only("shop")
 
@@ -537,6 +549,8 @@ func open_carinfo() -> void:
 func close_shop() -> void:
 	shop_open = false
 	hud.set_shop_hint(false)
+	if on_foot:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)   # 步行中关店 → 回到锁定视角
 	hud.show_only("roam" if shop_from_roam else "garage")
 
 
@@ -735,9 +749,91 @@ func enter_roam() -> void:
 		npc.setup(freeroam, hud)
 		npc.busted.connect(_on_npc_busted)
 		npc.heli_fire.connect(func(): shake = maxf(shake, 0.5))
+		npc.police_shot.connect(_on_police_shot)
 	npc.solid = npc_solid
 	npc.set_active(true)
+	if onfoot == null:
+		onfoot = OnFoot.new()
+		add_child(onfoot)
+		onfoot.setup(freeroam, npc, audio, camera)
+		onfoot.shoot_hit.connect(_on_foot_shot)
+		onfoot.reload_done.connect(func(): audio.play_reload())
+	# 开局在车内（清除可能的步行残留）
+	on_foot = false
+	if onfoot != null:
+		onfoot.exit()
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	hud.set_onfoot(false)
 	hud.show_center("", "", 0)
+
+
+func _toggle_on_foot() -> void:
+	var v := player.veh
+	if not on_foot:
+		if absf(v.vf) > 2.0:
+			hud.show_center("先停车再下车", "", 900)
+			return
+		on_foot = true
+		camera.near = 0.02   # 步行第一人称：贴脸的枪模不被近裁剪面裁掉
+		v.input_throttle = 0.0
+		v.input_brake = 1.0
+		v.vf = 0.0
+		var side := Vector3(cos(v.heading), 0, -sin(v.heading))
+		onfoot.enter(v.pos + side * 2.2, v.heading)
+		player.visual.visible = false
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		hud.set_onfoot(true)
+		hud.show_center("", "", 0)
+	else:
+		if onfoot.pos.distance_to(v.pos) > 3.5:
+			hud.show_center("离车辆太远", "", 900)
+			return
+		_enter_car_from_foot()
+
+
+func _enter_car_from_foot() -> void:
+	on_foot = false
+	onfoot.exit()
+	camera.near = 0.8   # 恢复驾车相机近面
+	player.visual.visible = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	hud.set_onfoot(false)
+	hud.set_scope(false)
+
+
+func _on_foot_shot(kind: String, idx: int, _point: Vector3) -> void:
+	if kind == "ped":
+		npc.kill_ped(idx)
+	elif kind == "traffic":
+		npc.damage_traffic(idx, 1.0)
+	elif kind == "police":
+		npc.damage_police(idx, 1.0)
+
+
+func _on_police_shot(dmg: float) -> void:
+	if not on_foot:
+		return
+	player_hp = maxf(0.0, player_hp - dmg)
+	_no_dmg_t = 0.0
+	hud.damage_flash()
+	hud.set_health(player_hp)
+	if player_hp <= 0.0:
+		_downed_on_foot()
+
+
+func _downed_on_foot() -> void:
+	coins = maxi(0, coins - 300)
+	_save_settings()
+	player_hp = 100.0
+	_enter_car_from_foot()
+	# 车辆拖回最近道路并清除通缉
+	if npc != null:
+		npc._clear_wanted()
+		hud.set_wanted(false, 0.0)
+	var rq: Dictionary = freeroam.query_rescue(player.veh.pos.x, player.veh.pos.z)
+	player.veh.place_at({"pos": rq["pos"], "heading": rq["ang"], "idx": null})
+	_sync_visual(player, 0.016)
+	hud.show_center("重伤被捕", "医疗费 -300 金币", 3000)
 
 
 func _on_npc_busted(fine: int) -> void:
@@ -754,6 +850,12 @@ func exit_roam() -> void:
 	if npc != null:
 		npc.set_active(false)
 		hud.set_wanted(false, 0.0)
+	if on_foot:
+		on_foot = false
+		onfoot.exit()
+		player.visual.visible = true
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		hud.set_onfoot(false)
 	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
 	env.set_ground_visible(true)
@@ -1043,6 +1145,8 @@ func _handle_hotkeys() -> void:
 			to_garage()
 		elif state in [ST.RACING, ST.COUNTDOWN, ST.PAUSED]:
 			toggle_pause()
+	if Input.is_action_just_pressed("rr_interact") and state == ST.ROAM and not shop_open:
+		_toggle_on_foot()
 	if Input.is_action_just_pressed("rr_start") and state == ST.GARAGE:
 		start_from_garage()
 	if state == ST.ROAM and not shop_open:
@@ -1120,29 +1224,50 @@ func _step_sim(h: float) -> void:
 	# ROAM：只有玩家车，物理照常（立体物理对路网高度自动生效）
 	if s == ST.ROAM:
 		if shop_open:
-			return   # 配件店里：冻结车辆，买完继续跑
-		var inp_r := _sample_input(h)
+			return   # 配件店里：冻结，买完继续
 		var pin := player.veh
-		pin.input_throttle = inp_r["throttle"]
-		pin.input_brake = inp_r["brake"]
-		pin.input_steer = inp_r["steer"]
-		pin.input_handbrake = inp_r["handbrake"]
-		freeroam.vehicle_y = pin.pos.y
-		freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
-		pin.step(h)
-		_roam_bound(pin)
+		if on_foot:
+			# 步行：第一人称移动/射击，车辆冻结在原地
+			onfoot.update(h)
+			npc.player_pos = onfoot.pos
+			npc.player_vel = Vector3(sin(onfoot.yaw), 0, cos(onfoot.yaw)) * onfoot.move_speed
+			npc.player_speed = onfoot.move_speed
+			npc.player_on_foot = true
+			_no_dmg_t += h
+			if _no_dmg_t > 6.0:
+				player_hp = minf(100.0, player_hp + 5.0 * h)
+			hud.set_health(player_hp)
+			hud.set_ammo(onfoot.ammo, onfoot.reloading)
+			hud.set_scope(onfoot.aiming)
+		else:
+			var inp_r := _sample_input(h)
+			pin.input_throttle = inp_r["throttle"]
+			pin.input_brake = inp_r["brake"]
+			pin.input_steer = inp_r["steer"]
+			pin.input_handbrake = inp_r["handbrake"]
+			freeroam.vehicle_y = pin.pos.y
+			freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
+			pin.step(h)
+			_roam_bound(pin)
+			npc.player_on_foot = false
 		# NPC 交通/行人/警察
 		if npc != null and npc.active:
-			npc.player_pos = pin.pos
-			npc.player_vel = Vector3(
-					sin(pin.heading) * pin.vf + cos(pin.heading) * pin.vl, 0.0,
-					cos(pin.heading) * pin.vf - sin(pin.heading) * pin.vl)
-			npc.player_speed = absf(pin.vf)
+			if not on_foot:
+				npc.player_pos = pin.pos
+				npc.player_vel = Vector3(
+						sin(pin.heading) * pin.vf + cos(pin.heading) * pin.vl, 0.0,
+						cos(pin.heading) * pin.vf - sin(pin.heading) * pin.vl)
+				npc.player_speed = absf(pin.vf)
 			npc.update(h)
 			# 警笛 + 直升机旋翼音（随距离衰减）
 			audio.set_pursuit_audio(npc.wanted and npc.min_police_dist < 400.0,
 					npc.min_police_dist, npc.heli_active and npc.heli_dist < 350.0,
 					npc.heli_dist)
+		# 镜头震动（直升机开火，步行时也生效）
+		if shake > 0.002 and on_foot:
+			var a2 := shake * 0.2
+			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a2
+		shake = maxf(shake * exp(-3.2 * h), 0.0)
 		sim_time += h
 		return
 
@@ -1393,6 +1518,10 @@ func _update_camera(dt: float) -> void:
 	var f := pv.forward_dir()
 	var spd_ratio := clampf(absf(pv.vf) / pv.top_speed, 0.0, 1.0)
 	var want_fov := 63.0
+
+	# 下车人模式：相机完全交给 onfoot（第一人称），这里不做任何覆盖
+	if on_foot and onfoot != null:
+		return
 
 	if state == ST.GARAGE:
 		# 固定机位看展台（画面里车偏左，给右侧比赛面板留出视野），展台可拖动旋转
