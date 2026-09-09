@@ -1138,13 +1138,25 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var cx := sz.x * 0.5
 	var cy := sz.y * 0.5
 	if _gun_scope:
-		# 三倍镜：圆形视野遮罩 + 十字线
+		# 三倍镜：圆外黑幕（64 段扇环拼接，圆内透明）+ 镜内玻璃色 + 十字 + 红点
 		var r := minf(sz.x, sz.y) * 0.42
-		cv.draw_circle(Vector2(cx, cy), r + 400.0, Color(0, 0, 0, 0.96))
-		cv.draw_arc(Vector2(cx, cy), r, 0, TAU, 64, Color(0.1, 0.1, 0.1), 6.0)
-		cv.draw_line(Vector2(cx - r, cy), Vector2(cx + r, cy), Color(0.1, 0.1, 0.1, 0.8), 1.5)
-		cv.draw_line(Vector2(cx, cy - r), Vector2(cx, cy + r), Color(0.1, 0.1, 0.1, 0.8), 1.5)
-		cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.9, 0.15, 0.1))
+		var far := 3000.0
+		var prev := Vector2(cx + r, cy)
+		for k in range(1, 65):
+			var a := float(k) / 64.0 * TAU
+			var prev_inner := prev
+			var inner := Vector2(cx + cos(a) * r, cy + sin(a) * r)
+			var outer := Vector2(cx + cos(a) * far, cy + sin(a) * far)
+			var prev_outer := Vector2(cx + cos(a - TAU / 64.0) * far,
+					cy + sin(a - TAU / 64.0) * far)
+			cv.draw_colored_polygon(PackedVector2Array([prev_inner, inner, outer, prev_outer]),
+					Color(0, 0, 0, 0.97))
+			prev = inner
+		cv.draw_circle(Vector2(cx, cy), r, Color(0.05, 0.09, 0.05, 0.18))
+		cv.draw_arc(Vector2(cx, cy), r, 0, TAU, 64, Color(0.08, 0.08, 0.1), 8.0)
+		cv.draw_line(Vector2(cx - r, cy), Vector2(cx + r, cy), Color(0.08, 0.09, 0.1, 0.85), 2.0)
+		cv.draw_line(Vector2(cx, cy - r), Vector2(cx, cy + r), Color(0.08, 0.09, 0.1, 0.85), 2.0)
+		cv.draw_circle(Vector2(cx, cy), 2.5, Color(0.9, 0.15, 0.1))
 	else:
 		# 腰射准星：四段短线 + 中点
 		cv.draw_circle(Vector2(cx, cy), 2.0, Color(1, 1, 1, 0.9))

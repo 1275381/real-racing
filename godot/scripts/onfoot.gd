@@ -76,6 +76,30 @@ func mount_gun(gun: Node3D) -> void:
 	gun.rotation_degrees = Vector3(0, -90, 0)
 	gun.scale = Vector3.ONE * 0.55
 	_gun_holder.add_child(gun)
+	# 双手：右臂握把 + 左臂护木（深色衣袖），手部肤色
+	var sleeve := StandardMaterial3D.new()
+	sleeve.albedo_color = Color(0.18, 0.2, 0.26)
+	var skin := StandardMaterial3D.new()
+	skin.albedo_color = Color(0.91, 0.71, 0.55)
+	var mk_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
+			mat: Material) -> MeshInstance3D:
+		var bm := BoxMesh.new()
+		bm.size = size
+		bm.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.position = pos
+		mi.rotation_degrees = rot_deg
+		_gun_holder.add_child(mi)
+		return mi
+	mk_box.call(Vector3(0.09, 0.09, 0.4), Vector3(0.2, -0.26, -0.18),
+			Vector3(-10, 10, -28), sleeve)   # 右臂（斜向握把）
+	mk_box.call(Vector3(0.075, 0.095, 0.1), Vector3(0.1, -0.15, -0.29),
+			Vector3(0, 10, 0), skin)         # 右手
+	mk_box.call(Vector3(0.09, 0.09, 0.38), Vector3(-0.16, -0.22, -0.4),
+			Vector3(-16, -12, 26), sleeve)   # 左臂（斜向护木）
+	mk_box.call(Vector3(0.075, 0.09, 0.11), Vector3(-0.075, -0.115, -0.5),
+			Vector3(0, -12, 0), skin)        # 左手
 	# 枪口火光：小发光片 + 瞬时点光
 	_flash_mesh = MeshInstance3D.new()
 	var fm_mesh := SphereMesh.new()
@@ -181,9 +205,9 @@ func update(dt: float) -> void:
 	cam.rotation = Vector3(pitch, yaw + PI, 0)   # Godot 相机前向 = -(sin,cos)，需加 PI 对齐位移约定
 	var target_fov := _base_fov / SCOPE_DIV if aiming else _base_fov
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
-	# 枪位：腰射（右下）↔ 开镜（镜筒对准屏幕中心）
-	var target := Vector3(0.0, -0.152, -0.32) if aiming else Vector3(0.18, -0.10, -0.35)
-	_gun_holder.position = _gun_holder.position.lerp(target, 1.0 - exp(-16.0 * dt))
+	# 开镜 = 从瞄具里看（枪模整体隐藏，视野即镜内画面）；腰射显示持枪双手
+	_gun_holder.visible = not aiming
+	var target := Vector3(0.18, -0.10, -0.35)
 	# 枪口火光衰减
 	if _flash_t > 0.0:
 		_flash_t -= dt
