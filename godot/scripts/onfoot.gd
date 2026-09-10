@@ -35,7 +35,10 @@ var _gun_holder: Node3D
 var _flash: OmniLight3D
 var _flash_mesh: MeshInstance3D
 var _flash_t := 0.0
-var _dbg := 0
+var _tr_pool: Array = []   # 曳光弹对象池 {mi, t}
+var _tr_i := 0
+var _im_pool: Array = []   # 命中火花对象池 {mi, t}
+var _im_i := 0
 var _identity := Transform3D()
 
 
@@ -65,6 +68,72 @@ func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	npc = npc_ref
 	audio = audio_ref
 	cam = camera
+	_setup_fx()
+
+## 曳光弹与命中火花的对象池
+func _setup_fx() -> void:
+	var tmat := StandardMaterial3D.new()
+	tmat.albedo_color = Color(1.0, 0.9, 0.5)
+	tmat.emission_enabled = true
+	tmat.emission = Color(1.0, 0.8, 0.35)
+	tmat.emission_energy_multiplier = 4.0
+	var tmesh := BoxMesh.new()
+	tmesh.size = Vector3(0.025, 0.025, 1.0)
+	tmesh.material = tmat
+	for i in 4:
+		var mi := MeshInstance3D.new()
+		mi.mesh = tmesh
+		mi.visible = false
+		add_child(mi)
+		_tr_pool.append({"mi": mi, "t": 0.0})
+	var imat := StandardMaterial3D.new()
+	imat.albedo_color = Color(1.0, 0.75, 0.3)
+	imat.emission_enabled = true
+	imat.emission = Color(1.0, 0.6, 0.2)
+	imat.emission_energy_multiplier = 3.0
+	var imesh := SphereMesh.new()
+	imesh.radius = 0.05
+	imesh.height = 0.1
+	imesh.material = imat
+	for i in 6:
+		var mi := MeshInstance3D.new()
+		mi.mesh = imesh
+		mi.visible = false
+		add_child(mi)
+		_im_pool.append({"mi": mi, "t": 0.0})
+
+
+func _spawn_tracer(from: Vector3, to: Vector3) -> void:
+	var slot: Dictionary = _tr_pool[_tr_i]
+	_tr_i = (_tr_i + 1) % _tr_pool.size()
+	var mi: MeshInstance3D = slot["mi"]
+	var mid := (from + to) * 0.5
+	mi.global_position = mid
+	mi.look_at_from_position(mid, to, Vector3.UP)
+	mi.scale = Vector3(1, 1, from.distance_to(to))
+	mi.visible = true
+	slot["t"] = 0.18
+
+
+func _spawn_impact(p: Vector3) -> void:
+	var slot: Dictionary = _im_pool[_im_i]
+	_im_i = (_im_i + 1) % _im_pool.size()
+	slot["mi"].global_position = p
+	slot["mi"].visible = true
+	slot["t"] = 0.24
+
+
+func _tick_fx(dt: float) -> void:
+	for s in _tr_pool:
+		if float(s["t"]) > 0.0:
+			s["t"] = float(s["t"]) - dt
+			if float(s["t"]) <= 0.0:
+				s["mi"].visible = false
+	for s in _im_pool:
+		if float(s["t"]) > 0.0:
+			s["t"] = float(s["t"]) - dt
+			if float(s["t"]) <= 0.0:
+				s["mi"].visible = false
 	# 枪模型（顶部自带三倍镜，ADS 时镜筒对准屏幕中心）
 	var gun: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
 	mount_gun(gun)
@@ -135,6 +204,7 @@ func take_damage(dmg: float) -> void:
 func update(dt: float) -> void:
 	if not active:
 		return
+	_tick_fx(dt)
 	fire_cd = maxf(0.0, fire_cd - dt)
 	_bob_t += dt * (2.2 if move_speed > 0.1 else 0.8)
 	# 换弹
@@ -236,9 +306,6 @@ func _shoot() -> void:
 	var from: Vector3 = cam.global_position
 	var dir: Vector3 = -cam.global_transform.basis.z
 	var hit: Dictionary = npc.raycast(from, dir, RANGE)
-	if _dbg < 4:
-		_dbg += 1
-		print("[shot-dbg] from=%s dir=%s 命中=%s d=%.1f" % [from, dir, hit["type"], hit["d"]])
 	if hit["type"] != "":
 		shoot_hit.emit(hit["type"], hit["i"], hit["point"])
 	audio.play_shot()

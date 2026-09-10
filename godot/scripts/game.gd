@@ -802,6 +802,8 @@ func _enter_car_from_foot() -> void:
 
 
 func _on_foot_shot(kind: String, idx: int, _point: Vector3) -> void:
+	if OS.get_environment("RR_DBG_SHOT") != "":
+		print("[shotdbg] 命中 kind=%s idx=%d" % [kind, idx])
 	if kind == "ped":
 		npc.kill_ped(idx)
 	elif kind == "traffic":
