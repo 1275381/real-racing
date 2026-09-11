@@ -29,18 +29,24 @@ var btn_del_track: Button
 var btn_shop: Button
 var btn_carinfo: Button
 var btn_npc_solid: Button
+var btn_gunshop: Button
 var results_grid: GridContainer
 
 # --- 配件店 / 车辆数据 ---
 signal shop_equip(slot: String, opt_id: String)
 signal shop_back
+signal gun_equip(gun_id: String)
+signal gunshop_back
+var gunshop_rows := {}      # gun_id -> Button
+var _gunshop_coins: Label
 var shop_car_label: Label
 var shop_coins_label: Label
 var _carinfo_car_label: Label
 var _shop_rows := {}        # "slot|opt" -> {btn: Button, note: Label}
 var _shop_slot_boxes := {}  # slot -> VBoxContainer（漂移胎分区按车型显隐）
 var info_rows: Label        # 车辆数据明细文本
-var shop_hint_label: Label  # 漫游靠近配件店提示
+var shop_hint_label: Label  # 漫游商店进入提示
+var gunshop_hint_label: Label  # 漫游枪械店进入提示
 var wanted_label: Label     # 通缉指示（警察追捕）
 var wanted_on := false
 var wanted_progress := 0.0
@@ -50,6 +56,7 @@ var _gun_scope := false
 var _gun_hp := 100.0
 var _gun_ammo := 30
 var _gun_reload := 0.0
+var _gun_name := ""
 var _dmg_flash_t := 0.0
 var _dmg_rect: ColorRect
 
@@ -112,6 +119,7 @@ func build(colors: Array) -> void:
 	_build_center_labels()
 	_build_garage()
 	_build_shop()
+	_build_gunshop()
 	_build_carinfo()
 	_build_roam_hud()
 	_build_pause()
@@ -464,10 +472,14 @@ class MinimapWidget:
 		_cars = cars
 		queue_redraw()
 
-	var marker := {}   # 固定地标 {"x","z","label"}（如自由漫游的配件店）
+	var markers: Array = []   # 固定地标 [{"x","z","label"}]（配件店/枪械店）
 
 	func set_marker(x: float, z: float, label: String) -> void:
-		marker = {"x": x, "z": z, "label": label}
+		markers = [{"x": x, "z": z, "label": label}]
+		queue_redraw()
+
+	func add_marker(x: float, z: float, label: String) -> void:
+		markers.append({"x": x, "z": z, "label": label})
 		queue_redraw()
 
 	func _notification(what: int) -> void:
@@ -517,7 +529,7 @@ class MinimapWidget:
 			else:
 				draw_circle(sp, 4.0, Color(0, 0, 0, 0.5))
 				draw_circle(sp, 3.4, col)
-		if not marker.is_empty():
+		for marker in markers:
 			var mp := _map(Vector2(marker["x"], marker["z"]))
 			var ms := 7.0
 			draw_rect(Rect2(mp - Vector2(ms, ms), Vector2(ms * 2.0, ms * 2.0)),
@@ -544,6 +556,11 @@ func draw_minimap(cars: Array) -> void:
 ## 漫游小地图固定地标（配件店）
 func set_map_marker(x: float, z: float, label: String) -> void:
 	_minimap.set_marker(x, z, label)
+
+
+## 追加小地图地标（不替换已有标记）
+func add_map_marker(x: float, z: float, label: String) -> void:
+	_minimap.add_marker(x, z, label)
 
 
 # ================= 车库（选车 + 选比赛） =================
@@ -634,6 +651,12 @@ func _build_garage() -> void:
 	btn_shop.custom_minimum_size = Vector2(0, 40)
 	btn_shop.add_theme_font_size_override("font_size", 18)
 	box.add_child(btn_shop)
+
+	btn_gunshop = Button.new()
+	btn_gunshop.text = "枪 械 店"
+	btn_gunshop.custom_minimum_size = Vector2(0, 40)
+	btn_gunshop.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_gunshop)
 
 	btn_carinfo = Button.new()
 	btn_carinfo.text = "车 辆 数 据"
@@ -847,6 +870,87 @@ func refresh_shop(car_name: String, coins: int, equipped: Dictionary, owned: Arr
 					Color(0.55, 1.0, 0.55) if is_eq else Color(0.8, 0.84, 0.9))
 
 
+## 枪械店界面：枪械列表（已装备/装备/价格）+ 金币 + 返回
+func _build_gunshop() -> void:
+	var screen := Control.new()
+	screen.name = "gunshop"
+	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(screen)
+	_screens["gunshop"] = screen
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _panel_stylebox())
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	screen.add_child(panel)
+
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(460, 0)
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+
+	var title := Label.new()
+	title.text = "枪 械 店"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	box.add_child(title)
+
+	_gunshop_coins = Label.new()
+	_gunshop_coins.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_gunshop_coins.add_theme_font_size_override("font_size", 17)
+	_gunshop_coins.add_theme_color_override("font_color", Color(1.0, 0.82, 0.25))
+	box.add_child(_gunshop_coins)
+
+	for g in Guns.GUNS:
+		var gid: String = g["id"]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		box.add_child(row)
+		var name_lab := Label.new()
+		name_lab.text = "%s · %s" % [g["name"], g["desc"]]
+		name_lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_lab.add_theme_font_size_override("font_size", 14)
+		name_lab.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+		row.add_child(name_lab)
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(110, 30)
+		b.add_theme_font_size_override("font_size", 14)
+		b.pressed.connect(func(): gun_equip.emit(gid))
+		row.add_child(b)
+		gunshop_rows[gid] = {"btn": b, "note": name_lab}
+
+	var back := Button.new()
+	back.text = "返 回 车 库"
+	back.custom_minimum_size = Vector2(0, 42)
+	back.add_theme_font_size_override("font_size", 18)
+	back.pressed.connect(func(): gunshop_back.emit())
+	box.add_child(back)
+
+
+## 刷新枪械店各行状态
+func refresh_gunshop(coins: int, owned: Array, equipped: String) -> void:
+	_gunshop_coins.text = "金币：%d" % coins
+	for g in Guns.GUNS:
+		var gid: String = g["id"]
+		var info: Dictionary = gunshop_rows[gid]
+		var b: Button = info["btn"]
+		var is_eq: bool = equipped == gid
+		var is_owned: bool = owned.has(gid)
+		if is_eq:
+			b.text = "已装备"
+			b.disabled = true
+		elif is_owned:
+			b.text = "装 备"
+			b.disabled = false
+		else:
+			b.text = "%d 金币" % Guns.gun_by_id(gid)["price"]
+			b.disabled = coins < Guns.gun_by_id(gid)["price"]
+		info["note"].add_theme_color_override("font_color",
+				Color(0.55, 1.0, 0.55) if is_eq else Color(0.8, 0.84, 0.9))
+
+
 ## 车辆数据界面：马力/极速/牵引/抓地/制动（基础 → 当前，配件加成标注）
 func _build_carinfo() -> void:
 	var screen := Control.new()
@@ -964,10 +1068,29 @@ func _build_roam_hud() -> void:
 	shop_hint_label.visible = false
 	screen.add_child(shop_hint_label)
 
+	gunshop_hint_label = Label.new()
+	gunshop_hint_label.text = "按 Enter 进入枪械店"
+	gunshop_hint_label.set_anchors_preset(Control.PRESET_CENTER)
+	gunshop_hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	gunshop_hint_label.grow_vertical = Control.GROW_DIRECTION_BOTH
+	gunshop_hint_label.position.y = 110
+	gunshop_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	gunshop_hint_label.add_theme_font_size_override("font_size", 22)
+	gunshop_hint_label.add_theme_constant_override("outline_size", 8)
+	gunshop_hint_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.75))
+	gunshop_hint_label.visible = false
+	screen.add_child(gunshop_hint_label)
 
-## 漫游靠近配件店时显示进入提示
-func set_shop_hint(on: bool) -> void:
+
+## 漫游靠近商店时显示进入提示（text 可区分配件店/枪械店）
+func set_shop_hint(on: bool, text: String = "按 Enter 进入配件店") -> void:
+	shop_hint_label.text = text
 	shop_hint_label.visible = on
+
+
+## 漫游靠近枪械店时显示进入提示
+func set_gunshop_hint(on: bool) -> void:
+	gunshop_hint_label.visible = on
 
 
 ## 通缉指示标签
@@ -1162,6 +1285,8 @@ func _draw_gun_overlay(cv: Control) -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.92, 0.95))
 	# 弹药（右下）
 	var ammo_txt := "换弹中…" if _gun_reload > 0.0 else "%d / ∞" % _gun_ammo
+	if _gun_name != "":
+		ammo_txt = _gun_name + "  " + ammo_txt
 	cv.draw_string(ThemeDB.fallback_font, Vector2(sz.x - 130.0, sz.y - 40.0),
 			ammo_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1.0, 0.85, 0.35))
 
@@ -1189,9 +1314,16 @@ func set_health(hp: float) -> void:
 	gun_overlay.queue_redraw()
 
 
-func set_ammo(ammo: int, reloading: float) -> void:
+## 步行 HUD 枪名
+func set_gun_name(name: String) -> void:
+	_gun_name = name
+	gun_overlay.queue_redraw()
+
+
+func set_ammo(ammo: int, reloading: float, gun_name: String = "") -> void:
 	_gun_ammo = ammo
 	_gun_reload = reloading
+	_gun_name = gun_name
 	gun_overlay.queue_redraw()
 
 

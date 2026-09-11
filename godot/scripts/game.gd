@@ -306,6 +306,8 @@ func _register_inputs() -> void:
 		"rr_rescue": [KEY_R],
 		"rr_mute": [KEY_N],
 		"rr_scope": [KEY_M],
+		"rr_gun1": [KEY_1], "rr_gun2": [KEY_2], "rr_gun3": [KEY_3],
+		"rr_gun4": [KEY_4], "rr_gun5": [KEY_5],
 		"rr_pause": [KEY_P, KEY_ESCAPE],
 		"rr_start": [KEY_ENTER],
 		"rr_dual": [KEY_O],
@@ -367,6 +369,8 @@ func _load_settings() -> void:
 		_saved_track_idx = TrackData.track_index_by_id(cf.get_value("settings", "track", "circuit"))
 		coins = cf.get_value("settings", "coins", 0)
 		npc_solid = cf.get_value("settings", "npc_solid", true)
+		guns_owned = cf.get_value("guns", "owned", ["pistol"])
+		gun_equipped = cf.get_value("guns", "equipped", "pistol")
 		parts_owned = cf.get_value("parts", "owned", {})
 		parts_equipped = cf.get_value("parts", "equipped", {})
 		if cf.has_section_key("records", "best_lap"):
@@ -383,6 +387,8 @@ func _save_settings() -> void:
 	cf.set_value("settings", "track", TrackData.get_tracks()[track_idx]["id"])
 	cf.set_value("settings", "coins", coins)
 	cf.set_value("settings", "npc_solid", npc_solid)
+	cf.set_value("guns", "owned", guns_owned)
+	cf.set_value("guns", "equipped", gun_equipped)
 	cf.set_value("parts", "owned", parts_owned)
 	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
@@ -399,6 +405,10 @@ var npc: NpcTraffic                # 漫游 NPC：交通车 + 行人 + 警察
 var npc_solid := true              # NPC 车与玩家实体碰撞（车库开关）
 var onfoot: OnFoot                 # 下车人模式（第一人称持枪）
 var on_foot := false               # 是否处于步行状态
+var guns_owned: Array = ["pistol"] # 已购枪械（全局，数字键 1~N 直选）
+var gun_equipped := "pistol"       # 当前手持枪械
+var gunshop_open := false          # 枪械店界面开着
+var gunshop_from_roam := false
 var player_hp := 100.0             # 步行状态血量（警车/直升机开枪扣血）
 var _no_dmg_t := 0.0               # 未受击计时（6 秒后缓慢回血）
 
@@ -487,6 +497,70 @@ func equip_part(slot: String, opt_id: String) -> void:
 	_apply_player_parts()
 
 
+# ================= 枪械店 =================
+
+func _gun_owned(gun_id: String) -> bool:
+	return guns_owned.has(gun_id)
+
+
+func buy_gun(gun_id: String) -> bool:
+	if _gun_owned(gun_id):
+		equip_gun(gun_id)
+		return true
+	var g: Dictionary = Guns.gun_by_id(gun_id)
+	if coins < g["price"]:
+		return false
+	coins -= g["price"]
+	guns_owned.append(gun_id)
+	equip_gun(gun_id)
+	_save_settings()
+	return true
+
+
+func equip_gun(gun_id: String) -> void:
+	if not _gun_owned(gun_id):
+		return
+	if not guns_owned.has(gun_id):
+		guns_owned.append(gun_id)
+	gun_equipped = gun_id
+	_save_settings()
+	if onfoot != null:
+		onfoot.set_gun(gun_id)
+
+
+func open_gunshop() -> void:
+	if state != ST.GARAGE and state != ST.ROAM:
+		return
+	gunshop_from_roam = state == ST.ROAM
+	gunshop_open = gunshop_from_roam
+	_refresh_gunshop_ui()
+	hud.show_only("gunshop")
+
+
+func close_gunshop() -> void:
+	gunshop_open = false
+	hud.set_shop_hint(false)
+	if on_foot:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	hud.show_only("roam" if gunshop_from_roam else "garage")
+
+
+func _refresh_gunshop_ui() -> void:
+	hud.refresh_gunshop(coins, guns_owned, gun_equipped)
+
+
+func _on_gun_equip(gun_id: String) -> void:
+	if _gun_owned(gun_id):
+		equip_gun(gun_id)
+		_refresh_gunshop_ui()
+		return
+	var g: Dictionary = Guns.gun_by_id(gun_id)
+	if not buy_gun(gun_id):
+		hud.show_center("金币不足", "还差 %d 金币" % (g["price"] - coins), 1500)
+		return
+	_refresh_gunshop_ui()
+
+
 # ================= 车库绑定 =================
 
 func _wire_menu() -> void:
@@ -521,6 +595,9 @@ func _wire_menu() -> void:
 		_save_settings())
 	hud.shop_equip.connect(_on_shop_equip)
 	hud.shop_back.connect(close_shop)
+	hud.btn_gunshop.pressed.connect(open_gunshop)
+	hud.gun_equip.connect(_on_gun_equip)
+	hud.gunshop_back.connect(close_gunshop)
 
 
 # ================= 配件店 / 车辆数据 =================
@@ -532,6 +609,7 @@ var _near_shop := false            # 漫游中是否在配件店门口
 func open_shop() -> void:
 	if state != ST.GARAGE and state != ST.ROAM:
 		return
+	gunshop_open = false
 	shop_from_roam = state == ST.ROAM
 	shop_open = shop_from_roam
 	if shop_open and on_foot:
@@ -742,6 +820,7 @@ func enter_roam() -> void:
 			Vector2(-FreeroamMap.MAP_LIMIT, -FreeroamMap.MAP_LIMIT),
 			Vector2(FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
 	hud.set_map_marker(FreeroamMap.SHOP_POS.x, FreeroamMap.SHOP_POS.y, "店")
+	hud.add_map_marker(FreeroamMap.GUNSHOP_POS.x, FreeroamMap.GUNSHOP_POS.y, "枪")
 	hud.set_roam_tach()
 	# NPC 交通 + 行人 + 警察
 	if npc == null:
@@ -758,6 +837,7 @@ func enter_roam() -> void:
 		add_child(onfoot)
 		onfoot.setup(freeroam, npc, audio, camera)
 		onfoot.shoot_hit.connect(_on_foot_shot)
+		onfoot.reload_done.connect(func(): pass)
 		onfoot.reload_done.connect(func(): audio.play_reload())
 	# 开局在车内（清除可能的步行残留）
 	on_foot = false
@@ -776,6 +856,7 @@ func _toggle_on_foot() -> void:
 			return
 		on_foot = true
 		camera.near = 0.02   # 步行第一人称：贴脸的枪模不被近裁剪面裁掉
+		onfoot.set_gun(gun_equipped)
 		v.input_throttle = 0.0
 		v.input_brake = 1.0
 		v.vf = 0.0
@@ -800,6 +881,15 @@ func _enter_car_from_foot() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	hud.set_onfoot(false)
 	hud.set_scope(false)
+
+
+func _select_gun(gun_id: String) -> void:
+	if not _gun_owned(gun_id) or gun_equipped == gun_id:
+		return
+	gun_equipped = gun_id
+	_save_settings()
+	onfoot.set_gun(gun_id)
+	hud.set_gun_name(Guns.gun_by_id(gun_id)["name"])
 
 
 func _on_foot_shot(kind: String, idx: int, _point: Vector3) -> void:
@@ -859,6 +949,9 @@ func exit_roam() -> void:
 		player.visual.visible = true
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		hud.set_onfoot(false)
+	if gunshop_open:
+		gunshop_open = false
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
 	env.set_ground_visible(true)
@@ -1147,20 +1240,35 @@ func _handle_hotkeys() -> void:
 	if Input.is_action_just_pressed("rr_pause"):
 		if state == ST.ROAM and shop_open:
 			close_shop()   # 漫游店里 Esc/P 先关店，不直接回车库
+		elif state == ST.ROAM and gunshop_open:
+			close_gunshop()
 		elif state == ST.ROAM or state == ST.FINISHED:
 			to_garage()
 		elif state in [ST.RACING, ST.COUNTDOWN, ST.PAUSED]:
 			toggle_pause()
 	if Input.is_action_just_pressed("rr_interact") and state == ST.ROAM and not shop_open:
 		_toggle_on_foot()
+	if state == ST.ROAM and on_foot:
+		for gi in 5:
+			if Input.is_action_just_pressed("rr_gun%d" % [gi + 1]):
+				var avail: Array = Guns.GUNS.filter(func(g): return _gun_owned(g["id"]))
+				if gi < avail.size():
+					_select_gun(avail[gi]["id"])
 	if Input.is_action_just_pressed("rr_start") and state == ST.GARAGE:
 		start_from_garage()
-	if state == ST.ROAM and not shop_open:
-		_near_shop = Vector2(player.veh.pos.x - FreeroamMap.SHOP_DOOR.x,
-				player.veh.pos.z - FreeroamMap.SHOP_DOOR.y).length() < 14.0
-		hud.set_shop_hint(_near_shop)
+	if state == ST.ROAM and not shop_open and not gunshop_open:
+		var d_parts: float = Vector2(player.veh.pos.x - FreeroamMap.SHOP_DOOR.x,
+				player.veh.pos.z - FreeroamMap.SHOP_DOOR.y).length()
+		var d_guns: float = Vector2(player.veh.pos.x - FreeroamMap.GUNSHOP_DOOR.x,
+				player.veh.pos.z - FreeroamMap.GUNSHOP_DOOR.y).length()
+		_near_shop = d_parts < 14.0
+		var near_guns := d_guns < 14.0
+		hud.set_shop_hint(_near_shop, "按 Enter 进入配件店")
+		hud.set_gunshop_hint(near_guns)
 		if _near_shop and Input.is_action_just_pressed("rr_start"):
 			open_shop()   # 漫游实体配件店：走近按 Enter 进店
+		elif near_guns and Input.is_action_just_pressed("rr_start"):
+			open_gunshop()   # 漫游实体枪械店：走近按 Enter 进店
 	if Input.is_action_just_pressed("rr_throttle") and state == ST.GARAGE:
 		enter_roam()   # 车库里按 W/↑：直接从卷帘门车库出发漫游
 	if Input.is_action_just_pressed("rr_dual"):
@@ -1229,8 +1337,8 @@ func _step_sim(h: float) -> void:
 
 	# ROAM：只有玩家车，物理照常（立体物理对路网高度自动生效）
 	if s == ST.ROAM:
-		if shop_open:
-			return   # 配件店里：冻结，买完继续
+		if shop_open or gunshop_open:
+			return   # 店里：冻结，买完继续
 		var pin := player.veh
 		if on_foot:
 			# 步行：第一人称移动/射击，车辆冻结在原地
@@ -1243,7 +1351,7 @@ func _step_sim(h: float) -> void:
 			if _no_dmg_t > 6.0:
 				player_hp = minf(100.0, player_hp + 5.0 * h)
 			hud.set_health(player_hp)
-			hud.set_ammo(onfoot.ammo, onfoot.reloading)
+			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(gun_equipped)["name"])
 			hud.set_scope(onfoot.scoped)
 		else:
 			var inp_r := _sample_input(h)

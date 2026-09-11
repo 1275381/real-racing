@@ -3,7 +3,7 @@ extends Node3D
 ## 自由漫游下车人模式：第一人称持枪步行 + 射击（左键开枪+自动三倍开镜）。
 ## 角色碰撞复用楼房 OBB 推出；地面高度走 freeroam query。
 
-signal shoot_hit(kind: String, idx: int, point: Vector3)
+signal shoot_hit(kind: String, idx: int, point: Vector3, dmg: float)
 signal reload_done
 
 const WALK := 4.5
@@ -30,6 +30,9 @@ var scoped := false      # 三倍镜开关（M 键切换，开火不再联动）
 var move_speed := 0.0
 var _last_idx = null
 var _bob_t := 0.0
+var _gun_id := "pistol"
+var _g: Dictionary = Guns.gun_by_id("pistol")
+var gun_ammo := {}        # gun_id → 当前弹匣余量
 var _base_fov := 63.0
 var _gun_holder: Node3D
 var _flash: OmniLight3D
@@ -49,7 +52,7 @@ func enter(p: Vector3, head: float) -> void:
 	yaw = head
 	pitch = 0.0
 	health = 100.0
-	ammo = MAG
+	ammo = _g.get("mag", 12)
 	reloading = 0.0
 	scoped = false
 	if cam != null:
@@ -63,6 +66,63 @@ func exit() -> void:
 		cam.fov = _base_fov
 
 
+## 装备指定枪械：换枪模 + 换数值 + 换弹匣（切枪自动满弹）
+func set_gun(gun_id: String) -> void:
+	_gun_id = gun_id
+	_g = Guns.gun_by_id(gun_id)
+	if gun_ammo.has(gun_id):
+		ammo = int(gun_ammo[gun_id])
+	else:
+		ammo = _g.get("mag", 12)
+		gun_ammo[gun_id] = ammo
+	# 重建枪模
+	if _gun_holder != null:
+		for c in _gun_holder.get_children():
+			if c.name != "arms":
+				c.queue_free()
+	mount_gun(_build_gun_visual(gun_id))
+
+
+## 程序化低多边形枪模（rifle 用 SCAR GLB，其余按种类拼装）
+func _build_gun_visual(gun_id: String) -> Node3D:
+	if gun_id == "rifle":
+		return load("res://assets/cars/gun_rifle.glb").instantiate()
+	var root := Node3D.new()
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.13, 0.14, 0.16)
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color(0.45, 0.3, 0.18)
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.35, 0.38, 0.42)
+	var add_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
+			mat: Material) -> void:
+		var bm := BoxMesh.new()
+		bm.size = size
+		bm.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.position = pos
+		mi.rotation_degrees = rot_deg
+		root.add_child(mi)
+	match gun_id:
+		"pistol":
+			add_box.call(Vector3(0.06, 0.1, 0.3), Vector3(0, 0.04, -0.04), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.15, 0.08), Vector3(0, -0.08, 0.06), Vector3(3, 0, 0), dark)
+		"smg":
+			add_box.call(Vector3(0.07, 0.11, 0.44), Vector3(0, 0, -0.05), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.22, 0.06), Vector3(0, -0.13, 0.04), Vector3(0, 0, 0), dark)
+			add_box.call(Vector3(0.05, 0.07, 0.2), Vector3(0, 0.03, -0.32), Vector3.ZERO, steel)
+		"shotgun":
+			add_box.call(Vector3(0.075, 0.09, 0.85), Vector3(0, 0.03, -0.15), Vector3.ZERO, wood)
+			add_box.call(Vector3(0.06, 0.07, 0.5), Vector3(0, -0.04, -0.35), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.14, 0.1), Vector3(0, -0.06, 0.18), Vector3(-6, 0, 0), wood)
+		"sniper":
+			add_box.call(Vector3(0.06, 0.09, 1.0), Vector3(0, 0.03, -0.12), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.08, 0.13, 0.26), Vector3(0, 0.14, -0.08), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.17, 0.09), Vector3(0, -0.09, 0.15), Vector3(-5, 0, 0), dark)
+	return root
+
+
 ## 挂第一人称枪（相机子节点），rotation.y=-90 使枪口朝前偏左
 func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	fm = freeroam
@@ -70,9 +130,7 @@ func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	audio = audio_ref
 	cam = camera
 	_setup_fx()
-	# 枪模型（顶部自带三倍镜，开镜时镜筒对准屏幕中心）
-	var gun: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
-	mount_gun(gun)
+	set_gun("rifle")
 
 ## 曳光弹与命中火花的对象池
 func _setup_fx() -> void:
@@ -213,7 +271,7 @@ func update(dt: float) -> void:
 		reloading -= dt
 		if reloading <= 0.0:
 			reloading = 0.0
-			ammo = MAG
+			ammo = _g.get("mag", 12)
 			reload_done.emit()
 	# 移动
 	var mf := 0.0
@@ -272,7 +330,8 @@ func update(dt: float) -> void:
 	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
 	cam.position = pos + Vector3(0, 1.58 + bob, 0)
 	cam.rotation = Vector3(pitch, yaw + PI, 0)   # Godot 相机前向 = -(sin,cos)，需加 PI 对齐位移约定
-	var target_fov := _base_fov / SCOPE_DIV if scoped else _base_fov
+	var scope_div: float = _g.get("scope_div", 1.0) if scoped else 1.0
+	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
 	# 开镜 = 从瞄具里看（枪模整体隐藏，视野即镜内画面）；腰射显示持枪双手
 	_gun_holder.visible = not scoped
@@ -286,28 +345,46 @@ func update(dt: float) -> void:
 
 
 func _start_reload() -> void:
-	if reloading > 0.0 or ammo >= MAG:
+	if reloading > 0.0 or ammo >= _g.get("mag", 12):
 		return
-	reloading = RELOAD_TIME
+	reloading = _g.get("reload", 1.5)
 	audio.play_reload()
 
 
 func _shoot() -> void:
 	ammo -= 1
-	fire_cd = FIRE_CD
+	fire_cd = _g.get("cd", 0.13)
 	# 枪口火光（发光片贴枪口 + 瞬时点光）
 	_flash_t = 0.05
 	_flash.visible = true
 	_flash.position = Vector3(0.2, -0.08, -0.85)
 	_flash_mesh.visible = true
 	_flash_mesh.position = Vector3(0.02, 0.06, -0.62)
-	# 射线
+	# 射线（每条弹丸独立判定）
 	var from: Vector3 = cam.global_position
-	var dir: Vector3 = -cam.global_transform.basis.z
-	var hit: Dictionary = npc.raycast(from, dir, RANGE)
-	if hit["type"] != "":
-		shoot_hit.emit(hit["type"], hit["i"], hit["point"])
+	var base_dir: Vector3 = -cam.global_transform.basis.z
+	var spread: float = _g.get("spread", 0.0)
+	var pellets: int = _g.get("pellets", 1)
+	var range: float = _g.get("range", 250.0)
+	var dmg: float = _g.get("dmg", 20.0)
+	var right := cam.global_transform.basis.x
+	var up := cam.global_transform.basis.y
+	for p in pellets:
+		var jitter := Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * spread * 2.0
+		var pdir := (base_dir + right * jitter.x + up * jitter.y).normalized()
+		var hit: Dictionary = npc.raycast(from, pdir, range)
+		var end: Vector3 = from + pdir * range if hit["type"] == "" \
+				else Vector3(hit["point"])
+		_spawn_tracer(muzzle_world(), end)
+		if hit["type"] != "":
+			_spawn_impact(end)
+			shoot_hit.emit(hit["type"], hit["i"], end, dmg)
 	audio.play_shot()
+
+
+## 枪口世界坐标
+func muzzle_world() -> Vector3:
+	return cam.global_transform * Vector3(0.02, 0.06, -0.62)
 
 
 ## 三倍镜开关（M 键）

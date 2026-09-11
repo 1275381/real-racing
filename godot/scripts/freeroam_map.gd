@@ -129,6 +129,13 @@ const GAR_C := Vector2(198.5, -520.0)   # 车库中心（= 楼底层的中心）
 # —— 配件店（自由漫游可进入购买）：中心广场 (34,34)，西门洞/店门朝路口 ——
 const SHOP_POS := Vector2(34.0, 34.0)       # 配件店建筑中心（小地图标记用）
 const SHOP_DOOR := Vector2(21.0, 34.0)      # 店门口（进入判定点）
+
+# —— 枪械店（独立建筑，广场另一角）——
+const GUNSHOP_POS := Vector2(-46.0, 46.0)   # 枪械店建筑中心（小地图「枪」标记用）
+const GUNSHOP_DOOR := Vector2(-33.0, 46.0)  # 店门口（进入判定点，朝东）
+const GUNSHOP_W := 20.0
+const GUNSHOP_D := 14.0
+const GUNSHOP_H := 8.0
 const SHOP_W := 20.0
 const SHOP_D := 14.0
 const SHOP_H := 8.0
@@ -198,6 +205,7 @@ func build() -> void:
 	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - t0])
 	_make_garage()
 	_make_parts_shop()
+	_make_gunshop()
 	_build_minimap()
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
@@ -2507,6 +2515,75 @@ func _make_parts_shop() -> void:
 	sign.outline_modulate = Color(0.1, 0.1, 0.12)
 	sign.position = Vector3(cx - SHOP_W * 0.5 - 0.4, y + SHOP_H - 1.2, cz)
 	sign.rotation_degrees.y = -90.0
+	add_child(sign)
+
+
+## 枪械店：独立建筑（深蓝灰 + 金色「枪 械 店」招牌），东门洞朝广场中心
+func _make_gunshop() -> void:
+	var y := STREET_Y
+	var cx := GUNSHOP_POS.x
+	var cz := GUNSHOP_POS.y
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var put_box := func(px: float, pz: float, sx: float, sy: float, sz: float,
+			col: Color, base_y: float = -1.0) -> void:
+		var by := y if base_y < 0.0 else base_y
+		xfs.append(Transform3D(Basis.from_scale(Vector3(sx, sy, sz)),
+				Vector3(px, by + sy * 0.5, pz)))
+		cols.append(col)
+	var tint := Color(0.52, 0.58, 0.68, 0.5)   # 蓝灰面砖
+	var wall_h := GUNSHOP_H
+	# 北墙 / 南墙
+	put_box.call(cx, cz - GUNSHOP_D * 0.5 + 0.3, GUNSHOP_W, wall_h, 0.6, tint)
+	put_box.call(cx, cz + GUNSHOP_D * 0.5 - 0.3, GUNSHOP_W, wall_h, 0.6, tint)
+	# 西墙（封死）
+	put_box.call(cx - GUNSHOP_W * 0.5 + 0.3, cz, 0.6, wall_h, GUNSHOP_D - 1.2, tint)
+	# 东墙（门洞 z ∈ [cz-3, cz+3]，两侧余段 + 门楣）
+	put_box.call(cx + GUNSHOP_W * 0.5 - 0.3, cz - 4.5, 0.6, wall_h, 3.0, tint)
+	put_box.call(cx + GUNSHOP_W * 0.5 - 0.3, cz + 4.5, 0.6, wall_h, 3.0, tint)
+	put_box.call(cx + GUNSHOP_W * 0.5 - 0.3, cz, 0.6, 1.4, 6.0,
+			Color(0.12, 0.15, 0.19, 0.0), y + wall_h - 1.4)
+	# 平屋顶
+	put_box.call(cx, cz, GUNSHOP_W + 0.6, 0.3, GUNSHOP_D + 0.6,
+			Color(0.5, 0.52, 0.55, 0.0), y + SHOP_H - 0.3)
+	var bmesh := BoxMesh.new()
+	bmesh.size = Vector3.ONE
+	bmesh.material = _building_material()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = bmesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(mmi)
+	# 碰撞（实心，进店靠走近按键）
+	obstacles_box.append({"c": Vector2(cx, cz - GUNSHOP_D * 0.5 + 0.3),
+			"hx": GUNSHOP_W * 0.5, "hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx, cz + GUNSHOP_D * 0.5 - 0.3),
+			"hx": GUNSHOP_W * 0.5, "hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - GUNSHOP_W * 0.5 + 0.3, cz),
+			"hx": 0.3, "hz": GUNSHOP_D * 0.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + GUNSHOP_W * 0.5 - 0.3, cz - 4.5),
+			"hx": 0.3, "hz": 1.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + GUNSHOP_W * 0.5 - 0.3, cz + 4.5),
+			"hx": 0.3, "hz": 1.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + GUNSHOP_W * 0.5 - 0.3, cz),
+			"hx": 0.3, "hz": 3.0, "rot": 0.0})   # 门洞玻璃
+	# 招牌
+	var sign := Label3D.new()
+	sign.text = "枪 械 店"
+	sign.font_size = 460
+	sign.pixel_size = 0.01
+	sign.modulate = Color(1.0, 0.82, 0.25)
+	sign.outline_size = 48
+	sign.outline_modulate = Color(0.1, 0.1, 0.12)
+	sign.position = Vector3(cx + GUNSHOP_W * 0.5 + 0.4, y + GUNSHOP_H - 1.2, cz)
+	sign.rotation_degrees.y = 90.0
 	add_child(sign)
 
 
