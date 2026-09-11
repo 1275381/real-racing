@@ -304,7 +304,8 @@ func _register_inputs() -> void:
 		"rr_handbrake": [KEY_SPACE],
 		"rr_camera": [KEY_C],
 		"rr_rescue": [KEY_R],
-		"rr_mute": [KEY_M],
+		"rr_mute": [KEY_N],
+		"rr_scope": [KEY_M],
 		"rr_pause": [KEY_P, KEY_ESCAPE],
 		"rr_start": [KEY_ENTER],
 		"rr_dual": [KEY_O],
@@ -1136,6 +1137,9 @@ func _handle_hotkeys() -> void:
 		hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
 	if Input.is_action_just_pressed("rr_rescue"):
 		rescue()
+	if Input.is_action_just_pressed("rr_scope") and state == ST.ROAM and on_foot:
+		onfoot.toggle_scope()
+		hud.set_scope(onfoot.scoped)
 	if Input.is_action_just_pressed("rr_mute"):
 		audio.ensure()
 		audio.set_muted(not audio.muted)
@@ -1240,7 +1244,7 @@ func _step_sim(h: float) -> void:
 				player_hp = minf(100.0, player_hp + 5.0 * h)
 			hud.set_health(player_hp)
 			hud.set_ammo(onfoot.ammo, onfoot.reloading)
-			hud.set_scope(onfoot.aiming)
+			hud.set_scope(onfoot.scoped)
 		else:
 			var inp_r := _sample_input(h)
 			pin.input_throttle = inp_r["throttle"]

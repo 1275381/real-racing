@@ -26,7 +26,7 @@ var health := 100.0
 var ammo := MAG
 var reloading := 0.0
 var fire_cd := 0.0
-var aiming := false       # 左键按住 = 射击 + 三倍开镜
+var scoped := false      # 三倍镜开关（M 键切换，开火不再联动）
 var move_speed := 0.0
 var _last_idx = null
 var _bob_t := 0.0
@@ -51,13 +51,14 @@ func enter(p: Vector3, head: float) -> void:
 	health = 100.0
 	ammo = MAG
 	reloading = 0.0
+	scoped = false
 	if cam != null:
 		cam.fov = _base_fov
 
 
 func exit() -> void:
 	active = false
-	aiming = false
+	scoped = false
 	if cam != null:
 		cam.fov = _base_fov
 
@@ -69,6 +70,9 @@ func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	audio = audio_ref
 	cam = camera
 	_setup_fx()
+	# 枪模型（顶部自带三倍镜，开镜时镜筒对准屏幕中心）
+	var gun: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
+	mount_gun(gun)
 
 ## 曳光弹与命中火花的对象池
 func _setup_fx() -> void:
@@ -134,9 +138,6 @@ func _tick_fx(dt: float) -> void:
 			s["t"] = float(s["t"]) - dt
 			if float(s["t"]) <= 0.0:
 				s["mi"].visible = false
-	# 枪模型（顶部自带三倍镜，ADS 时镜筒对准屏幕中心）
-	var gun: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
-	mount_gun(gun)
 
 
 func mount_gun(gun: Node3D) -> void:
@@ -261,22 +262,20 @@ func update(dt: float) -> void:
 	pos.x = clampf(pos.x, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT)
 	pos.z = clampf(pos.z, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT)
 	# 射击（左键按住 = 开枪 + 自动三倍开镜）
-	aiming = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	if aiming and fire_cd <= 0.0 and reloading <= 0.0:
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and fire_cd <= 0.0 \
+			and reloading <= 0.0:
 		if ammo > 0:
 			_shoot()
 		else:
 			_start_reload()
-	if reloading > 0.0 or ammo == 0:
-		aiming = aiming and false
 	# 相机：第一人称 + 走路轻微点头 + 开镜 FOV
 	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
 	cam.position = pos + Vector3(0, 1.58 + bob, 0)
 	cam.rotation = Vector3(pitch, yaw + PI, 0)   # Godot 相机前向 = -(sin,cos)，需加 PI 对齐位移约定
-	var target_fov := _base_fov / SCOPE_DIV if aiming else _base_fov
+	var target_fov := _base_fov / SCOPE_DIV if scoped else _base_fov
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
 	# 开镜 = 从瞄具里看（枪模整体隐藏，视野即镜内画面）；腰射显示持枪双手
-	_gun_holder.visible = not aiming
+	_gun_holder.visible = not scoped
 	var target := Vector3(0.18, -0.10, -0.35)
 	# 枪口火光衰减
 	if _flash_t > 0.0:
@@ -309,3 +308,8 @@ func _shoot() -> void:
 	if hit["type"] != "":
 		shoot_hit.emit(hit["type"], hit["i"], hit["point"])
 	audio.play_shot()
+
+
+## 三倍镜开关（M 键）
+func toggle_scope() -> void:
+	scoped = not scoped
