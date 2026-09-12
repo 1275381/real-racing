@@ -65,7 +65,6 @@ var _ped_mm_head: MultiMeshInstance3D
 var _ped_mm_torso: MultiMeshInstance3D
 var _ped_mm_arm: MultiMeshInstance3D
 var _ped_mm_leg: MultiMeshInstance3D
-var _dbg_once := false
 var _traffic_body: MultiMesh
 var _traffic_wheel: MultiMesh
 
@@ -501,10 +500,6 @@ func _update_car(car: Dictionary, dt: float, i: int) -> void:
 
 func _update_peds(dt: float) -> void:
 	var i := 0
-	if _dbg_once == false:
-		_dbg_once = true
-		print("[npcdbg] _update_peds 首帧执行 人数=%d ped0origin=%s" % [peds.size(),
-				str(peds[0]["origin"]) if peds.size() > 0 else "-"])
 	for ped in peds:
 		if ped["knock_t"] > 0.0:
 			ped["knock_t"] -= dt
