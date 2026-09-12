@@ -1422,8 +1422,12 @@ func _handle_hotkeys() -> void:
 	if Input.is_action_just_pressed("rr_debug"):
 		hud.toggle_debug()
 	if Input.is_action_just_pressed("rr_camera"):
-		cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
-		hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
+		if on_foot and onfoot != null \
+				and (state == ST.ROAM or state == ST.BATTLE):
+			onfoot.try_slide()   # 步行时 C = 滑铲
+		else:
+			cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
+			hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
 	if Input.is_action_just_pressed("rr_rescue") and state != ST.BATTLE:
 		rescue()
 	if Input.is_action_just_pressed("rr_scope") and on_foot \

@@ -6,13 +6,18 @@ extends Node3D
 signal shoot_hit(kind: String, idx: int, point: Vector3, dmg: float)
 signal reload_done
 
-const WALK := 4.5
-const RUN := 8.5
+const WALK := 6.0
+const RUN := 11.5
 const MAG := 30
 const RELOAD_TIME := 1.5
 const RANGE := 250.0
 const FIRE_CD := 0.13
 const SCOPE_DIV := 3.0
+const SLIDE_SPEED := 14.0    # 滑铲起速（平方衰减到步行速）
+const SLIDE_TIME := 0.7
+const SLIDE_CD := 1.2        # 滑铲冷却（含铲行时间）
+const EYE_H := 1.58
+const EYE_H_SLIDE := 0.92
 
 var fm
 var npc                   # NpcTraffic（射线目标）
@@ -28,6 +33,10 @@ var reloading := 0.0
 var fire_cd := 0.0
 var scoped := false      # 三倍镜开关（M 键切换，开火不再联动）
 var move_speed := 0.0
+var slide_t := 0.0       # 剩余滑铲时间（>0 = 铲行中）
+var slide_cd := 0.0      # 滑铲冷却
+var slide_dir := Vector3.ZERO
+var _eye_h := EYE_H
 var _last_idx = null
 var _bob_t := 0.0
 var _gun_id := "pistol"
@@ -70,8 +79,22 @@ func enter(p: Vector3, head: float) -> void:
 func exit() -> void:
 	active = false
 	scoped = false
+	slide_t = 0.0
+	slide_cd = 0.0
+	_eye_h = EYE_H
 	if cam != null:
 		cam.fov = _base_fov
+
+
+## C 滑铲：移动中按下沿面朝方向急冲 0.7s，镜头压低 + FOV 拉开（冷却 1.2s）
+func try_slide() -> void:
+	if not active or slide_cd > 0.0 or slide_t > 0.0:
+		return
+	if move_speed < 0.5:
+		return   # 需在移动中才能铲
+	slide_t = SLIDE_TIME
+	slide_cd = SLIDE_TIME + SLIDE_CD
+	slide_dir = Vector3(sin(yaw), 0, cos(yaw))
 
 
 ## 装备指定枪械：换枪模 + 换数值 + 换弹匣（切枪自动满弹）
@@ -333,7 +356,8 @@ func update(dt: float) -> void:
 		_reload_rot = Vector3.ZERO
 		_mag_mesh.visible = true
 		_falling = false
-	# 移动
+	# 移动（C 滑铲：沿启动时朝向急冲，平方衰减；铲行中不接受转向输入）
+	slide_cd = maxf(0.0, slide_cd - dt)
 	var mf := 0.0
 	var ms := 0.0
 	if Input.is_physical_key_pressed(KEY_W):
@@ -344,13 +368,21 @@ func update(dt: float) -> void:
 		ms += 1.0
 	if Input.is_physical_key_pressed(KEY_A):
 		ms -= 1.0
-	var run := Input.is_physical_key_pressed(KEY_SHIFT)
-	move_speed = (RUN if run else WALK) * clampf(Vector2(mf, ms).length(), 0.0, 1.0)
-	if mf != 0.0 or ms != 0.0:
+	if slide_t > 0.0:
+		slide_t -= dt
+		var k := clampf(slide_t / SLIDE_TIME, 0.0, 1.0)
+		var spd := WALK + (SLIDE_SPEED - WALK) * k * k
+		pos += slide_dir * spd * dt
+		move_speed = spd
+	elif mf != 0.0 or ms != 0.0:
+		var run := Input.is_physical_key_pressed(KEY_SHIFT)
+		move_speed = (RUN if run else WALK) * clampf(Vector2(mf, ms).length(), 0.0, 1.0)
 		var fwd := Vector3(sin(yaw), 0, cos(yaw))
 		var right := Vector3(cos(yaw), 0, -sin(yaw))
 		var dir := (fwd * mf + right * ms).normalized()
 		pos += dir * move_speed * dt
+	else:
+		move_speed = 0.0
 	# 楼房 OBB 推出（半径 0.5）
 	for ob in fm.obstacles_box:
 		var dx: float = pos.x - ob["c"].x
@@ -386,12 +418,16 @@ func update(dt: float) -> void:
 			_shoot()
 		else:
 			_start_reload()
-	# 相机：第一人称 + 走路轻微点头 + 开镜 FOV
+	# 相机：第一人称 + 走路轻微点头 + 滑铲压低视线 + 开镜 FOV
+	var eye_target := EYE_H_SLIDE if slide_t > 0.0 else EYE_H
+	_eye_h = lerpf(_eye_h, eye_target, 1.0 - exp(-14.0 * dt))
 	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
-	cam.position = pos + Vector3(0, 1.58 + bob, 0)
+	cam.position = pos + Vector3(0, _eye_h + bob, 0)
 	cam.rotation = Vector3(pitch, yaw + PI, 0)   # Godot 相机前向 = -(sin,cos)，需加 PI 对齐位移约定
 	var scope_div: float = _g.get("scope_div", 1.0) if scoped else 1.0
 	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
+	if slide_t > 0.0 and not scoped:
+		target_fov += 10.0   # 滑铲速度感
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
 	# 开镜 = 从瞄具里看（枪模整体隐藏，视野即镜内画面）；腰射显示持枪双手
 	_gun_holder.visible = not scoped
