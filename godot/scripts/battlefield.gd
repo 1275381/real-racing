@@ -161,13 +161,14 @@ func update_player_plane(dt: float) -> void:
 			or Input.is_physical_key_pressed(KEY_RIGHT):
 		turn -= 1.0
 	p["heading"] = float(p["heading"]) + turn * PLANE_TURN * dt
-	p["roll"] = lerpf(float(p["roll"]), turn * 0.55, 1.0 - exp(-5.0 * dt))
-	# 俯仰：↑ 拉起 ↓ 俯冲，无输入缓慢回平
+	# 压杆方向：转向侧机翼下沉（rotation.z 正 = 左翼上抬，故取负）
+	p["roll"] = lerpf(float(p["roll"]), -turn * 0.55, 1.0 - exp(-5.0 * dt))
+	# 俯仰：↑ 推杆低头 / ↓ 拉杆爬升（摇杆惯例），无输入缓慢回平
 	var pitch_in := 0.0
 	if Input.is_physical_key_pressed(KEY_UP):
-		pitch_in += 1.0
-	if Input.is_physical_key_pressed(KEY_DOWN):
 		pitch_in -= 1.0
+	if Input.is_physical_key_pressed(KEY_DOWN):
+		pitch_in += 1.0
 	if pitch_in != 0.0:
 		p["pitch"] = clampf(float(p["pitch"]) + pitch_in * PLANE_PITCH_RATE * dt,
 				-0.55, 0.6)
@@ -336,7 +337,7 @@ func _update_enemy_plane(p: Dictionary, dt: float) -> void:
 	var want_h := atan2(to_t.x, to_t.z)
 	var dh := wrapf(want_h - float(p["heading"]), -PI, PI)
 	p["heading"] = float(p["heading"]) + clampf(dh, -1.0, 1.0) * PLANE_TURN * dt
-	p["roll"] = lerpf(float(p["roll"]), clampf(dh, -1.0, 1.0) * 0.55,
+	p["roll"] = lerpf(float(p["roll"]), -clampf(dh, -1.0, 1.0) * 0.55,
 			1.0 - exp(-4.0 * dt))
 	var want_pitch := clampf((tgt.y - p["pos"].y) * 0.03, -0.4, 0.4)
 	p["pitch"] = lerpf(float(p["pitch"]), want_pitch, 1.0 - exp(-2.0 * dt))
