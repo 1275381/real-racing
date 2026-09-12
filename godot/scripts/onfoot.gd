@@ -33,6 +33,12 @@ var _bob_t := 0.0
 var _gun_id := "pistol"
 var _g: Dictionary = Guns.gun_by_id("pistol")
 var gun_ammo := {}        # gun_id → 当前弹匣余量
+var _mag_mesh: MeshInstance3D       # 枪上弹匣（换弹时脱落/滑入）
+var _falling_mag: MeshInstance3D    # 掉落中的弹匣（世界空间）
+var _falling_vel := Vector3.ZERO
+var _falling := false
+var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
+var _reload_rot := Vector3.ZERO
 var _base_fov := 63.0
 var _gun_holder: Node3D
 var _flash: OmniLight3D
@@ -70,6 +76,10 @@ func exit() -> void:
 func set_gun(gun_id: String) -> void:
 	_gun_id = gun_id
 	_g = Guns.gun_by_id(gun_id)
+	reloading = 0.0
+	_falling = false
+	if _falling_mag != null:
+		_falling_mag.visible = false
 	if gun_ammo.has(gun_id):
 		ammo = int(gun_ammo[gun_id])
 	else:
@@ -130,6 +140,16 @@ func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	audio = audio_ref
 	cam = camera
 	_setup_fx()
+	# 掉落弹匣（换弹动画：旧弹匣从枪上脱落坠地）
+	var fm_mesh := BoxMesh.new()
+	fm_mesh.size = Vector3(0.055, 0.17, 0.09)
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_color = Color(0.16, 0.18, 0.22)
+	fm_mesh.material = fmat
+	_falling_mag = MeshInstance3D.new()
+	_falling_mag.mesh = fm_mesh
+	_falling_mag.visible = false
+	add_child(_falling_mag)
 	set_gun("rifle")
 
 ## 曳光弹与命中火花的对象池
@@ -186,6 +206,11 @@ func _spawn_impact(p: Vector3) -> void:
 
 
 func _tick_fx(dt: float) -> void:
+	# 掉落弹匣：重力下坠 + 落地静止
+	if _falling_mag != null and _falling_mag.visible:
+		_falling_vel.y -= 9.8 * dt
+		_falling_mag.position += _falling_vel * dt
+		_falling_mag.rotation_degrees.z += 140.0 * dt
 	for s in _tr_pool:
 		if float(s["t"]) > 0.0:
 			s["t"] = float(s["t"]) - dt
@@ -228,6 +253,16 @@ func mount_gun(gun: Node3D) -> void:
 			Vector3(-16, -12, 26), sleeve)   # 左臂（斜向护木）
 	mk_box.call(Vector3(0.075, 0.09, 0.11), Vector3(-0.075, -0.115, -0.5),
 			Vector3(0, -12, 0), skin)        # 左手
+	# 枪上弹匣（换弹动画：脱落/滑入用）
+	var mag_mesh := BoxMesh.new()
+	mag_mesh.size = Vector3(0.055, 0.17, 0.09)
+	var mag_mat := StandardMaterial3D.new()
+	mag_mat.albedo_color = Color(0.16, 0.18, 0.22)
+	mag_mesh.material = mag_mat
+	_mag_mesh = MeshInstance3D.new()
+	_mag_mesh.mesh = mag_mesh
+	_mag_mesh.position = Vector3(0.02, -0.14, -0.16)
+	_gun_holder.add_child(_mag_mesh)
 	# 枪口火光：小发光片 + 瞬时点光
 	_flash_mesh = MeshInstance3D.new()
 	var fm_mesh := SphereMesh.new()
@@ -266,13 +301,36 @@ func update(dt: float) -> void:
 	_tick_fx(dt)
 	fire_cd = maxf(0.0, fire_cd - dt)
 	_bob_t += dt * (2.2 if move_speed > 0.1 else 0.8)
-	# 换弹
+	# 换弹动画：枪体下倾 → 旧弹匣脱落坠地 → 新弹匣滑入 → 回位
 	if reloading > 0.0:
 		reloading -= dt
+		var total: float = _g.get("reload", 1.5)
+		var prog: float = clampf(1.0 - reloading / maxf(total, 0.01), 0.0, 1.0)
+		var dip := sin(prog * PI)
+		_reload_off = Vector3(0.03 * dip, -0.09 * dip, 0.05 * dip)
+		_reload_rot = Vector3(4.0 * dip, 0, 26.0 * dip)
+		# 28%~60%：旧弹匣脱落坠地（世界空间，重力+前抛）
+		if prog > 0.28 and prog < 0.60:
+			_mag_mesh.visible = false
+			if not _falling:
+				_falling = true
+				_falling_mag.global_position = cam.global_position * 						Transform3D(Basis.IDENTITY, Vector3.ZERO) * \
+						Transform3D(Basis.IDENTITY, Vector3(0.02, -0.1, -0.3)) if false \
+						else cam.to_global(Vector3(0.02, -0.16, -0.3))
+				_falling_vel = cam.global_transform.basis.z * 0.8 + Vector3(0, -0.4, 0)
+				_falling_mag.visible = true
+		elif prog >= 0.60:
+			_mag_mesh.visible = true
+			_falling = false
 		if reloading <= 0.0:
 			reloading = 0.0
 			ammo = _g.get("mag", 12)
 			reload_done.emit()
+	else:
+		_reload_off = Vector3.ZERO
+		_reload_rot = Vector3.ZERO
+		_mag_mesh.visible = true
+		_falling = false
 	# 移动
 	var mf := 0.0
 	var ms := 0.0
