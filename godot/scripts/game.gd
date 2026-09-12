@@ -627,7 +627,6 @@ func _wire_menu() -> void:
 	hud.gun_equip.connect(_on_gun_equip)
 	hud.ammo_equip.connect(_on_ammo_equip)
 	hud.gunshop_back.connect(close_gunshop)
-	hud.btn_gunshop.pressed.connect(open_gunshop)
 
 
 # ================= 配件店 / 车辆数据 =================
