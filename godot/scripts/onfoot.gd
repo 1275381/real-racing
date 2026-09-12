@@ -82,6 +82,15 @@ func exit() -> void:
 	slide_t = 0.0
 	slide_cd = 0.0
 	_eye_h = EYE_H
+	# 枪模挂在相机上：离场必须隐藏（战场飞行等 near 面小的相机会放 giant 块）
+	if _gun_holder != null:
+		_gun_holder.visible = false
+	if _flash != null:
+		_flash.visible = false
+	if _flash_mesh != null:
+		_flash_mesh.visible = false
+	if _falling_mag != null:
+		_falling_mag.visible = false
 	if cam != null:
 		cam.fov = _base_fov
 

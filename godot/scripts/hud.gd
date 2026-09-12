@@ -37,6 +37,8 @@ var results_grid: GridContainer
 var battle_lbl_ally: Label
 var battle_lbl_enemy: Label
 var battle_lbl_kill: Label
+var battle_lbl_plane: Label
+var board_hint: Label
 
 # --- 配件店 / 车辆数据 ---
 signal shop_equip(slot: String, opt_id: String)
@@ -1211,19 +1213,39 @@ func _build_battle_hud() -> void:
 	battle_lbl_kill = Label.new()
 	battle_lbl_kill.add_theme_font_size_override("font_size", 20)
 	battle_lbl_kill.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
+	battle_lbl_plane = Label.new()
+	battle_lbl_plane.add_theme_font_size_override("font_size", 20)
+	battle_lbl_plane.add_theme_color_override("font_color", Color(0.55, 0.9, 0.95))
 	row.add_child(battle_lbl_ally)
 	row.add_child(battle_lbl_enemy)
 	row.add_child(battle_lbl_kill)
+	row.add_child(battle_lbl_plane)
 	bar.add_child(row)
 	screen.add_child(bar)
+	# 登机提示（底部中央）
+	board_hint = Label.new()
+	board_hint.text = "按 F 登机"
+	board_hint.add_theme_font_size_override("font_size", 19)
+	board_hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	board_hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	board_hint.position.y = -84.0
+	board_hint.visible = false
+	screen.add_child(board_hint)
 	_screens["battle"] = screen
 	_root.add_child(screen)
 
 
-func set_battle_top(allies: int, enemies: int, wave: int, kills: int) -> void:
+func set_battle_top(allies: int, enemies: int, wave: int, kills: int,
+		plane_txt: String = "") -> void:
 	battle_lbl_ally.text = "我方 %d" % allies
 	battle_lbl_enemy.text = "敌军 %d · 第 %d 波" % [enemies, wave]
 	battle_lbl_kill.text = "击杀 %d" % kills
+	battle_lbl_plane.text = plane_txt
+
+
+func set_board_hint(on: bool, text: String = "按 F 登机") -> void:
+	board_hint.text = text
+	board_hint.visible = on
 
 
 func _build_pause() -> void:
