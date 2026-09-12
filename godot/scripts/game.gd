@@ -663,7 +663,8 @@ func _board_plane() -> void:
 	hud.set_onfoot(false)
 	hud.set_scope(false)
 	hud.set_board_hint(false)
-	hud.show_center("起飞", "W/S 油门 · A/D 转弯 · ↑/↓ 俯仰 · 空格 投弹 · 落地减速后 F 下机",
+	hud.show_center("起飞",
+			"W/S 油门 · A/D 或 ←/→ 转弯 · ↑/↓ 俯仰 · 空格 投弹 · 落地减速后 F 下机",
 			4000)
 
 

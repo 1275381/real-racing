@@ -152,11 +152,13 @@ func update_player_plane(dt: float) -> void:
 			p["throttle"] = minf(1.0, float(p["throttle"]) + 0.55 * dt)
 		if Input.is_physical_key_pressed(KEY_S):
 			p["throttle"] = maxf(0.0, float(p["throttle"]) - 0.55 * dt)
-	# 转向 + 侧倾
+	# 转向 + 侧倾（A/D 与 ←/→ 等效）
 	var turn := 0.0
-	if Input.is_physical_key_pressed(KEY_A):
+	if Input.is_physical_key_pressed(KEY_A) \
+			or Input.is_physical_key_pressed(KEY_LEFT):
 		turn += 1.0
-	if Input.is_physical_key_pressed(KEY_D):
+	if Input.is_physical_key_pressed(KEY_D) \
+			or Input.is_physical_key_pressed(KEY_RIGHT):
 		turn -= 1.0
 	p["heading"] = float(p["heading"]) + turn * PLANE_TURN * dt
 	p["roll"] = lerpf(float(p["roll"]), turn * 0.55, 1.0 - exp(-5.0 * dt))
