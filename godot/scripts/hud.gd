@@ -37,7 +37,9 @@ signal shop_equip(slot: String, opt_id: String)
 signal shop_back
 signal gun_equip(gun_id: String)
 signal gunshop_back
+signal ammo_equip(ammo_id: String)
 var gunshop_rows := {}      # gun_id -> Button
+var _ammo_rows := {}        # ammo_id -> Button
 var _gunshop_coins: Label
 var shop_car_label: Label
 var shop_coins_label: Label
@@ -921,6 +923,29 @@ func _build_gunshop() -> void:
 		row.add_child(b)
 		gunshop_rows[gid] = {"btn": b, "note": name_lab}
 
+	var ammo_head := Label.new()
+	ammo_head.text = "【弹　药】"
+	ammo_head.add_theme_font_size_override("font_size", 16)
+	ammo_head.add_theme_color_override("font_color", Color(0.98, 0.75, 0.25))
+	box.add_child(ammo_head)
+	for a in Guns.AMMO:
+		var aid: String = a["id"]
+		var arow := HBoxContainer.new()
+		arow.add_theme_constant_override("separation", 8)
+		box.add_child(arow)
+		var alab := Label.new()
+		alab.text = "%s · %s" % [a["name"], a["desc"]]
+		alab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		alab.add_theme_font_size_override("font_size", 14)
+		alab.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+		arow.add_child(alab)
+		var ab := Button.new()
+		ab.custom_minimum_size = Vector2(110, 30)
+		ab.add_theme_font_size_override("font_size", 14)
+		ab.pressed.connect(func(): ammo_equip.emit(aid))
+		arow.add_child(ab)
+		_ammo_rows[aid] = {"btn": ab, "note": alab}
+
 	var back := Button.new()
 	back.text = "返 回 车 库"
 	back.custom_minimum_size = Vector2(0, 42)
@@ -929,8 +954,9 @@ func _build_gunshop() -> void:
 	box.add_child(back)
 
 
-## 刷新枪械店各行状态
-func refresh_gunshop(coins: int, owned: Array, equipped: String) -> void:
+## 刷新枪械店各行状态（枪械 + 弹药）
+func refresh_gunshop(coins: int, owned: Array, equipped: String,
+		ammo_type: String) -> void:
 	_gunshop_coins.text = "金币：%d" % coins
 	for g in Guns.GUNS:
 		var gid: String = g["id"]
@@ -949,6 +975,23 @@ func refresh_gunshop(coins: int, owned: Array, equipped: String) -> void:
 			b.disabled = coins < Guns.gun_by_id(gid)["price"]
 		info["note"].add_theme_color_override("font_color",
 				Color(0.55, 1.0, 0.55) if is_eq else Color(0.8, 0.84, 0.9))
+	for a in Guns.AMMO:
+		var aid: String = a["id"]
+		var info: Dictionary = _ammo_rows[aid]
+		var b: Button = info["btn"]
+		var is_eq2: bool = ammo_type == aid
+		var is_owned2: bool = aid == "standard" or owned.has(aid)
+		if is_eq2:
+			b.text = "使用中"
+			b.disabled = true
+		elif is_owned2:
+			b.text = "使 用"
+			b.disabled = false
+		else:
+			b.text = "%d 金币" % Guns.ammo_by_id(aid)["price"]
+			b.disabled = coins < Guns.ammo_by_id(aid)["price"]
+		info["note"].add_theme_color_override("font_color",
+				Color(0.55, 1.0, 0.55) if is_eq2 else Color(0.8, 0.84, 0.9))
 
 
 ## 车辆数据界面：马力/极速/牵引/抓地/制动（基础 → 当前，配件加成标注）

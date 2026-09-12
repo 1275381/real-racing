@@ -33,6 +33,8 @@ var _bob_t := 0.0
 var _gun_id := "pistol"
 var _g: Dictionary = Guns.gun_by_id("pistol")
 var gun_ammo := {}        # gun_id → 当前弹匣余量
+var ammo_mul := 1.0       # 弹药类型伤害倍率（弹药店）
+var _ammo_color := Color(1.0, 0.8, 0.35)
 var _mag_mesh: MeshInstance3D       # 枪上弹匣（换弹时脱落/滑入）
 var _falling_mag: MeshInstance3D    # 掉落中的弹匣（世界空间）
 var _falling_vel := Vector3.ZERO
@@ -378,7 +380,7 @@ func update(dt: float) -> void:
 	pos.x = clampf(pos.x, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT)
 	pos.z = clampf(pos.z, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT)
 	# 射击（左键按住 = 开枪 + 自动三倍开镜）
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and fire_cd <= 0.0 \
+	if Input.is_action_pressed("rr_fire") and fire_cd <= 0.0 \
 			and reloading <= 0.0:
 		if ammo > 0:
 			_shoot()
@@ -424,7 +426,7 @@ func _shoot() -> void:
 	var spread: float = _g.get("spread", 0.0)
 	var pellets: int = _g.get("pellets", 1)
 	var range: float = _g.get("range", 250.0)
-	var dmg: float = _g.get("dmg", 20.0)
+	var dmg: float = _g.get("dmg", 20.0) * ammo_mul
 	var right := cam.global_transform.basis.x
 	var up := cam.global_transform.basis.y
 	for p in pellets:
@@ -443,6 +445,19 @@ func _shoot() -> void:
 ## 枪口世界坐标
 func muzzle_world() -> Vector3:
 	return cam.global_transform * Vector3(0.02, 0.06, -0.62)
+
+
+## 装备弹药类型（伤害倍率 + 曳光/火花颜色）
+func set_ammo_type(ammo_id: String) -> void:
+	var a: Dictionary = Guns.ammo_by_id(ammo_id)
+	ammo_mul = a.get("dmg_mul", 1.0)
+	_ammo_color = a.get("color", Color(1.0, 0.8, 0.35))
+	for s in _tr_pool:
+		(s["mi"].mesh as BoxMesh).material.set("emission", _ammo_color)
+		(s["mi"].mesh as BoxMesh).material.set("albedo_color", _ammo_color)
+	for s in _im_pool:
+		(s["mi"].mesh as SphereMesh).material.set("emission", _ammo_color)
+		(s["mi"].mesh as SphereMesh).material.set("albedo_color", _ammo_color)
 
 
 ## 三倍镜开关（M 键）

@@ -322,6 +322,12 @@ func _register_inputs() -> void:
 			var ev := InputEventKey.new()
 			ev.physical_keycode = keycode
 			InputMap.action_add_event(action, ev)
+	# 步行开火动作：鼠标左键
+	if not InputMap.has_action("rr_fire"):
+		InputMap.add_action("rr_fire")
+		var fire_ev := InputEventMouseButton.new()
+		fire_ev.button_index = MOUSE_BUTTON_LEFT
+		InputMap.action_add_event("rr_fire", fire_ev)
 
 
 func _sample_input(dt: float) -> Dictionary:
@@ -371,6 +377,7 @@ func _load_settings() -> void:
 		npc_solid = cf.get_value("settings", "npc_solid", true)
 		guns_owned = cf.get_value("guns", "owned", ["pistol"])
 		gun_equipped = cf.get_value("guns", "equipped", "pistol")
+		ammo_type = cf.get_value("guns", "ammo_type", "standard")
 		parts_owned = cf.get_value("parts", "owned", {})
 		parts_equipped = cf.get_value("parts", "equipped", {})
 		if cf.has_section_key("records", "best_lap"):
@@ -389,6 +396,7 @@ func _save_settings() -> void:
 	cf.set_value("settings", "npc_solid", npc_solid)
 	cf.set_value("guns", "owned", guns_owned)
 	cf.set_value("guns", "equipped", gun_equipped)
+	cf.set_value("guns", "ammo_type", ammo_type)
 	cf.set_value("parts", "owned", parts_owned)
 	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
@@ -407,6 +415,7 @@ var onfoot: OnFoot                 # 下车人模式（第一人称持枪）
 var on_foot := false               # 是否处于步行状态
 var guns_owned: Array = ["pistol"] # 已购枪械（全局，数字键 1~N 直选）
 var gun_equipped := "pistol"       # 当前手持枪械
+var ammo_type := "standard"        # 弹药类型（弹药店购买/切换）
 var gunshop_open := false          # 枪械店界面开着
 var gunshop_from_roam := false
 var player_hp := 100.0             # 步行状态血量（警车/直升机开枪扣血）
@@ -546,7 +555,7 @@ func close_gunshop() -> void:
 
 
 func _refresh_gunshop_ui() -> void:
-	hud.refresh_gunshop(coins, guns_owned, gun_equipped)
+	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type)
 
 
 func _on_gun_equip(gun_id: String) -> void:
@@ -558,6 +567,25 @@ func _on_gun_equip(gun_id: String) -> void:
 	if not buy_gun(gun_id):
 		hud.show_center("金币不足", "还差 %d 金币" % (g["price"] - coins), 1500)
 		return
+	_refresh_gunshop_ui()
+
+
+## 购买/使用弹药类型
+func _on_ammo_equip(ammo_id: String) -> void:
+	var a: Dictionary = Guns.ammo_by_id(ammo_id)
+	if ammo_type == ammo_id:
+		return
+	if not guns_owned.has(ammo_id):
+		if coins < a["price"]:
+			hud.show_center("金币不足", "还差 %d 金币" % (a["price"] - coins), 1500)
+			return
+		coins -= a["price"]
+		guns_owned.append(ammo_id)
+		_save_settings()
+	ammo_type = ammo_id
+	_save_settings()
+	if onfoot != null:
+		onfoot.set_ammo_type(ammo_id)
 	_refresh_gunshop_ui()
 
 
@@ -597,7 +625,9 @@ func _wire_menu() -> void:
 	hud.shop_back.connect(close_shop)
 	hud.btn_gunshop.pressed.connect(open_gunshop)
 	hud.gun_equip.connect(_on_gun_equip)
+	hud.ammo_equip.connect(_on_ammo_equip)
 	hud.gunshop_back.connect(close_gunshop)
+	hud.btn_gunshop.pressed.connect(open_gunshop)
 
 
 # ================= 配件店 / 车辆数据 =================
@@ -836,6 +866,7 @@ func enter_roam() -> void:
 		onfoot = OnFoot.new()
 		add_child(onfoot)
 		onfoot.setup(freeroam, npc, audio, camera)
+		onfoot.set_ammo_type(ammo_type)
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): pass)
 		onfoot.reload_done.connect(func(): audio.play_reload())
@@ -892,15 +923,15 @@ func _select_gun(gun_id: String) -> void:
 	hud.set_gun_name(Guns.gun_by_id(gun_id)["name"])
 
 
-func _on_foot_shot(kind: String, idx: int, _point: Vector3) -> void:
+func _on_foot_shot(kind: String, idx: int, point: Vector3, dmg: float = 20.0) -> void:
 	if OS.get_environment("RR_DBG_SHOT") != "":
-		print("[shotdbg] 命中 kind=%s idx=%d" % [kind, idx])
+		print("[shotdbg] 命中 kind=%s idx=%d dmg=%.0f" % [kind, idx, dmg])
 	if kind == "ped":
 		npc.kill_ped(idx)
 	elif kind == "traffic":
-		npc.damage_traffic(idx, 1.0)
+		npc.damage_traffic(idx, dmg)
 	elif kind == "police":
-		npc.damage_police(idx, 1.0)
+		npc.damage_police(idx, dmg)
 
 
 func _on_police_shot(dmg: float) -> void:

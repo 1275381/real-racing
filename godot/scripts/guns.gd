@@ -27,3 +27,23 @@ static func gun_by_id(id: String) -> Dictionary:
 		if g["id"] == id:
 			return g
 	return GUNS[0]
+
+
+# 弹药类型：装备后影响所有枪械的伤害与曳光/火花颜色
+const AMMO := [
+	{"id": "standard", "name": "标准弹", "desc": "标准威力", "price": 0, "dmg_mul": 1.0,
+		"color": Color(1.0, 0.8, 0.35)},
+	{"id": "power", "name": "强力弹", "desc": "伤害 +35%", "price": 600, "dmg_mul": 1.35,
+		"color": Color(1.0, 0.55, 0.2)},
+	{"id": "ap", "name": "穿甲弹", "desc": "伤害 +75%", "price": 1500, "dmg_mul": 1.75,
+		"color": Color(0.75, 0.85, 1.0)},
+	{"id": "incendiary", "name": "燃烧弹", "desc": "伤害 +120% · 红色曳光", "price": 3000,
+		"dmg_mul": 2.2, "color": Color(1.0, 0.3, 0.15)},
+]
+
+
+static func ammo_by_id(id: String) -> Dictionary:
+	for a in AMMO:
+		if a["id"] == id:
+			return a
+	return AMMO[0]
