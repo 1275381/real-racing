@@ -30,7 +30,13 @@ var btn_shop: Button
 var btn_carinfo: Button
 var btn_npc_solid: Button
 var btn_gunshop: Button
+var btn_battle: Button
 var results_grid: GridContainer
+
+# --- 大战场 ---
+var battle_lbl_ally: Label
+var battle_lbl_enemy: Label
+var battle_lbl_kill: Label
 
 # --- 配件店 / 车辆数据 ---
 signal shop_equip(slot: String, opt_id: String)
@@ -124,6 +130,7 @@ func build(colors: Array) -> void:
 	_build_gunshop()
 	_build_carinfo()
 	_build_roam_hud()
+	_build_battle_hud()
 	_build_pause()
 	_build_results()
 	_build_wanted()
@@ -648,6 +655,12 @@ func _build_garage() -> void:
 	btn_roam.add_theme_font_size_override("font_size", 18)
 	box.add_child(btn_roam)
 
+	btn_battle = Button.new()
+	btn_battle.text = "大 战 场"
+	btn_battle.custom_minimum_size = Vector2(0, 40)
+	btn_battle.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_battle)
+
 	btn_shop = Button.new()
 	btn_shop.text = "配 件 店"
 	btn_shop.custom_minimum_size = Vector2(0, 40)
@@ -1171,6 +1184,46 @@ func _panel_stylebox() -> StyleBoxFlat:
 	sb.content_margin_top = 22
 	sb.content_margin_bottom = 22
 	return sb
+
+
+## 大战场顶栏：我方兵力 ｜ 敌军兵力·波次 ｜ 玩家击杀
+func _build_battle_hud() -> void:
+	var screen := Control.new()
+	screen.name = "battle"
+	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bar := PanelContainer.new()
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = Color(0.04, 0.05, 0.08, 0.72)
+	bs.set_corner_radius_all(6)
+	bar.add_theme_stylebox_override("panel", bs)
+	bar.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	bar.position.y = 14.0
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 26)
+	battle_lbl_ally = Label.new()
+	battle_lbl_ally.add_theme_font_size_override("font_size", 20)
+	battle_lbl_ally.add_theme_color_override("font_color", Color(0.5, 0.75, 1.0))
+	battle_lbl_enemy = Label.new()
+	battle_lbl_enemy.add_theme_font_size_override("font_size", 20)
+	battle_lbl_enemy.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
+	battle_lbl_kill = Label.new()
+	battle_lbl_kill.add_theme_font_size_override("font_size", 20)
+	battle_lbl_kill.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
+	row.add_child(battle_lbl_ally)
+	row.add_child(battle_lbl_enemy)
+	row.add_child(battle_lbl_kill)
+	bar.add_child(row)
+	screen.add_child(bar)
+	_screens["battle"] = screen
+	_root.add_child(screen)
+
+
+func set_battle_top(allies: int, enemies: int, wave: int, kills: int) -> void:
+	battle_lbl_ally.text = "我方 %d" % allies
+	battle_lbl_enemy.text = "敌军 %d · 第 %d 波" % [enemies, wave]
+	battle_lbl_kill.text = "击杀 %d" % kills
 
 
 func _build_pause() -> void:

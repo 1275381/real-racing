@@ -2,7 +2,7 @@ extends Node3D
 ## 整场游戏编排：场景装配 / 状态机 / 定步物理 / 相机 / 竞速判定
 ## （移植自 js/game.js）
 
-enum ST { GARAGE, COUNTDOWN, RACING, PAUSED, FINISHED, ROAM }
+enum ST { GARAGE, COUNTDOWN, RACING, PAUSED, FINISHED, ROAM, BATTLE }
 
 const H_STEP := 1.0 / 120.0        # 固定物理步长
 const CAM_MODE_NAMES: Array = TrackData.CAM_MODES
@@ -378,6 +378,8 @@ func _load_settings() -> void:
 		guns_owned = cf.get_value("guns", "owned", ["pistol"])
 		gun_equipped = cf.get_value("guns", "equipped", "pistol")
 		ammo_type = cf.get_value("guns", "ammo_type", "standard")
+		battle_kills_total = cf.get_value("battle", "kills", 0)
+		battle_wins = cf.get_value("battle", "wins", 0)
 		parts_owned = cf.get_value("parts", "owned", {})
 		parts_equipped = cf.get_value("parts", "equipped", {})
 		if cf.has_section_key("records", "best_lap"):
@@ -397,6 +399,8 @@ func _save_settings() -> void:
 	cf.set_value("guns", "owned", guns_owned)
 	cf.set_value("guns", "equipped", gun_equipped)
 	cf.set_value("guns", "ammo_type", ammo_type)
+	cf.set_value("battle", "kills", battle_kills_total)
+	cf.set_value("battle", "wins", battle_wins)
 	cf.set_value("parts", "owned", parts_owned)
 	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
@@ -420,6 +424,15 @@ var gunshop_open := false          # 枪械店界面开着
 var gunshop_from_roam := false
 var player_hp := 100.0             # 步行状态血量（警车/直升机开枪扣血）
 var _no_dmg_t := 0.0               # 未受击计时（6 秒后缓慢回血）
+
+# ================= 大战场模式 =================
+
+var bmap: BattleMap                # 独立战场地图（荒漠 500×400m）
+var bf: RRBattleField              # 战斗管理器（两军 AI 士兵）
+var battle_kills_total := 0        # 累计击杀（存档）
+var battle_wins := 0               # 累计胜场（存档）
+var _battle_respawn_t := 0.0       # 阵亡重生倒计时（>0 = 死亡等待）
+var _battle_prev_theme := "country"  # 进场前主题（退场恢复）
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -558,6 +571,154 @@ func _refresh_gunshop_ui() -> void:
 	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type)
 
 
+# ================= 大战场模式 =================
+
+## 进入大战场：独立荒漠地图，持枪步行参战（波次歼灭战 12 v 12）
+func enter_battle() -> void:
+	if state != ST.GARAGE:
+		return
+	audio.ensure()
+	_battle_prev_theme = env._cur_theme
+	hud.show_only("battle")
+	for t in tracks:
+		t.visible = false
+	if freeroam != null:
+		freeroam.visible = false
+	if npc != null:
+		npc.set_active(false)
+	env.set_theme("desert")
+	env.set_race_props_visible(false)
+	env.set_fog_range(260.0, 900.0)   # 战场近雾：荒漠沙尘氛围
+	env.set_ground_visible(true)      # 战场边界之外由全局面兜底地平
+	fx.clear_skids()
+	state = ST.BATTLE
+	if bmap == null:
+		bmap = BattleMap.new()
+		add_child(bmap)
+	bmap.visible = true
+	if bf == null:
+		bf = RRBattleField.new()
+		add_child(bf)
+		bf.setup(bmap, audio)
+		bf.player_hit.connect(_on_bf_player_hit)
+		bf.enemy_killed.connect(_on_bf_enemy_killed)
+		bf.wave_started.connect(_on_bf_wave)
+		bf.over.connect(_on_bf_over)
+	if onfoot == null:
+		onfoot = OnFoot.new()
+		add_child(onfoot)
+		onfoot.setup(bmap, bf, audio, camera)   # bmap/bf 顶替 freeroam/npc 位
+		onfoot.set_ammo_type(ammo_type)
+		onfoot.shoot_hit.connect(_on_foot_shot)
+		onfoot.reload_done.connect(func(): audio.play_reload())
+	# 战场内无载具：直接步行入场
+	on_foot = false
+	onfoot.exit()
+	player.visual.visible = false
+	_in_steer = 0.0
+	_cam_init = false
+	_intro_t = 0.0
+	_battle_respawn_t = 0.0
+	player_hp = 100.0
+	bf.start()
+	_battle_enter_foot()
+	hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
+			bf.wave, bf.kills)
+	hud.show_center("大 战 场", "全歼 %d 名敌军即获胜 · 阵亡扣 100 金币医疗费"
+			% (bf.ENEMY_WAVE * bf.TOTAL_WAVES), 3500)
+
+
+## 战场步行入场（无载具版上下车切换）
+func _battle_enter_foot() -> void:
+	on_foot = true
+	camera.near = 0.02   # 步行第一人称：贴脸枪模不被近裁剪面裁掉
+	onfoot.set_gun(gun_equipped)
+	var spawn: Vector3 = BattleMap.ALLY_SPAWN \
+			+ Vector3(randf_range(-8.0, 8.0), 0, randf_range(-4.0, 4.0))
+	onfoot.enter(spawn, PI)   # 朝北（-Z，敌军方向）
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	hud.set_onfoot(true)
+	hud.set_health(player_hp)
+	hud.set_gun_name(Guns.gun_by_id(gun_equipped)["name"])
+	hud.set_scope(false)
+
+
+## 退出战场回车库（恢复环境与界面）
+func exit_battle() -> void:
+	if bf != null:
+		bf.active = false
+	if bmap != null:
+		bmap.visible = false
+	_battle_respawn_t = 0.0
+	if on_foot:
+		on_foot = false
+		onfoot.exit()
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		hud.set_onfoot(false)
+		hud.set_scope(false)
+	env.set_theme(_battle_prev_theme)
+	env.set_race_props_visible(true)
+	env.set_fog_range(240.0, 1650.0)
+	state = ST.GARAGE
+	for i in cars.size():
+		cars[i].visual.visible = i == 0
+	refresh_menu_best()
+	_update_garage_labels()
+	hud.show_only("garage")
+	hud.show_center("", "", 0)
+
+
+func _on_bf_player_hit(dmg: float) -> void:
+	if not on_foot or _battle_respawn_t > 0.0:
+		return
+	player_hp = maxf(0.0, player_hp - dmg)
+	_no_dmg_t = 0.0
+	hud.damage_flash()
+	hud.set_health(player_hp)
+	if player_hp <= 0.0:
+		_battle_downed()
+
+
+func _battle_downed() -> void:
+	coins = maxi(0, coins - 100)
+	_save_settings()
+	_battle_respawn_t = 3.0
+	bf.player_alive = false
+	onfoot.exit()
+	hud.set_onfoot(false)
+	hud.show_center("阵 亡", "医疗费 -100 金币 · 3 秒后基地重生", 3000)
+
+
+func _on_bf_enemy_killed(by_player: bool) -> void:
+	if by_player:
+		coins += 50
+		battle_kills_total += 1
+		_save_settings()
+	hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
+			bf.wave, bf.kills)
+
+
+func _on_bf_wave(n: int) -> void:
+	hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
+			bf.wave, bf.kills)
+	if n > 1:
+		hud.show_center("敌军第 %d 波增援！" % n, "顶住进攻", 2500)
+		audio.beep(220, 0.3, 0.25)
+
+
+func _on_bf_over(did_win: bool, _kills: int) -> void:
+	if did_win:
+		battle_wins += 1
+		coins += 1500
+		hud.show_center("胜　利", "敌军全歼 · 奖励 +1500 金币", 8000)
+		audio.beep(870, 0.4, 0.26)
+	else:
+		coins += 200
+		hud.show_center("战　败", "我方全军覆没 · 补给 +200 金币 · 按 Enter 返回", 8000)
+		audio.beep(180, 0.5, 0.25)
+	_save_settings()
+
+
 func _on_gun_equip(gun_id: String) -> void:
 	if _gun_owned(gun_id):
 		equip_gun(gun_id)
@@ -594,6 +755,7 @@ func _on_ammo_equip(ammo_id: String) -> void:
 func _wire_menu() -> void:
 	hud.btn_start.pressed.connect(start_from_garage)
 	hud.btn_roam.pressed.connect(enter_roam)
+	hud.btn_battle.pressed.connect(enter_battle)
 	hud.track_sel.item_selected.connect(func(_i: int):
 		set_track(hud.track_sel.selected)
 		_update_del_track_btn())
@@ -925,6 +1087,9 @@ func _select_gun(gun_id: String) -> void:
 func _on_foot_shot(kind: String, idx: int, point: Vector3, dmg: float = 20.0) -> void:
 	if OS.get_environment("RR_DBG_SHOT") != "":
 		print("[shotdbg] 命中 kind=%s idx=%d dmg=%.0f" % [kind, idx, dmg])
+	if state == ST.BATTLE and bf != null:
+		bf.player_shot(kind, idx, dmg)
+		return
 	if kind == "ped":
 		npc.kill_ped(idx)
 	elif kind == "traffic":
@@ -1209,7 +1374,8 @@ func _process(dt_real: float) -> void:
 					else (0.7 if (v.input_brake > 0.9 and absf(v.vf) > 22.0
 					and v.surface == "road") else 0.0)))
 			fx.surface_effects(v)
-	env.follow_shadow(player.veh.pos)
+	# 战场里阴影跟随步行玩家（车藏在别处）
+	env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
 	env.update_clouds(dt)
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
@@ -1258,9 +1424,10 @@ func _handle_hotkeys() -> void:
 	if Input.is_action_just_pressed("rr_camera"):
 		cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
 		hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
-	if Input.is_action_just_pressed("rr_rescue"):
+	if Input.is_action_just_pressed("rr_rescue") and state != ST.BATTLE:
 		rescue()
-	if Input.is_action_just_pressed("rr_scope") and state == ST.ROAM and on_foot:
+	if Input.is_action_just_pressed("rr_scope") and on_foot \
+			and (state == ST.ROAM or state == ST.BATTLE):
 		onfoot.toggle_scope()
 		hud.set_scope(onfoot.scoped)
 	if Input.is_action_just_pressed("rr_mute"):
@@ -1274,11 +1441,13 @@ func _handle_hotkeys() -> void:
 			close_gunshop()
 		elif state == ST.ROAM or state == ST.FINISHED:
 			to_garage()
+		elif state == ST.BATTLE:
+			exit_battle()
 		elif state in [ST.RACING, ST.COUNTDOWN, ST.PAUSED]:
 			toggle_pause()
 	if Input.is_action_just_pressed("rr_interact") and state == ST.ROAM and not shop_open:
 		_toggle_on_foot()
-	if state == ST.ROAM and on_foot:
+	if on_foot and (state == ST.ROAM or state == ST.BATTLE):
 		for gi in 5:
 			if Input.is_action_just_pressed("rr_gun%d" % [gi + 1]):
 				var avail: Array = Guns.GUNS.filter(func(g): return _gun_owned(g["id"]))
@@ -1286,6 +1455,9 @@ func _handle_hotkeys() -> void:
 					_select_gun(avail[gi]["id"])
 	if Input.is_action_just_pressed("rr_start") and state == ST.GARAGE:
 		start_from_garage()
+	if state == ST.BATTLE and bf != null and bf.battle_over \
+			and Input.is_action_just_pressed("rr_start"):
+		exit_battle()   # 战斗结束：Enter 返回车库
 	if state == ST.ROAM and not shop_open and not gunshop_open:
 		var d_parts: float = Vector2(player.veh.pos.x - FreeroamMap.SHOP_DOOR.x,
 				player.veh.pos.z - FreeroamMap.SHOP_DOOR.y).length()
@@ -1411,6 +1583,42 @@ func _step_sim(h: float) -> void:
 		if shake > 0.002 and on_foot:
 			var a2 := shake * 0.2
 			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a2
+		shake = maxf(shake * exp(-3.2 * h), 0.0)
+		sim_time += h
+		return
+
+	# BATTLE：大战场（步行持枪 + 两军 AI 士兵交战，无载具）
+	if s == ST.BATTLE:
+		if bf == null or bmap == null:
+			return
+		if _battle_respawn_t > 0.0:
+			# 死亡等待：战场继续打，玩家 3 秒后基地重生
+			_battle_respawn_t = _battle_respawn_t - h
+			bf.update(h)
+			if _battle_respawn_t <= 0.0:
+				player_hp = 100.0
+				bf.player_alive = true
+				_battle_enter_foot()
+				hud.show_center("", "", 0)
+			sim_time += h
+			return
+		if bf.battle_over:
+			sim_time += h
+			return
+		bf.player_pos = onfoot.pos
+		bf.player_alive = true
+		onfoot.update(h)
+		bf.update(h)
+		_no_dmg_t += h
+		if _no_dmg_t > 6.0:
+			player_hp = minf(100.0, player_hp + 5.0 * h)
+		hud.set_health(player_hp)
+		hud.set_ammo(onfoot.ammo, onfoot.reloading,
+				Guns.gun_by_id(gun_equipped)["name"])
+		hud.set_scope(onfoot.scoped)
+		if shake > 0.002:
+			var a3 := shake * 0.2
+			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a3
 		shake = maxf(shake * exp(-3.2 * h), 0.0)
 		sim_time += h
 		return
@@ -1811,6 +2019,8 @@ func _update_debug_text() -> void:
 func _update_hud(dt: float) -> void:
 	if state == ST.GARAGE:
 		return
+	if state == ST.BATTLE:
+		return   # 战场 HUD（顶栏/准星/血条弹药）在 _step_sim 里直更
 	var pv := player.veh
 	var gear_label := str(pv.gear)
 	if pv.no_shift:
