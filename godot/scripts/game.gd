@@ -178,6 +178,7 @@ func _ready() -> void:
 		cars[i].visual.visible = i == 0   # 车库里只展示玩家车
 	refresh_menu_best()
 	_update_garage_labels()
+	_apply_garage_display()
 	hud.show_only("garage")
 
 	# 调试参数（-- 之后传参，等价网页版 URL 参数）：--autostart --laps=N --track=id --roam
@@ -381,6 +382,7 @@ func _load_settings() -> void:
 		ammo_type = cf.get_value("guns", "ammo_type", "standard")
 		battle_kills_total = cf.get_value("battle", "kills", 0)
 		battle_wins = cf.get_value("battle", "wins", 0)
+		plane_mode = cf.get_value("settings", "plane", false)
 		parts_owned = cf.get_value("parts", "owned", {})
 		parts_equipped = cf.get_value("parts", "equipped", {})
 		if cf.has_section_key("records", "best_lap"):
@@ -402,6 +404,7 @@ func _save_settings() -> void:
 	cf.set_value("guns", "ammo_type", ammo_type)
 	cf.set_value("battle", "kills", battle_kills_total)
 	cf.set_value("battle", "wins", battle_wins)
+	cf.set_value("settings", "plane", plane_mode)
 	cf.set_value("parts", "owned", parts_owned)
 	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
@@ -436,6 +439,13 @@ var _battle_respawn_t := 0.0       # 阵亡重生倒计时（>0 = 死亡等待�
 var _battle_prev_theme := "country"  # 进场前主题（退场恢复）
 var flying := false                # 玩家驾驶我方战机中
 var _plane_was_down := false       # 我方战机被击落（重生提示用）
+
+# ================= 漫游战机（车库可选，仅限自由漫游） =================
+
+var plane_mode := false            # 车库选中战机（漫游专用，不能参赛）
+var rplane := {}                   # 漫游战机状态 {pos,heading,pitch,roll,speed,throttle,landed,hint}
+var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行同用）
+var _roam_vs := 0.0                # 升降率平滑（仪表）
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -817,6 +827,7 @@ func _wire_menu() -> void:
 	hud.btn_start.pressed.connect(start_from_garage)
 	hud.btn_roam.pressed.connect(enter_roam)
 	hud.btn_battle.pressed.connect(enter_battle)
+	hud.btn_plane.pressed.connect(_toggle_plane_mode)
 	hud.track_sel.item_selected.connect(func(_i: int):
 		set_track(hud.track_sel.selected)
 		_update_del_track_btn())
@@ -1025,8 +1036,196 @@ func _toggle_dual_mode() -> void:
 # ================= 流程 =================
 
 func start_from_garage() -> void:
+	if plane_mode:
+		hud.show_center("战机不能参赛", "战机仅限自由漫游 · 按自由漫游出发", 1800)
+		return
 	audio.ensure()
 	start_race()
+
+
+# ================= 漫游战机（车库/漫游） =================
+
+## 车库「漫游战机」开关
+func _toggle_plane_mode() -> void:
+	plane_mode = not plane_mode
+	_save_settings()
+	_apply_garage_display()
+
+
+## 车库展示与按钮状态（战机模式：展台摆战机、禁比赛/配件/车辆数据）
+func _apply_garage_display() -> void:
+	if roam_plane_vis == null:
+		roam_plane_vis = PlaneVisual.create("gold")
+		add_child(roam_plane_vis)
+	hud.btn_plane.text = "漫游战机：开" if plane_mode else "漫游战机：关"
+	if plane_mode and state == ST.GARAGE:
+		player.visual.visible = false
+		roam_plane_vis.visible = true
+		var gp := RRGarage.GARAGE_POS
+		roam_plane_vis.position = gp + Vector3(0, RRGarage.PLATFORM_TOP + 1.1, 0)
+		hud.btn_start.disabled = true
+		hud.btn_start.text = "战机不能参赛"
+		hud.btn_shop.disabled = true
+		hud.btn_carinfo.disabled = true
+		hud.btn_roam.text = "驾 机 漫 游"
+	else:
+		roam_plane_vis.visible = false
+		if state == ST.GARAGE:
+			player.visual.visible = true
+		hud.btn_start.disabled = false
+		hud.btn_start.text = "开 始 比 赛"
+		hud.btn_shop.disabled = false
+		hud.btn_carinfo.disabled = false
+		hud.btn_roam.text = "自 由 漫 游"
+	var car: Dictionary = TrackData.model_by_id(car_model_id)
+	var info: Dictionary = TrackData.AIRCRAFT
+	if plane_mode:
+		hud.update_car_label(info["name"], info["desc"])
+	else:
+		var cls: Dictionary = TrackData.CAR_CLASSES.get(
+				car.get("class", "combustion"), {})
+		hud.update_car_label(car["name"], car["desc"]
+				+ (" · 组别：%s" % cls["name"] if not cls.is_empty() else ""))
+
+
+## 漫游战机状态复位（进场时摆在广场北侧路面）
+func _roam_plane_reset() -> void:
+	rplane = {
+		"pos": Vector3.ZERO, "heading": PI, "pitch": 0.0, "roll": 0.0,
+		"speed": 0.0, "throttle": 0.0, "landed": true, "hint": -1,
+	}
+	var q: Dictionary = freeroam.query(0.0, 120.0, -1)
+	rplane["pos"] = Vector3(0.0, float(q["height"]) + 1.15, 120.0)
+	rplane["ground"] = float(q["height"]) + 3.5
+	if roam_plane_vis == null:
+		roam_plane_vis = PlaneVisual.create("gold")
+		add_child(roam_plane_vis)
+	roam_plane_vis.visible = true
+	_roam_plane_sync()
+
+
+func _roam_plane_sync() -> void:
+	roam_plane_vis.position = rplane["pos"]
+	roam_plane_vis.rotation = Vector3(-float(rplane["pitch"]),
+			float(rplane["heading"]), float(rplane["roll"]))
+	roam_plane_vis.prop.rotation.z += 0.35 + 1.4 * float(rplane["throttle"])
+
+
+## 漫游飞行物理（与大战场同款街机模型；W/S 油门 · A/D 或 ←/→ 转向 · ↑推杆 ↓拉起）
+func _roam_plane_step(dt: float) -> void:
+	var p := rplane
+	var prev_y: float = float(p["pos"].y)
+	if p["landed"]:
+		p["throttle"] = 0.0
+		if Input.is_physical_key_pressed(KEY_W):
+			p["throttle"] = 1.0
+		if p["throttle"] > 0.9:
+			p["landed"] = false
+			p["speed"] = 28.0
+		else:
+			p["speed"] = 0.0
+			_roam_plane_sync()
+			return
+	else:
+		if Input.is_physical_key_pressed(KEY_W):
+			p["throttle"] = minf(1.0, float(p["throttle"]) + 0.55 * dt)
+		if Input.is_physical_key_pressed(KEY_S):
+			p["throttle"] = maxf(0.0, float(p["throttle"]) - 0.55 * dt)
+	# 转向 + 压杆
+	var turn := 0.0
+	if Input.is_physical_key_pressed(KEY_A) \
+			or Input.is_physical_key_pressed(KEY_LEFT):
+		turn += 1.0
+	if Input.is_physical_key_pressed(KEY_D) \
+			or Input.is_physical_key_pressed(KEY_RIGHT):
+		turn -= 1.0
+	p["heading"] = float(p["heading"]) + turn * 1.05 * dt
+	p["roll"] = lerpf(float(p["roll"]), -turn * 0.55, 1.0 - exp(-5.0 * dt))
+	# 俯仰：↑ 推杆低头 / ↓ 拉杆爬升
+	var pitch_in := 0.0
+	if Input.is_physical_key_pressed(KEY_UP):
+		pitch_in -= 1.0
+	if Input.is_physical_key_pressed(KEY_DOWN):
+		pitch_in += 1.0
+	if pitch_in != 0.0:
+		p["pitch"] = clampf(float(p["pitch"]) + pitch_in * 0.9 * dt,
+				-0.55, 0.6)
+	else:
+		p["pitch"] = move_toward(float(p["pitch"]), 0.0, 0.35 * dt)
+	# 速度：油门目标 + 爬升掉速
+	var target_spd := 28.0 + 57.0 * float(p["throttle"]) \
+			- sin(float(p["pitch"])) * 14.0
+	p["speed"] = clampf(move_toward(float(p["speed"]), target_spd,
+			20.0 * dt), 12.0, 93.0)
+	# 位移
+	var fwd := Vector3(sin(float(p["heading"])), 0, cos(float(p["heading"])))
+	p["pos"] = Vector3(p["pos"]) \
+			+ fwd * float(p["speed"]) * cos(float(p["pitch"])) * dt
+	p["pos"] = Vector3(p["pos"]) \
+			+ Vector3(0, sin(float(p["pitch"])), 0) * float(p["speed"]) * dt
+	p["pos"] = Vector3(clampf(p["pos"].x, -FreeroamMap.MAP_LIMIT,
+			FreeroamMap.MAP_LIMIT), p["pos"].y,
+			clampf(p["pos"].z, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
+	# 地面高度 + 最低高度钳制
+	var q: Dictionary = freeroam.query(p["pos"].x, p["pos"].z, p["hint"], p["pos"].y)
+	p["hint"] = q["idx"]
+	var ground: float = float(q["height"]) + 3.5
+	p["ground"] = ground
+	if p["pos"].y < ground:
+		p["pos"] = Vector3(p["pos"].x, ground, p["pos"].z)
+		p["pitch"] = maxf(float(p["pitch"]), 0.0)
+	p["landed"] = p["pos"].y - ground < 0.6 and float(p["speed"]) < 14.0
+	if p["landed"]:
+		p["speed"] = maxf(0.0, float(p["speed"]) - 26.0 * dt)
+	# 低空楼体粗碰撞（<26m 时从 OBB 推出）
+	if p["pos"].y - ground < 26.0:
+		for ob in freeroam.obstacles_box:
+			var dx: float = p["pos"].x - ob["c"].x
+			var dz: float = p["pos"].z - ob["c"].y
+			if dx * dx + dz * dz > 8100.0:
+				continue
+			var ca: float = cos(ob["rot"])
+			var sa: float = sin(ob["rot"])
+			var lx: float = ca * dx + sa * dz
+			var lz: float = -sa * dx + ca * dz
+			var px: float = ob["hx"] + 2.0 - absf(lx)
+			var pz: float = ob["hz"] + 2.0 - absf(lz)
+			if px > 0.0 and pz > 0.0:
+				if px < pz:
+					lx = signf(lx) * (ob["hx"] + 2.0)
+				else:
+					lz = signf(lz) * (ob["hz"] + 2.0)
+				p["pos"] = Vector3(ob["c"].x + ca * lx - sa * lz,
+						p["pos"].y, ob["c"].y + sa * lx + ca * lz)
+	_roam_vs = lerpf(_roam_vs, (float(p["pos"].y) - prev_y) / dt,
+			1.0 - exp(-6.0 * dt))
+	_roam_plane_sync()
+
+
+## 登机/下机（漫游）
+func _roam_board_plane() -> void:
+	on_foot = false
+	onfoot.exit()
+	hud.set_onfoot(false)
+	hud.set_scope(false)
+	hud.show_center("起飞",
+			"W/S 油门 · A/D 或 ←/→ 转弯 · ↑ 推杆 ↓ 拉起 · F 落地后下机", 3500)
+
+
+func _roam_exit_plane() -> void:
+	var alt: float = float(rplane["pos"].y) - float(rplane["ground"])
+	if not rplane["landed"] or alt > 5.0:
+		hud.show_center("无法下机", "先关油门贴地减速（S 键）", 1600)
+		return
+	var side := Vector3(sin(float(rplane["heading"]) + PI * 0.5), 0,
+			cos(float(rplane["heading"]) + PI * 0.5))
+	on_foot = true
+	camera.near = 0.02
+	onfoot.set_gun(gun_equipped)
+	onfoot.enter(Vector3(rplane["pos"]) + side * 5.0, float(rplane["heading"]))
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	hud.set_onfoot(true)
+	hud.set_health(player_hp)
 
 
 ## 进入自由漫游：首次会同步生成大地图（1~2 秒）
@@ -1099,6 +1298,16 @@ func enter_roam() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	hud.set_onfoot(false)
 	hud.show_center("", "", 0)
+	# 战机模式：广场北停机，直接在机上（W 推油门起飞）
+	if plane_mode:
+		_roam_plane_reset()
+		player.visual.visible = false
+		hud.set_plane_panel(true)
+		hud.show_center("漫游战机",
+				"W 推油门起飞 · A/D 或 ←/→ 转弯 · ↑ 推杆 ↓ 拉起 · F 落地后下机",
+				4000)
+	else:
+		hud.set_plane_panel(false)
 
 
 func _toggle_on_foot() -> void:
@@ -1208,6 +1417,11 @@ func exit_roam() -> void:
 	if gunshop_open:
 		gunshop_open = false
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if plane_mode:
+		if roam_plane_vis != null:
+			roam_plane_vis.visible = false
+		hud.set_plane_panel(false)
+		rplane.clear()
 	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
 	env.set_ground_visible(true)
@@ -1457,6 +1671,9 @@ func _process(dt_real: float) -> void:
 			* clampf(absf(pv.vf) / 16.0, 0.0, 1.0)) if state in [ST.RACING, ST.ROAM] else 0.0
 	audio.update_skid(skid_vol)
 	audio.update_wind(clampf(absf(pv.vf) / pv.top_speed, 0.0, 1.0))
+	# 漫游战机：风噪按空速（车引擎保持怠速不干扰）
+	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty():
+		audio.update_wind(clampf(float(rplane["speed"]) / 93.0, 0.0, 1.0))
 	audio.update_rumble(state in [ST.RACING, ST.ROAM] and pv.surface != "road", absf(pv.vf))
 
 	_record_player_line()
@@ -1468,6 +1685,15 @@ func _process(dt_real: float) -> void:
 		audio.collision(clampf(land / 20.0, 0.05, 0.7))
 	_update_camera(dt)
 	_update_hud(dt)
+	# 漫游战机仪表盘逐帧刷新
+	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty():
+		var hdg := fposmod(540.0 - rad_to_deg(float(rplane["heading"])), 360.0)
+		var rpm_n := 0.12 + 0.88 * float(rplane["throttle"]) \
+				if not rplane["landed"] else 0.0
+		hud.update_plane_panel(float(rplane["speed"]) * 3.6,
+				float(rplane["pos"].y), _roam_vs, hdg,
+				float(rplane["pitch"]), float(rplane["roll"]),
+				float(rplane["throttle"]), rpm_n, rplane["landed"])
 
 	# 调试：RR_DEBUG=1 时每秒打印一次状态（headless 验证用）
 	if OS.get_environment("RR_DEBUG") != "":
@@ -1492,7 +1718,8 @@ func _handle_hotkeys() -> void:
 		else:
 			cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
 			hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
-	if Input.is_action_just_pressed("rr_rescue") and state != ST.BATTLE:
+	if Input.is_action_just_pressed("rr_rescue") and state != ST.BATTLE \
+			and not (plane_mode and state == ST.ROAM and not on_foot):
 		rescue()
 	if Input.is_action_just_pressed("rr_scope") and on_foot \
 			and (state == ST.ROAM or state == ST.BATTLE):
@@ -1526,6 +1753,16 @@ func _handle_hotkeys() -> void:
 			and Input.is_action_just_pressed("rr_bomb"):
 		if not bf.player_drop_bomb():
 			hud.show_center("没有炸弹了", "回基地落地补给", 1200)
+	# 漫游战机：F 登机/下机
+	if state == ST.ROAM and plane_mode \
+			and Input.is_action_just_pressed("rr_interact") \
+			and not shop_open and not gunshop_open:
+		if on_foot:
+			if rplane.get("landed", false) and not rplane.is_empty() \
+					and onfoot.pos.distance_to(rplane["pos"]) < 9.0:
+				_roam_board_plane()
+		else:
+			_roam_exit_plane()
 	if on_foot and (state == ST.ROAM or state == ST.BATTLE):
 		for gi in 5:
 			if Input.is_action_just_pressed("rr_gun%d" % [gi + 1]):
@@ -1621,7 +1858,18 @@ func _step_sim(h: float) -> void:
 		if shop_open or gunshop_open:
 			return   # 店里：冻结，买完继续
 		var pin := player.veh
-		if on_foot:
+		if plane_mode and not on_foot:
+			# 漫游战机：飞行物理，车辆冻结（位置同步给 NPC/警察逻辑）
+			_roam_plane_step(h)
+			pin.pos = rplane["pos"]
+			pin.heading = rplane["heading"]
+			pin.vf = rplane["speed"]
+			npc.player_pos = pin.pos
+			npc.player_vel = Vector3(sin(rplane["heading"]), 0,
+					cos(rplane["heading"])) * float(rplane["speed"])
+			npc.player_speed = float(rplane["speed"])
+			npc.player_on_foot = false
+		elif on_foot:
 			# 步行：第一人称移动/射击，车辆冻结在原地
 			onfoot.update(h)
 			npc.player_pos = onfoot.pos
@@ -1950,8 +2198,17 @@ func _sync_garage(dt: float) -> void:
 		_garage.pivot.rotation.y = _garage_angle
 	_sync_visual(player, dt)
 	var gp := RRGarage.GARAGE_POS
-	player.visual.position = gp + Vector3(0, RRGarage.PLATFORM_TOP, 0)
-	player.visual.rotation.y = _garage_angle
+	if plane_mode and roam_plane_vis != null:
+		# 战机摆上展台（车模隐藏），与展台同速旋转
+		player.visual.visible = false
+		roam_plane_vis.visible = true
+		roam_plane_vis.position = gp + Vector3(0,
+				RRGarage.PLATFORM_TOP + 1.1, 0)
+		roam_plane_vis.rotation.y = _garage_angle + PI
+		roam_plane_vis.prop.rotation.z += dt * 1.2   # 怠速慢转
+	else:
+		player.visual.position = gp + Vector3(0, RRGarage.PLATFORM_TOP, 0)
+		player.visual.rotation.y = _garage_angle
 	for i in range(1, cars.size()):
 		cars[i].visual.visible = false
 
@@ -1996,6 +2253,18 @@ func _update_camera(dt: float) -> void:
 				+ Vector3(0, 2.0, 0), Vector3.UP)
 		camera.fov = RRUtil.damp(camera.fov,
 				66.0 + float(pl["speed"]) * 0.14, 3.0, dt)
+		return
+
+	# 漫游战机：同款追尾相机
+	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty():
+		var rfwd := Vector3(sin(float(rplane["heading"])), 0,
+				cos(float(rplane["heading"])))
+		var rwant := Vector3(rplane["pos"]) - rfwd * 17.0 + Vector3(0, 7.0, 0)
+		camera.position = camera.position.lerp(rwant, 1.0 - exp(-5.0 * dt))
+		camera.look_at(Vector3(rplane["pos"]) + rfwd * 14.0
+				+ Vector3(0, 2.0, 0), Vector3.UP)
+		camera.fov = RRUtil.damp(camera.fov,
+				66.0 + float(rplane["speed"]) * 0.14, 3.0, dt)
 		return
 
 	# 下车人模式：相机完全交给 onfoot（第一人称），这里不做任何覆盖

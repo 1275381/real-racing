@@ -31,6 +31,7 @@ var btn_carinfo: Button
 var btn_npc_solid: Button
 var btn_gunshop: Button
 var btn_battle: Button
+var btn_plane: Button
 var results_grid: GridContainer
 
 # --- 大战场 ---
@@ -74,6 +75,8 @@ var _root: Control
 var _screens := {}          # name -> Control
 var _tach: TachWidget
 var _minimap: MinimapWidget
+var _plane_panel: PlanePanelWidget
+var _plane_panel_on := false   # 战机仪表盘开关（漫游战机模式）
 var _timing_labels := {}
 var _standings_box: VBoxContainer
 var _center_label: Label
@@ -137,6 +140,7 @@ func build(colors: Array) -> void:
 	_build_results()
 	_build_wanted()
 	_build_gun_overlay()
+	_build_plane_panel()
 	show_only("garage")
 
 
@@ -193,8 +197,9 @@ func show_only(name: String) -> void:
 	for k in _screens:
 		_screens[k].visible = k == name
 	var show_flight := name == "hud" or name == "roam"
-	_tach.visible = show_flight
+	_tach.visible = show_flight and not _plane_panel_on
 	_minimap.visible = show_flight
+	_plane_panel.visible = _plane_panel_on and name == "roam"
 
 
 # ================= 计时面板 =================
@@ -450,6 +455,229 @@ func draw_tach(speed: float, gear_label: String, rpm_norm: float, drifting: bool
 	_tach.queue_redraw()
 
 
+# ================= 战机仪表盘 =================
+
+class PlanePanelWidget:
+	extends Control
+	var spd_kmh := 0.0        # 空速 km/h
+	var alt_m := 0.0          # 气压高度 m
+	var vs_ms := 0.0          # 升降率 m/s（平滑）
+	var hdg_deg := 0.0        # 航向 0..360（0=北）
+	var pitch_rad := 0.0      # 俯仰（+抬头）
+	var roll_rad := 0.0       # 滚转（+左倾）
+	var throttle := 0.0
+	var rpm := 0.0            # 转速规范化
+	var landed := true
+
+	var _vs_disp := 0.0
+
+	func _draw() -> void:
+		var font := RRFont.get_font()
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0.04, 0.05, 0.08, 0.78)
+		bg.set_corner_radius_all(12)
+		bg.border_color = Color(0.35, 0.4, 0.46, 0.8)
+		bg.set_border_width_all(2)
+		draw_style_box(bg, Rect2(Vector2.ZERO, size))
+		_vs_disp = lerpf(_vs_disp, vs_ms, 0.15)
+		# ---- 四连圆表 ----
+		var r := 52.0
+		var cy := size.y * 0.46
+		var xs := [r + 26.0, r * 3.0 + 42.0, r * 5.0 + 58.0, r * 7.0 + 74.0]
+		_draw_asi(font, xs[0], cy, r)
+		_draw_attitude(font, xs[1], cy, r)
+		_draw_alt(font, xs[2], cy, r)
+		_draw_vsi(font, xs[3], cy, r)
+		# ---- 右侧数字区 ----
+		var dx := size.x - 208.0
+		var compass := "N" if hdg_deg < 22.5 or hdg_deg >= 337.5 else (
+				"E" if hdg_deg < 112.5 else ("S" if hdg_deg < 202.5 else "W"))
+		draw_string(font, Vector2(dx, 34), "HDG %3d° %s" % [int(hdg_deg), compass],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.97, 1.0))
+		# 油门条
+		draw_string(font, Vector2(dx, 62), "THR", HORIZONTAL_ALIGNMENT_LEFT,
+				-1, 14, Color(0.62, 0.68, 0.75))
+		draw_rect(Rect2(dx + 42, 48, 130, 12), Color(0.12, 0.14, 0.18))
+		draw_rect(Rect2(dx + 42, 48, 130.0 * clampf(throttle, 0.0, 1.0), 12),
+				Color(1.0, 0.72, 0.28))
+		# 转速条
+		draw_string(font, Vector2(dx, 92), "RPM", HORIZONTAL_ALIGNMENT_LEFT,
+				-1, 14, Color(0.62, 0.68, 0.75))
+		draw_rect(Rect2(dx + 42, 78, 130, 12), Color(0.12, 0.14, 0.18))
+		var rpm_c := Color(0.45, 0.85, 0.45) if rpm < 0.9 else Color(0.95, 0.4, 0.3)
+		draw_rect(Rect2(dx + 42, 78, 130.0 * clampf(rpm, 0.0, 1.0), 12), rpm_c)
+		draw_string(font, Vector2(dx + 42, 108), "%d r/min" % int(rpm * 2700.0),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.62, 0.68, 0.75))
+		# 状态灯
+		var st := "GND 地面" if landed else "AIR 空中"
+		var st_c := Color(0.55, 0.85, 1.0) if not landed else Color(0.6, 0.66, 0.72)
+		draw_circle(Vector2(dx + 8, 132), 5, st_c)
+		draw_string(font, Vector2(dx + 20, 137), st, HORIZONTAL_ALIGNMENT_LEFT,
+				-1, 15, st_c)
+
+	func _dial_base(c: Vector2, r: float, label: String) -> void:
+		var font := RRFont.get_font()
+		draw_circle(c, r + 5, Color(0.16, 0.18, 0.22))
+		draw_circle(c, r, Color(0.07, 0.08, 0.11))
+		draw_arc(c, r, 0, TAU, 48, Color(0.45, 0.5, 0.56), 2.0)
+		draw_string(font, c + Vector2(-r, r + 16), label,
+				HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, 12, Color(0.62, 0.68, 0.75))
+
+	func _needle(c: Vector2, ang: float, len: float, col: Color,
+			width := 3.0) -> void:
+		draw_line(c, c + Vector2(sin(ang), -cos(ang)) * len, col, width)
+
+	## 空速表：0–300 km/h，绿弧 60–260
+	func _draw_asi(font: Font, x: float, y: float, r: float) -> void:
+		var c := Vector2(x, y)
+		_dial_base(c, r, "空速 km/h")
+		var a0 := deg_to_rad(-120.0)
+		var a1 := deg_to_rad(120.0)
+		for v in range(0, 301, 50):
+			var t := float(v) / 300.0
+			var ang := lerpf(a0, a1, t)
+			_needle(c, ang, r - 12.0, Color(0.7, 0.75, 0.82), 2.0)
+		draw_arc(c, r - 6.0, a0 + deg_to_rad(72.0), a1 - deg_to_rad(48.0),
+				24, Color(0.4, 0.9, 0.5, 0.8), 4.0)
+		var na := lerpf(a0, a1, clampf(spd_kmh / 300.0, 0.0, 1.0))
+		_needle(c, na, r - 16.0, Color(1.0, 0.85, 0.3), 3.5)
+		draw_circle(c, 4, Color(0.8, 0.84, 0.9))
+		draw_string(font, c + Vector2(-r, -r * 0.25), "%d" % int(spd_kmh),
+				HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, 15, Color(0.95, 0.97, 1.0))
+
+	## 姿态仪：天地线随滚转旋转/俯仰平移 + 俯仰梯（裁剪进表盘）+ 固定机翼标
+	func _draw_attitude(font: Font, x: float, y: float, r: float) -> void:
+		var c := Vector2(x, y)
+		_dial_base(c, r, "姿态")
+		var up := Vector2(sin(roll_rad), -cos(roll_rad))       # 机头上方向
+		var rt := _perp(up)
+		var shift := -pitch_to_px(r)
+		var steps := 14
+		for i in range(-steps, steps + 1):
+			var mid := c + up * (float(i) / steps * r * 2.4 + shift)
+			var pitch_deg := i * (180.0 / steps)
+			var is_sky := up.dot(mid - c) > 0.0
+			var col := Color(0.6, 0.82, 1.0, 0.9) if is_sky \
+					else Color(0.95, 0.65, 0.3, 0.9)
+			var major := int(absf(pitch_deg)) % 45 == 0
+			var half := 26.0 if major else 13.0
+			for s in [-1.0, 1.0]:
+				var a: Vector2 = mid + rt * (half * float(s))
+				var b: Vector2 = mid + rt * (half * float(s) * 0.45)
+				if not _seg_in_circle(a, b, c, r - 4.0).is_empty():
+					draw_line(a, b, col, 1.8)
+			if major:
+				var tp := mid + rt * (half + 5.0)
+				if up.dot(tp - c) < r - 8.0:
+					draw_string(font, tp - Vector2(8, -4),
+							str(int(absf(pitch_deg))),
+							HORIZONTAL_ALIGNMENT_CENTER, 20, 9, col)
+		# 天地线（0°，横贯表盘）
+		var hmid := c + up * shift
+		var seg := _clip_seg_circle(hmid - rt * (r + 8.0),
+				hmid + rt * (r + 8.0), c, r - 4.0)
+		if seg.size() == 2:
+			draw_line(seg[0], seg[1], Color(0.95, 0.97, 1.0, 0.95), 2.2)
+		# 固定机翼标（W 形）
+		var wc := Color(1.0, 0.62, 0.15)
+		draw_line(c + Vector2(-30, 0), c + Vector2(-10, 0), wc, 3.0)
+		draw_line(c + Vector2(10, 0), c + Vector2(30, 0), wc, 3.0)
+		draw_line(c + Vector2(0, 0), c + Vector2(0, 7), wc, 3.0)
+		draw_circle(c, 2.5, wc)
+
+	## 线段裁剪进圆：返回圆内端点数组（空 = 完全在圆外）
+	func _clip_seg_circle(a: Vector2, b: Vector2, c: Vector2,
+			r: float) -> Array:
+		var d := b - a
+		var f := a - c
+		var aa := d.dot(d)
+		if aa == 0.0:
+			return []
+		var bb := 2.0 * f.dot(d)
+		var cc := f.dot(f) - r * r
+		var disc := bb * bb - 4.0 * aa * cc
+		if disc < 0.0:
+			return []
+		var sq := sqrt(disc)
+		var lo := maxf((-bb - sq) / (2.0 * aa), 0.0)
+		var hi := minf((-bb + sq) / (2.0 * aa), 1.0)
+		if lo > hi:
+			return []
+		return [a + d * lo, a + d * hi]
+
+	func _seg_in_circle(a: Vector2, b: Vector2, c: Vector2, r: float) -> Array:
+		return _clip_seg_circle(a, b, c, r)
+
+	func pitch_to_px(r: float) -> float:
+		return clampf(pitch_rad, -0.6, 0.6) * r * 1.4
+
+	func _perp(v: Vector2) -> Vector2:
+		return Vector2(-v.y, v.x)
+
+	## 高度表：一圈 1000m + 数字
+	func _draw_alt(font: Font, x: float, y: float, r: float) -> void:
+		var c := Vector2(x, y)
+		_dial_base(c, r, "高度 m")
+		for v in range(0, 10):
+			var ang := deg_to_rad(-120.0 + 240.0 * v / 10.0)
+			_needle(c, ang, r - 12.0, Color(0.7, 0.75, 0.82), 2.0)
+		var t := fmod(alt_m, 1000.0) / 1000.0
+		_needle(c, lerpf(deg_to_rad(-120.0), deg_to_rad(120.0), t),
+				r - 16.0, Color(1.0, 0.85, 0.3), 3.5)
+		draw_circle(c, 4, Color(0.8, 0.84, 0.9))
+		draw_string(font, c + Vector2(-r, -r * 0.25), "%d" % int(alt_m),
+				HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, 15, Color(0.95, 0.97, 1.0))
+
+	## 升降率：-20..+20 m/s，0 在正上
+	func _draw_vsi(font: Font, x: float, y: float, r: float) -> void:
+		var c := Vector2(x, y)
+		_dial_base(c, r, "升降 m/s")
+		for v in [-20.0, -10.0, 0.0, 10.0, 20.0]:
+			var ang := deg_to_rad(180.0 * (v / 20.0))
+			_needle(c, ang, r - 12.0, Color(0.7, 0.75, 0.82) if v != 0.0
+					else Color(0.4, 0.9, 0.5), 2.0)
+		var na := deg_to_rad(180.0 * (clampf(_vs_disp, -20.0, 20.0) / 20.0))
+		_needle(c, na, r - 16.0, Color(1.0, 0.85, 0.3), 3.5)
+		draw_circle(c, 4, Color(0.8, 0.84, 0.9))
+		draw_string(font, c + Vector2(-r, -r * 0.25), "%+.1f" % _vs_disp,
+				HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, 15, Color(0.95, 0.97, 1.0))
+
+
+func _build_plane_panel() -> void:
+	_plane_panel = PlanePanelWidget.new()
+	_plane_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_plane_panel.position = Vector2(-360, -218)
+	_plane_panel.size = Vector2(720, 190)
+	_plane_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_plane_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_plane_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_plane_panel.visible = false
+	_root.add_child(_plane_panel)
+
+
+func update_plane_panel(spd: float, alt: float, vs: float, hdg: float,
+		pitch: float, roll: float, thr: float, rpm_n: float,
+		is_landed: bool) -> void:
+	_plane_panel.spd_kmh = spd
+	_plane_panel.alt_m = alt
+	_plane_panel.vs_ms = vs
+	_plane_panel.hdg_deg = hdg
+	_plane_panel.pitch_rad = pitch
+	_plane_panel.roll_rad = roll
+	_plane_panel.throttle = thr
+	_plane_panel.rpm = rpm_n
+	_plane_panel.landed = is_landed
+	_plane_panel.queue_redraw()
+
+
+func set_plane_panel(on: bool) -> void:
+	_plane_panel_on = on
+	# 立即按当前屏状态应用可见性（show_only 只在切屏时刷）
+	var roam_visible: bool = _screens.has("roam") and _screens["roam"].visible
+	_plane_panel.visible = on and roam_visible
+	_tach.visible = roam_visible and not on   # 与转速表互斥
+
+
 # ================= 小地图 =================
 
 class MinimapWidget:
@@ -662,6 +890,12 @@ func _build_garage() -> void:
 	btn_battle.custom_minimum_size = Vector2(0, 40)
 	btn_battle.add_theme_font_size_override("font_size", 18)
 	box.add_child(btn_battle)
+
+	btn_plane = Button.new()
+	btn_plane.text = "漫 游 战 机"
+	btn_plane.custom_minimum_size = Vector2(0, 40)
+	btn_plane.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_plane)
 
 	btn_shop = Button.new()
 	btn_shop.text = "配 件 店"

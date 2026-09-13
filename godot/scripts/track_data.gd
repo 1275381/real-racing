@@ -172,6 +172,10 @@ const CAR_MODELS := [
 		"stats": {"top": 92.0, "power": 65.0, "accel": 11.7, "grip": 1.06, "brake": 19.0, "no_shift": true}},
 ]
 
+## 漫游战机（非赛车）：车库可选，仅限自由漫游驾驶
+const AIRCRAFT := {"id": "plane", "name": "云隼 螺旋桨战机",
+	"desc": "可驾驶战机 · 真实仪表盘 · 仅限自由漫游（不能参赛）"}
+
 const DEFAULT_MODEL := "gt3"
 
 const DIFF_PRESETS := {

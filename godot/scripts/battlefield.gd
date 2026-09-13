@@ -83,8 +83,11 @@ func setup(bmap_ref, audio_ref) -> void:
 ## ================= 战机 =================
 
 func _make_plane(enemy: bool, pos: Vector3, heading: float) -> Dictionary:
+	var vis := PlaneVisual.create("enemy" if enemy else "ally")
+	vis.visible = false
+	add_child(vis)
 	return {
-		"enemy": enemy, "vis": _build_plane_vis(enemy),
+		"enemy": enemy, "vis": vis, "prop": vis.prop,
 		"pos": pos, "heading": heading, "pitch": 0.0, "roll": 0.0,
 		"speed": 0.0, "throttle": 0.0, "hp": PLANE_HP, "bombs": PLANE_BOMBS,
 		"alive": false, "respawn_t": 0.0, "landed": true,
@@ -94,33 +97,6 @@ func _make_plane(enemy: bool, pos: Vector3, heading: float) -> Dictionary:
 	}
 
 
-func _build_plane_vis(enemy: bool) -> Node3D:
-	var root := Node3D.new()
-	var body := Color(0.47, 0.56, 0.68) if not enemy else Color(0.5, 0.27, 0.21)
-	var wing := Color(0.4, 0.48, 0.58) if not enemy else Color(0.42, 0.23, 0.18)
-	var dark := Color(0.16, 0.17, 0.19)
-	var add_box := func(size: Vector3, p: Vector3, c: Color) -> void:
-		var mesh := BoxMesh.new()
-		mesh.size = size
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = c
-		mat.roughness = 0.6
-		mesh.material = mat
-		var mi := MeshInstance3D.new()
-		mi.mesh = mesh
-		mi.position = p
-		root.add_child(mi)
-	add_box.call(Vector3(1.1, 1.0, 5.6), Vector3(0, 0, 0), body)       # 机身
-	add_box.call(Vector3(0.55, 0.5, 0.4), Vector3(0, 0, 3.0), dark)    # 螺旋桨座
-	add_box.call(Vector3(7.2, 0.14, 1.5), Vector3(0, 0.22, 0.4), wing) # 主翼
-	add_box.call(Vector3(2.6, 0.12, 0.9), Vector3(0, 0.28, -2.4), wing)
-	add_box.call(Vector3(0.12, 1.1, 0.9), Vector3(0, 0.7, -2.4), body) # 垂尾
-	add_box.call(Vector3(0.7, 0.45, 1.2), Vector3(0, 0.6, 0.8), dark)  # 座舱
-	root.visible = false
-	add_child(root)
-	return root
-
-
 func _sync_plane_vis(p: Dictionary) -> void:
 	var vis: Node3D = p["vis"]
 	vis.visible = p["alive"]
@@ -128,6 +104,8 @@ func _sync_plane_vis(p: Dictionary) -> void:
 	# 前向 = (sin h, 0, cos h)；rotation.x 正 = 低头，故爬升取负
 	vis.rotation = Vector3(-float(p["pitch"]), float(p["heading"]),
 			float(p["roll"]))
+	if p["prop"] != null:
+		p["prop"].rotation.z += 0.35 + 1.4 * float(p["throttle"])
 
 
 ## 玩家战机：W/S 油门 · A/D 转弯 · ↑/↓ 俯仰（原始物理键采样）
