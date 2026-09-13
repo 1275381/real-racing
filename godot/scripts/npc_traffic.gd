@@ -12,6 +12,7 @@ signal police_shot(dmg: float)   # 警察向步行玩家开枪（game 扣血）
 const CAR_COUNT := 20
 const POLICE_COUNT := 4
 const POLICE_MAX := 6
+const POLICE_TOP_SPEED := 62.0   # 警车极速硬上限（~223km/h）：无论玩家开多快都不超越
 const PED_TARGET := 220
 const SEDAN_COLORS := [
 	Color("#d8d9dd"), Color("#b8bcc4"), Color("#23262c"), Color("#7d1f1f"),
@@ -457,7 +458,10 @@ func update(dt: float) -> void:
 	if wanted:
 		_update_police(dt)
 		_wanted_t += dt
-		hud.set_wanted(true, _esc_t / 6.0)
+		# _update_police 内可能本帧已逃脱/被捕（wanted 置 false），
+		# 此时不能再回写「通缉中」横幅——否则字幕逃脱后永远残留
+		if wanted:
+			hud.set_wanted(true, _esc_t / 6.0)
 
 
 func _update_car(car: Dictionary, dt: float, i: int) -> void:
@@ -584,13 +588,15 @@ func _update_police(dt: float) -> void:
 		to_p.y = 0.0
 		var d := to_p.length()
 		min_d = minf(min_d, d)
-		# 追击动力：加速 16 m/s²，极速 165km/h 起步；玩家开得越快警车极速
-		# 水涨船高（玩家车速 +2），普通车甩不掉、顶配车靠弯道与技术仍可摆脱。
-		# 近身 20m 内收到「玩家速度 +6」，贴上去拦截而不是冲过头
-		var chase_top: float = maxf(46.0, player_speed + 2.0)
+		# 追击动力：加速 16 m/s²，极速 165km/h 起步；随玩家车速水涨船高
+		# （玩家车速 +2），但有硬上限 ~223km/h——顶配车直线全油门即可拉开。
+		# 近身 20m 内收到「玩家速度 +6」，同样不破上限
+		var chase_top: float = minf(maxf(46.0, player_speed + 2.0),
+				POLICE_TOP_SPEED)
 		u["speed"] = minf(float(u["speed"]) + 16.0 * dt, chase_top)
 		if d < 20.0:
-			u["speed"] = minf(float(u["speed"]), player_speed + 6.0)
+			u["speed"] = minf(float(u["speed"]),
+					minf(player_speed + 6.0, POLICE_TOP_SPEED))
 		var spd: float = u["speed"]
 		if d > 2.0:
 			pos += to_p / d * spd * dt
@@ -633,6 +639,11 @@ func _update_police(dt: float) -> void:
 			u["pos"] = Vector3(player_pos.x + sin(ang) * 60.0, pos.y,
 					player_pos.z + cos(ang) * 60.0)
 			u["stuck"] = 0.0
+	# 警车已全部清空（逃脱/脱离后）：不再驱动通缉横幅——否则空表 min_d=INF
+	# 恒大于 180m，会把「通缉中」字幕重新刷出来（逃脱后字幕残留的根因）
+	if police.is_empty():
+		min_police_dist = 400.0
+		return
 	min_police_dist = min_d   # 每帧更新（供音效距离衰减），不受摆脱分支 return 影响
 	# 被捕：贴身且玩家近乎停下，持续 1.5 秒
 	if _bust_t > 1.5:
