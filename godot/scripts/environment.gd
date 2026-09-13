@@ -87,19 +87,21 @@ void sky() {
 	_sky_mat.set_shader_parameter("sun_dir", Vector3(0.52, 0.42, 0.74))
 	_sky = Sky.new()
 	_sky.sky_material = _sky_mat
-	_sky.radiance_size = Sky.RADIANCE_SIZE_128
+	_sky.radiance_size = Sky.RADIANCE_SIZE_256   # 更细的天空反射辐照
 	_sky.process_mode = Sky.PROCESS_MODE_REALTIME
 
 	# ---- 光照 ----
 	sun = DirectionalLight3D.new()
-	sun.light_color = Color("#fff2dd")
-	sun.light_energy = 0.7
+	sun.light_color = Color("#ffedd0")
+	sun.light_energy = 1.5
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 800.0
+	sun.directional_shadow_max_distance = 1200.0
 	sun.shadow_bias = 0.06
 	sun.shadow_normal_bias = 2.0
-	sun.shadow_opacity = 0.68   # 阴影柔和化：阴影里保留散射光，路面不会黑成一团
+	sun.shadow_blur = 1.4            # 软阴影：日光明暗过渡柔和
+	sun.shadow_opacity = 0.78        # 阴影里保留散射光，路面不会黑成一团
+	sun.light_angular_distance = 0.6 # 太阳有视距张角 → PCSS 式半影
 	add_child(sun)
 
 	# ---- 环境雾 / 环境光 / 色调映射（网页版为 ACES，Godot 默认 Linear 会过曝）----
@@ -107,7 +109,8 @@ void sky() {
 	_env.background_mode = Environment.BG_SKY
 	_env.sky = _sky
 	_env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	_env.tonemap_exposure = 1.0
+	_env.tonemap_exposure = 1.05
+	_env.tonemap_white = 6.0
 	_env.fog_enabled = true
 	_env.fog_mode = Environment.FOG_MODE_DEPTH
 	# FOG_MODE_DEPTH 下 fog_density 就是「到达 fog_depth_end 时的不透明度」，
@@ -116,13 +119,30 @@ void sky() {
 	_env.fog_density = 1.0
 	_env.fog_depth_curve = 1.35
 	_env.fog_sky_affect = 0.0   # 深度雾不遮天空（天空在无穷远，否则整片天被雾色糊白）
-	# 环境光与反射都不取自天空：Compatibility 下 BG_SKY 会把天空辐照喂进
-	# 环境光/反射，整个场景（地面、路面）被染成蓝色 —— 俯视时尤其明显。
-	# 这里显式切断，保持与旧版（BG_CLEAR_COLOR）一致的中性光照。
-	_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	_env.ambient_light_sky_contribution = 0.0
-	_env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
-	_env.ambient_light_energy = 0.4
+	# Forward+ 下环境光/反射取自天空是写实光照的关键：太阳高光在车漆与
+	# 路面上流动、阴面带天空冷色反弹。（旧 Compatibility 下会整体泛蓝，
+	# 那条注释的取舍只适用于旧渲染器；切渲染器后这里改为取天空）
+	_env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	_env.ambient_light_sky_contribution = 0.45
+	_env.ambient_light_energy = 0.85
+	_env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	# ---- 写实画质套件（Forward+ 专属效果）----
+	_env.ssao_enabled = true                 # 接触阴影：轮拱/屋檐/车底暗部
+	_env.ssao_radius = 1.2
+	_env.ssao_intensity = 1.7
+	_env.ssao_power = 1.6
+	_env.ssao_detail = 0.6
+	_env.glow_enabled = true                 # 辉光：太阳/尾灯/车灯泛光
+	_env.glow_intensity = 0.45
+	_env.glow_bloom = 0.06
+	_env.glow_hdr_threshold = 1.05
+	_env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	_env.volumetric_fog_enabled = true       # 体积雾：晨雾光束与距离纵深
+	_env.volumetric_fog_density = 0.0025
+	_env.volumetric_fog_albedo = Color(0.95, 0.92, 0.85)
+	_env.volumetric_fog_emission_energy = 0.0
+	_env.volumetric_fog_length = 150.0
+	_env.volumetric_fog_ambient_inject = 0.2
 	var we := WorldEnvironment.new()
 	we.environment = _env
 	add_child(we)
@@ -136,6 +156,7 @@ void sky() {
 				m.albedo_color = Color("#bfcfb2")
 			"city":
 				m.albedo_texture = RRTextures.concrete()
+				m.albedo_color = Color(0.72, 0.7, 0.66)   # 暖灰沥青基调，避免雪白泛光
 			"desert":
 				m.albedo_texture = RRTextures.sand()
 			"akina":

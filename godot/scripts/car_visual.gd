@@ -33,9 +33,34 @@ static func create(model_id: String, color: Color, accent: Color) -> CarVisual:
 		built = cv._build_from_glb(def, color, accent)
 	if not built:
 		cv._build_fallback(color, accent)
+	cv._apply_paint_gloss()
 	# 车底软阴影
 	cv._add_blob_shadow()
 	return cv
+
+
+## 车漆质感：清漆层 + 适度金属度（Forward+ 天空反射下车身高光会流动）
+func _apply_paint_gloss() -> void:
+	var stack: Array = [self]
+	var seen := {}
+	while not stack.is_empty():
+		var n = stack.pop_back()
+		stack.append_array(n.get_children())
+		if n is MeshInstance3D:
+			var mi := n as MeshInstance3D
+			for s in mi.mesh.get_surface_count():
+				var mat := mi.get_active_material(s)
+				if mat == null or not (mat is BaseMaterial3D):
+					continue
+				var bm := mat as BaseMaterial3D
+				if seen.has(bm):
+					continue
+				seen[bm] = true
+				bm.roughness = minf(bm.roughness, 0.42)
+				bm.metallic = maxf(bm.metallic, 0.12)
+				bm.clearcoat_enabled = true
+				bm.clearcoat = 0.45
+				bm.clearcoat_roughness = 0.18
 
 
 func _find(node_name: String) -> Node3D:
