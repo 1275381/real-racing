@@ -134,44 +134,44 @@ const CAR_MODELS := [
 		"class": "endurance", "stats": {"top": 93.0, "power": 63.0, "accel": 11.6, "grip": 1.07, "brake": 18.8}},
 	# AI 生成车模（Tripo）：整块网格无车轮骨架，CarVisual 自动适配（车轮不单独动画）；
 	# yaw_deg 把车头摆正到 +Z，scale 归一到约 4.5m 车长
-	{"id": "aif1", "name": "AI F1 赛车", "file": "res://assets/cars/car_tripo_a.glb", "desc": "AI 生成 · 红牛涂装 · 开轮式低趴", "yaw_deg": 180.0, "scale": 4.6,
+	{"id": "aif1", "name": "F1 赛车", "file": "res://assets/cars/car_tripo_a.glb", "desc": "红牛涂装 · 开轮式低趴", "yaw_deg": 180.0, "scale": 4.6,
 		"class": "hybrid", "stats": {"top": 79.0, "power": 72.0, "accel": 14.6, "grip": 1.03, "brake": 20.0, "no_shift": true}},
-	{"id": "aihyper", "name": "AI 蓝色超跑", "file": "res://assets/cars/car_tripo_b.glb", "desc": "AI 生成 · Bolide 风格 · 中置引擎", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aihyper", "name": "蓝色超跑", "file": "res://assets/cars/car_tripo_b.glb", "desc": "Bolide 风格 · 中置引擎", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "combustion", "stats": {"top": 90.0, "power": 64.0, "accel": 11.4, "grip": 1.05, "brake": 18.8}},
-	{"id": "aigt", "name": "AI GT 跑车", "file": "res://assets/cars/car_tripo_c.glb", "desc": "AI 生成 · 灰鲨车身 · 大尾翼", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aigt", "name": "GT 跑车", "file": "res://assets/cars/car_tripo_c.glb", "desc": "灰鲨车身 · 大尾翼", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid", "stats": {"top": 79.0, "power": 68.0, "accel": 13.8, "grip": 1.00, "brake": 19.2, "no_shift": true}},
-	{"id": "aiwhite", "name": "AI 白色超跑", "file": "res://assets/cars/car_tripo_d.glb", "desc": "AI 生成 · 低风阻概念车身", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aiwhite", "name": "白色超跑", "file": "res://assets/cars/car_tripo_d.glb", "desc": "低风阻概念车身", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "endurance", "stats": {"top": 95.0, "power": 66.0, "accel": 11.9, "grip": 1.09, "brake": 19.2}},
-	{"id": "aimuscle", "name": "AI 黑色肌肉", "file": "res://assets/cars/car_tripo_e.glb", "desc": "AI 生成 · 宽体肌肉 · 机械增压", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aimuscle", "name": "黑色肌肉", "file": "res://assets/cars/car_tripo_e.glb", "desc": "宽体肌肉 · 机械增压", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "combustion", "stats": {"top": 87.0, "power": 60.0, "accel": 11.1, "grip": 0.99, "brake": 18.0}},
-	{"id": "aicyan", "name": "AI 青蓝超跑", "file": "res://assets/cars/car_tripo_f.glb", "desc": "AI 生成 · 竞技大尾翼 · 兰博风格", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aicyan", "name": "青蓝超跑", "file": "res://assets/cars/car_tripo_f.glb", "desc": "竞技大尾翼 · 兰博风格", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid", "stats": {"top": 80.0, "power": 69.0, "accel": 14.0, "grip": 1.01, "brake": 19.0, "no_shift": true}},
 	# 双组别旗舰：燃油跑车 × 热芒耐力。modes 双模式（O 键切换）：
 	# accel 加速模式（高牵引） / top 极速模式（高极速），sound 为对应引擎声纹组别
-	{"id": "aidual", "name": "AI 赤焰双模", "file": "res://assets/cars/car_tripo_g.glb", "desc": "AI 生成 · 双组别旗舰 · O 键切换加速/极速 · 惯性漂移", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aidual", "name": "赤焰双模", "file": "res://assets/cars/car_tripo_g.glb", "desc": "双组别旗舰 · O 键切换加速/极速 · 惯性漂移", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "dual", "stats": {"top": 96.0, "power": 64.0, "accel": 11.8, "grip": 1.07, "brake": 19.2},
 		"modes": {
 			"accel": {"label": "加速模式", "top": 87.0, "power": 72.0, "accel": 14.2, "grip": 1.09, "brake": 20.0},
 			"top": {"label": "极速模式", "top": 96.0, "power": 64.0, "accel": 11.8, "grip": 1.07, "brake": 19.2},
 		}},
 	# 惯性漂移特化车：点一次手刹+方向起漂，松手刹后漂移自持（油门维持），仅此车拥有
-	{"id": "aie86", "name": "AI 86 漂移", "file": "res://assets/cars/car_tripo_i.glb", "desc": "AI 生成 · 藤原配色 · 惯性漂移：点一次手刹+方向起漂，松手刹滑移自持", "yaw_deg": 0.0, "scale": 4.6,
+	{"id": "aie86", "name": "86 漂移", "file": "res://assets/cars/car_tripo_i.glb", "desc": "藤原配色 · 惯性漂移：点一次手刹+方向起漂，松手刹滑移自持", "yaw_deg": 0.0, "scale": 4.6,
 		"class": "street", "inertia_drift": true,
 		"stats": {"top": 84.0, "power": 58.0, "accel": 11.6, "grip": 0.94, "brake": 18.0}},
 	# 马自达 RX-7：白色跳灯双座（车头原生朝 +Z，yaw 0）；与 AE86 同款惯性漂移
-	{"id": "aifd", "name": "AI 马自达 RX-7", "file": "res://assets/cars/car_tripo_k.glb", "desc": "AI 生成 · 珠白跳灯双座 + 大尾翼 · 惯性漂移：点一次手刹+方向起漂", "yaw_deg": 0.0, "scale": 4.6,
+	{"id": "aifd", "name": "马自达 RX-7", "file": "res://assets/cars/car_tripo_k.glb", "desc": "珠白跳灯双座 + 大尾翼 · 惯性漂移：点一次手刹+方向起漂", "yaw_deg": 0.0, "scale": 4.6,
 		"class": "street", "inertia_drift": true,
 		"stats": {"top": 89.0, "power": 61.0, "accel": 12.0, "grip": 0.96, "brake": 18.2}},
 	# 白灰幽灵：柯尼塞格风格极速旗舰，全队最快
-	{"id": "aighost", "name": "AI 幽灵超跑", "file": "res://assets/cars/car_tripo_l.glb", "desc": "AI 生成 · 白刃车身 · 环刀尾翼 · 极速旗舰", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aighost", "name": "幽灵超跑", "file": "res://assets/cars/car_tripo_l.glb", "desc": "白刃车身 · 环刀尾翼 · 极速旗舰", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "endurance",
 		"stats": {"top": 97.0, "power": 66.0, "accel": 12.0, "grip": 1.08, "brake": 19.4}},
 	# 奔驰 AMG：荧光绿涂装混动电驱（源模型贴图名即「奔驰跑车」）
-	{"id": "aiamg", "name": "AI 奔驰 AMG", "file": "res://assets/cars/car_tripo_m.glb", "desc": "AI 生成 · 荧光绿涂装 · AMG 混动电驱", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aiamg", "name": "奔驰 AMG", "file": "res://assets/cars/car_tripo_m.glb", "desc": "荧光绿涂装 · AMG 混动电驱", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid",
 		"stats": {"top": 92.0, "power": 65.0, "accel": 11.7, "grip": 1.06, "brake": 19.0, "no_shift": true}},
 	# 混动电驱新旗舰（Tripo 2026-09）：车头朝 +Z 需 yaw 校正，scale 归一约 4.6m
-	{"id": "aivolt", "name": "AI 闪电混动", "file": "res://assets/cars/car_tripo_n.glb", "desc": "AI 生成 · 混动电驱新旗舰 · 单速直驱", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aivolt", "name": "闪电混动", "file": "res://assets/cars/car_tripo_n.glb", "desc": "混动电驱新旗舰 · 单速直驱", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid",
 		"stats": {"top": 91.0, "power": 69.0, "accel": 13.8, "grip": 1.05, "brake": 19.3, "no_shift": true}},
 ]
