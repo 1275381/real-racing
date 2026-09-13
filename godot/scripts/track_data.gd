@@ -170,6 +170,10 @@ const CAR_MODELS := [
 	{"id": "aiamg", "name": "AI 奔驰 AMG", "file": "res://assets/cars/car_tripo_m.glb", "desc": "AI 生成 · 荧光绿涂装 · AMG 混动电驱", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid",
 		"stats": {"top": 92.0, "power": 65.0, "accel": 11.7, "grip": 1.06, "brake": 19.0, "no_shift": true}},
+	# 混动电驱新旗舰（Tripo 2026-09）：车头朝 +Z 需 yaw 校正，scale 归一约 4.6m
+	{"id": "aivolt", "name": "AI 闪电混动", "file": "res://assets/cars/car_tripo_n.glb", "desc": "AI 生成 · 混动电驱新旗舰 · 单速直驱", "yaw_deg": -90.0, "scale": 4.6,
+		"class": "hybrid",
+		"stats": {"top": 91.0, "power": 69.0, "accel": 13.8, "grip": 1.05, "brake": 19.3, "no_shift": true}},
 ]
 
 ## 漫游战机（非赛车）：车库可选，仅限自由漫游驾驶
