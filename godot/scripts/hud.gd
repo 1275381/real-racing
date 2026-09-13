@@ -397,6 +397,7 @@ class TachWidget:
 	var speed_ratio := 0.0          # 全程速度进程（0..1），驱动档位进程指针
 	var lap_text := "--:--.--"      # 右侧功能数字：本圈时间 / 漫游行驶时长
 	var lap_label := "本圈"
+	var nitro := 1.0                # 氮气储量 0..1
 
 	func _draw() -> void:
 		var font := RRFont.get_font()
@@ -433,6 +434,14 @@ class TachWidget:
 				HORIZONTAL_ALIGNMENT_CENTER, 180, 56, spd_col)
 		draw_string(font, Vector2(w * 0.5 - 140, h * 0.58 + 20), "km/h",
 				HORIZONTAL_ALIGNMENT_CENTER, 180, 12, Color(0.6, 0.66, 0.72))
+		# ---- 氮气条（速度下方，蓝）----
+		var nx := w * 0.5 - 90.0
+		var ny := h - 12.0
+		draw_rect(Rect2(nx - 2, ny - 2, 184, 10), Color(0, 0, 0, 0.5))
+		draw_rect(Rect2(nx, ny, 180.0 * clampf(nitro, 0.0, 1.0), 6),
+				Color(0.3, 0.75, 1.0))
+		draw_string(font, Vector2(nx - 44, ny + 8), "NOS",
+				HORIZONTAL_ALIGNMENT_LEFT, 40, 11, Color(0.45, 0.8, 1.0))
 		# ---- 右侧功能数字：本圈时间 ----
 		draw_string(font, Vector2(w - 170, h * 0.4), lap_text,
 				HORIZONTAL_ALIGNMENT_CENTER, 144, 21, Color(0.9, 0.93, 0.97))
@@ -444,7 +453,8 @@ class TachWidget:
 
 
 func draw_tach(speed: float, gear_label: String, rpm_norm: float, drifting: bool,
-		speed_ratio: float, lap_text: String, lap_label := "本圈") -> void:
+		speed_ratio: float, lap_text: String, lap_label := "本圈",
+		nitro := 1.0) -> void:
 	_tach.speed_kmh = speed
 	_tach.gear_label = gear_label
 	_tach.rpm = rpm_norm
@@ -452,6 +462,7 @@ func draw_tach(speed: float, gear_label: String, rpm_norm: float, drifting: bool
 	_tach.speed_ratio = speed_ratio
 	_tach.lap_text = lap_text
 	_tach.lap_label = lap_label
+	_tach.nitro = nitro
 	_tach.queue_redraw()
 
 

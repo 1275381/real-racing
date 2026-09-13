@@ -17,6 +17,14 @@ var brake_power := 18.0           # 制动减速度基准 (m/s²)
 var accel_cap := 11.0             # 牵引上限 (m/s²)：抓地能给的起步加速度
 var no_shift := false             # 电驱单速变速箱：无换挡切断，起步线性猛
 var _ev_gear := 0                 # 电驱虚拟 7 段位（仅声浪用）：每 1/7 极速升段
+
+# ---- 氮气（Shift 按住喷射）----
+var nitro := 100.0                # 储量 0..100（满罐 3.3 秒）
+var nitro_active := false         # 外部输入：驾驶中按住 Shift（游戏侧每帧写入）
+const NITRO_BURN := 30.0          # 每秒消耗
+const NITRO_REGEN := 7.0          # 松开回充（约 14 秒回满）
+const NITRO_TRACTION := 1.5       # 喷射牵引倍率
+const NITRO_TOP := 1.14           # 喷射极速倍率
 var drift_tire := 1.0             # 漂移胎滑移回收系数（1.0=无；越小甩尾越持久）
 var inertia_drift := false        # 惯性漂移：手刹只负责起漂，松开后漂移自持
 var _drift_hold := false          # 惯性漂移自持标志
@@ -161,13 +169,21 @@ func step(dt: float) -> void:
 	heading += yaw_rate * dt
 
 	# ---- 纵向 ----
+	# 氮气：按住 Shift 且踩油门才喷射；松开或空罐自动回充
+	nitro_active = nitro_active and nitro > 0.0 and input_throttle > 0.0
+	if nitro_active:
+		nitro = maxf(0.0, nitro - NITRO_BURN * dt)
+	else:
+		nitro = minf(100.0, nitro + NITRO_REGEN * dt)
+	var boost_top := top_speed * (NITRO_TOP if nitro_active else 1.0)
 	var thr_eff := input_throttle * 0.15 if shift_timer > 0.0 else input_throttle
-	var traction_cap := grip * accel_cap   # 牵引上限：起步加速度（每车 stats）
+	var traction_cap := grip * accel_cap * (NITRO_TRACTION if nitro_active
+			else 1.0)   # 牵引上限：起步加速度（每车 stats；氮气 ×1.5）
 	var drive := 0.0
 	var reverse_intent := input_brake > 0.0 and vf < 0.6 \
 			and input_throttle == 0.0 and not finished
 	if input_throttle > 0.0 and vf >= -0.5 and grounded:
-		var curve := maxf(0.0, 1.0 - pow(clampf(vf / top_speed, 0.0, 1.0), 2.2))
+		var curve := maxf(0.0, 1.0 - pow(clampf(vf / boost_top, 0.0, 1.0), 2.2))
 		drive = minf(power * thr_eff * curve, traction_cap)
 		dbg_curve = curve
 	elif reverse_intent:
@@ -196,7 +212,7 @@ func step(dt: float) -> void:
 	if absf(new_vf) < 0.14 and input_throttle == 0.0 and not reverse_intent:
 		new_vf *= 0.5
 	vf = new_vf
-	vf = clampf(vf, -11.0, top_speed)
+	vf = clampf(vf, -11.0, boost_top)
 
 	# ---- 车身旋转把前向动量泄入侧向（滑移根源）----
 	var eps := clampf(yaw_rate * dt, -0.16, 0.16)

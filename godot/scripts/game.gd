@@ -1665,8 +1665,10 @@ func _process(dt_real: float) -> void:
 	var running := state == ST.RACING or state == ST.FINISHED \
 			or state == ST.COUNTDOWN or state == ST.GARAGE or state == ST.ROAM
 	var revving := state == ST.COUNTDOWN and pv.input_throttle > 0.0
+	var rpm_feed: float = pv.rpm_norm + (0.12 if pv.nitro_active
+			and pv.nitro > 0.0 else 0.0)
 	audio.update_engine(
-		0.12 if state == ST.GARAGE else (0.62 + 0.18 * sin(_now_s * 9.0) if revving else pv.rpm_norm),
+		0.12 if state == ST.GARAGE else (0.62 + 0.18 * sin(_now_s * 9.0) if revving else rpm_feed),
 		pv.engine_load_smoothed, running and not audio.muted)
 	var skid_vol := (clampf(pv.slip_amount * 1.2, 0.0, 1.0)
 			* clampf(absf(pv.vf) / 16.0, 0.0, 1.0)) if state in [ST.RACING, ST.ROAM] else 0.0
@@ -1852,6 +1854,7 @@ func _step_sim(h: float) -> void:
 		var inp_c := _sample_input(h)
 		player.veh.input_throttle = inp_c["throttle"]
 		player.veh.input_brake = 0.0
+		player.veh.nitro_active = false
 		return
 
 	# ROAM：只有玩家车，物理照常（立体物理对路网高度自动生效）
@@ -1889,6 +1892,7 @@ func _step_sim(h: float) -> void:
 			pin.input_brake = inp_r["brake"]
 			pin.input_steer = inp_r["steer"]
 			pin.input_handbrake = inp_r["handbrake"]
+			pin.nitro_active = Input.is_physical_key_pressed(KEY_SHIFT)
 			freeroam.vehicle_y = pin.pos.y
 			freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
 			pin.step(h)
@@ -1992,6 +1996,7 @@ func _step_sim(h: float) -> void:
 
 	# 输入
 	var inp := _sample_input(h)
+	player.veh.nitro_active = Input.is_physical_key_pressed(KEY_SHIFT)
 	var pin := player.veh
 	if pin.finished:
 		if player.ai_cruise == null:
@@ -2354,6 +2359,8 @@ func _update_camera(dt: float) -> void:
 			(randf() - 0.5) * a,
 			(randf() - 0.5) * a * 0.7,
 			(randf() - 0.5) * a)
+	if pv.nitro_active and pv.nitro > 0.0:
+		want_fov += 7.0   # 氮气推进感
 	camera.fov = RRUtil.damp(camera.fov, want_fov, 4.0, dt)
 	# 把相机/车位/车头方向写给桥体与楼体的遮挡淡出着色器
 	if state == ST.ROAM and freeroam != null:
@@ -2437,7 +2444,7 @@ func _update_hud(dt: float) -> void:
 		lap_text = RRUtil.format_time(sim_time * 1000.0)
 		lap_label = "行驶"
 	hud.draw_tach(pv.speed_kmh, gear_label, maxf(0.04, pv.rpm_norm), pv.drifting,
-			ratio, lap_text, lap_label)
+			ratio, lap_text, lap_label, pv.nitro / 100.0)
 
 	if state == ST.ROAM:
 		# 漫游：只有转速表 + 整图小地图 + 车辆位置点
