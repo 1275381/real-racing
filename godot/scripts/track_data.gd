@@ -173,8 +173,8 @@ const CAR_MODELS := [
 ]
 
 ## 漫游战机（非赛车）：车库可选，仅限自由漫游驾驶
-const AIRCRAFT := {"id": "plane", "name": "云隼 螺旋桨战机",
-	"desc": "可驾驶战机 · 真实仪表盘 · 仅限自由漫游（不能参赛）"}
+const AIRCRAFT := {"id": "plane", "name": "玄刃 X-6 隐形战机",
+	"desc": "第六代隐形喷气战斗机 · 菱面隐身机身 · 矢量双发尾焰 · 仅限自由漫游（不能参赛）"}
 
 const DEFAULT_MODEL := "gt3"
 

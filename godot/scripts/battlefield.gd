@@ -87,7 +87,7 @@ func _make_plane(enemy: bool, pos: Vector3, heading: float) -> Dictionary:
 	vis.visible = false
 	add_child(vis)
 	return {
-		"enemy": enemy, "vis": vis, "prop": vis.prop,
+		"enemy": enemy, "vis": vis,
 		"pos": pos, "heading": heading, "pitch": 0.0, "roll": 0.0,
 		"speed": 0.0, "throttle": 0.0, "hp": PLANE_HP, "bombs": PLANE_BOMBS,
 		"alive": false, "respawn_t": 0.0, "landed": true,
@@ -104,8 +104,8 @@ func _sync_plane_vis(p: Dictionary) -> void:
 	# 前向 = (sin h, 0, cos h)；rotation.x 正 = 低头，故爬升取负
 	vis.rotation = Vector3(-float(p["pitch"]), float(p["heading"]),
 			float(p["roll"]))
-	if p["prop"] != null:
-		p["prop"].rotation.z += 0.35 + 1.4 * float(p["throttle"])
+	vis.set_throttle(float(p["throttle"]))
+	vis.set_gear(p["landed"])
 
 
 ## 玩家战机：W/S 油门 · A/D 转弯 · ↑/↓ 俯仰（原始物理键采样）

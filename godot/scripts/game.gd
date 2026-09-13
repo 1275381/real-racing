@@ -1108,7 +1108,8 @@ func _roam_plane_sync() -> void:
 	roam_plane_vis.position = rplane["pos"]
 	roam_plane_vis.rotation = Vector3(-float(rplane["pitch"]),
 			float(rplane["heading"]), float(rplane["roll"]))
-	roam_plane_vis.prop.rotation.z += 0.35 + 1.4 * float(rplane["throttle"])
+	roam_plane_vis.set_throttle(float(rplane["throttle"]))
+	roam_plane_vis.set_gear(rplane["landed"])
 
 
 ## 漫游飞行物理（与大战场同款街机模型；W/S 油门 · A/D 或 ←/→ 转向 · ↑推杆 ↓拉起）
@@ -2205,7 +2206,8 @@ func _sync_garage(dt: float) -> void:
 		roam_plane_vis.position = gp + Vector3(0,
 				RRGarage.PLATFORM_TOP + 1.1, 0)
 		roam_plane_vis.rotation.y = _garage_angle + PI
-		roam_plane_vis.prop.rotation.z += dt * 1.2   # 怠速慢转
+		roam_plane_vis.set_throttle(0.05)   # 尾焰怠速微光
+		roam_plane_vis.set_gear(true)
 	else:
 		player.visual.position = gp + Vector3(0, RRGarage.PLATFORM_TOP, 0)
 		player.visual.rotation.y = _garage_angle
