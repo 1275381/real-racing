@@ -132,6 +132,14 @@ const SHOP_DOOR := Vector2(21.0, 34.0)      # 店门口（进入判定点）
 
 # —— 枪械店（独立建筑，广场另一角）——
 const GUNSHOP_POS := Vector2(-46.0, 46.0)   # 枪械店建筑中心（小地图「枪」标记用）
+
+# ---- 机场与远方城市 ----
+const AIRPORT_POS := Vector2(1350.0, 1000.0)    # 城市机场（城市东南缘）
+const AIRPORT_HEADING := -0.55                   # 跑道朝向（弧度）
+const FAR_CITY_POS := Vector2(8200.0, 6600.0)    # 远方城市中心（只飞得到）
+const FAR_CITY_HEADING := 0.75
+const FAR_CITY_HALF := 1050.0                    # 远城半径（边界钳制用）
+const WORLD_LIMIT := 16000.0                     # 战机可达世界边界
 const GUNSHOP_DOOR := Vector2(-33.0, 46.0)  # 店门口（进入判定点，朝东）
 const GUNSHOP_W := 20.0
 const GUNSHOP_D := 14.0
@@ -206,6 +214,8 @@ func build() -> void:
 	_make_garage()
 	_make_parts_shop()
 	_make_gunshop()
+	_build_airport(AIRPORT_POS, AIRPORT_HEADING)
+	_build_far_city()
 	_build_minimap()
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
@@ -1454,6 +1464,164 @@ func _build_terrain_field() -> void:
 ## 地形高程（双线性插值，与 _build_zone_ground 建出的可见网格一致）。
 ## _terrain_h 是「取最近格」，只适合建面顶点（顶点正好落在格心）；
 ## 物理查询落在格与格之间，必须插值，否则地板是 50m 的台阶。
+## ================= 机场与远方城市 =================
+
+## 机场：跑道/滑行道/停机坪/航站楼/塔台（center=机场中心，heading=跑道朝向）
+func _build_airport(center: Vector2, heading: float) -> void:
+	var base_y := terrain_height(center.x, center.y) + 0.04
+	var fwd := Vector2(sin(heading), cos(heading))
+	var right := Vector2(cos(heading), -sin(heading))
+	var put := func(px: float, pz: float, sx: float, sz: float, sy: float,
+			mat: Material, col := Color.WHITE, y_off := 0.0) -> void:
+		var mi := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(sx, maxf(sy, 0.05), sz)
+		mesh.material = mat
+		mi.mesh = mesh
+		mi.position = Vector3(px, base_y + y_off + sy * 0.5, pz)
+		mi.rotation.y = heading     # 局部 +X 对齐跑道方向
+		add_child(mi)
+	var asphalt := StandardMaterial3D.new()
+	asphalt.albedo_texture = RRTextures.asphalt_plain()
+	asphalt.roughness = 0.94
+	var conc := StandardMaterial3D.new()
+	conc.albedo_texture = RRTextures.concrete()
+	conc.roughness = 0.92
+	var white := StandardMaterial3D.new()
+	white.albedo_color = Color(0.92, 0.93, 0.95)
+	white.roughness = 0.8
+	var to_local := func(lx: float, ly: float) -> Vector2:
+		return center + fwd * lx + right * ly
+	# 停机坪整体垫层（跑道 + 联络道范围）
+	var pad_c: Vector2 = to_local.call(0.0, 60.0)
+	put.call(pad_c.x, pad_c.y, 1500.0, 400.0, 0.06, conc)
+	# 跑道 1300×46
+	var rw_c: Vector2 = to_local.call(0.0, 0.0)
+	put.call(rw_c.x, rw_c.y, 1300.0, 46.0, 0.05, asphalt)
+	# 跑道中线虚线
+	for k in 26:
+		var lx := -624.0 + k * 48.0
+		var mc: Vector2 = to_local.call(lx, 0.0)
+		put.call(mc.x, mc.y, 22.0, 1.1, 0.07, white, Color.WHITE, 0.005)
+	# 两端斑马线
+	for end_i in 2:
+		var ex := -640.0 if end_i == 0 else 640.0
+		for k in 6:
+			var sc: Vector2 = to_local.call(ex, -15.0 + k * 6.0)
+			put.call(sc.x, sc.y, 30.0, 2.2, 0.07, white, Color.WHITE, 0.005)
+	# 平行滑行道 + 3 条联络道
+	var tw_c: Vector2 = to_local.call(0.0, 120.0)
+	put.call(tw_c.x, tw_c.y, 1200.0, 24.0, 0.05, asphalt)
+	for k in 3:
+		var lx := -420.0 + k * 420.0
+		var cc: Vector2 = to_local.call(lx, 60.0)
+		put.call(cc.x, cc.y, 24.0, 130.0, 0.05, asphalt)
+	# 停机坪（航站楼前）
+	var ap_c: Vector2 = to_local.call(60.0, 240.0)
+	put.call(ap_c.x, ap_c.y, 520.0, 220.0, 0.06, conc)
+	# 航站楼（玻璃幕墙盒体）
+	var term: Vector2 = to_local.call(60.0, 372.0)
+	var tmi := MeshInstance3D.new()
+	var tmesh := BoxMesh.new()
+	tmesh.size = Vector3(300.0, 16.0, 52.0)
+	tmesh.material = _building_material()
+	tmi.mesh = tmesh
+	tmi.position = Vector3(term.x, base_y + 8.0, term.y)
+	tmi.rotation.y = heading
+	add_child(tmi)
+	obstacles_box.append({"c": term, "hx": 150.0, "hz": 26.0, "rot": heading,
+			"top": base_y + 16.0})
+	# 塔台（细高 + 顶盘）
+	var twr: Vector2 = to_local.call(-190.0, 350.0)
+	var tower := MeshInstance3D.new()
+	var tmesh2 := BoxMesh.new()
+	tmesh2.size = Vector3(9.0, 34.0, 9.0)
+	tower.mesh = tmesh2
+	tower.position = Vector3(twr.x, base_y + 17.0, twr.y)
+	add_child(tower)
+	var cab := MeshInstance3D.new()
+	var cmesh := BoxMesh.new()
+	cmesh.size = Vector3(16.0, 5.0, 16.0)
+	var cmat := StandardMaterial3D.new()
+	cmat.albedo_color = Color(0.25, 0.4, 0.5)
+	cmat.roughness = 0.2
+	cmesh.material = cmat
+	cab.mesh = cmesh
+	cab.position = Vector3(twr.x, base_y + 36.0, twr.y)
+	add_child(cab)
+	obstacles_box.append({"c": twr, "hx": 4.5, "hz": 4.5, "rot": 0.0,
+			"top": base_y + 34.0})
+
+
+## 远方城市：街网 + 楼群 + 自己的机场（只能驾机抵达）
+func _build_far_city() -> void:
+	var c := FAR_CITY_POS
+	var base_y := terrain_height(c.x, c.y) + 0.04
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 777
+	var asphalt := StandardMaterial3D.new()
+	asphalt.albedo_texture = RRTextures.asphalt_plain()
+	asphalt.roughness = 0.94
+	# 街网：7 纵 7 横（±520 范围）
+	for k in 7:
+		var off := -520.0 + k * 173.0
+		var vmi := MeshInstance3D.new()
+		var vm := BoxMesh.new()
+		vm.size = Vector3(14.0, 0.06, 1040.0)
+		vm.material = asphalt
+		vmi.mesh = vm
+		vmi.position = Vector3(c.x + off, base_y + 0.03, c.y)
+		add_child(vmi)
+		var hmi := MeshInstance3D.new()
+		var hm := BoxMesh.new()
+		hm.size = Vector3(1040.0, 0.06, 14.0)
+		hm.material = asphalt
+		hmi.mesh = hm
+		hmi.position = Vector3(c.x, base_y + 0.03, c.y + off)
+		add_child(hmi)
+	# 楼群：每街区 2~4 栋（贴纹理，登记碰撞）
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var obs: Array = []
+	for bx in 6:
+		for bz in 6:
+			var bc := Vector2(c.x - 433.0 + bx * 173.0 + 86.5,
+					c.y - 433.0 + bz * 173.0 + 86.5)
+			for k in rng.randi_range(2, 4):
+				var h := rng.randf_range(10.0, 42.0)
+				var w := rng.randf_range(16.0, 34.0)
+				var d := rng.randf_range(16.0, 34.0)
+				var ox := bc.x + rng.randf_range(-30.0, 30.0)
+				var oz := bc.y + rng.randf_range(-30.0, 30.0)
+				xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, d)),
+						Vector3(ox, base_y + h * 0.5, oz)))
+				cols.append(Color(0.75, 0.78, 0.82))
+				obs.append({"c": Vector2(ox, oz), "hx": w * 0.5,
+						"hz": d * 0.5, "rot": 0.0, "top": base_y + h})
+	var bmesh := BoxMesh.new()
+	bmesh.size = Vector3.ONE
+	bmesh.material = _building_material()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = bmesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
+	obstacles_box.append_array(obs)
+	# 远城机场
+	_build_airport(c + Vector2(760.0, -620.0), FAR_CITY_HEADING)
+
+
+## 远城区域判定（onfoot 边界钳制用：在远城内不按主城半径收边）
+func far_city_contains(x: float, z: float) -> bool:
+	return absf(x - FAR_CITY_POS.x) < FAR_CITY_HALF 			and absf(z - FAR_CITY_POS.y) < FAR_CITY_HALF
+
+
 func terrain_height(x: float, z: float) -> float:
 	if _terr.is_empty():
 		return 0.0

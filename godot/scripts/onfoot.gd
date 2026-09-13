@@ -417,9 +417,12 @@ func update(dt: float) -> void:
 	var q: Dictionary = fm.query(pos.x, pos.z, _last_idx, pos.y)
 	_last_idx = q["idx"]
 	pos.y = q["height"]
-	# 地图边界
-	pos.x = clampf(pos.x, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT)
-	pos.z = clampf(pos.z, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT)
+	# 地图边界（飞抵远方城市后，按远城范围放行）
+	var lim := FreeroamMap.MAP_LIMIT
+	if fm != null and fm.has_method("far_city_contains") 			and fm.far_city_contains(pos.x, pos.z):
+		lim = FreeroamMap.WORLD_LIMIT
+	pos.x = clampf(pos.x, -lim, lim)
+	pos.z = clampf(pos.z, -lim, lim)
 	# 射击（左键按住 = 开枪 + 自动三倍开镜）
 	if Input.is_action_pressed("rr_fire") and fire_cd <= 0.0 \
 			and reloading <= 0.0:

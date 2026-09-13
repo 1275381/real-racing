@@ -445,6 +445,7 @@ var _plane_was_down := false       # 我方战机被击落（重生提示用）
 var plane_mode := false            # 车库选中战机（漫游专用，不能参赛）
 var rplane := {}                   # 漫游战机状态 {pos,heading,pitch,roll,speed,throttle,landed,hint}
 var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行同用）
+var airport_traffic: AirportTraffic  # 机场氛围（客机起降 + 登机人流）
 var _roam_vs := 0.0                # 升降率平滑（仪表）
 
 
@@ -1094,8 +1095,16 @@ func _roam_plane_reset() -> void:
 		"pos": Vector3.ZERO, "heading": PI, "pitch": 0.0, "roll": 0.0,
 		"speed": 0.0, "throttle": 0.0, "landed": true, "hint": -1,
 	}
-	var q: Dictionary = freeroam.query(0.0, 120.0, -1)
-	rplane["pos"] = Vector3(0.0, float(q["height"]) + 1.15, 120.0)
+	# 城市机场停机坪出发（跑道正对，推油门即起飞）
+	var o: Vector2 = FreeroamMap.AIRPORT_POS
+	var fwd := Vector2(sin(FreeroamMap.AIRPORT_HEADING),
+			cos(FreeroamMap.AIRPORT_HEADING))
+	var right := Vector2(cos(FreeroamMap.AIRPORT_HEADING),
+			-sin(FreeroamMap.AIRPORT_HEADING))
+	var apron: Vector2 = o + fwd * (-180.0) + right * 190.0
+	var q: Dictionary = freeroam.query(apron.x, apron.y, -1)
+	rplane["pos"] = Vector3(apron.x, float(q["height"]) + 1.15, apron.y)
+	rplane["heading"] = FreeroamMap.AIRPORT_HEADING
 	rplane["ground"] = float(q["height"]) + 3.5
 	if roam_plane_vis == null:
 		roam_plane_vis = PlaneVisual.create("gold")
@@ -1153,8 +1162,8 @@ func _roam_plane_step(dt: float) -> void:
 				-0.55, 0.6)
 	else:
 		p["pitch"] = move_toward(float(p["pitch"]), 0.0, 0.35 * dt)
-	# 速度：油门目标 + 爬升掉速
-	var target_spd := 28.0 + 57.0 * float(p["throttle"]) \
+	# 速度：油门目标（怠速滑行 16 → 可减到落地线以下）+ 爬升掉速
+	var target_spd := 16.0 + 69.0 * float(p["throttle"]) \
 			- sin(float(p["pitch"])) * 14.0
 	p["speed"] = clampf(move_toward(float(p["speed"]), target_spd,
 			20.0 * dt), 12.0, 93.0)
@@ -1164,9 +1173,10 @@ func _roam_plane_step(dt: float) -> void:
 			+ fwd * float(p["speed"]) * cos(float(p["pitch"])) * dt
 	p["pos"] = Vector3(p["pos"]) \
 			+ Vector3(0, sin(float(p["pitch"])), 0) * float(p["speed"]) * dt
-	p["pos"] = Vector3(clampf(p["pos"].x, -FreeroamMap.MAP_LIMIT,
-			FreeroamMap.MAP_LIMIT), p["pos"].y,
-			clampf(p["pos"].z, -FreeroamMap.MAP_LIMIT, FreeroamMap.MAP_LIMIT))
+	p["pos"] = Vector3(clampf(p["pos"].x, -FreeroamMap.WORLD_LIMIT,
+			FreeroamMap.WORLD_LIMIT), p["pos"].y,
+			clampf(p["pos"].z, -FreeroamMap.WORLD_LIMIT,
+			FreeroamMap.WORLD_LIMIT))
 	# 地面高度 + 最低高度钳制
 	var q: Dictionary = freeroam.query(p["pos"].x, p["pos"].z, p["hint"], p["pos"].y)
 	p["hint"] = q["idx"]
@@ -1175,7 +1185,7 @@ func _roam_plane_step(dt: float) -> void:
 	if p["pos"].y < ground:
 		p["pos"] = Vector3(p["pos"].x, ground, p["pos"].z)
 		p["pitch"] = maxf(float(p["pitch"]), 0.0)
-	p["landed"] = p["pos"].y - ground < 0.6 and float(p["speed"]) < 14.0
+	p["landed"] = p["pos"].y - ground < 0.6 and float(p["speed"]) < 18.0
 	if p["landed"]:
 		p["speed"] = maxf(0.0, float(p["speed"]) - 26.0 * dt)
 	# 低空楼体粗碰撞（<26m 时从 OBB 推出）
@@ -1299,7 +1309,18 @@ func enter_roam() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	hud.set_onfoot(false)
 	hud.show_center("", "", 0)
-	# 战机模式：广场北停机，直接在机上（W 推油门起飞）
+	# 机场氛围：客机起降 + 登机人流（含远方城市机场）
+	if airport_traffic == null:
+		airport_traffic = AirportTraffic.new()
+		add_child(airport_traffic)
+		airport_traffic.setup([
+			{"origin": FreeroamMap.AIRPORT_POS, "heading": FreeroamMap.AIRPORT_HEADING},
+			{"origin": FreeroamMap.FAR_CITY_POS + Vector2(760.0, -620.0),
+					"heading": FreeroamMap.FAR_CITY_HEADING},
+		])
+	airport_traffic.set_process(true)
+	hud.add_map_marker(FreeroamMap.AIRPORT_POS.x, FreeroamMap.AIRPORT_POS.y, "机")
+	# 战机模式：机场停机坪出发（W 推油门起飞）
 	if plane_mode:
 		_roam_plane_reset()
 		player.visual.visible = false
@@ -1423,6 +1444,8 @@ func exit_roam() -> void:
 			roam_plane_vis.visible = false
 		hud.set_plane_panel(false)
 		rplane.clear()
+	if airport_traffic != null:
+		airport_traffic.set_process(false)
 	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
 	env.set_fog_range(240.0, 1650.0)   # 恢复城市雾距
 	env.set_ground_visible(true)
@@ -1898,6 +1921,13 @@ func _step_sim(h: float) -> void:
 			pin.step(h)
 			_roam_bound(pin)
 			npc.player_on_foot = false
+		# 机场氛围（客机起降 + 登机人流）
+		if airport_traffic != null:
+			airport_traffic._t += h
+			for ap in airport_traffic.airports:
+				for p in ap["planes"]:
+					airport_traffic._update_plane(ap, p, h)
+				airport_traffic._update_walkers(ap, h)
 		# NPC 交通/行人/警察
 		if npc != null and npc.active:
 			if not on_foot:
