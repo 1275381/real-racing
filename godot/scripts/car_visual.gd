@@ -112,9 +112,13 @@ func _build_from_glb(def: Dictionary, color: Color, accent: Color) -> bool:
 		wheels.clear()
 		var aabb := _tree_aabb(root)
 		root.get_parent().remove_child(root)
+		# 贴地归一：AI 模型的原点可能在车高中面（底面悬在 -h/2），
+		# 统一把底面抬到 y=0（车轮接地面），否则整车陷进地里；
+		# 底面本就在 0 的模型此步为零位移
+		root.position.y -= aabb.position.y
 		var body := Node3D.new()
 		body.name = "BodyPivot"
-		body.position = Vector3(0, aabb.position.y + aabb.size.y * 0.45, 0)
+		body.position = Vector3(0, aabb.size.y * 0.45, 0)
 		add_child(body)
 		root.position.y -= body.position.y
 		body.add_child(root)
