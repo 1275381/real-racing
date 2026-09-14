@@ -447,6 +447,7 @@ var rplane := {}                   # 漫游战机状态 {pos,heading,pitch,roll,
 var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行同用）
 var airport_traffic: AirportTraffic  # 机场氛围（客机起降 + 登机人流）
 var _roam_vs := 0.0                # 升降率平滑（仪表）
+var airliner_ride := false         # 正在乘班机飞行
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -716,6 +717,19 @@ func exit_battle() -> void:
 	_update_garage_labels()
 	hud.show_only("garage")
 	hud.show_center("", "", 0)
+
+
+## 登上班机：起飞巡航至对面机场，落地自动下机
+func _airliner_board(from_i: int) -> void:
+	if not airport_traffic.begin_ride(from_i):
+		return
+	on_foot = false
+	onfoot.exit()
+	hud.set_onfoot(false)
+	hud.set_scope(false)
+	airliner_ride = true
+	hud.show_center("登机 · 飞往" + airport_traffic.ride_dest_name(),
+			"巡航约 1 分钟 · 落地后自动下机", 3500)
 
 
 func _on_bf_player_hit(dmg: float) -> void:
@@ -1444,6 +1458,10 @@ func exit_roam() -> void:
 			roam_plane_vis.visible = false
 		hud.set_plane_panel(false)
 		rplane.clear()
+	if airliner_ride:
+		airliner_ride = false
+		if airport_traffic != null:
+			airport_traffic.abort_ride()
 	if airport_traffic != null:
 		airport_traffic.set_process(false)
 	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
@@ -1766,8 +1784,16 @@ func _handle_hotkeys() -> void:
 			exit_battle()
 		elif state in [ST.RACING, ST.COUNTDOWN, ST.PAUSED]:
 			toggle_pause()
-	if Input.is_action_just_pressed("rr_interact") and state == ST.ROAM and not shop_open:
-		_toggle_on_foot()
+	if Input.is_action_just_pressed("rr_interact") and state == ST.ROAM \
+			and not shop_open and not gunshop_open:
+		# 班机舱门优先：站在航站楼旁的班机舱门边即登机
+		var airliner_i: int = -1
+		if on_foot and airport_traffic != null:
+			airliner_i = airport_traffic.near_service_door(onfoot.pos)
+		if airliner_i >= 0:
+			_airliner_board(airliner_i)
+		else:
+			_toggle_on_foot()
 	if state == ST.BATTLE and Input.is_action_just_pressed("rr_interact"):
 		if flying:
 			_exit_plane()
@@ -1779,10 +1805,12 @@ func _handle_hotkeys() -> void:
 			and Input.is_action_just_pressed("rr_bomb"):
 		if not bf.player_drop_bomb():
 			hud.show_center("没有炸弹了", "回基地落地补给", 1200)
-	# 漫游战机：F 登机/下机
+	# 漫游战机：F 登机/下机（站在班机舱门边时优先登班机，不重复触发）
 	if state == ST.ROAM and plane_mode \
 			and Input.is_action_just_pressed("rr_interact") \
-			and not shop_open and not gunshop_open:
+			and not shop_open and not gunshop_open \
+			and not (on_foot and airport_traffic != null \
+			and airport_traffic.near_service_door(onfoot.pos) >= 0):
 		if on_foot:
 			if rplane.get("landed", false) and not rplane.is_empty() \
 					and onfoot.pos.distance_to(rplane["pos"]) < 9.0:
@@ -1885,7 +1913,27 @@ func _step_sim(h: float) -> void:
 		if shop_open or gunshop_open:
 			return   # 店里：冻结，买完继续
 		var pin := player.veh
-		if plane_mode and not on_foot:
+		if airliner_ride and airport_traffic != null:
+			# 乘班机中：班机照常飞，玩家无实体；到达后自动下机
+			airport_traffic._update_ride(h)
+			npc.player_pos = airport_traffic.ride_pos
+			npc.player_speed = 0.0
+			npc.player_on_foot = false
+			if airport_traffic.ride_phase == "arrived":
+				airliner_ride = false
+				var di: int = 1 - airport_traffic.ride_from_i
+				on_foot = true
+				camera.near = 0.02
+				onfoot.set_gun(gun_equipped)
+				onfoot.enter(airport_traffic.service_door_pos(di)
+						+ Vector3(6.0, 0, 0), PI)
+				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+				hud.set_onfoot(true)
+				hud.set_health(player_hp)
+				hud.set_gun_name(Guns.gun_by_id(gun_equipped)["name"])
+				hud.show_center("已抵达 " + airport_traffic.ride_names[di],
+						"", 2500)
+		elif plane_mode and not on_foot:
 			# 漫游战机：飞行物理，车辆冻结（位置同步给 NPC/警察逻辑）
 			_roam_plane_step(h)
 			pin.pos = rplane["pos"]
@@ -1921,9 +1969,10 @@ func _step_sim(h: float) -> void:
 			pin.step(h)
 			_roam_bound(pin)
 			npc.player_on_foot = false
-		# 机场氛围（客机起降 + 登机人流）
+		# 机场氛围（客机起降 + 登机人流 + 班机补充）
 		if airport_traffic != null:
 			airport_traffic._t += h
+			airport_traffic.tick(h)
 			for ap in airport_traffic.airports:
 				for p in ap["planes"]:
 					airport_traffic._update_plane(ap, p, h)
@@ -2290,6 +2339,17 @@ func _update_camera(dt: float) -> void:
 				+ Vector3(0, 2.0, 0), Vector3.UP)
 		camera.fov = RRUtil.damp(camera.fov,
 				66.0 + float(pl["speed"]) * 0.14, 3.0, dt)
+		return
+
+	# 班机载客飞行：追逐班机
+	if state == ST.ROAM and airliner_ride and airport_traffic != null:
+		var afwd := Vector3(sin(airport_traffic.ride_heading), 0,
+				cos(airport_traffic.ride_heading))
+		camera.position = camera.position.lerp(
+				airport_traffic.ride_pos - afwd * 30.0 + Vector3(0, 12.0, 0),
+				1.0 - exp(-3.0 * dt))
+		camera.look_at(airport_traffic.ride_pos + Vector3(0, 3.0, 0), Vector3.UP)
+		camera.fov = RRUtil.damp(camera.fov, 60.0, 2.0, dt)
 		return
 
 	# 漫游战机：同款追尾相机

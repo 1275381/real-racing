@@ -134,8 +134,8 @@ const SHOP_DOOR := Vector2(21.0, 34.0)      # 店门口（进入判定点）
 const GUNSHOP_POS := Vector2(-46.0, 46.0)   # 枪械店建筑中心（小地图「枪」标记用）
 
 # ---- 机场与远方城市 ----
-const AIRPORT_POS := Vector2(1350.0, 1000.0)    # 城市机场（城市东南缘）
-const AIRPORT_HEADING := -0.55                   # 跑道朝向（弧度）
+const AIRPORT_POS := Vector2(-1900.0, -400.0)   # 城市机场（西郊平地，避开沙漠岩山）
+const AIRPORT_HEADING := -0.35                   # 跑道朝向（弧度）
 const FAR_CITY_POS := Vector2(8200.0, 6600.0)    # 远方城市中心（只飞得到）
 const FAR_CITY_HEADING := 0.75
 const FAR_CITY_HALF := 1050.0                    # 远城半径（边界钳制用）

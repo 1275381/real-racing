@@ -11,6 +11,18 @@ const WALKERS_PER_AIRPORT := 8 # 登机人流数
 
 var airports: Array = []
 var _t := 0.0
+var ride_names := ["城市机场", "远城机场"]
+
+# ---- 班机载客（F 登机 → 起飞 → 巡航 → 降落 → 下机）----
+var ride_active := false
+var ride_from_i := 0
+var ride_phase := "idle"       # taxi/roll/rotate/climb/cruise/descend/rollout/arrived
+var ride_t := 0.0
+var ride_pos := Vector3.ZERO
+var ride_heading := 0.0
+var ride_pitch := 0.0
+var ride_speed := 0.0
+var ride_vis: Node3D = null
 
 
 func setup(spots: Array) -> void:
@@ -27,10 +39,38 @@ func setup(spots: Array) -> void:
 		}
 		for i in PLANES_PER_AIRPORT:
 			ap["planes"].append(_make_plane(ap, i))
+		ap["service"] = {"vis": _build_airliner(Color(0.93, 0.94, 0.96),
+				Color(0.16, 0.34, 0.6)), "pos": Vector3.ZERO,
+				"heading": heading + PI * 0.5}
+		ap["service"]["vis"].visible = true
+		add_child(ap["service"]["vis"])
+		ap["service"]["pos"] = _gate_pos(ap, 3)
+		ap["service"]["vis"].position = ap["service"]["pos"]
+		ap["service"]["vis"].rotation.y = ap["service"]["heading"]
 		ap["mm"] = _setup_walkers_mm(ap, WALKERS_PER_AIRPORT)
 		for i in WALKERS_PER_AIRPORT:
 			ap["walkers"].append(_make_walker(ap, i))
 		airports.append(ap)
+
+
+## 每帧维护：班机被调走后 30 秒自动补充新班机
+func tick(dt: float) -> void:
+	for ap in airports:
+		var s: Dictionary = ap["service"]
+		if s.get("vis") != null:
+			continue
+		s["respawn"] = float(s.get("respawn", 0.0)) + dt
+		if float(s["respawn"]) < 30.0:
+			continue
+		s["vis"] = _build_airliner(Color(0.93, 0.94, 0.96),
+				Color(0.16, 0.34, 0.6))
+		s["vis"].visible = true
+		add_child(s["vis"])
+		s["pos"] = _gate_pos(ap, 3)
+		s["heading"] = float(ap["heading"]) + PI * 0.5
+		s["vis"].position = s["pos"]
+		s["vis"].rotation.y = s["heading"]
+		s["respawn"] = 0.0
 
 
 func update(dt: float) -> void:
@@ -39,6 +79,145 @@ func update(dt: float) -> void:
 		for p in ap["planes"]:
 			_update_plane(ap, p, dt)
 		_update_walkers(ap, dt)
+	if ride_active:
+		_update_ride(dt)
+
+
+## 班机舱门世界坐标（登机判定点）
+func service_door_pos(ap_i: int) -> Vector3:
+	var ap: Dictionary = airports[ap_i]
+	var s: Dictionary = ap["service"]
+	var right := Vector2(cos(float(s["heading"])), -sin(float(s["heading"])))
+	var d: Vector2 = right * -4.5   # 舱门在机身左侧（朝航站楼一侧）
+	return Vector3(s["pos"].x + d.x, float(s["pos"].y) - 0.6,
+			s["pos"].z + d.y)
+
+
+## 玩家是否站在某座机场的班机舱门旁（返回机场序号，-1 = 否）
+func near_service_door(player_pos: Vector3) -> int:
+	for i in airports.size():
+		if ride_active:
+			return -1
+		var d: float = service_door_pos(i).distance_to(player_pos)
+		if d < 10.0:
+			return i
+	return -1
+
+
+func ride_dest_name() -> String:
+	return ride_names[1 - ride_from_i]
+
+
+## 开始载客飞行：班机从本场滑出起飞，巡航至对面机场降落靠桥
+func begin_ride(from_i: int) -> bool:
+	if ride_active or airports.is_empty():
+		return false
+	var ap: Dictionary = airports[from_i]
+	var s: Dictionary = ap["service"]
+	ride_active = true
+	ride_from_i = from_i
+	ride_phase = "taxi"
+	ride_t = 7.0
+	ride_pos = Vector3(s["pos"])
+	ride_heading = float(s["heading"])
+	ride_pitch = 0.0
+	ride_speed = 0.0
+	ride_vis = s["vis"]
+	ap["service"] = {"vis": null, "pos": Vector3.ZERO, "heading": 0.0}
+	return true
+
+
+## 中途放弃行程：班机复位回本场停机位
+func abort_ride() -> void:
+	ride_active = false
+	ride_phase = "idle"
+	if ride_vis != null:
+		ride_vis.visible = false
+	var ap: Dictionary = airports[ride_from_i]
+	ap["service"] = {"vis": null, "pos": _gate_pos(ap, 3),
+			"heading": float(ap["heading"]) + PI * 0.5}
+	ride_vis = null
+
+
+func _update_ride(dt: float) -> void:
+	ride_t = float(ride_t) - dt
+	var dest_i: int = 1 - ride_from_i
+	var dest: Dictionary = airports[dest_i]
+	var dest_gate: Vector3 = _gate_pos(dest, 3)
+	var dest_th := _threshold_pos(dest)
+	var fwd := Vector2(sin(ride_heading), cos(ride_heading))
+	match ride_phase:
+		"taxi":
+			var th := _threshold_pos(airports[ride_from_i])
+			ride_pos = ride_pos.lerp(th, 1.0 - exp(-0.5 * dt))
+			ride_heading = float(airports[ride_from_i]["heading"])
+			ride_speed = 8.0
+			if ride_t <= 0.0:
+				ride_pos = Vector3(th.x, float(th.y), th.z)
+				ride_phase = "roll"
+		"roll":
+			ride_speed = float(ride_speed) + PLANE_ACCEL * dt
+			ride_pos += Vector3(fwd.x, 0, fwd.y) * ride_speed * dt
+			if ride_speed > ROTATE_SPEED:
+				ride_phase = "rotate"
+		"rotate":
+			ride_speed = float(ride_speed) + PLANE_ACCEL * dt
+			ride_pitch = minf(ride_pitch + 0.12 * dt, 0.2)
+			ride_pos += Vector3(fwd.x, 0, fwd.y) * ride_speed * dt
+			ride_pos.y += sin(ride_pitch) * ride_speed * dt
+			if ride_pos.y > float(airports[ride_from_i]["base_y"]) + 80.0:
+				ride_phase = "cruise"
+		"cruise":
+			ride_speed = move_toward(ride_speed, 150.0, 6.0 * dt)
+			ride_pos.y = move_toward(ride_pos.y,
+					float(dest["base_y"]) + 260.0, 22.0 * dt)
+			var to_d := Vector2(dest_th.x - ride_pos.x, dest_th.z - ride_pos.z)
+			var want_h := atan2(to_d.x, to_d.y)
+			var dh := wrapf(want_h - ride_heading, -PI, PI)
+			ride_heading += clampf(dh, -0.5, 0.5) * 1.2 * dt
+			ride_pos += Vector3(sin(ride_heading), 0, cos(ride_heading)) \
+					* ride_speed * dt
+			if to_d.length() < 2600.0:
+				ride_phase = "descend"
+		"descend":
+			ride_speed = move_toward(ride_speed, 78.0, 5.0 * dt)
+			var to_d2 := Vector2(dest_th.x - ride_pos.x, dest_th.z - ride_pos.z)
+			var want_h2 := atan2(to_d2.x, to_d2.y)
+			ride_heading += clampf(wrapf(want_h2 - ride_heading, -PI, PI),
+					-0.5, 0.5) * 1.2 * dt
+			ride_pitch = lerpf(ride_pitch, -0.05, 1.0 - exp(-2.0 * dt))
+			ride_pos += Vector3(sin(ride_heading), 0, cos(ride_heading)) \
+					* ride_speed * dt
+			var ground_y: float = float(dest["base_y"]) + 2.6
+			ride_pos.y = maxf(ride_pos.y - 14.0 * dt, ground_y)
+			if ride_pos.y <= ground_y + 0.05 and to_d2.length() < 700.0:
+				ride_pitch = 0.0
+				ride_phase = "rollout"
+				ride_t = 6.0
+		"rollout":
+			# 降落滑跑后转向停机位滑行，到位即靠桥
+			ride_speed = move_toward(ride_speed, 9.0, 9.0 * dt)
+			var to_gate := Vector2(dest_gate.x - ride_pos.x,
+					dest_gate.z - ride_pos.z)
+			if to_gate.length() < 25.0 or ride_t < -14.0:
+				ride_speed = 0.0
+				ride_pos = Vector3(dest_gate.x, ride_pos.y, dest_gate.z)
+				ride_heading = float(dest["heading"]) + PI * 0.5
+				ride_phase = "arrived"
+				ride_active = false
+				# 班机停靠对面机场，成为该机场的常驻班机（供返程）
+				dest["service"] = {"vis": ride_vis, "pos": ride_pos,
+						"heading": ride_heading}
+			else:
+				var want := atan2(to_gate.x, to_gate.y)
+				ride_heading += clampf(wrapf(want - ride_heading, -PI, PI),
+						-0.6, 0.6) * 1.5 * dt
+				ride_pos += Vector3(sin(ride_heading), 0,
+						cos(ride_heading)) * ride_speed * dt
+	# 应用到班机模型
+	if ride_vis != null:
+		ride_vis.position = ride_pos
+		ride_vis.rotation = Vector3(-ride_pitch, ride_heading, 0.0)
 
 
 func _ground_y(origin: Vector2) -> float:
