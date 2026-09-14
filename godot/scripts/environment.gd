@@ -68,6 +68,9 @@ uniform vec3 mid_color : source_color = vec3(0.525, 0.682, 0.871);
 uniform vec3 bot_color : source_color = vec3(0.875, 0.914, 0.933);
 uniform vec3 sun_dir = vec3(0.52, 0.42, 0.74);
 uniform vec3 sun_color : source_color = vec3(1.0, 0.945, 0.839);
+uniform float night_f = 0.0;
+uniform vec3 moon_dir = vec3(-0.5, 0.5, -0.5);
+uniform float weather_dim = 0.0;
 
 void sky() {
 	vec3 dir = normalize(EYEDIR);
@@ -80,6 +83,21 @@ void sky() {
 	}
 	float sd = max(dot(dir, normalize(sun_dir)), 0.0);
 	col += sun_color * (pow(sd, 900.0) * 1.15 + pow(sd, 26.0) * 0.16);
+	// 星空（网格哈希撒点，越靠近天顶越密）
+	if (night_f > 0.01 && h > 0.0) {
+		vec2 sc = dir.xz / max(dir.y + 0.55, 0.05);
+		vec2 cell = floor(sc * 190.0);
+		float star = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+		float tw = 0.55 + 0.45 * fract(star * 91.7 + TIME * 0.7);
+		col += vec3(step(0.996, star) * night_f * tw);
+	}
+	// 月亮（软边圆盘 + 月晕）
+	float md = max(dot(dir, normalize(moon_dir)), 0.0);
+	col += vec3(0.92, 0.94, 1.0) * (smoothstep(0.99930, 0.99965, md)
+			* (0.35 + 0.65 * night_f) + pow(md, 90.0) * 0.14 * night_f);
+	// 雨/雾天：天空灰化去饱和
+	col = mix(col, vec3(dot(col, vec3(0.3333))) * 0.85 + 0.10,
+			clamp(weather_dim, 0.0, 1.0) * 0.6);
 	COLOR = col;
 }
 """
@@ -538,9 +556,58 @@ func set_ground_visible(v: bool) -> void:
 
 
 ## 大世界雾距调整（自由漫游用：世界扩大后默认雾距会吞掉远景）
+var _fog_base_near := 240.0
+var _fog_base_far := 1650.0
+
 func set_fog_range(near: float, far: float) -> void:
+	_fog_base_near = near
+	_fog_base_far = far
 	_env.fog_depth_begin = near
 	_env.fog_depth_end = far
+
+
+## ---- 昼夜 / 天气实时驱动（DayCycle 每帧调用）----
+
+## 太阳/月亮姿态与光强
+func set_celestial(sun_dir: Vector3, sun_energy: float, sun_col: Color,
+		moon_dir: Vector3, night_f: float, weather_dim: float) -> void:
+	_sun_dir = sun_dir
+	sun.light_energy = sun_energy
+	sun.light_color = sun_col
+	_sky_mat.set_shader_parameter("sun_dir", sun_dir)
+	_sky_mat.set_shader_parameter("moon_dir", moon_dir)
+	_sky_mat.set_shader_parameter("night_f", night_f)
+	_sky_mat.set_shader_parameter("weather_dim", weather_dim)
+
+
+## 天空三段色（昼夜/黄昏调色板插值结果）
+func set_sky_palette(top: Color, mid: Color, bot: Color) -> void:
+	_sky_mat.set_shader_parameter("top_color", top)
+	_sky_mat.set_shader_parameter("mid_color", mid)
+	_sky_mat.set_shader_parameter("bot_color", bot)
+
+
+## 环境光 / 雾 / 体积雾（fog_mul：天气对雾距基准的缩放）
+func set_atmosphere(amb_col: Color, amb_e: float, fog_col: Color,
+		fog_mul: float, vol_mul: float) -> void:
+	_env.ambient_light_color = amb_col
+	_env.ambient_light_energy = amb_e
+	_env.fog_light_color = fog_col
+	_env.fog_depth_begin = _fog_base_near * fog_mul
+	_env.fog_depth_end = _fog_base_far * fog_mul
+	_env.volumetric_fog_density = 0.0025 * vol_mul
+
+
+## 地面覆雪（0..1，向白色过渡；主题切换不影响——每次按基准色重算）
+var _ground_base := {}
+func set_snow_ground(w: float) -> void:
+	if _ground_base.is_empty():
+		for t in ["country", "city", "desert", "akina"]:
+			_ground_base[t] = (_ground_mats[t] as StandardMaterial3D).albedo_color
+	for t in _ground_mats:
+		var base: Color = _ground_base[t]
+		(_ground_mats[t] as StandardMaterial3D).albedo_color = \
+				base.lerp(Color(0.93, 0.94, 0.97), clampf(w, 0.0, 1.0))
 
 
 func set_theme(name: String) -> void:

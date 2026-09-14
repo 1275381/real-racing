@@ -77,6 +77,7 @@ var _tach: TachWidget
 var _minimap: MinimapWidget
 var _plane_panel: PlanePanelWidget
 var _plane_panel_on := false   # 战机仪表盘开关（漫游战机模式）
+var _clock_label: Label        # 时钟/相位/天气（游戏中显示）
 var _timing_labels := {}
 var _standings_box: VBoxContainer
 var _center_label: Label
@@ -141,6 +142,7 @@ func build(colors: Array) -> void:
 	_build_wanted()
 	_build_gun_overlay()
 	_build_plane_panel()
+	_build_clock()
 	show_only("garage")
 
 
@@ -687,6 +689,31 @@ func set_plane_panel(on: bool) -> void:
 	var roam_visible: bool = _screens.has("roam") and _screens["roam"].visible
 	_plane_panel.visible = on and roam_visible
 	_tach.visible = roam_visible and not on   # 与转速表互斥
+
+
+## 时钟：时刻 + 相位 + 天气
+func _build_clock() -> void:
+	_clock_label = Label.new()
+	_clock_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_clock_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_clock_label.position.y = 8.0
+	_clock_label.add_theme_font_size_override("font_size", 20)
+	_clock_label.add_theme_color_override("font_color", Color(0.95, 0.96, 1.0))
+	_clock_label.add_theme_color_override("font_outline_color",
+			Color(0, 0, 0, 0.75))
+	_clock_label.add_theme_constant_override("outline_size", 5)
+	_clock_label.visible = false
+	_root.add_child(_clock_label)
+
+
+func update_clock(time_str: String, phase: String, weather_str: String) -> void:
+	var txt := "%s  ·  %s  ·  %s" % [time_str, phase, weather_str]
+	if _clock_label.text != txt:
+		_clock_label.text = txt
+
+
+func set_clock_visible(on: bool) -> void:
+	_clock_label.visible = on
 
 
 # ================= 小地图 =================

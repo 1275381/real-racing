@@ -179,6 +179,10 @@ func _ready() -> void:
 	refresh_menu_best()
 	_update_garage_labels()
 	_apply_garage_display()
+	day_cycle = DayCycle.new()
+	add_child(day_cycle)
+	day_cycle.setup(env, camera)
+	_ensure_headlight()
 	hud.show_only("garage")
 
 	# 调试参数（-- 之后传参，等价网页版 URL 参数）：--autostart --laps=N --track=id --roam
@@ -448,6 +452,8 @@ var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行�
 var airport_traffic: AirportTraffic  # 机场氛围（客机起降 + 登机人流）
 var _roam_vs := 0.0                # 升降率平滑（仪表）
 var airliner_ride := false         # 正在乘班机飞行
+var day_cycle: DayCycle            # 昼夜 + 天气
+var _headlight: SpotLight3D        # 玩家车头灯（夜色自动点亮）
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -1060,6 +1066,20 @@ func start_from_garage() -> void:
 
 # ================= 漫游战机（车库/漫游） =================
 
+## 夜色车头灯（挂在车模前部，随车型重建）
+func _ensure_headlight() -> void:
+	if _headlight != null and is_instance_valid(_headlight):
+		return
+	_headlight = SpotLight3D.new()
+	_headlight.light_color = Color(1.0, 0.93, 0.78)
+	_headlight.light_energy = 6.0
+	_headlight.spot_range = 55.0
+	_headlight.spot_angle = 38.0
+	_headlight.position = Vector3(0, 0.75, 1.6)
+	_headlight.rotation.x = -0.12
+	player.visual.add_child(_headlight)
+
+
 ## 车库「漫游战机」开关
 func _toggle_plane_mode() -> void:
 	plane_mode = not plane_mode
@@ -1599,6 +1619,9 @@ func set_car_model(id: String) -> void:
 	rec.visual.queue_free()
 	rec.visual = CarVisual.create(id, rec.team["color"], rec.team["accent"])
 	add_child(rec.visual)
+	if _headlight != null:
+		_headlight = null
+		_ensure_headlight()
 	# 不同车型有不同 stats：重建车辆物理实例，迁移位置与行驶状态
 	# 玩家车吃自己名下配件的加成
 	var old := rec.veh
@@ -1696,6 +1719,16 @@ func _process(dt_real: float) -> void:
 		env.follow_shadow(bf.ally_plane["pos"])
 	else:
 		env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
+	# 昼夜 + 天气推进（所有模式共享同一片天）
+	if day_cycle != null:
+		day_cycle.advance(dt)
+		day_cycle.apply(env)
+		if _headlight != null and is_instance_valid(_headlight):
+			_headlight.visible = day_cycle.night_f > 0.4 \
+					and not on_foot and state != ST.GARAGE
+		hud.update_clock(day_cycle.clock_text(), day_cycle.phase_text(),
+				day_cycle.weather_text())
+		hud.set_clock_visible(state != ST.GARAGE)
 	env.update_clouds(dt)
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
