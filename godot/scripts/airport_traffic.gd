@@ -23,6 +23,7 @@ var ride_heading := 0.0
 var ride_pitch := 0.0
 var ride_speed := 0.0
 var ride_vis: Node3D = null
+var ride_gear: Node3D = null
 var ride_wps: Array = []           # 载客滑行航路点
 
 
@@ -39,10 +40,14 @@ func setup(spots: Array) -> void:
 			"planes": [], "mm": {}, "walkers": [], "gate_i": 0,
 		}
 		for i in PLANES_PER_AIRPORT:
-			ap["planes"].append(_make_plane(ap, i))
-		ap["service"] = {"vis": _build_airliner(Color(0.93, 0.94, 0.96),
-				Color(0.16, 0.34, 0.6)), "pos": Vector3.ZERO,
-				"heading": heading + PI * 0.5}
+			var pl: Dictionary = _make_plane(ap, i)
+			pl["gear"] = (pl["vis"] as Node3D).find_child("gear", true, false)
+			ap["planes"].append(pl)
+		var svis: Node3D = _build_airliner(Color(0.93, 0.94, 0.96),
+				Color(0.16, 0.34, 0.6))
+		ap["service"] = {"vis": svis, "pos": Vector3.ZERO,
+				"heading": heading + PI * 0.5,
+				"gear": svis.find_child("gear", true, false)}
 		ap["service"]["vis"].visible = true
 		add_child(ap["service"]["vis"])
 		ap["service"]["pos"] = _gate_pos(ap, 3)
@@ -67,6 +72,7 @@ func tick(dt: float) -> void:
 				Color(0.16, 0.34, 0.6))
 		s["vis"].visible = true
 		add_child(s["vis"])
+		s["gear"] = (s["vis"] as Node3D).find_child("gear", true, false)
 		s["pos"] = _gate_pos(ap, 3)
 		s["heading"] = float(ap["heading"]) + PI * 0.5
 		s["vis"].position = s["pos"]
@@ -125,6 +131,7 @@ func begin_ride(from_i: int) -> bool:
 	ride_speed = 0.0
 	ride_wps = []
 	ride_vis = s["vis"]
+	ride_gear = s.get("gear")
 	ap["service"] = {"vis": null, "pos": Vector3.ZERO, "heading": 0.0}
 	return true
 
@@ -134,6 +141,8 @@ func abort_ride() -> void:
 	ride_active = false
 	ride_phase = "idle"
 	ride_wps = []
+	if ride_gear != null:
+		ride_gear.visible = true
 	if ride_vis != null:
 		ride_vis.visible = false
 	var ap: Dictionary = airports[ride_from_i]
@@ -228,10 +237,14 @@ func _update_ride(dt: float) -> void:
 						-0.6, 0.6) * 1.5 * dt
 				ride_pos += Vector3(sin(ride_heading), 0,
 						cos(ride_heading)) * ride_speed * dt
-	# 应用到班机模型
+	# 应用到班机模型 + 起落架收放
 	if ride_vis != null:
 		ride_vis.position = ride_pos
 		ride_vis.rotation = Vector3(-ride_pitch, ride_heading, 0.0)
+	if ride_gear != null:
+		var gear_down := ride_phase in ["taxi", "roll", "descend", "rollout",
+				"arrived"]
+		ride_gear.visible = gear_down
 
 
 func _ground_y(origin: Vector2) -> float:
@@ -342,6 +355,10 @@ func _update_plane(ap: Dictionary, p: Dictionary, dt: float) -> void:
 	vis.visible = String(p["state"]) != "gone"
 	vis.position = p["pos"]
 	vis.rotation = Vector3(-float(p["pitch"]), float(p["heading"]), 0.0)
+	# 起落架：地面段放下，抬轮后收起，下降段再放出
+	if p.get("gear") != null:
+		var st := String(p["state"])
+		p["gear"].visible = st in ["board", "taxi", "roll", "descend"]
 
 
 ## ================= 登机人流（航站楼 → 停机位客机） =================
@@ -486,9 +503,25 @@ func _build_airliner(body: Color, tail: Color) -> Node3D:
 	# 尾翼：水平尾翼 + 垂尾（航司涂装色）
 	add_box.call(Vector3(9.0, 0.24, 2.8), Vector3(0, 0.6, -11.0), body)
 	add_box.call(Vector3(0.3, 5.2, 3.6), Vector3(0, 2.9, -11.2), tail)
-	# 起落架
+	# 起落架（"gear" 组：地面放下 / 空中收起）
+	var gear := Node3D.new()
+	gear.name = "gear"
+	root.add_child(gear)
 	for g in [Vector3(0, -1.9, 10.0), Vector3(-2.2, -1.9, -1.0),
 			Vector3(2.2, -1.9, -1.0)]:
-		add_box.call(Vector3(0.3, 1.6, 0.3), g, dark)
-		add_box.call(Vector3(0.55, 0.55, 0.55), g + Vector3(0, -0.9, 0), dark)
+		var leg := MeshInstance3D.new()
+		var lm := BoxMesh.new()
+		lm.size = Vector3(0.3, 1.6, 0.3)
+		var lmat := StandardMaterial3D.new()
+		lmat.albedo_color = dark
+		lm.material = lmat
+		leg.mesh = lm
+		leg.position = g
+		gear.add_child(leg)
+		var wheel := MeshInstance3D.new()
+		var wm := BoxMesh.new()
+		wm.size = Vector3(0.55, 0.55, 0.55)
+		wheel.mesh = wm
+		wheel.position = g + Vector3(0, -0.9, 0)
+		gear.add_child(wheel)
 	return root
