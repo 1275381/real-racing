@@ -23,6 +23,7 @@ var ride_heading := 0.0
 var ride_pitch := 0.0
 var ride_speed := 0.0
 var ride_vis: Node3D = null
+var ride_wps: Array = []           # 载客滑行航路点
 
 
 func setup(spots: Array) -> void:
@@ -122,6 +123,7 @@ func begin_ride(from_i: int) -> bool:
 	ride_heading = float(s["heading"])
 	ride_pitch = 0.0
 	ride_speed = 0.0
+	ride_wps = []
 	ride_vis = s["vis"]
 	ap["service"] = {"vis": null, "pos": Vector3.ZERO, "heading": 0.0}
 	return true
@@ -131,6 +133,7 @@ func begin_ride(from_i: int) -> bool:
 func abort_ride() -> void:
 	ride_active = false
 	ride_phase = "idle"
+	ride_wps = []
 	if ride_vis != null:
 		ride_vis.visible = false
 	var ap: Dictionary = airports[ride_from_i]
@@ -148,13 +151,24 @@ func _update_ride(dt: float) -> void:
 	var fwd := Vector2(sin(ride_heading), cos(ride_heading))
 	match ride_phase:
 		"taxi":
-			var th := _threshold_pos(airports[ride_from_i])
-			ride_pos = ride_pos.lerp(th, 1.0 - exp(-0.5 * dt))
-			ride_heading = float(airports[ride_from_i]["heading"])
-			ride_speed = 8.0
-			if ride_t <= 0.0:
-				ride_pos = Vector3(th.x, float(th.y), th.z)
-				ride_phase = "roll"
+			var ap_o: Dictionary = airports[ride_from_i]
+			if ride_wps.is_empty():
+				ride_wps = _taxi_waypoints(ap_o, 3)
+			var tgt: Vector3 = ride_wps[0]
+			var to_t := Vector2(tgt.x - ride_pos.x, tgt.z - ride_pos.z)
+			ride_speed = 18.0
+			if to_t.length() < 16.0:
+				ride_wps.pop_front()
+				if ride_wps.is_empty():
+					ride_pos = Vector3(tgt.x, ride_pos.y, tgt.z)
+					ride_heading = float(ap_o["heading"])
+					ride_phase = "roll"
+			else:
+				var want := atan2(to_t.x, to_t.y)
+				ride_heading += clampf(wrapf(want - ride_heading, -PI, PI),
+						-0.5, 0.5) * 1.4 * dt
+				ride_pos += Vector3(sin(ride_heading), 0,
+						cos(ride_heading)) * ride_speed * dt
 		"roll":
 			ride_speed = float(ride_speed) + PLANE_ACCEL * dt
 			ride_pos += Vector3(fwd.x, 0, fwd.y) * ride_speed * dt
@@ -252,6 +266,20 @@ func _gate_pos(ap: Dictionary, gate_i: int) -> Vector3:
 	return Vector3(g.x, by + 2.6, g.y)
 
 
+## 滑行航路点：停机位正后方上滑行道 → 跑道 1/4 处对正点（世界坐标，依次走）
+func _taxi_waypoints(ap: Dictionary, gate_i: int) -> Array:
+	var o: Vector2 = ap["origin"]
+	var fwd: Vector2 = ap["fwd"]
+	var right: Vector2 = ap["right"]
+	var by: float = float(ap["base_y"])
+	var gate_station := -80.0 + gate_i * 90.0
+	var wps: Array = []
+	for pt in [Vector2(gate_station, 120.0), Vector2(-350.0, 0.0)]:
+		var w: Vector2 = o + fwd * pt.x + right * pt.y
+		wps.append(Vector3(w.x, by + 2.6, w.y))
+	return wps
+
+
 func _threshold_pos(ap: Dictionary) -> Vector3:
 	# 跑道端头
 	var o: Vector2 = ap["origin"]
@@ -270,6 +298,7 @@ func _update_plane(ap: Dictionary, p: Dictionary, dt: float) -> void:
 			if p["t"] <= 0.0:
 				p["state"] = "taxi"
 				p["t"] = 7.0
+				p["wps"] = []
 		"taxi":
 			# 停机位 → 跑道端头直线滑行
 			var tgt := _threshold_pos(ap)
