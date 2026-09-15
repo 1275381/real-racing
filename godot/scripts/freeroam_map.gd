@@ -140,6 +140,9 @@ const FAR_CITY_POS := Vector2(8200.0, 6600.0)    # 远方城市中心（只飞�
 const FAR_CITY_HEADING := 0.75
 const FAR_CITY_HALF := 1050.0                    # 远城半径（边界钳制用）
 const WORLD_LIMIT := 16000.0                     # 战机可达世界边界
+
+## 铺装区（机场坪面/远城街道）：query 回退时表面按道路计算，不再当草地减速
+var road_pads: Array = []
 const GUNSHOP_DOOR := Vector2(-33.0, 46.0)  # 店门口（进入判定点，朝东）
 const GUNSHOP_W := 20.0
 const GUNSHOP_D := 14.0
@@ -615,10 +618,22 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 		_scratch["lat_off"] = 999.0
 		_scratch["ang"] = roads[best_road].ang[best_i] if best_road >= 0 else 0.0
 		_scratch["surf"] = "grass"
+		# 机场坪面/远城街道等铺装区：表面按道路、高度取铺装面
+		# （否则在机场开车会按草地抓地 0.46 + 3.6 倍阻力被大幅减速）
+		for pad in road_pads:
+			var pdx: float = x - (pad["c"] as Vector2).x
+			var pdz: float = z - (pad["c"] as Vector2).y
+			var la: float = pdx * float(pad["fx"]) + pdz * float(pad["fz"])
+			var ll: float = pdx * float(pad["fz"]) - pdz * float(pad["fx"])
+			if absf(la) <= float(pad["hf"]) and absf(ll) <= float(pad["hl"]):
+				_scratch["surf"] = "road"
+				_scratch["height"] = float(pad["y"])
+				break
 		# 越野高度必须取地形高程：地面网格已按 _terr 抬起（盘山一带到 72m），
 		# 这里再返回 0 的话车会从山体内部穿过去，进入某条路的判定范围时
 		# 又被一帧抬升几十米
-		_scratch["height"] = terrain_height(x, z)
+		if _scratch["surf"] != "road":
+			_scratch["height"] = terrain_height(x, z)
 		_scratch["slope"] = 0.0
 		_scratch["wall"] = 10000.0
 		_scratch["dist_sq"] = best_dist * best_dist
@@ -1495,6 +1510,8 @@ func _build_airport(center: Vector2, heading: float) -> void:
 	# 停机坪整体垫层（跑道 + 联络道范围）
 	var pad_c: Vector2 = to_local.call(0.0, 60.0)
 	put.call(pad_c.x, pad_c.y, 1500.0, 400.0, 0.06, conc)
+	road_pads.append({"c": pad_c, "fx": fwd.x, "fz": fwd.y,
+			"hf": 750.0, "hl": 200.0, "y": base_y + 0.06})
 	# 跑道 1300×46
 	var rw_c: Vector2 = to_local.call(0.0, 0.0)
 	put.call(rw_c.x, rw_c.y, 1300.0, 46.0, 0.05, asphalt)
@@ -1579,6 +1596,10 @@ func _build_far_city() -> void:
 		hmi.mesh = hm
 		hmi.position = Vector3(c.x, base_y + 0.03, c.y + off)
 		add_child(hmi)
+		road_pads.append({"c": Vector2(c.x + off, c.y), "fx": 0.0, "fz": 1.0,
+				"hf": 520.0, "hl": 7.0, "y": base_y + 0.06})
+		road_pads.append({"c": Vector2(c.x, c.y + off), "fx": 1.0, "fz": 0.0,
+				"hf": 520.0, "hl": 7.0, "y": base_y + 0.06})
 	# 楼群：每街区 2~4 栋（贴纹理，登记碰撞）
 	var xfs: Array[Transform3D] = []
 	var cols: Array[Color] = []
