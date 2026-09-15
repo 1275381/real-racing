@@ -558,6 +558,7 @@ func set_ground_visible(v: bool) -> void:
 ## 大世界雾距调整（自由漫游用：世界扩大后默认雾距会吞掉远景）
 var _fog_base_near := 240.0
 var _fog_base_far := 1650.0
+var underground := false         # 相机处于地下（车库）：关体积雾、压雾距
 
 func set_fog_range(near: float, far: float) -> void:
 	_fog_base_near = near
@@ -590,6 +591,9 @@ func set_sky_palette(top: Color, mid: Color, bot: Color) -> void:
 ## 环境光 / 雾 / 体积雾（fog_mul：天气对雾距基准的缩放）
 func set_atmosphere(amb_col: Color, amb_e: float, fog_col: Color,
 		fog_mul: float, vol_mul: float) -> void:
+	if underground:
+		fog_mul = minf(fog_mul, 0.4)   # 地下无大气雾
+		vol_mul = 0.1
 	_env.ambient_light_color = amb_col
 	_env.ambient_light_energy = amb_e
 	_env.fog_light_color = fog_col

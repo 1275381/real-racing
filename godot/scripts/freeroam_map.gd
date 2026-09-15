@@ -203,6 +203,8 @@ func build() -> void:
 	_make_cross_highways()
 	_make_ramps()
 	_make_outskirts_roads()
+	_build_airport(AIRPORT_POS, AIRPORT_HEADING)
+	_build_far_city()
 	print("[map] 路网采样 %d 点 %dms" % [n, Time.get_ticks_msec() - t0])
 	_mark_road_blocks()
 	_build_road_meshes()
@@ -217,8 +219,6 @@ func build() -> void:
 	_make_garage()
 	_make_parts_shop()
 	_make_gunshop()
-	_build_airport(AIRPORT_POS, AIRPORT_HEADING)
-	_build_far_city()
 	_build_minimap()
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
@@ -618,22 +618,22 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 		_scratch["lat_off"] = 999.0
 		_scratch["ang"] = roads[best_road].ang[best_i] if best_road >= 0 else 0.0
 		_scratch["surf"] = "grass"
-		# 机场坪面/远城街道等铺装区：表面按道路、高度取铺装面
-		# （否则在机场开车会按草地抓地 0.46 + 3.6 倍阻力被大幅减速）
-		for pad in road_pads:
-			var pdx: float = x - (pad["c"] as Vector2).x
-			var pdz: float = z - (pad["c"] as Vector2).y
-			var la: float = pdx * float(pad["fx"]) + pdz * float(pad["fz"])
-			var ll: float = pdx * float(pad["fz"]) - pdz * float(pad["fx"])
-			if absf(la) <= float(pad["hf"]) and absf(ll) <= float(pad["hl"]):
-				_scratch["surf"] = "road"
-				_scratch["height"] = float(pad["y"])
-				break
 		# 越野高度必须取地形高程：地面网格已按 _terr 抬起（盘山一带到 72m），
 		# 这里再返回 0 的话车会从山体内部穿过去，进入某条路的判定范围时
 		# 又被一帧抬升几十米
-		if _scratch["surf"] != "road":
-			_scratch["height"] = terrain_height(x, z)
+		_scratch["height"] = terrain_height(x, z)
+		# 机场坪面/远城街道/地下车库地坪等铺装区：草地按道路计（高度取铺装面）
+		for pad in road_pads:
+			var pdx: float = x - (pad["c"] as Vector2).x
+			var pdz: float = z - (pad["c"] as Vector2).y
+			if vy > -1.0e8 and absf(vy - float(pad["y"])) > 3.0:
+				continue
+			var pla: float = pdx * float(pad["fx"]) + pdz * float(pad["fz"])
+			var pll: float = pdx * float(pad["fz"]) - pdz * float(pad["fx"])
+			if absf(pla) <= float(pad["hf"]) and absf(pll) <= float(pad["hl"]):
+				_scratch["surf"] = "road"
+				_scratch["height"] = float(pad["y"])
+				break
 		_scratch["slope"] = 0.0
 		_scratch["wall"] = 10000.0
 		_scratch["dist_sq"] = best_dist * best_dist
@@ -693,6 +693,19 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 	_scratch["wall"] = wall
 	_scratch["surf"] = "grass" if al > road.half_w + 1.2 \
 			else ("curb" if al > road.half_w else "road")
+	# 铺装区覆写（机场坪面/远城街道/地下车库地坪）：草地按道路计
+	if _scratch["surf"] == "grass":
+		for pad in road_pads:
+			var pdx: float = x - (pad["c"] as Vector2).x
+			var pdz: float = z - (pad["c"] as Vector2).y
+			if vy > -1.0e8 and absf(vy - float(pad["y"])) > 3.0:
+				continue   # 车辆高度与该铺装层差太多（地下/地表互不误判）
+			var pla: float = pdx * float(pad["fx"]) + pdz * float(pad["fz"])
+			var pll: float = pdx * float(pad["fz"]) - pdz * float(pad["fx"])
+			if absf(pla) <= float(pad["hf"]) and absf(pll) <= float(pad["hl"]):
+				_scratch["surf"] = "road"
+				_scratch["height"] = float(pad["y"])
+				break
 	return _scratch
 
 
@@ -1568,6 +1581,147 @@ func _build_airport(center: Vector2, heading: float) -> void:
 	add_child(cab)
 	obstacles_box.append({"c": twr, "hx": 4.5, "hz": 4.5, "rot": 0.0,
 			"top": base_y + 34.0})
+	_build_airport_access()
+
+
+## 航站楼地面通道：连接公路 + 航站楼回车环道 + 地下停车库（入口/出口坡道下到 -7m）
+func _build_airport_access() -> void:
+	var base_y := terrain_height(AIRPORT_POS.x, AIRPORT_POS.y) + 0.04
+	var fwd := Vector2(sin(AIRPORT_HEADING), cos(AIRPORT_HEADING))
+	var right := Vector2(cos(AIRPORT_HEADING), -sin(AIRPORT_HEADING))
+	var lp := func(lx: float, ly: float) -> Vector2:
+		return AIRPORT_POS + fwd * lx + right * ly
+	var loop_y := terrain_height(AIRPORT_POS.x, AIRPORT_POS.y) + 0.1
+	# ---- 航站楼回车环道（闭合路，紧贴航站楼背面）----
+	var loop := [lp.call(-180.0, 415.0), lp.call(300.0, 415.0),
+			lp.call(300.0, 433.0), lp.call(-180.0, 433.0)]
+	_make_road(loop, [loop_y, loop_y, loop_y, loop_y], true, 6.5, false)
+	# ---- 连接公路：最近主路采样点 → 环道西角 ----
+	var best := INF
+	var bp := Vector2.ZERO
+	var by := 0.0
+	for road in roads:
+		if road.elevated:
+			continue
+		for pt in road.pts:
+			var d: float = Vector2(pt.x, pt.z).distance_to(
+					lp.call(-180.0, 415.0))
+			if d < best:
+				best = d
+				bp = Vector2(pt.x, pt.z)
+				by = pt.y
+	var c_mid: Vector2 = bp.lerp(lp.call(-180.0, 415.0), 0.55) \
+			+ Vector2(0.0, 60.0)
+	_make_road([bp, c_mid, lp.call(-180.0, 415.0)],
+			[by, loop_y, loop_y], false, 6.5, false)
+	# ---- 地下车库：入口坡道 → 地下环路 → 出口坡道（降到 -6.8m）----
+	var ug_y := -6.8
+	_make_road([lp.call(300.0, 433.0), lp.call(352.0, 452.0),
+			lp.call(400.0, 430.0)],
+			[loop_y, loop_y - 3.2, ug_y], false, 6.0, false)
+	var ug_loop := [lp.call(400.0, 430.0), lp.call(400.0, 260.0),
+			lp.call(120.0, 230.0), lp.call(-60.0, 330.0),
+			lp.call(-60.0, 433.0)]
+	_make_road(ug_loop, [ug_y, ug_y, ug_y, ug_y, ug_y], true, 7.0, false)
+	_make_road([lp.call(-60.0, 433.0), lp.call(-110.0, 452.0),
+			lp.call(-150.0, 430.0)],
+			[ug_y, loop_y - 3.4, loop_y], false, 6.0, false)
+	# 车库整层地坪铺装（vy 门控：只在地下高度命中）
+	var gc: Vector2 = lp.call(240.0, 320.0)
+	var gright := Vector2(cos(AIRPORT_HEADING), -sin(AIRPORT_HEADING))
+	road_pads.append({"c": gc, "fx": gright.x, "fz": gright.y,
+			"hf": 150.0, "hl": 185.0, "y": ug_y})
+	# ---- 地下车库视觉：墙面 / 顶板 / 照明 / P 标记 / 车位线 ----
+	var wall_mat := StandardMaterial3D.new()
+	wall_mat.albedo_color = Color(0.32, 0.34, 0.38)
+	wall_mat.roughness = 0.9
+	var dark_mat := StandardMaterial3D.new()
+	dark_mat.albedo_color = Color(0.1, 0.11, 0.13)
+	dark_mat.roughness = 1.0
+	var wall_box := func(a: Vector2, b: Vector2, h: float,
+			th := 1.2) -> void:
+		var mid: Vector2 = (a + b) * 0.5
+		var d: Vector2 = b - a
+		var ln: float = d.length()
+		var ang: float = atan2(d.x, d.y)
+		var mi := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(th, h, ln)
+		mesh.material = wall_mat
+		mi.mesh = mesh
+		mi.position = Vector3(mid.x, base_y - h * 0.5, mid.y)
+		mi.rotation.y = ang
+		add_child(mi)
+	# 地下环路外墙（环路中心线外扩 9.6m ≈ 软墙位置）
+	var outer_a: Vector2 = lp.call(409.6, 439.6)
+	var outer_b: Vector2 = lp.call(409.6, 250.4)
+	var outer_c: Vector2 = lp.call(129.6, 220.4)
+	var outer_d: Vector2 = lp.call(-69.6, 320.4)
+	var outer_e: Vector2 = lp.call(-69.6, 442.6)
+	wall_box.call(outer_a, outer_b, 12.0)
+	wall_box.call(outer_b, outer_c, 12.0)
+	wall_box.call(outer_c, outer_d, 12.0)
+	wall_box.call(outer_d, outer_e, 12.0)
+	wall_box.call(outer_e, outer_a, 12.0)
+	# 顶板（地下空间上方的深色天花板）
+	var ce := MeshInstance3D.new()
+	var cm := BoxMesh.new()
+	cm.size = Vector3(520.0, 0.5, 260.0)
+	cm.material = dark_mat
+	ce.mesh = cm
+	var cc: Vector2 = lp.call(170.0, 330.0)
+	ce.position = Vector3(cc.x, base_y - 1.2, cc.y)
+	add_child(ce)
+	# 地坪板（深色，路面网格之外的地面）
+	var fl := MeshInstance3D.new()
+	var flm := BoxMesh.new()
+	flm.size = Vector3(300.0, 0.3, 270.0)
+	flm.material = dark_mat
+	fl.mesh = flm
+	var fc: Vector2 = lp.call(300.0, 325.0)
+	fl.position = Vector3(fc.x, base_y - 7.05, fc.y)
+	add_child(fl)
+	# 照明：环路沿线 6 盏顶灯 + 灯带
+	for li in 6:
+		var lamp := OmniLight3D.new()
+		lamp.light_color = Color(0.85, 0.9, 1.0)
+		lamp.light_energy = 2.2
+		lamp.omni_range = 60.0
+		var la: Vector2 = lp.call(360.0 - float(li) * 110.0, 335.0)
+		lamp.position = Vector3(la.x, base_y - 2.6, la.y)
+		add_child(lamp)
+		var strip := MeshInstance3D.new()
+		var sm := BoxMesh.new()
+		sm.size = Vector3(6.0, 0.12, 1.4)
+		var smat := StandardMaterial3D.new()
+		smat.albedo_color = Color(0.95, 0.97, 1.0)
+		smat.emission_enabled = true
+		smat.emission = Color(0.85, 0.92, 1.0)
+		smat.emission_energy_multiplier = 2.0
+		sm.material = smat
+		strip.mesh = sm
+		strip.position = Vector3(la.x, base_y - 2.2, la.y)
+		add_child(strip)
+	# 入口 P 标记 + 车位线
+	var pmark := Label3D.new()
+	pmark.text = "P 停车"
+	pmark.font_size = 200
+	pmark.modulate = Color(0.4, 0.75, 1.0)
+	pmark.outline_size = 36
+	var pe: Vector2 = lp.call(376.0, 470.0)
+	pmark.position = Vector3(pe.x, base_y + 6.0, pe.y)
+	add_child(pmark)
+	var line_mat := StandardMaterial3D.new()
+	line_mat.albedo_color = Color(0.9, 0.92, 0.95)
+	for li in 5:
+		var lm := MeshInstance3D.new()
+		var lmesh := BoxMesh.new()
+		lmesh.size = Vector3(0.25, 0.02, 6.0)
+		lmesh.material = line_mat
+		lm.mesh = lmesh
+		var lpos: Vector2 = lp.call(120.0 + li * 40.0, 244.0)
+		lm.position = Vector3(lpos.x, ug_y + 0.04, lpos.y)
+		add_child(lm)
 
 
 ## 远方城市：街网 + 楼群 + 自己的机场（只能驾机抵达）

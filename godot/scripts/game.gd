@@ -1721,6 +1721,7 @@ func _process(dt_real: float) -> void:
 		env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
 	# 昼夜 + 天气推进（所有模式共享同一片天）
 	if day_cycle != null:
+		env.underground = camera.position.y < -2.0
 		day_cycle.advance(dt)
 		day_cycle.apply(env)
 		if _headlight != null and is_instance_valid(_headlight):

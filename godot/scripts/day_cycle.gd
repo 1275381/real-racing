@@ -84,6 +84,8 @@ func apply(env) -> void:
 	var fog_mul := 1.0
 	var vol_mul := 1.0
 	var amb_mul := 1.0
+	if env.get("underground") != null and bool(env.get("underground")):
+		amb_mul = 1.15   # 地下靠灯光照明，环境光略提
 	match weather:
 		"fog":
 			dim = 0.75
