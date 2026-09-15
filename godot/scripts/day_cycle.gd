@@ -127,6 +127,16 @@ func apply(env) -> void:
 			_snow.global_position = Vector3(cp.x, cp.y + 10.0, cp.z)
 
 
+## 天气抓地倍率（车辆物理每帧读取：雨 0.8 / 雪 0.6，随强度平滑）
+func grip_mul() -> float:
+	var mul := 1.0
+	match weather:
+		"rain": mul = 0.8
+		"snow": mul = 0.6
+		"fog": mul = 0.92
+	return lerpf(1.0, mul, weather_intensity)
+
+
 ## 时刻字符串（08:24）
 func clock_text() -> String:
 	var hh := int(time_min / 60.0)

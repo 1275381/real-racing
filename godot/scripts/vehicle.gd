@@ -21,6 +21,7 @@ var _ev_gear := 0                 # 电驱虚拟 7 段位（仅声浪用）：�
 # ---- 氮气（Shift 按住喷射）----
 var nitro := 100.0                # 储量 0..100（满罐 3.3 秒）
 var nitro_active := false         # 外部输入：驾驶中按住 Shift（游戏侧每帧写入）
+var weather_grip := 1.0           # 天气抓地倍率（晴 1 / 雨 0.8 / 雪 0.6，游戏侧每帧写入）
 const NITRO_BURN := 30.0          # 每秒消耗
 const NITRO_REGEN := 7.0          # 松开回充（约 14 秒回满）
 const NITRO_TRACTION := 1.5       # 喷射牵引倍率
@@ -158,7 +159,9 @@ func step(dt: float) -> void:
 	var eff_max := Tuning.STEER_MAX / (1.0 + pow(spd / Tuning.STEER_FALLOFF_SPEED,
 			Tuning.STEER_FALLOFF_POW) * Tuning.STEER_FALLOFF_STR)
 	var delta := input_steer * eff_max
+	var wg := clampf(weather_grip, 0.0, 1.0)
 	var yaw_t := (vf * tan(delta)) / WHEELBASE
+	yaw_t *= lerpf(0.8, 1.0, wg)   # 雨雪推头：转向响应变钝，弯中往外滑
 	steer_vis = RRUtil.damp(steer_vis, delta, 12.0, dt)
 
 	var slip_abs := absf(vl)
@@ -192,7 +195,7 @@ func step(dt: float) -> void:
 
 	var decel := 0.0
 	if grounded and input_brake > 0.0 and not reverse_intent and absf(vf) > 0.3:
-		decel += brake_power * grip * input_brake   # ≈1.8g 上限：制动有力但不瞬停
+		decel += brake_power * grip * wg * input_brake   # ≈1.8g 上限；雨雪制动变长
 	if grounded and input_handbrake and absf(vf) > 0.3:
 		decel += 3.8
 	# 倒车中踩油门：先强力刹停，速度回正后上面的前进驱动自动接管
@@ -234,12 +237,18 @@ func step(dt: float) -> void:
 	var grip_rate := Tuning.GRIP_RATE * grip * grip_mul * (0.05 if not grounded else 1.0)
 	if drift_tire < 1.0 and (drifting or _drift_hold):
 		grip_rate *= drift_tire   # 漂移胎：滑移中侧滑回收更慢，甩尾更持久
-	if grounded and absf(vl) < Tuning.DRIFT_THRESH and not input_handbrake:
+	# 天气侧滑：雨/雪弯中注入向外侧滑（推头），天气抓地越低滑越多；
+	# 抓地尚可（晴）时保持原有的完全吸附走线
+	var slip_inject := absf(yaw_rate) * spd * (1.0 - wg) * 0.9 * dt
+	if input_steer != 0.0 and absf(vf) > 1.0:
+		vl -= signf(input_steer * vf) * slip_inject
+	if grounded and (absf(vl) < Tuning.DRIFT_THRESH and wg > 0.9 \
+			or (absf(vl) < 0.5 and wg > 0.6)) and not input_handbrake:
 		var spd_total := sqrt(vf * vf + vl * vl)
 		vf = (signf(vf) if vf != 0.0 else 1.0) * spd_total
 		vl = 0.0
 	else:
-		vl *= exp(-grip_rate * dt)
+		vl *= exp(-grip_rate * lerpf(0.42, 1.0, wg) * dt)
 
 	# 惯性漂移状态机：手刹+方向+速度 → 起漂；松手刹后靠低抓地自然滑一段，
 	# 侧滑耗尽 / 收油 / 失速才退出

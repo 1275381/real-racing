@@ -1997,6 +1997,7 @@ func _step_sim(h: float) -> void:
 			pin.input_steer = inp_r["steer"]
 			pin.input_handbrake = inp_r["handbrake"]
 			pin.nitro_active = Input.is_physical_key_pressed(KEY_SHIFT)
+			pin.weather_grip = day_cycle.grip_mul() if day_cycle != null else 1.0
 			freeroam.vehicle_y = pin.pos.y
 			freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
 			pin.step(h)
@@ -2129,8 +2130,10 @@ func _step_sim(h: float) -> void:
 		rec.ai.rubber = -clampf(sec_gap * 0.012, -0.05, 0.06)
 		rec.ai.update(h, others)
 
-	# 物理步进
+	# 物理步进（雨/雪天气抓地对全部车辆生效）
+	var w_grip: float = day_cycle.grip_mul() if day_cycle != null else 1.0
 	for rec in cars:
+		rec.veh.weather_grip = w_grip
 		rec.veh.step(h)
 	_resolve_car_collisions()
 
