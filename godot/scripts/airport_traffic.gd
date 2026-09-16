@@ -12,6 +12,12 @@ const WALKERS_PER_AIRPORT := 8 # 登机人流数
 var airports: Array = []
 var _t := 0.0
 var ride_names := ["城市机场", "远城机场"]
+var fm = null                   # freeroam 引用（注册坡道/货仓铺装）
+var cargo_pos := Vector3.ZERO   # 货仓取货点
+var cargo_taken := false
+var cargo_crates: Node3D = null
+var cargo_ramp_base := Vector2.ZERO   # 坡道接地端（探针/导航用）
+var cargo_ramp_up := Vector2.ZERO     # 上坡方向（水平单位向量）
 
 # ---- 班机载客（F 登机 → 起飞 → 巡航 → 降落 → 下机）----
 var ride_active := false
@@ -27,7 +33,8 @@ var ride_gear: Node3D = null
 var ride_wps: Array = []           # 载客滑行航路点
 
 
-func setup(spots: Array) -> void:
+func setup(spots: Array, fm_ref = null) -> void:
+	fm = fm_ref
 	for s in spots:
 		var origin: Vector2 = s["origin"]
 		var heading: float = float(s["heading"])
@@ -57,6 +64,89 @@ func setup(spots: Array) -> void:
 		for i in WALKERS_PER_AIRPORT:
 			ap["walkers"].append(_make_walker(ap, i))
 		airports.append(ap)
+	_build_cargo_plane(spots[0]["origin"], float(spots[0]["heading"]))
+
+
+## 货运任务：客机停在停机坪，后舱门坡道放平，车辆可驶入货仓夺货
+func _build_cargo_plane(origin: Vector2, airport_heading: float) -> void:
+	var ph := airport_heading + PI   # 机尾朝停机坪开阔侧
+	print("[cp] fm非空=", fm != null, " pads=", fm.road_pads.size() if fm != null else -1)
+	var axis := Vector2(sin(ph), cos(ph))          # 机头方向
+	var rear_dir := -axis
+	var rear := origin + rear_dir * 14.0            # 机尾位置
+	var pos := Vector3(origin.x, 0.1, origin.y)
+	var vis := _build_airliner(Color(0.75, 0.72, 0.62),
+			Color(0.85, 0.6, 0.1))
+	vis.position = Vector3(pos.x, 0.1, pos.z)
+	vis.rotation.y = ph
+	add_child(vis)
+	# 尾部舱门坡道（斜板到底）
+	var ramp := MeshInstance3D.new()
+	var rm := BoxMesh.new()
+	rm.size = Vector3(5.6, 0.3, 13.4)
+	var rmat := StandardMaterial3D.new()
+	rmat.albedo_color = Color(0.45, 0.44, 0.4)
+	rmat.roughness = 0.85
+	rm.material = rmat
+	ramp.mesh = rm
+	var rc: Vector2 = rear + rear_dir * 5.5
+	var slope := atan2(2.5, 11.0)
+	ramp.position = Vector3(rc.x, 1.25, rc.y)
+	ramp.rotation.y = ph + PI
+	ramp.rotation.x = -slope * signf(cos(ph)) if absf(cos(ph)) > 0.01 \
+			else -slope
+	add_child(ramp)
+	# 货仓内货箱
+	var crates := Node3D.new()
+	crates.name = "cargo_crates"
+	add_child(crates)
+	var cc: Vector2 = rear - rear_dir * 4.0
+	cargo_ramp_base = Vector2(rc.x, rc.y)
+	cargo_ramp_up = -rear_dir
+	cargo_pos = Vector3(cc.x, 2.55, cc.y)
+	var cm := StandardMaterial3D.new()
+	cm.albedo_color = Color(0.72, 0.5, 0.16)
+	for ci in 4:
+		var box := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		var s := 1.3 - ci * 0.12
+		bm.size = Vector3(s, 1.1, s)
+		bm.material = cm
+		box.mesh = bm
+		box.position = Vector3(cc.x + (ci % 2) * 1.4 - 0.7, 2.75 + (ci / 2) * 1.15,
+				cc.y + (ci / 2) * 1.2 - 0.6)
+		crates.add_child(box)
+	cargo_crates = crates
+	# 坡道 + 货仓铺装（线性坡度 pad：y→y2）
+	if fm != null:
+		var fwd2 := Vector2(sin(ph + PI), cos(ph + PI))   # 坡道沿机尾方向
+		fm.road_pads.append({"c": Vector2(rc.x, rc.y), "fx": fwd2.x,
+				"fz": fwd2.y, "hf": 8.2, "hl": 3.2, "y": 2.6, "y2": 0.1})
+		var hc: Vector2 = rear - rear_dir * 5.0
+		fm.road_pads.append({"c": Vector2(hc.x, hc.y), "fx": fwd2.x,
+				"fz": fwd2.y, "hf": 5.0, "hl": 3.2, "y": 2.6, "y2": 2.6})
+
+
+## 车辆是否在货仓内（水平距离 + 舱内高度频段）
+func cargo_in_hold(pos: Vector3) -> bool:
+	if cargo_taken:
+		return false
+	var hd: float = Vector2(pos.x - cargo_pos.x, pos.z - cargo_pos.z).length()
+	return hd < 6.5 and pos.y > 1.0 and pos.y < 5.0
+
+
+## 取走货物（货箱消失）
+func take_cargo() -> void:
+	cargo_taken = true
+	if cargo_crates != null:
+		cargo_crates.visible = false
+
+
+## 新的一天：货物补充
+func respawn_cargo() -> void:
+	cargo_taken = false
+	if cargo_crates != null:
+		cargo_crates.visible = true
 
 
 ## 每帧维护：班机被调走后 30 秒自动补充新班机
@@ -248,9 +338,9 @@ func _update_ride(dt: float) -> void:
 
 
 func _ground_y(origin: Vector2) -> float:
-	var fm = get_parent()
-	if fm != null and fm.has_method("terrain_height"):
-		return float(fm.terrain_height(origin.x, origin.y))
+	var parent = get_parent()
+	if parent != null and parent.has_method("terrain_height"):
+		return float(parent.terrain_height(origin.x, origin.y))
 	return 0.0
 
 

@@ -452,6 +452,8 @@ var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行�
 var airport_traffic: AirportTraffic  # 机场氛围（客机起降 + 登机人流）
 var _roam_vs := 0.0                # 升降率平滑（仪表）
 var airliner_ride := false         # 正在乘班机飞行
+var cargo_state := "ready"         # 货运任务：ready 备货 / escape 逃脱中 / rewarded 已结算
+var _cargo_last_day := 0           # 货物补充的日期标记
 var day_cycle: DayCycle            # 昼夜 + 天气
 var _headlight: SpotLight3D        # 玩家车头灯（夜色自动点亮）
 
@@ -1351,7 +1353,7 @@ func enter_roam() -> void:
 			{"origin": FreeroamMap.AIRPORT_POS, "heading": FreeroamMap.AIRPORT_HEADING},
 			{"origin": FreeroamMap.FAR_CITY_POS + Vector2(760.0, -620.0),
 					"heading": FreeroamMap.FAR_CITY_HEADING},
-		])
+		], freeroam)
 	airport_traffic.set_process(true)
 	hud.add_map_marker(FreeroamMap.AIRPORT_POS.x, FreeroamMap.AIRPORT_POS.y, "机")
 	# 战机模式：机场停机坪出发（W 推油门起飞）
@@ -1730,6 +1732,11 @@ func _process(dt_real: float) -> void:
 		hud.update_clock(day_cycle.clock_text(), day_cycle.phase_text(),
 				day_cycle.weather_text())
 		hud.set_clock_visible(state != ST.GARAGE)
+		if day_cycle.day_index > _cargo_last_day:
+			_cargo_last_day = day_cycle.day_index
+			if cargo_state != "escape" and airport_traffic != null:
+				airport_traffic.respawn_cargo()
+				cargo_state = "ready"
 	env.update_clouds(dt)
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
@@ -2014,10 +2021,30 @@ func _step_sim(h: float) -> void:
 		if airport_traffic != null:
 			airport_traffic._t += h
 			airport_traffic.tick(h)
+			for ap in airport_traffic.airports:
+				for pl in ap["planes"]:
+					airport_traffic._update_plane(ap, pl, h)
+				airport_traffic._update_walkers(ap, h)
 		freeroam.update_doors(h, onfoot.pos if on_foot else pin.pos)
 		if on_foot:
 			onfoot.fire_block = freeroam.nearest_closed_door(
 					onfoot.pos, 4.5) >= 0
+		# 货运任务：车辆驶入货仓夺货 → 大量警察 → 逃脱领赏
+		if cargo_state == "ready" and airport_traffic != null \
+				and airport_traffic.cargo_in_hold(pin.pos):
+			cargo_state = "escape"
+			airport_traffic.take_cargo()
+			if npc != null:
+				npc.trigger_wanted()
+				npc.escalate()
+			hud.show_center("货物到手！", "大量警察正在赶来 · 甩掉他们领取报酬",
+					4000)
+		elif cargo_state == "escape" and npc != null and not npc.wanted \
+				and npc.police.is_empty():
+			cargo_state = "rewarded"
+			coins += 5000
+			_save_settings()
+			hud.show_center("成功脱身！", "货物报酬 +5000 金币", 4000)
 			for ap in airport_traffic.airports:
 				for p in ap["planes"]:
 					airport_traffic._update_plane(ap, p, h)
