@@ -7,6 +7,7 @@ const DAY_REAL_SECONDS := 1200.0   # 现实 20 分钟 = 游戏 24 小时
 const MIN_PER_SEC := 1440.0 / DAY_REAL_SECONDS
 
 var time_min := 480.0              # 游戏时刻（分钟，480 = 08:00 开局）
+var day_index := 0                 # 第几天（时间跨过午夜 +1）
 var weather := "clear"             # clear / fog / rain / snow
 var weather_intensity := 0.0       # 当前天气强度 0..1（平滑过渡）
 var night_f := 0.0                 # 夜色系数 0..1
@@ -26,7 +27,10 @@ func setup(env, cam: Camera3D) -> void:
 
 ## 每帧推进（真实 dt 秒）
 func advance(dt: float) -> void:
+	var prev := time_min
 	time_min = fmod(time_min + dt * MIN_PER_SEC, 1440.0)
+	if time_min < prev:
+		day_index += 1   # 跨过午夜：新的一天
 	# ---- 天气状态机：到点掷骰换天气，强度平滑过渡 ----
 	_weather_switch -= dt
 	if _weather_switch <= 0.0:

@@ -277,6 +277,8 @@ func step(dt: float) -> void:
 	# ---- 软墙 ----
 	var wall: float = q.get("wall", trk.wall_lat)
 	if absf(lat_off) > wall:
+		if OS.get_environment("RR_DBG") != "":
+			print("[veh] 软墙 lat_off=%.1f wall=%.1f pos=%s" % [lat_off, wall, str(pos)])
 		var side := signf(lat_off)
 		var la := cos(q["ang"])
 		var lb := -sin(q["ang"])       # 该段左向量(x,z)

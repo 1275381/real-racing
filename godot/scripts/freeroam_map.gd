@@ -626,22 +626,36 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 		# 这里再返回 0 的话车会从山体内部穿过去，进入某条路的判定范围时
 		# 又被一帧抬升几十米
 		_scratch["height"] = terrain_height(x, z)
-		# 机场坪面/远城街道/地下车库地坪等铺装区：草地按道路计（高度取铺装面）
+		# 铺装区覆写（机场坪面/远城街道/地下车库地坪/货机坡道）：草地按道路计
+		# 多层重叠时取面积最小（最具体）的一层；vy 差 3m 以上不匹配（地下/地表互不误判）
+		var best_pad = null
+		var best_area := INF
+		var best_hgt := INF
 		for pad in road_pads:
 			var pdx: float = x - (pad["c"] as Vector2).x
 			var pdz: float = z - (pad["c"] as Vector2).y
-			if vy > -1.0e8 and absf(vy - float(pad["y"])) > 3.0:
-				continue
 			var pla: float = pdx * float(pad["fx"]) + pdz * float(pad["fz"])
 			var pll: float = pdx * float(pad["fz"]) - pdz * float(pad["fx"])
-			if absf(pla) <= float(pad["hf"]) and absf(pll) <= float(pad["hl"]):
-				_scratch["surf"] = "road"
-				_scratch["height"] = float(pad["y"])
-				break
-		_scratch["slope"] = 0.0
-		_scratch["wall"] = 10000.0
-		_scratch["dist_sq"] = best_dist * best_dist
-		return _scratch
+			if absf(pla) > float(pad["hf"]) or absf(pll) > float(pad["hl"]):
+				continue
+			var hgt: float = float(pad["y"])
+			if pad.has("y2"):
+				var tt: float = clampf((pla / float(pad["hf"]) + 1.0) * 0.5,
+						0.0, 1.0)
+				hgt = lerpf(float(pad["y"]), float(pad["y2"]), tt)
+			if vy > -1.0e8 and absf(vy - hgt) > 3.0:
+				continue   # 车辆高度与该层差太多（地下/地表/空中互不误判）
+			var area: float = float(pad["hf"]) * float(pad["hl"])
+			if area < best_area:
+				best_area = area
+				best_pad = pad
+				best_hgt = hgt
+		if best_pad != null:
+			_scratch["surf"] = "road"
+			_scratch["height"] = best_hgt
+			_scratch["lat_off"] = 0.0
+			_scratch["wall"] = 100000.0   # 铺装区无软墙
+	return _scratch
 
 	# 重叠路段（匝道口/并线段/路口）取相近候选中最宽的软墙，消除隐形墙
 	var wall := roads[best_road].wall
@@ -709,6 +723,8 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 			if absf(pla) <= float(pad["hf"]) and absf(pll) <= float(pad["hl"]):
 				_scratch["surf"] = "road"
 				_scratch["height"] = float(pad["y"])
+				_scratch["lat_off"] = 0.0
+				_scratch["wall"] = 100000.0
 				break
 	return _scratch
 
@@ -1725,6 +1741,10 @@ func _build_airport_access() -> void:
 			+ Vector2(0.0, 60.0)
 	_make_road([bp, c_mid, lp.call(-180.0, 415.0)],
 			[by, loop_y, loop_y], false, 6.5, false)
+	# ---- 货运坪面车道：末端以缓坡爬升至货仓地板高度（与尾门坡道衔接）----
+	_make_road([lp.call(300.0, 415.0), lp.call(250.0, 300.0),
+			lp.call(180.0, 150.0), lp.call(19.5, 0.0)],
+			[loop_y, loop_y, loop_y, 2.55], false, 9.0, false)
 	# ---- 地下车库：入口坡道 → 地下环路 → 出口坡道（降到 -6.8m）----
 	var ug_y := -6.8
 	_make_road([lp.call(300.0, 433.0), lp.call(352.0, 452.0),

@@ -152,9 +152,9 @@ func update_player_plane(dt: float) -> void:
 				-0.55, 0.6)
 	else:
 		p["pitch"] = move_toward(float(p["pitch"]), 0.0, 0.35 * dt)
-	# 速度：油门目标 + 爬升掉速
-	var target_spd := PLANE_SPEED_MIN \
-			+ (PLANE_SPEED_MAX - PLANE_SPEED_MIN) * float(p["throttle"])
+	# 速度：油门目标（怠速滑行 16，可减速到落地判定线以下）+ 爬升掉速
+	var target_spd := 16.0 + (PLANE_SPEED_MAX - 16.0) \
+			* float(p["throttle"])
 	target_spd -= sin(float(p["pitch"])) * 14.0
 	p["speed"] = clampf(move_toward(float(p["speed"]), target_spd,
 			20.0 * dt), 12.0, PLANE_SPEED_MAX + 8.0)
@@ -176,7 +176,7 @@ func update_player_plane(dt: float) -> void:
 			clampf(p["pos"].z, -260.0, 260.0))
 	# 落地判定：贴地且低速
 	var alt: float = p["pos"].y - bmap.terrain_height(p["pos"].x, p["pos"].z)
-	p["landed"] = alt < PLANE_MIN_ALT + 0.6 and p["speed"] < 14.0
+	p["landed"] = alt < PLANE_MIN_ALT + 0.6 and p["speed"] < 18.0
 	if p["landed"]:
 		p["speed"] = maxf(0.0, float(p["speed"]) - 26.0 * dt)
 	_sync_plane_vis(p)
