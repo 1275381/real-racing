@@ -143,6 +143,10 @@ const WORLD_LIMIT := 16000.0                     # 战机可达世界边界
 
 ## 铺装区（机场坪面/远城街道）：query 回退时表面按道路计算，不再当草地减速
 var road_pads: Array = []
+
+## 门系统：leaves 为叶片节点（含铰链/滑轨动画），obs_i 指向 obstacles_box 的门板碰撞
+var doors: Array = []
+var doors_player_pos := Vector3.ZERO
 const GUNSHOP_DOOR := Vector2(-33.0, 46.0)  # 店门口（进入判定点，朝东）
 const GUNSHOP_W := 20.0
 const GUNSHOP_D := 14.0
@@ -1595,6 +1599,23 @@ func _build_airport(center: Vector2, heading: float) -> void:
 		tint.add_child(glabel)
 	# 端墙 fwd ±150
 	tbox.call(-150.0, 8.0, 0.0, 0.8, 16.0, 52.0, panel_col)
+	# ---- 门：主入口双开玻璃门（左键）+ 4 登机口自动滑门 ----
+	var glass_m := StandardMaterial3D.new()
+	glass_m.albedo_color = Color(0.62, 0.8, 0.9, 0.4)
+	glass_m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glass_m.roughness = 0.08
+	glass_m.metallic = 0.2
+	var frame_m := StandardMaterial3D.new()
+	frame_m.albedo_color = Color(0.3, 0.34, 0.4)
+	# 主入口（陆侧 lat+26，宽 18）：双开玻璃门
+	var main_d: Vector2 = to_local.call(0.0, 26.0)
+	add_door(Vector3(main_d.x, base_y + 0.1, main_d.y), heading + PI * 0.5,
+			18.0, 5.0, "swing", 2, glass_m)
+	# 登机口自动滑门 ×4（空侧 lat-26，宽 10）
+	for gx in gate_x:
+		var gd: Vector2 = to_local.call(gx, -26.0)
+		add_door(Vector3(gd.x, base_y + 0.1, gd.y), heading + PI * 0.5, 10.0,
+				4.5, "slide", 2, glass_m)
 	tbox.call(150.0, 8.0, 0.0, 0.8, 16.0, 52.0, panel_col)
 	# ---- 内饰 ----
 	for ci in 3:
@@ -1880,6 +1901,100 @@ func _build_far_city() -> void:
 	obstacles_box.append_array(obs)
 	# 远城机场
 	_build_airport(c + Vector2(760.0, -620.0), FAR_CITY_HEADING)
+
+
+## ================= 门系统 =================
+
+## 加一扇门：swing=铰链门（左键开），slide=自动滑门（靠近开）
+## center=门洞中心（地面），heading=门面法线朝向，width=门洞总宽
+func add_door(center: Vector3, heading: float, width: float, height: float,
+		kind: String, leaves: int, mat: Material) -> void:
+	var right := Vector2(cos(heading), -sin(heading))
+	var rv := Vector3(right.x, 0, right.y)
+	var leaf_w := width / float(leaves)
+	var door := {"center": center, "heading": heading, "width": width,
+			"kind": kind, "open": false, "t": 0.0, "leaves": [],
+			"auto": kind == "slide", "close_t": 0.0}
+	for i in leaves:
+		var hinge_off := -width * 0.5 + float(i) * leaf_w
+		var hinge := Node3D.new()
+		hinge.position = center + rv * hinge_off + Vector3(0, 0, 0)
+		add_child(hinge)
+		var panel := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(leaf_w - 0.12, height - 0.1, 0.12)
+		mesh.material = mat
+		panel.mesh = mesh
+		if kind == "slide":
+			panel.position = Vector3(0, height * 0.5, 0)
+		else:
+			panel.position = Vector3(rv.x * leaf_w * 0.5,
+					height * 0.5, rv.z * leaf_w * 0.5)
+		hinge.add_child(panel)
+		door["leaves"].append({"hinge": hinge, "panel": panel,
+				"base": hinge.position, "rv": rv, "lw": leaf_w})
+	# 门板碰撞（关：占满门洞；开：缩成薄条不挡路）
+	var obs := {"c": Vector2(center.x, center.z), "hx": width * 0.5,
+			"hz": 0.2, "rot": heading}
+	obstacles_box.append(obs)
+	door["obs"] = obs
+	doors.append(door)
+
+
+## 每帧更新门动画（pos=步行玩家位置）
+func update_doors(dt: float, pos: Vector3) -> void:
+	doors_player_pos = pos
+	for d in doors:
+		var near: bool = Vector2(pos.x, pos.z).distance_to(
+				Vector2(d["center"].x, d["center"].z)) < 4.0
+		var target := 0.0
+		if d["kind"] == "slide":
+			target = 1.0 if near else 0.0
+		else:
+			if d["open"]:
+				target = 1.0
+				if not near:
+					d["close_t"] = float(d.get("close_t")) - dt
+					if float(d["close_t"]) <= 0.0:
+						d["open"] = false
+						target = 0.0
+		var spd := 3.2 if d["kind"] == "slide" else 2.4
+		d["t"] = move_toward(float(d["t"]), target, spd * dt)
+		var t: float = d["t"]
+		var w: float = float(d["width"])
+		for li in (d["leaves"] as Array).size():
+			var leaf: Dictionary = d["leaves"][li]
+			var hinge: Node3D = leaf["hinge"]
+			if d["kind"] == "slide":
+				var dir_s := 1.0 if li % 2 == 0 else -1.0
+				hinge.position = Vector3(leaf["base"]) + \
+						Vector3(leaf["rv"].x, 0, leaf["rv"].y) * \
+						(dir_s * t * (w * 0.5))
+			else:
+				var dir_s := 1.0 if li % 2 == 0 else -1.0
+				hinge.rotation.y = -dir_s * t * 1.9
+		# 门板碰撞随开合变化：开过半即标记 off（步行推开不再阻挡）
+		var obs: Dictionary = d["obs"]
+		obs["hx"] = w * 0.5 * (1.0 - t) + 0.15 * t
+		obs["off"] = t > 0.6
+
+
+## 最近的未开门（左键交互用；返回 door 序号，-1 = 无）
+func nearest_closed_door(pos: Vector3, max_d: float) -> int:
+	for i in doors.size():
+		var d: Dictionary = doors[i]
+		if d["kind"] != "swing" or d["open"]:
+			continue
+		if Vector2(pos.x, pos.z).distance_to(
+				Vector2(d["center"].x, d["center"].z)) < max_d:
+			return i
+	return -1
+
+
+func open_door(i: int) -> void:
+	if i >= 0 and i < doors.size():
+		doors[i]["open"] = true
+		doors[i]["close_t"] = 8.0
 
 
 ## 远城区域判定（onfoot 边界钳制用：在远城内不按主城半径收边）
@@ -2936,8 +3051,6 @@ func _make_parts_shop() -> void:
 			"hx": 0.3, "hz": 1.5, "rot": 0.0})
 	obstacles_box.append({"c": Vector2(cx - SHOP_W * 0.5 + 0.3, cz + 4.5),
 			"hx": 0.3, "hz": 1.5, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx - SHOP_W * 0.5 + 0.3, cz),
-			"hx": 0.3, "hz": 3.0, "rot": 0.0})   # 门洞玻璃（进门按键，不通行）
 	# 招牌
 	var sign := Label3D.new()
 	sign.text = "配 件 店"
@@ -2949,6 +3062,20 @@ func _make_parts_shop() -> void:
 	sign.position = Vector3(cx - SHOP_W * 0.5 - 0.4, y + SHOP_H - 1.2, cz)
 	sign.rotation_degrees.y = -90.0
 	add_child(sign)
+	# 店内地板
+	var fl := MeshInstance3D.new()
+	var flm := BoxMesh.new()
+	flm.size = Vector3(SHOP_W - 0.8, 0.08, SHOP_D - 0.8)
+	var flm_mat := StandardMaterial3D.new()
+	flm_mat.albedo_color = Color(0.42, 0.36, 0.3)
+	flm_mat.roughness = 0.7
+	flm.material = flm_mat
+	fl.mesh = flm
+	fl.position = Vector3(cx, y + 0.04, cz)
+	add_child(fl)
+	# 西门木门（左键开启）
+	add_door(Vector3(cx - SHOP_W * 0.5 + 0.3, y, cz), -PI * 0.5, 5.6, 3.4,
+			"swing", 1, StandardMaterial3D.new())
 	_furnish_parts_shop(cx, cz, y)
 
 
@@ -3173,8 +3300,6 @@ func _make_gunshop() -> void:
 			"hx": 0.3, "hz": 1.5, "rot": 0.0})
 	obstacles_box.append({"c": Vector2(cx + GUNSHOP_W * 0.5 - 0.3, cz + 4.5),
 			"hx": 0.3, "hz": 1.5, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx + GUNSHOP_W * 0.5 - 0.3, cz),
-			"hx": 0.3, "hz": 3.0, "rot": 0.0})   # 门洞玻璃
 	# 招牌
 	var sign := Label3D.new()
 	sign.text = "枪 械 店"
@@ -3186,6 +3311,23 @@ func _make_gunshop() -> void:
 	sign.position = Vector3(cx + GUNSHOP_W * 0.5 + 0.4, y + GUNSHOP_H - 1.2, cz)
 	sign.rotation_degrees.y = 90.0
 	add_child(sign)
+	# 店内地板
+	var fl2 := MeshInstance3D.new()
+	var flm2 := BoxMesh.new()
+	flm2.size = Vector3(GUNSHOP_W - 0.8, 0.08, GUNSHOP_D - 0.8)
+	var flm2_mat := StandardMaterial3D.new()
+	flm2_mat.albedo_color = Color(0.24, 0.27, 0.33)
+	flm2_mat.roughness = 0.6
+	flm2.material = flm2_mat
+	fl2.mesh = flm2
+	fl2.position = Vector3(cx, y + 0.04, cz)
+	add_child(fl2)
+	# 西门木门（深色）
+	var door_mat := StandardMaterial3D.new()
+	door_mat.albedo_color = Color(0.35, 0.22, 0.14)
+	door_mat.roughness = 0.6
+	add_door(Vector3(cx + GUNSHOP_W * 0.5 - 0.3, y, cz), PI * 0.5, 5.6, 3.4,
+			"swing", 1, door_mat)
 	_furnish_gunshop(cx, cz, y)
 
 

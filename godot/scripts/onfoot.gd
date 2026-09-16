@@ -34,6 +34,7 @@ var fire_cd := 0.0
 var scoped := false      # 三倍镜开关（M 键切换，开火不再联动）
 var move_speed := 0.0
 var slide_t := 0.0       # 剩余滑铲时间（>0 = 铲行中）
+var fire_block := false  # 门旁屏蔽开枪（左键留给开门）
 var slide_cd := 0.0      # 滑铲冷却
 var slide_dir := Vector3.ZERO
 var _eye_h := EYE_H
@@ -394,6 +395,8 @@ func update(dt: float) -> void:
 		move_speed = 0.0
 	# 楼房 OBB 推出（半径 0.5）
 	for ob in fm.obstacles_box:
+		if ob.get("off", false):
+			continue
 		var dx: float = pos.x - ob["c"].x
 		var dz: float = pos.z - ob["c"].y
 		if dx * dx + dz * dz > 40.0 * 40.0:
@@ -424,8 +427,8 @@ func update(dt: float) -> void:
 	pos.x = clampf(pos.x, -lim, lim)
 	pos.z = clampf(pos.z, -lim, lim)
 	# 射击（左键按住 = 开枪 + 自动三倍开镜）
-	if Input.is_action_pressed("rr_fire") and fire_cd <= 0.0 \
-			and reloading <= 0.0:
+	if Input.is_action_pressed("rr_fire") and not fire_block \
+			and fire_cd <= 0.0 and reloading <= 0.0:
 		if ammo > 0:
 			_shoot()
 		else:

@@ -1787,6 +1787,12 @@ func _process(dt_real: float) -> void:
 
 
 func _handle_hotkeys() -> void:
+	# 左键开门：下车后靠近关闭的门，左键开门（同时屏蔽枪击）
+	if on_foot and state == ST.ROAM and freeroam != null \
+			and freeroam.doors.size() > 0 \
+			and freeroam.nearest_closed_door(onfoot.pos, 4.5) >= 0 \
+			and Input.is_action_just_pressed("rr_fire"):
+		freeroam.open_door(freeroam.nearest_closed_door(onfoot.pos, 4.5))
 	if Input.is_action_just_pressed("rr_debug"):
 		hud.toggle_debug()
 	if Input.is_action_just_pressed("rr_camera"):
@@ -2004,10 +2010,14 @@ func _step_sim(h: float) -> void:
 			pin.step(h)
 			_roam_bound(pin)
 			npc.player_on_foot = false
-		# 机场氛围（客机起降 + 登机人流 + 班机补充）
+		# 机场氛围（客机起降 + 登机人流 + 班机补充）+ 门动画
 		if airport_traffic != null:
 			airport_traffic._t += h
 			airport_traffic.tick(h)
+		freeroam.update_doors(h, onfoot.pos if on_foot else pin.pos)
+		if on_foot:
+			onfoot.fire_block = freeroam.nearest_closed_door(
+					onfoot.pos, 4.5) >= 0
 			for ap in airport_traffic.airports:
 				for p in ap["planes"]:
 					airport_traffic._update_plane(ap, p, h)
