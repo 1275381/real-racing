@@ -1549,18 +1549,108 @@ func _build_airport(center: Vector2, heading: float) -> void:
 	# 停机坪（航站楼前）
 	var ap_c: Vector2 = to_local.call(60.0, 240.0)
 	put.call(ap_c.x, ap_c.y, 520.0, 220.0, 0.06, conc)
-	# 航站楼（玻璃幕墙盒体）
+	# 航站楼：可走入大厅——地面/屋顶/墙体段（陆侧主入口 + 空侧 4 个登机口）
 	var term: Vector2 = to_local.call(60.0, 372.0)
-	var tmi := MeshInstance3D.new()
-	var tmesh := BoxMesh.new()
-	tmesh.size = Vector3(300.0, 16.0, 52.0)
-	tmesh.material = _building_material()
-	tmi.mesh = tmesh
-	tmi.position = Vector3(term.x, base_y + 8.0, term.y)
-	tmi.rotation.y = heading
-	add_child(tmi)
-	obstacles_box.append({"c": term, "hx": 150.0, "hz": 26.0, "rot": heading,
-			"top": base_y + 16.0})
+	var tint := Node3D.new()
+	tint.position = Vector3(term.x, base_y, term.y)
+	tint.rotation.y = heading
+	add_child(tint)
+	var tbox := func(px: float, py: float, pz: float, sx: float, sy: float,
+			sz: float, c: Color) -> void:
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(sx, sy, sz)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = c
+		mat.roughness = 0.85
+		mesh.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.position = Vector3(px, py, pz)
+		tint.add_child(mi)
+	var panel_col := Color(0.58, 0.6, 0.66)
+	var dark_col := Color(0.16, 0.18, 0.22)
+	# 地面（浅色地砖）与屋顶
+	tbox.call(60.0, 0.1, 12.0, 300.0, 0.2, 52.0, Color(0.72, 0.7, 0.68))
+	tbox.call(60.0, 16.0, 12.0, 300.0, 0.6, 52.0, dark_col)
+	# 后墙（陆侧 lat+26）：主入口开口 fwd -10..+10
+	tbox.call(-80.0, 8.0, 26.0, 130.0, 16.0, 0.8, panel_col)
+	tbox.call(80.0, 8.0, 26.0, 130.0, 16.0, 0.8, panel_col)
+	tbox.call(0.0, 13.0, 26.0, 20.0, 6.0, 0.8, panel_col)
+	# 前墙（空侧 lat-26）：4 个登机口开口各宽 12（中心 fwd -105/-35/35/105）
+	var gate_x := [-105.0, -35.0, 35.0, 105.0]
+	var segs := [[-150.0, -111.0], [-99.0, -29.0], [-23.0, 29.0],
+			[41.0, 111.0], [117.0, 150.0]]
+	for sg in segs:
+		var mid: float = (sg[0] + sg[1]) * 0.5
+		var ln: float = sg[1] - sg[0]
+		tbox.call(mid, 8.0, -26.0, ln, 16.0, 0.8, panel_col)
+	for gx in gate_x:
+		tbox.call(gx, 13.0, -26.0, 12.0, 6.0, 0.8, panel_col)
+		var glabel := Label3D.new()
+		glabel.text = "登机口 %d" % (gate_x.find(gx) + 1)
+		glabel.font_size = 220
+		glabel.modulate = Color(0.35, 0.65, 1.0)
+		glabel.outline_size = 40
+		glabel.position = Vector3(gx, 11.2, -24.6)
+		tint.add_child(glabel)
+	# 端墙 fwd ±150
+	tbox.call(-150.0, 8.0, 0.0, 0.8, 16.0, 52.0, panel_col)
+	tbox.call(150.0, 8.0, 0.0, 0.8, 16.0, 52.0, panel_col)
+	# ---- 内饰 ----
+	for ci in 3:
+		var cx2: float = -90.0 + ci * 90.0
+		tbox.call(cx2, 1.0, 12.0, 12.0, 2.0, 2.4, Color(0.3, 0.26, 0.2))
+		tbox.call(cx2, 3.4, 14.2, 12.0, 3.4, 0.4, Color(0.45, 0.5, 0.56))
+		var clabel := Label3D.new()
+		clabel.text = "值机 %d" % (ci + 1)
+		clabel.font_size = 160
+		clabel.modulate = Color(1.0, 0.85, 0.4)
+		clabel.outline_size = 30
+		clabel.position = Vector3(cx2, 5.6, 14.4)
+		tint.add_child(clabel)
+	tbox.call(60.0, 9.0, -18.0, 18.0, 5.0, 0.4, dark_col)
+	var board := Label3D.new()
+	board.text = "远城  09:30  登机\n远城  11:10  值机\n远城  14:20  值机"
+	board.font_size = 130
+	board.modulate = Color(1.0, 0.85, 0.4)
+	board.outline_size = 20
+	board.position = Vector3(60.0, 9.0, -19.8)
+	tint.add_child(board)
+	for si in 6:
+		tbox.call(-120.0 + si * 45.0, 0.45, -8.0, 4.0, 0.5, 0.7,
+				Color(0.2, 0.3, 0.45))
+	for px in [-120.0, -40.0, 40.0, 120.0]:
+		for pz in [-10.0, 10.0]:
+			tbox.call(px, 8.0, pz, 1.2, 16.0, 1.2, Color(0.55, 0.57, 0.6))
+	for lx in [-112.0, -38.0, 38.0, 112.0]:
+		tbox.call(lx, 15.6, 0.0, 2.0, 0.15, 24.0, Color(0.95, 0.97, 1.0))
+	for li in 6:
+		var lamp := OmniLight3D.new()
+		lamp.light_color = Color(0.92, 0.94, 1.0)
+		lamp.light_energy = 1.6
+		lamp.omni_range = 90.0
+		lamp.position = Vector3(-125.0 + li * 50.0, 12.0, 0.0)
+		tint.add_child(lamp)
+	# ---- 航站楼碰撞：墙体段（开口可通行）----
+	var w2 := func(lx: float, ly: float, ln: float, th: float) -> void:
+		var wpos: Vector2 = to_local.call(lx, ly)
+		obstacles_box.append({"c": wpos, "hx": ln * 0.5, "hz": th * 0.5,
+				"rot": heading})
+	w2.call(-80.0, 26.0, 130.0, 0.8)
+	w2.call(80.0, 26.0, 130.0, 0.8)
+	for sg in segs:
+		var mid2: float = (sg[0] + sg[1]) * 0.5
+		w2.call(mid2, -26.0, sg[1] - sg[0], 0.8)
+	w2.call(-150.0, 0.0, 0.8, 52.0)
+	w2.call(150.0, 0.0, 0.8, 52.0)
+	for px in [-120.0, -40.0, 40.0, 120.0]:
+		for pz in [-10.0, 10.0]:
+			var pp: Vector2 = to_local.call(px, pz)
+			obstacles_box.append({"c": pp, "hx": 0.6, "hz": 0.6, "rot": 0.0,
+					"top": base_y + 16.0})
+	for ci in 3:
+		var cw: Vector2 = to_local.call(-90.0 + ci * 90.0, 12.0)
+		obstacles_box.append({"c": cw, "hx": 6.0, "hz": 1.2, "rot": heading})
 	# 塔台（细高 + 顶盘）
 	var twr: Vector2 = to_local.call(-190.0, 350.0)
 	var tower := MeshInstance3D.new()
@@ -2859,6 +2949,174 @@ func _make_parts_shop() -> void:
 	sign.position = Vector3(cx - SHOP_W * 0.5 - 0.4, y + SHOP_H - 1.2, cz)
 	sign.rotation_degrees.y = -90.0
 	add_child(sign)
+	_furnish_parts_shop(cx, cz, y)
+
+
+## 配件店内饰：柜台 / 货架商品 / 轮胎堆 / 顶灯
+func _furnish_parts_shop(cx: float, cz: float, y: float) -> void:
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var put := func(px: float, py: float, pz: float, sx: float, sy: float,
+			sz: float, c: Color) -> void:
+		xfs.append(Transform3D(Basis.from_scale(Vector3(sx, sy, sz)),
+				Vector3(px, py + sy * 0.5, pz)))
+		cols.append(c)
+	var wood := Color(0.3, 0.24, 0.18)
+	var counter_c := Color(0.52, 0.55, 0.6)
+	# 柜台 + 台面
+	put.call(cx + 4.0, y + 0.55, cz, 6.0, 1.1, 1.2, wood)
+	put.call(cx + 4.0, y + 1.18, cz, 6.4, 0.1, 1.4, counter_c)
+	# 沿北墙货架 ×3 + 商品
+	for sh in 3:
+		var sx := cx - 5.0 + sh * 5.0
+		put.call(sx, y + 1.2, cz - 5.9, 4.6, 2.4, 0.8, Color(0.36, 0.4, 0.46))
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 3400 + sh
+		for gi in 6:
+			var gc := Color(rng.randf_range(0.5, 0.95), rng.randf_range(0.35, 0.7),
+					rng.randf_range(0.2, 0.5))
+			put.call(sx - 1.6 + (gi % 3) * 1.6, y + 0.9 + (gi / 3) * 0.75,
+					cz - 5.9, 0.7, 0.4, 0.5, gc)
+	# 东墙货架
+	put.call(cx + 8.9, y + 1.2, cz + 2.0, 0.8, 2.4, 5.0, Color(0.36, 0.4, 0.46))
+	for gi in 4:
+		put.call(cx + 8.9, y + 0.9 + (gi % 2) * 0.75, cz + 0.6 + (gi / 2) * 2.2,
+				0.5, 0.4, 0.8, Color(0.6, 0.5, 0.3))
+	# 轮胎堆 ×2（进门左侧）
+	for ts in 2:
+		for k in 3:
+			var tire := MeshInstance3D.new()
+			var tm := CylinderMesh.new()
+			tm.top_radius = 0.38
+			tm.bottom_radius = 0.38
+			tm.height = 0.24
+			var tmat := StandardMaterial3D.new()
+			tmat.albedo_color = Color(0.12, 0.12, 0.13)
+			tm.material = tmat
+			tire.mesh = tm
+			tire.position = Vector3(cx - 6.8, y + 0.14 + k * 0.26,
+					cz - 2.0 + ts * 2.4)
+			add_child(tire)
+	# 顶灯 ×2 + 灯板
+	for li in 2:
+		var lamp := OmniLight3D.new()
+		lamp.light_color = Color(1.0, 0.95, 0.85)
+		lamp.light_energy = 1.5
+		lamp.omni_range = 18.0
+		lamp.position = Vector3(cx - 3.0 + li * 7.0, y + 6.6, cz)
+		add_child(lamp)
+		var panel := MeshInstance3D.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(2.4, 0.08, 1.2)
+		var pmat := StandardMaterial3D.new()
+		pmat.albedo_color = Color(0.98, 0.98, 1.0)
+		pmat.emission_enabled = true
+		pmat.emission = Color(1.0, 0.97, 0.9)
+		pmat.emission_energy_multiplier = 1.6
+		pm.material = pmat
+		panel.mesh = pm
+		panel.position = Vector3(cx - 3.0 + li * 7.0, y + 7.2, cz)
+		add_child(panel)
+	# 家具碰撞：柜台 / 货架
+	obstacles_box.append({"c": Vector2(cx + 4.0, cz), "hx": 3.0, "hz": 0.6,
+			"rot": 0.0})
+	for sh in 3:
+		obstacles_box.append({"c": Vector2(cx - 5.0 + sh * 5.0, cz - 5.9),
+				"hx": 2.3, "hz": 0.4, "rot": 0.0})
+	# 内饰 MultiMesh
+	var bmesh := BoxMesh.new()
+	bmesh.size = Vector3.ONE
+	bmesh.material = _building_material()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = bmesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
+
+
+## 枪械店内饰：玻璃展柜 / 武器墙架 / 海报 / 顶灯
+func _furnish_gunshop(cx: float, cz: float, y: float) -> void:
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var put := func(px: float, py: float, pz: float, sx: float, sy: float,
+			sz: float, c: Color) -> void:
+		xfs.append(Transform3D(Basis.from_scale(Vector3(sx, sy, sz)),
+				Vector3(px, py + sy * 0.5, pz)))
+		cols.append(c)
+	var dark := Color(0.14, 0.15, 0.17)
+	# 玻璃展柜 ×2（柜台 + 玻璃罩 + 展品）
+	for gi in 2:
+		var gz := cz - 3.0 + gi * 6.0
+		put.call(cx + 1.0, y + 0.45, gz, 4.6, 0.9, 1.2, dark)
+		for k in 3:
+			put.call(cx - 0.2 + k * 1.2, y + 0.92, gz - 0.2 + k * 0.16,
+					0.9, 0.12, 0.14, Color(0.35, 0.37, 0.4))
+	# 武器墙架（北墙）
+	put.call(cx + 1.0, y + 2.0, cz - 6.45, 8.0, 2.6, 0.16, dark)
+	for k in 5:
+		put.call(cx - 2.6 + k * 1.8, y + 2.2, cz - 6.32, 0.16, 0.9, 0.12,
+				Color(0.4, 0.42, 0.46))
+	# 东墙海报
+	put.call(cx + 9.4, y + 4.2, cz, 0.1, 1.7, 1.3, Color(0.5, 0.16, 0.14))
+	put.call(cx + 9.3, y + 4.2, cz, 0.06, 1.5, 1.1, Color(0.85, 0.8, 0.7))
+	# 玻璃罩（透明，单独 MeshInstance）
+	for gi in 2:
+		var glass := MeshInstance3D.new()
+		var gm := BoxMesh.new()
+		gm.size = Vector3(4.6, 0.5, 1.2)
+		var gmat := StandardMaterial3D.new()
+		gmat.albedo_color = Color(0.6, 0.8, 0.9, 0.25)
+		gmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		gmat.roughness = 0.1
+		gm.material = gmat
+		glass.mesh = gm
+		glass.position = Vector3(cx + 1.0, y + 1.2, cz - 3.0 + gi * 6.0)
+		add_child(glass)
+	# 顶灯 ×2 + 灯带
+	for li in 2:
+		var lamp := OmniLight3D.new()
+		lamp.light_color = Color(0.9, 0.95, 1.0)
+		lamp.light_energy = 1.5
+		lamp.omni_range = 18.0
+		lamp.position = Vector3(cx - 2.0 + li * 6.0, y + 6.6, cz)
+		add_child(lamp)
+		var panel := MeshInstance3D.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(2.2, 0.08, 1.2)
+		var pmat := StandardMaterial3D.new()
+		pmat.albedo_color = Color(0.9, 0.96, 1.0)
+		pmat.emission_enabled = true
+		pmat.emission = Color(0.8, 0.92, 1.0)
+		pmat.emission_energy_multiplier = 1.5
+		pm.material = pmat
+		panel.mesh = pm
+		panel.position = Vector3(cx - 2.0 + li * 6.0, y + 7.2, cz)
+		add_child(panel)
+	# 家具碰撞：展柜 ×2
+	for gi in 2:
+		obstacles_box.append({"c": Vector2(cx + 1.0, cz - 3.0 + gi * 6.0),
+				"hx": 2.3, "hz": 0.6, "rot": 0.0})
+	# 内饰 MultiMesh
+	var bmesh := BoxMesh.new()
+	bmesh.size = Vector3.ONE
+	bmesh.material = _building_material()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = bmesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
 
 
 ## 枪械店：独立建筑（深蓝灰 + 金色「枪 械 店」招牌），东门洞朝广场中心
@@ -2928,6 +3186,7 @@ func _make_gunshop() -> void:
 	sign.position = Vector3(cx + GUNSHOP_W * 0.5 + 0.4, y + GUNSHOP_H - 1.2, cz)
 	sign.rotation_degrees.y = 90.0
 	add_child(sign)
+	_furnish_gunshop(cx, cz, y)
 
 
 ## 每次进漫游把卷帘门落回原位（出生在车库内，踩油门顶门出发）
