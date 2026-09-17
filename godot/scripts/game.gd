@@ -1160,6 +1160,8 @@ func _roam_plane_sync() -> void:
 
 ## 漫游飞行物理（与大战场同款街机模型；W/S 油门 · A/D 或 ←/→ 转向 · ↑推杆 ↓拉起）
 func _roam_plane_step(dt: float) -> void:
+	if rplane.is_empty():
+		return
 	var p := rplane
 	var prev_y: float = float(p["pos"].y)
 	if p["landed"]:
@@ -2000,7 +2002,7 @@ func _step_sim(h: float) -> void:
 				hud.set_gun_name(Guns.gun_by_id(gun_equipped)["name"])
 				hud.show_center("已抵达 " + airport_traffic.ride_names[di],
 						"", 2500)
-		elif plane_mode and not on_foot:
+		elif plane_mode and not on_foot and not rplane.is_empty():
 			# 漫游战机：飞行物理，车辆冻结（位置同步给 NPC/警察逻辑）
 			_roam_plane_step(h)
 			pin.pos = rplane["pos"]

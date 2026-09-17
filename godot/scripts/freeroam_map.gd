@@ -655,7 +655,10 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 			_scratch["height"] = best_hgt
 			_scratch["lat_off"] = 0.0
 			_scratch["wall"] = 100000.0   # 铺装区无软墙
-	return _scratch
+		# 返回必须在草地区块内部：曾经缩进掉到区块外，把后面的整段
+		# 道路分支变成死代码——桥面高度/路面坡度/道路朝向全部失效，
+		# 所有道路查询都回落到预置默认值（高度 0），高架与坡道全废
+		return _scratch
 
 	# 重叠路段（匝道口/并线段/路口）取相近候选中最宽的软墙，消除隐形墙
 	var wall := roads[best_road].wall
@@ -1463,11 +1466,17 @@ func _pillar_blocked(road: Road, p: Vector3) -> bool:
 func _build_zones() -> void:
 	_build_zone_ground()
 	# 海面（独立光泽层，驶入即浅水漫过轮组）
+	# 机场平地（西郊）从海里挖开：整块水面盖过机场时，坪面/跑道只高出水面
+	# 8~12cm，中远距离深度精度不够，机场一带的路面会与水面闪烁。
+	# 豁口矩形比 _zone_color 的机场草地矩形四边各外扩 30m，水线内永远
+	# 压着草地色海床，不会露出蓝色旱地。
 	var ocean := StandardMaterial3D.new()
 	ocean.albedo_color = Color(0.1, 0.33, 0.56)
 	ocean.metallic = 0.35
 	ocean.roughness = 0.12
-	_ground_plane(3520, 9600, null, Color.WHITE, 1.0, Vector2(-2840, 0.02), 0.02, ocean)
+	_ground_plane(2220, 9600, null, Color.WHITE, 1.0, Vector2(-3490, 0.02), 0.02, ocean)
+	_ground_plane(1300, 4290, null, Color.WHITE, 1.0, Vector2(-1730, 2655.0), 0.02, ocean)
+	_ground_plane(1300, 3530, null, Color.WHITE, 1.0, Vector2(-1730, -3035.0), 0.02, ocean)
 	_mountains()
 	_desert_props()
 
@@ -1547,28 +1556,28 @@ func _build_airport(center: Vector2, heading: float) -> void:
 			"hf": 750.0, "hl": 200.0, "y": base_y + 0.06})
 	# 跑道 1300×46
 	var rw_c: Vector2 = to_local.call(0.0, 0.0)
-	put.call(rw_c.x, rw_c.y, 1300.0, 46.0, 0.05, asphalt)
+	put.call(rw_c.x, rw_c.y, 1300.0, 46.0, 0.09, asphalt)
 	# 跑道中线虚线
 	for k in 26:
 		var lx := -624.0 + k * 48.0
 		var mc: Vector2 = to_local.call(lx, 0.0)
-		put.call(mc.x, mc.y, 22.0, 1.1, 0.07, white, Color.WHITE, 0.005)
+		put.call(mc.x, mc.y, 22.0, 1.1, 0.105, white, Color.WHITE, 0.005)
 	# 两端斑马线
 	for end_i in 2:
 		var ex := -640.0 if end_i == 0 else 640.0
 		for k in 6:
 			var sc: Vector2 = to_local.call(ex, -15.0 + k * 6.0)
-			put.call(sc.x, sc.y, 30.0, 2.2, 0.07, white, Color.WHITE, 0.005)
+			put.call(sc.x, sc.y, 30.0, 2.2, 0.105, white, Color.WHITE, 0.005)
 	# 平行滑行道 + 3 条联络道
 	var tw_c: Vector2 = to_local.call(0.0, 120.0)
-	put.call(tw_c.x, tw_c.y, 1200.0, 24.0, 0.05, asphalt)
+	put.call(tw_c.x, tw_c.y, 1200.0, 24.0, 0.08, asphalt)
 	for k in 3:
 		var lx := -420.0 + k * 420.0
 		var cc: Vector2 = to_local.call(lx, 60.0)
-		put.call(cc.x, cc.y, 24.0, 130.0, 0.05, asphalt)
-	# 停机坪（航站楼前）
-	var ap_c: Vector2 = to_local.call(60.0, 240.0)
-	put.call(ap_c.x, ap_c.y, 520.0, 220.0, 0.06, conc)
+		put.call(cc.x, cc.y, 24.0, 130.0, 0.08, asphalt)
+	# 停机坪（航站楼前；东缘收到 fwd 140，避免与货运车道重叠共面闪烁）
+	var ap_c: Vector2 = to_local.call(-30.0, 243.0)
+	put.call(ap_c.x, ap_c.y, 340.0, 214.0, 0.08, conc)
 	# 航站楼：可走入大厅——地面/屋顶/墙体段（陆侧主入口 + 空侧 4 个登机口）
 	var term: Vector2 = to_local.call(60.0, 372.0)
 	var tint := Node3D.new()
@@ -1708,17 +1717,20 @@ func _build_airport(center: Vector2, heading: float) -> void:
 	add_child(cab)
 	obstacles_box.append({"c": twr, "hx": 4.5, "hz": 4.5, "rot": 0.0,
 			"top": base_y + 34.0})
-	_build_airport_access()
+	_build_airport_access(center, heading)
 
 
 ## 航站楼地面通道：连接公路 + 航站楼回车环道 + 地下停车库（入口/出口坡道下到 -7m）
-func _build_airport_access() -> void:
-	var base_y := terrain_height(AIRPORT_POS.x, AIRPORT_POS.y) + 0.04
-	var fwd := Vector2(sin(AIRPORT_HEADING), cos(AIRPORT_HEADING))
-	var right := Vector2(cos(AIRPORT_HEADING), -sin(AIRPORT_HEADING))
+func _build_airport_access(center: Vector2, heading: float) -> void:
+	# 此前本函数无参、内部写死主机场坐标——远城机场构建时又把整套接入道路
+	# （回车环道/连接公路/货运车道/地下车库）在主机场原位重复建了一遍，
+	# 两份同高网格完全共面，机场一带所有路面持续闪烁。
+	var base_y := terrain_height(center.x, center.y) + 0.04
+	var fwd := Vector2(sin(heading), cos(heading))
+	var right := Vector2(cos(heading), -sin(heading))
 	var lp := func(lx: float, ly: float) -> Vector2:
-		return AIRPORT_POS + fwd * lx + right * ly
-	var loop_y := terrain_height(AIRPORT_POS.x, AIRPORT_POS.y) + 0.1
+		return center + fwd * lx + right * ly
+	var loop_y := terrain_height(center.x, center.y) + 0.14
 	# ---- 航站楼回车环道（闭合路，紧贴航站楼背面）----
 	var loop := [lp.call(-180.0, 415.0), lp.call(300.0, 415.0),
 			lp.call(300.0, 433.0), lp.call(-180.0, 433.0)]
@@ -1737,10 +1749,13 @@ func _build_airport_access() -> void:
 				best = d
 				bp = Vector2(pt.x, pt.z)
 				by = pt.y
-	var c_mid: Vector2 = bp.lerp(lp.call(-180.0, 415.0), 0.55) \
-			+ Vector2(0.0, 60.0)
-	_make_road([bp, c_mid, lp.call(-180.0, 415.0)],
-			[by, loop_y, loop_y], false, 6.5, false)
+	# 最近路网点太远（远城机场周边没有路网）就不拉连接线，
+	# 否则会从 6km 外的城市拉一条野路横穿地图
+	if best < 400.0:
+		var c_mid: Vector2 = bp.lerp(lp.call(-180.0, 415.0), 0.55) \
+				+ Vector2(0.0, 60.0)
+		_make_road([bp, c_mid, lp.call(-180.0, 415.0)],
+				[by, loop_y, loop_y], false, 6.5, false)
 	# ---- 货运坪面车道：末端以缓坡爬升至货仓地板高度（与尾门坡道衔接）----
 	_make_road([lp.call(300.0, 415.0), lp.call(250.0, 300.0),
 			lp.call(180.0, 150.0), lp.call(19.5, 0.0)],
@@ -1759,7 +1774,7 @@ func _build_airport_access() -> void:
 			[ug_y, loop_y - 3.4, loop_y], false, 6.0, false)
 	# 车库整层地坪铺装（vy 门控：只在地下高度命中）
 	var gc: Vector2 = lp.call(240.0, 320.0)
-	var gright := Vector2(cos(AIRPORT_HEADING), -sin(AIRPORT_HEADING))
+	var gright := right
 	road_pads.append({"c": gc, "fx": gright.x, "fz": gright.y,
 			"hf": 150.0, "hl": 185.0, "y": ug_y})
 	# ---- 地下车库视觉：墙面 / 顶板 / 照明 / P 标记 / 车位线 ----
@@ -2099,7 +2114,9 @@ func _build_zone_ground() -> void:
 func _zone_color(x: float, z: float, rng: RRUtil.Mulberry) -> Color:
 	var n := (rng.next() - 0.5) * 0.06
 	var c: Color
-	if x < -1080.0:
+	if x > -2350.0 and x < -1000.0 and z > -1240.0 and z < 480.0:
+		c = Color(0.42, 0.55, 0.33)      # 机场平地（西郊旱地，海面在此挖开）
+	elif x < -1080.0:
 		c = Color(0.10, 0.33, 0.56)      # 海
 	elif x < -980.0:
 		c = Color(0.85, 0.78, 0.60)      # 沙滩
@@ -3375,6 +3392,7 @@ func _build_minimap() -> void:
 	_fill_zone(img, size, 950, 2800, -2800, 2800, Color(0.66, 0.55, 0.35))      # 东沙漠
 	_fill_zone(img, size, -1080, -980, -2800, 2800, Color(0.72, 0.66, 0.50))    # 西沙滩
 	_fill_zone(img, size, -2800, -1080, -2800, 2800, Color(0.1, 0.28, 0.5))     # 西海
+	_fill_zone(img, size, -2350, -1000, -1240, 480, Color(0.17, 0.23, 0.15))    # 机场平地（西海挖开）
 	_fill_zone(img, size, -950, 950, -950, 950, Color(0.2, 0.22, 0.26))         # 城市核心
 	var scale := float(size) / (MAP_LIMIT * 2.0)
 	for road in roads:
