@@ -518,8 +518,16 @@ func _update_walkers(ap: Dictionary, dt: float) -> void:
 		var mm: Dictionary = ap["mm"]
 		var idx: int = ap["walkers"].find(w)
 		if k > 1.0:
-			# 已"登机"：隐藏
-			for key in ["head", "torso", "arm", "leg"]:
+			# 已"登机"：隐藏。head/torso 单实例（下标 idx），arm/leg 左右
+			# 两实例（idx*2 / idx*2+1）——此前一律按 idx*2 系写入，
+			# 行人过半就把 head/torso 越界刷屏
+			mm["head"].multimesh.set_instance_transform(idx,
+					Transform3D(Basis.from_scale(Vector3.ONE * 0.0001),
+					Vector3(0, -50, 0)))
+			mm["torso"].multimesh.set_instance_transform(idx,
+					Transform3D(Basis.from_scale(Vector3.ONE * 0.0001),
+					Vector3(0, -50, 0)))
+			for key in ["arm", "leg"]:
 				mm[key].multimesh.set_instance_transform(idx * 2,
 						Transform3D(Basis.from_scale(Vector3.ONE * 0.0001),
 						Vector3(0, -50, 0)))
