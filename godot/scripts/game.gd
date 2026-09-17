@@ -454,6 +454,7 @@ var _roam_vs := 0.0                # 升降率平滑（仪表）
 var airliner_ride := false         # 正在乘班机飞行
 var cargo_state := "ready"         # 货运任务：ready 备货 / escape 逃脱中 / rewarded 已结算
 var _cargo_last_day := 0           # 货物补充的日期标记
+var cargo_heist := "none"          # 劫案流程：none / chase 追赶 / flee 逃脱中
 var day_cycle: DayCycle            # 昼夜 + 天气
 var _headlight: SpotLight3D        # 玩家车头灯（夜色自动点亮）
 
@@ -1852,6 +1853,25 @@ func _handle_hotkeys() -> void:
 			and Input.is_action_just_pressed("rr_bomb"):
 		if not bf.player_drop_bomb():
 			hud.show_center("没有炸弹了", "回基地落地补给", 1200)
+	# 货运劫案：地面靠近停机货机接取 / 飞行中靠近货舱夺货
+	if state == ST.ROAM and airport_traffic != null \
+			and Input.is_action_just_pressed("rr_interact") \
+			and not shop_open and not gunshop_open:
+		if on_foot and airport_traffic.cargo_mission == "parked" \
+				and onfoot.pos.distance_to(airport_traffic.cargo_plane_pos) < 15.0:
+			airport_traffic.begin_cargo_mission()
+			cargo_heist = "chase"
+			hud.show_center("任务接取", "货机正在起飞 · 驾驶战机追上它夺走货物", 3500)
+		elif not on_foot and airport_traffic.near_cargo_hold(
+				player.veh.pos) \
+				and airport_traffic.cargo_mission in ["cruise", "takeoff"]:
+			airport_traffic.steal_cargo()
+			cargo_heist = "flee"
+			cargo_state = "escape"
+			if npc != null:
+				npc.trigger_wanted()
+				npc.escalate()
+			hud.show_center("货物到手！", "大量警察出动 · 飞远甩掉通缉", 3500)
 	# 漫游战机：F 登机/下机（站在班机舱门边时优先登班机，不重复触发）
 	if state == ST.ROAM and plane_mode \
 			and Input.is_action_just_pressed("rr_interact") \
@@ -2017,10 +2037,11 @@ func _step_sim(h: float) -> void:
 			pin.step(h)
 			_roam_bound(pin)
 			npc.player_on_foot = false
-		# 机场氛围（客机起降 + 登机人流 + 班机补充）+ 门动画
+		# 机场氛围（客机起降 + 登机人流 + 班机补充）+ 门动画 + 货运任务
 		if airport_traffic != null:
 			airport_traffic._t += h
 			airport_traffic.tick(h)
+			airport_traffic.update_cargo_mission(h)
 			for ap in airport_traffic.airports:
 				for pl in ap["planes"]:
 					airport_traffic._update_plane(ap, pl, h)
