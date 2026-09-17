@@ -14,10 +14,20 @@ var _t := 0.0
 var ride_names := ["城市机场", "远城机场"]
 var fm = null                   # freeroam 引用（注册坡道/货仓铺装）
 var cargo_pos := Vector3.ZERO   # 货仓取货点
-var cargo_taken := false
 var cargo_crates: Node3D = null
+var cargo_crates_mission: Node3D = null   # 货运任务货箱
 var cargo_ramp_base := Vector2.ZERO   # 坡道接地端（探针/导航用）
 var cargo_ramp_up := Vector2.ZERO     # 上坡方向（水平单位向量）
+
+# ---- 货运劫案任务 ----
+var cargo_mission := "idle"        # idle 停机待命 / taxi 滑行 / takeoff 起飞爬升 / cruise 巡航 / stolen 已被劫 / leave 离场 / cooldown 冷却
+var cargo_mission_t := 0.0
+var cargo_plane_pos := Vector3.ZERO
+var cargo_plane_heading := 0.0
+var cargo_plane_pitch := 0.0
+var cargo_plane_speed := 0.0
+var cargo_plane_vis: Node3D = null
+var cargo_taken := false           # 货物已被夺走
 
 # ---- 班机载客（F 登机 → 起飞 → 巡航 → 降落 → 下机）----
 var ride_active := false
@@ -35,6 +45,7 @@ var ride_wps: Array = []           # 载客滑行航路点
 
 func setup(spots: Array, fm_ref = null) -> void:
 	fm = fm_ref
+	_build_cargo_mission_plane(spots[0]["origin"])
 	for s in spots:
 		var origin: Vector2 = s["origin"]
 		var heading: float = float(s["heading"])
@@ -100,6 +111,7 @@ func _build_cargo_plane(origin: Vector2, airport_heading: float) -> void:
 	var crates := Node3D.new()
 	crates.name = "cargo_crates"
 	add_child(crates)
+	cargo_crates_mission = crates
 	var cc: Vector2 = rear - rear_dir * 4.0
 	cargo_ramp_base = Vector2(rc.x, rc.y)
 	cargo_ramp_up = -rear_dir
@@ -615,3 +627,107 @@ func _build_airliner(body: Color, tail: Color) -> Node3D:
 		wheel.position = g + Vector3(0, -0.9, 0)
 		gear.add_child(wheel)
 	return root
+
+
+## ================= 货运劫案任务 =================
+
+const CARGO_CRUISE_SPD := 16.0     # 货机巡航速度（慢速 ~58km/h，任何载具都能追上）
+const CARGO_STEAL_DIST := 32.0     # 夺货判定距离（战机货仓 < 32m）
+
+var cargo_hold_world := Vector3.ZERO   # 货舱世界坐标（夺货判定点）
+var cargo_label: Label3D = null
+
+
+func _build_cargo_mission_plane(origin: Vector2) -> void:
+	var ph := -0.35 + PI
+	var vis := _build_airliner(Color(0.82, 0.78, 0.68), Color(0.85, 0.55, 0.1))
+	vis.visible = true
+	add_child(vis)
+	cargo_plane_vis = vis
+	cargo_plane_pos = Vector3(origin.x + 24.0, 0.1, origin.y - 320.0)
+	cargo_plane_heading = -0.35 + PI * 0.5
+	cargo_mission = "parked"
+	var lb := Label3D.new()
+	lb.text = "货 运"
+	lb.modulate = Color(1.0, 0.75, 0.2)
+	lb.outline_size = 44
+	lb.position = Vector3(0, 9.0, 0)
+	vis.add_child(lb)
+	_sync_cargo_vis()
+
+
+## F 交互接取：货机开始滑行起飞
+func begin_cargo_mission() -> bool:
+	if cargo_mission != "parked":
+		return false
+	cargo_mission = "taxi"
+	cargo_mission_t = 0.0
+	cargo_plane_pos = Vector3(-1876.0, 0.1, -720.0)
+	cargo_plane_heading = -0.35
+	cargo_plane_speed = 0.0
+	cargo_plane_pitch = 0.0
+	return true
+
+
+func _sync_cargo_vis() -> void:
+	if cargo_plane_vis == null:
+		return
+	cargo_plane_vis.visible = cargo_mission != "gone"
+	cargo_plane_vis.position = cargo_plane_pos
+	cargo_plane_vis.rotation = Vector3(-cargo_plane_pitch,
+			cargo_plane_heading, 0.0)
+
+
+## 每帧推进货运任务状态机
+func update_cargo_mission(dt: float) -> void:
+	match cargo_mission:
+		"parked":
+			return
+		"taxi":
+			cargo_plane_speed = minf(cargo_plane_speed + 2.5 * dt, CARGO_CRUISE_SPD)
+			var fwd := Vector2(sin(cargo_plane_heading), cos(cargo_plane_heading))
+			cargo_plane_pos += Vector3(fwd.x, 0, fwd.y) * cargo_plane_speed * dt
+			if cargo_plane_speed >= 14.0:
+				cargo_mission = "takeoff"
+				cargo_plane_pitch = 0.16
+		"takeoff":
+			cargo_plane_speed = minf(cargo_plane_speed + 1.5 * dt, CARGO_CRUISE_SPD)
+			var fwd2 := Vector2(sin(cargo_plane_heading), cos(cargo_plane_heading))
+			cargo_plane_pos += Vector3(fwd2.x, 0, fwd2.y) * cargo_plane_speed * dt
+			cargo_plane_pos.y += sin(0.16) * cargo_plane_speed * dt
+			cargo_plane_pitch = move_toward(cargo_plane_pitch, 0.13, 0.08 * dt)
+			if cargo_plane_pos.y > 25.0:
+				cargo_mission = "cruise"
+		"cruise":
+			var fwd3 := Vector2(sin(cargo_plane_heading), cos(cargo_plane_heading))
+			cargo_plane_pos += Vector3(fwd3.x, 0, fwd3.y) * cargo_plane_speed * dt
+			cargo_plane_pos.y = move_toward(cargo_plane_pos.y, 18.0, 2.0 * dt)
+			if cargo_plane_pos.length() > 9000.0:
+				cargo_mission = "gone"
+				cargo_mission_t = 30.0
+		"gone":
+			cargo_mission_t -= dt
+			if cargo_mission_t <= 0.0:
+				cargo_mission = "parked"
+				cargo_plane_pos = Vector3(-1876.0, 0.1, -720.0)
+				cargo_plane_heading = -0.35 + PI * 0.5
+				cargo_plane_speed = 0.0
+	# 货舱世界坐标（机身后段货门）
+	var back := Vector2(sin(cargo_plane_heading + PI), cos(cargo_plane_heading + PI))
+	cargo_hold_world = cargo_plane_pos \
+			+ Vector3(back.x, 0, back.y) * 12.0 + Vector3(0, -1.2, 0)
+	_sync_cargo_vis()
+
+
+## 战机是否靠近货舱（夺货判定）
+func near_cargo_hold(plane_pos: Vector3) -> bool:
+	if cargo_mission != "cruise" and cargo_mission != "takeoff":
+		return false
+	return plane_pos.distance_to(cargo_hold_world) < 32.0
+
+
+## 夺走货物
+func steal_cargo() -> void:
+	if cargo_crates_mission != null:
+		cargo_crates_mission.visible = false
+	cargo_mission = "cruise"
