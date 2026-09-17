@@ -712,7 +712,10 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 	if not soft_walls_enabled:
 		wall = 100000.0   # 自由漫游：路边无空气墙
 	_scratch["wall"] = wall
-	_scratch["surf"] = "grass" if al > road.half_w + 1.2 \
+	# 路肩走廊：沥青内=road，往外 16m 内=curb（路肩/前场/匝道口，轻阻力）。
+	# 曾经这里超过 half_w+1.2 就算 grass（3.6 倍阻力），修复道路分支后
+	# 贴路区域的真实横向偏移生效，车主一压上路肩就被压到 ~50km/h
+	_scratch["surf"] = "grass" if al > road.half_w + 16.0 \
 			else ("curb" if al > road.half_w else "road")
 	# 铺装区覆写（机场坪面/远城街道/地下车库地坪）：草地按道路计
 	if _scratch["surf"] == "grass":
