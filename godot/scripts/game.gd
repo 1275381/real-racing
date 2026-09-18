@@ -1745,6 +1745,7 @@ func _process(dt_real: float) -> void:
 	env.update_clouds(dt)
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
+		freeroam.update_landmarks(dt)
 		freeroam.resolve_obstacles(player.veh)   # 楼房/桥墩碰撞（路边无空气墙）
 
 	# 音效参数

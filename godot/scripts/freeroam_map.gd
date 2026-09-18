@@ -111,6 +111,17 @@ const BLK_DEEP_MIN := 14.0
 const BLK_DEEP_MAX := 22.0
 const BLK_CORNER := 35.0     # ≈ BLK_FRONT + BLK_DEEP_MAX：转角楼与沿街排不重叠
 
+# 特色地标预留地块（程序生成楼避让；中心 + 预留半径）
+const LM_ZONES := [
+	{"c": Vector2(90, 90), "r": 60.0},     # 云顶之针 电视塔（中央广场）
+	{"c": Vector2(450, 90), "r": 56.0},    # 双辉双子塔
+	{"c": Vector2(-450, -90), "r": 80.0},  # 云湖体育馆
+	{"c": Vector2(-630, 450), "r": 64.0},  # 湖畔之眼 摩天轮
+	{"c": Vector2(630, -450), "r": 48.0},  # 文笔塔
+	{"c": Vector2(-90, 450), "r": 56.0},   # 天环中心 超高层
+	{"c": Vector2(270, -90), "r": 62.0},   # 环球百货 LED 大卖场
+]
+
 var roads: Array[Road] = []
 var n := 0                 # 采样总数（vehicle 进度计算用）
 var ds := SAMPLE_DS
@@ -120,6 +131,13 @@ var soft_walls_enabled := false   # 自由漫游：路边软墙关闭（越野�
 var closed := true                # 漫游路网视为闭环（vehicle 开线判定用不到，占位兼容）
 var _obst_hit := 0.0              # 本帧障碍撞击强度（供音效/震屏消费）
 var minimap_tex: ImageTexture
+
+# ---- 特色地标动画引用 ----
+var _wheel: Node3D                 # 摩天轮转盘
+var _gondolas: Array[Node3D] = []
+var _beacon_mat: StandardMaterial3D
+var _led_mat: StandardMaterial3D
+var _lm_t := 0.0
 var vehicle_y := 0.0       # 由 game 每帧写入（高度选层迟滞用）
 
 # —— 卷帘门车库（漫游出生点）：x=180 街东侧、z=-540 街北侧的沿街地块，
@@ -219,6 +237,7 @@ func build() -> void:
 	_build_intersections()
 	print("[map] 路口 %dms" % [Time.get_ticks_msec() - t0])
 	_place_buildings()
+	_build_landmarks()
 	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - t0])
 	_make_garage()
 	_make_parts_shop()
@@ -2741,6 +2760,10 @@ func _place_buildings() -> void:
 	var buildable := func(cx: float, cz: float, hw: float, hd: float) -> bool:
 		if absf(cx) < 150.0 and absf(cz) < 150.0:
 			return false                       # 中心广场留空
+		for lz in LM_ZONES:
+			if Vector2(cx, cz).distance_to(lz["c"]) \
+					< float(lz["r"]) + maxf(hw, hd):
+						return false           # 特色地标预留地块
 		if absf(cx - GAR_C.x) < GAR_W * 0.5 + hw + 1.0 \
 				and absf(cz - GAR_C.y) < GAR_D * 0.5 + hd + 1.0:
 			return false                       # 卷帘门车库保留地
@@ -3422,3 +3445,224 @@ func _fill_zone(img: Image, size: int, x0: float, x1: float, z0: float, z1: floa
 	var pz0 := clampi(int((z0 + MAP_LIMIT) * s), 0, size - 1)
 	var pz1 := clampi(int((z1 + MAP_LIMIT) * s), 0, size - 1)
 	img.fill_rect(Rect2i(px0, pz0, maxi(px1 - px0, 1), maxi(pz1 - pz0, 1)), col)
+
+
+## ================= 城市特色地标 =================
+## 七座手工地标：电视塔 / 双子塔 / 体育馆 / 摩天轮 / 宝塔 / 超高层 / LED 卖场。
+## 地块由 LM_ZONES 预留（程序生成楼避让）；碰撞登记 obstacles_box（带 top，
+## 漫游战机低空推出也按真实高度处理）；摩天轮/信标/LED 由 update_landmarks 驱动。
+
+func _lm_mat(col: Color, emis := Color.BLACK, e_energy := 0.0) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.roughness = 0.82
+	if e_energy > 0.0:
+		m.emission_enabled = true
+		m.emission = emis
+		m.emission_energy_multiplier = e_energy
+	return m
+
+
+func _lm_box(parent: Node3D, pos: Vector3, size: Vector3,
+		mat: StandardMaterial3D) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	mesh.material = mat
+	mi.mesh = mesh
+	mi.position = pos
+	parent.add_child(mi)
+	return mi
+
+
+func _lm_cyl(parent: Node3D, pos: Vector3, r_top: float, r_bot: float, h: float,
+		mat: StandardMaterial3D) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = r_top
+	mesh.bottom_radius = r_bot
+	mesh.height = h
+	mesh.material = mat
+	mi.mesh = mesh
+	mi.position = pos
+	parent.add_child(mi)
+	return mi
+
+
+func _lm_solid(c: Vector2, hx: float, hz: float, top: float,
+		rot := 0.0) -> void:
+	obstacles_box.append({"c": c, "hx": hx, "hz": hz, "rot": rot, "top": top})
+
+
+func _lm_label(parent: Node3D, text: String, pos: Vector3, px := 300) -> void:
+	var lb := Label3D.new()
+	lb.text = text
+	lb.font_size = px
+	lb.outline_size = int(px * 0.14)
+	lb.modulate = Color(1.0, 0.92, 0.55)
+	lb.outline_modulate = Color(0.08, 0.08, 0.12, 0.9)
+	lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lb.no_depth_test = false
+	lb.position = pos
+	parent.add_child(lb)
+
+
+func _build_landmarks() -> void:
+	var root := Node3D.new()
+	root.name = "Landmarks"
+	add_child(root)
+	var white := _lm_mat(Color(0.88, 0.89, 0.91))
+	var glass := _lm_mat(Color(0.45, 0.62, 0.78), Color(0.4, 0.65, 0.9), 0.35)
+	var steel := _lm_mat(Color(0.52, 0.55, 0.6))
+	var dark := _lm_mat(Color(0.16, 0.17, 0.2))
+	_beacon_mat = StandardMaterial3D.new()
+	_beacon_mat.albedo_color = Color(1.0, 0.2, 0.15)
+	_beacon_mat.emission_enabled = true
+	_beacon_mat.emission = Color(1.0, 0.15, 0.1)
+	_beacon_mat.emission_energy_multiplier = 2.2
+	_led_mat = StandardMaterial3D.new()
+	_led_mat.albedo_color = Color(0.2, 0.8, 1.0)
+	_led_mat.emission_enabled = true
+	_led_mat.emission = Color(0.2, 0.8, 1.0)
+	_led_mat.emission_energy_multiplier = 0.9
+
+	# ---- 1) 云顶之针 · 电视塔（中央广场 90,90，全城最高 210m）----
+	var lp := Vector3(90, 0, 90)
+	_lm_box(root, lp + Vector3(0, 3, 0), Vector3(46, 6, 46), white)
+	_lm_cyl(root, lp + Vector3(0, 81, 0), 4.5, 7.5, 150, white)
+	_lm_cyl(root, lp + Vector3(0, 161, 0), 16, 16, 10, glass)
+	_lm_cyl(root, lp + Vector3(0, 173, 0), 2.6, 3.2, 14, steel)
+	_lm_box(root, lp + Vector3(0, 195, 0), Vector3(1.1, 30, 1.1), steel)
+	_lm_box(root, lp + Vector3(0, 210.6, 0), Vector3(1.8, 1.8, 1.8), _beacon_mat)
+	_lm_solid(Vector2(90, 90), 23, 23, 6)
+	_lm_solid(Vector2(90, 90), 8, 8, 211)
+	_lm_label(root, "云顶之针 · 电视塔", lp + Vector3(0, 178, 30), 340)
+
+	# ---- 2) 双辉双子塔（450,90，135m + 空中连桥）----
+	for sx in [433.0, 467.0]:
+		_lm_box(root, Vector3(sx, 67.5, 90), Vector3(30, 135, 30), glass)
+		_lm_box(root, Vector3(sx, 129, 90), Vector3(31.5, 4, 31.5), steel)
+		_lm_box(root, Vector3(sx, 135.6, 90), Vector3(2, 1.8, 2), _beacon_mat)
+		_lm_solid(Vector2(sx, 90), 15, 15, 136)
+	_lm_box(root, Vector3(450, 86, 90), Vector3(40, 7, 15), white)
+	_lm_label(root, "双辉双子塔", Vector3(450, 116, 112), 300)
+
+	# ---- 3) 云湖体育馆（-450,-90，椭圆碗场）----
+	var sc := Vector2(-450, -90)
+	_lm_cyl(root, Vector3(sc.x, 13, sc.y), 52, 57, 26, white)
+	var roof := MeshInstance3D.new()
+	var tmesh := TorusMesh.new()
+	tmesh.inner_radius = 28
+	tmesh.outer_radius = 58
+	tmesh.material = steel
+	roof.mesh = tmesh
+	roof.position = Vector3(sc.x, 29.5, sc.y)
+	root.add_child(roof)
+	_lm_box(root, Vector3(sc.x, 4, sc.y - 52), Vector3(26, 8, 12), glass)
+	var k := 0
+	while k < 8:
+		var ang := float(k) * PI * 0.25
+		_lm_solid(sc + Vector2(sin(ang), -cos(ang)) * 55.0, 21.5, 3.0, 26.0, ang)
+		k += 1
+	_lm_label(root, "云湖体育馆", Vector3(sc.x, 38, sc.y - 62), 300)
+
+	# ---- 4) 湖畔之眼 · 摩天轮（-630,450，轮径 80m 旋转）----
+	var wc := Vector3(-630, 52, 450)
+	for zs in [-4.0, 4.0]:
+		for sgn in [-1.0, 1.0]:
+			var leg := _lm_box(root, Vector3(wc.x + sgn * 11, 26, wc.z + zs),
+					Vector3(4.5, 52, 4.5), steel)
+			leg.rotation.z = -sgn * 0.36
+	_lm_solid(Vector2(wc.x, wc.z), 26, 8, 54)
+	_lm_cyl(root, wc, 3, 3, 6, dark)
+	_wheel = Node3D.new()
+	_wheel.position = wc
+	root.add_child(_wheel)
+	var rim := MeshInstance3D.new()
+	var rmesh := TorusMesh.new()
+	rmesh.inner_radius = 36
+	rmesh.outer_radius = 40
+	rmesh.material = steel
+	rim.mesh = rmesh
+	rim.rotation.x = PI * 0.5
+	_wheel.add_child(rim)
+	var spoke_mat := _lm_mat(Color(0.6, 0.63, 0.68))
+	var gondola_cols := [Color(0.85, 0.3, 0.25), Color(0.3, 0.55, 0.85),
+			Color(0.95, 0.75, 0.25), Color(0.4, 0.75, 0.45),
+			Color(0.8, 0.45, 0.75)]
+	_gondolas.clear()
+	var gi := 0
+	while gi < 10:
+		var ang := float(gi) / 10.0 * TAU
+		var spoke := _lm_box(_wheel, Vector3(cos(ang) * 38, sin(ang) * 38, 0),
+				Vector3(2.2, 2.2, 1.4), spoke_mat)
+		spoke.rotation.z = ang
+		var gon := _lm_box(_wheel,
+				Vector3(cos(ang) * 38, sin(ang) * 38 - 3.4, 0),
+				Vector3(3.4, 4.2, 2.8),
+				_lm_mat(gondola_cols[gi % gondola_cols.size()]))
+		_gondolas.append(gon)
+		gi += 1
+	_lm_label(root, "湖畔之眼 摩天轮", Vector3(wc.x, 102, wc.z + 14), 300)
+
+	# ---- 5) 文笔塔（630,-450，七层仿古 68m）----
+	var pc := Vector3(630, 0, -450)
+	var body_col := _lm_mat(Color(0.85, 0.79, 0.66))
+	var roof_col := _lm_mat(Color(0.54, 0.25, 0.19))
+	_lm_box(root, pc + Vector3(0, 1, 0), Vector3(30, 2, 30), steel)
+	var ti := 0
+	while ti < 7:
+		var w := 26.0 - ti * 2.4
+		var y0 := 2.0 + ti * 8.5
+		_lm_box(root, pc + Vector3(0, y0 + 3.5, 0), Vector3(w, 7, w), body_col)
+		_lm_box(root, pc + Vector3(0, y0 + 7.6, 0), Vector3(w + 5, 1.6, w + 5),
+				roof_col)
+		ti += 1
+	_lm_cyl(root, pc + Vector3(0, 66, 0), 0.5, 0.8, 8,
+			_lm_mat(Color(0.9, 0.75, 0.3), Color(0.95, 0.8, 0.3), 0.8))
+	_lm_solid(Vector2(pc.x, pc.z), 13, 13, 62)
+	_lm_label(root, "文笔塔", pc + Vector3(0, 74, 22), 280)
+
+	# ---- 6) 天环中心（-90,450，超高层 172m + 停机坪）----
+	var tc := Vector3(-90, 0, 450)
+	_lm_box(root, tc + Vector3(0, 75, 0), Vector3(40, 150, 40), glass)
+	# 四角霓虹灯柱（细条变色，随 update_landmarks 呼吸）
+	for sx in [-19.2, 19.2]:
+		for sz in [-19.2, 19.2]:
+			_lm_box(root, tc + Vector3(sx, 75, sz),
+					Vector3(1.4, 148, 1.4), _led_mat)
+	_lm_box(root, tc + Vector3(0, 156, 0), Vector3(30, 12, 30), white)
+	_lm_box(root, tc + Vector3(0, 167, 0), Vector3(18, 10, 18), steel)
+	_lm_cyl(root, tc + Vector3(0, 172.5, 0), 8, 8, 1, dark)
+	_lm_box(root, tc + Vector3(0, 173.6, 0), Vector3(1.8, 1.8, 1.8), _beacon_mat)
+	_lm_solid(Vector2(tc.x, tc.z), 20, 20, 173)
+	_lm_label(root, "天环中心", tc + Vector3(0, 180, 28), 320)
+
+	# ---- 7) 环球百货 · LED 大卖场（270,-90）----
+	var mc := Vector3(270, 0, -90)
+	_lm_box(root, mc + Vector3(0, 9, 0), Vector3(70, 18, 50), white)
+	_lm_box(root, mc + Vector3(0, 18.8, 0), Vector3(72, 1.6, 52), steel)
+	_lm_box(root, mc + Vector3(-14, 22.5, 0), Vector3(14, 6, 10), dark)
+	_lm_box(root, mc + Vector3(6, 21.5, 0), Vector3(20, 4, 10), dark)
+	# LED 大屏（西立面，变色）
+	_lm_box(root, Vector3(mc.x - 35.4, 11, mc.z), Vector3(0.8, 12, 30), _led_mat)
+	# 入口雨棚
+	_lm_box(root, mc + Vector3(-38, 6, 0), Vector3(8, 1, 18), glass)
+	_lm_solid(Vector2(mc.x, mc.z), 35, 25, 24)
+	_lm_label(root, "环球百货", Vector3(mc.x - 30, 27, mc.z), 320)
+
+
+## 地标逐帧动画：摩天轮旋转（吊舱保持水平）/ 信标呼吸 / LED 变色
+func update_landmarks(dt: float) -> void:
+	if _wheel == null:
+		return
+	_lm_t += dt
+	_wheel.rotation.z -= dt * 0.16
+	for g in _gondolas:
+		g.rotation.z = -_wheel.rotation.z
+	if _beacon_mat != null:
+		_beacon_mat.emission_energy_multiplier = 1.9 + 1.5 * sin(_lm_t * 2.6)
+	if _led_mat != null:
+		var c := Color.from_hsv(fmod(_lm_t * 0.06, 1.0), 0.7, 1.0)
+		_led_mat.albedo_color = c
+		_led_mat.emission = c
