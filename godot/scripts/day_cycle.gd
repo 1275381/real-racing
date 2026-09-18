@@ -13,6 +13,7 @@ var weather_intensity := 0.0       # 当前天气强度 0..1（平滑过渡）
 var night_f := 0.0                 # 夜色系数 0..1
 var phase_name := "day"            # sunrise / day / dusk / night
 
+var indoor := false                # 室内画面（车库初始页等）：天气照常演变但不渲染
 var _weather_target := "clear"
 var _weather_switch := randf_range(100.0, 220.0)
 var _rain: GPUParticles3D
@@ -83,7 +84,8 @@ func apply(env) -> void:
 	var top := (day_top * day_w + dusk_top * dusk_w + night_top * night_w)
 	var mid := (day_mid * day_w + dusk_mid * dusk_w + night_mid * night_w)
 	var bot := (day_bot * day_w + dusk_bot * dusk_w + night_bot * night_w)
-	# ---- 天气灰化 ----
+	# ---- 天气灰化（室内画面天气强度按 0 处理：不灰化/不起雾/不落地雪）----
+	var wi := 0.0 if indoor else weather_intensity
 	var dim := 0.0
 	var fog_mul := 1.0
 	var vol_mul := 1.0
@@ -93,20 +95,20 @@ func apply(env) -> void:
 	match weather:
 		"fog":
 			dim = 0.75
-			fog_mul = lerpf(1.0, 0.10, weather_intensity)
-			vol_mul = lerpf(1.0, 3.2, weather_intensity)
-			amb_mul = lerpf(1.0, 0.9, weather_intensity)
+			fog_mul = lerpf(1.0, 0.10, wi)
+			vol_mul = lerpf(1.0, 3.2, wi)
+			amb_mul = lerpf(1.0, 0.9, wi)
 		"rain":
 			dim = 0.62
-			fog_mul = lerpf(1.0, 0.62, weather_intensity)
-			vol_mul = lerpf(1.0, 1.8, weather_intensity)
-			amb_mul = lerpf(1.0, 0.72, weather_intensity)
+			fog_mul = lerpf(1.0, 0.62, wi)
+			vol_mul = lerpf(1.0, 1.8, wi)
+			amb_mul = lerpf(1.0, 0.72, wi)
 		"snow":
 			dim = 0.45
-			fog_mul = lerpf(1.0, 0.4, weather_intensity)
-			vol_mul = lerpf(1.0, 1.6, weather_intensity)
-			amb_mul = lerpf(1.0, 0.82, weather_intensity)
-			env.set_snow_ground(weather_intensity if weather == "snow" else 0.0)
+			fog_mul = lerpf(1.0, 0.4, wi)
+			vol_mul = lerpf(1.0, 1.6, wi)
+			amb_mul = lerpf(1.0, 0.82, wi)
+			env.set_snow_ground(wi if weather == "snow" else 0.0)
 	if weather != "snow":
 		env.set_snow_ground(0.0)
 	# ---- 应用 ----
@@ -115,16 +117,18 @@ func apply(env) -> void:
 	env.set_celestial(sun_dir,
 			clampf(elev * 4.0, 0.0, 1.0) * 1.5 * amb_mul,
 			Color("#ffedd0").lerp(Color("#ff9a4a"), dusk_w),
-			moon_dir, night_f, dim * weather_intensity
+			moon_dir, night_f, dim * wi
 					if weather != "clear" else dim)
 	env.set_atmosphere(amb_col,
 			(0.55 + 0.4 * day_w + 0.18 * dusk_w) * amb_mul,
 			bot, fog_mul, vol_mul)
 	if _rain != null:
-		_rain.emitting = weather == "rain" and weather_intensity > 0.03
-		_rain.amount_ratio = lerpf(0.25, 1.0, weather_intensity)
+		_rain.emitting = not indoor and weather == "rain" \
+				and weather_intensity > 0.03
+		_rain.amount_ratio = lerpf(0.25, 1.0, wi)
 	if _snow != null:
-		_snow.emitting = weather == "snow" and weather_intensity > 0.03
+		_snow.emitting = not indoor and weather == "snow" \
+				and weather_intensity > 0.03
 	if _cam != null:
 		var cp: Vector3 = _cam.global_position
 		if _rain != null:

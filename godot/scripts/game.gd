@@ -1724,9 +1724,11 @@ func _process(dt_real: float) -> void:
 		env.follow_shadow(bf.ally_plane["pos"])
 	else:
 		env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
-	# 昼夜 + 天气推进（所有模式共享同一片天）
+	# 昼夜 + 天气推进（所有模式共享同一片天；车库初始页算室内，
+	# 天气在背后照常演变但不渲染——雨雪粒子/灰化/浓雾不进初始画面）
 	if day_cycle != null:
 		env.underground = camera.position.y < -2.0
+		day_cycle.indoor = state == ST.GARAGE
 		day_cycle.advance(dt)
 		day_cycle.apply(env)
 		if _headlight != null and is_instance_valid(_headlight):
