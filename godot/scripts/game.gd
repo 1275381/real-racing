@@ -1501,6 +1501,18 @@ func _nav_drive(h: float) -> Dictionary:
 		_nav_wp_i += 1
 	var target: Vector2 = nav_route[_nav_wp_i] \
 			if _nav_wp_i < nav_route.size() else nav_dest
+	# 弯前预判限速：距目标路点 35m 内按转角收油（直道 122km/h，急弯 ~32）
+	var vlim := 34.0
+	if _nav_wp_i < nav_route.size():
+		var cur: Vector2 = nav_route[_nav_wp_i]
+		var nxt: Vector2 = nav_route[_nav_wp_i + 1] \
+				if _nav_wp_i + 1 < nav_route.size() else cur
+		if nxt != cur:
+			var turn: float = absf(wrapf(
+					(nxt - cur).angle() - (cur - p2).angle(), -PI, PI))
+			if p2.distance_to(cur) < 35.0:
+				vlim = clampf(lerpf(34.0, 9.0, clampf(turn * 0.85, 0.0, 1.0)),
+						9.0, 34.0)
 	# 前方 12m 锥形范围有车 → 刹停等待
 	var fwd := Vector2(sin(v.heading), cos(v.heading))
 	var blocked := false
@@ -1550,8 +1562,10 @@ func _nav_drive(h: float) -> Dictionary:
 			thr = 0.5
 		else:
 			thr = 0.9
-		# 巡航限速 ~79km/h：城市街道与转弯可控
-		thr = minf(thr, clampf(1.3 - absf(v.vf) / 22.0, 0.0, 1.0))
+		# 巡航限速 ~119km/h：弯前按 vlim 收油，超速 5m/s 以上制动
+		thr = minf(thr, clampf((vlim - absf(v.vf)) / 6.0, 0.0, 1.0))
+		if absf(v.vf) > vlim + 5.0:
+			brk = maxf(brk, 0.5)
 	return {"throttle": thr, "brake": brk, "steer": steer,
 			"handbrake": false}
 
