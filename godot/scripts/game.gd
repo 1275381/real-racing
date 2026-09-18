@@ -452,6 +452,8 @@ var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行�
 var airport_traffic: AirportTraffic  # 机场氛围（客机起降 + 登机人流）
 var _roam_vs := 0.0                # 升降率平滑（仪表）
 var airliner_ride := false         # 正在乘班机飞行
+var wheel_ride := false            # 正在乘摩天轮（第一人称观景）
+var _wheel_gi := 0                 # 所乘吊舱序号
 var cargo_state := "ready"         # 货运任务：ready 备货 / escape 逃脱中 / rewarded 已结算
 var _cargo_last_day := 0           # 货物补充的日期标记
 var cargo_heist := "none"          # 劫案流程：none / chase 追赶 / flee 逃脱中
@@ -1371,6 +1373,39 @@ func enter_roam() -> void:
 		hud.set_plane_panel(false)
 
 
+## 地标交互（摩天轮乘坐 / 电视塔观景电梯）——返回 true 表示 F 已消费
+func _landmark_interact() -> bool:
+	if not on_foot or freeroam == null:
+		return false
+	if wheel_ride:
+		wheel_ride = false
+		onfoot.enter(freeroam.wheel_board_pos() + Vector3(0, 0.1, 0),
+				onfoot.yaw)
+		hud.set_board_hint(false)
+		hud.show_center("已下摩天轮", "", 1200)
+		return true
+	var p := onfoot.pos
+	# 电视塔底 → 观景电梯上塔（基座半宽 23，站在基座边即可按）
+	if p.y < 50.0 and Vector2(p.x - 90, p.z - 90).length() < 30.0:
+		onfoot.enter(freeroam.tower_deck_pos(), onfoot.yaw)
+		hud.show_center("云顶之针 · 观景台", "166m 塔顶环视全城 · 再按 F 下塔",
+				2400)
+		return true
+	# 塔顶 → 下塔
+	if p.y > 100.0 and Vector2(p.x - 90, p.z - 90).length() < 20.0:
+		onfoot.enter(freeroam.tower_base_pos(), onfoot.yaw)
+		hud.show_center("已返回地面", "", 1200)
+		return true
+	# 摩天轮登舱
+	if p.distance_to(freeroam.wheel_board_pos()) < 14.0:
+		_wheel_gi = freeroam.lowest_gondola()
+		wheel_ride = true
+		onfoot.pos = freeroam.gondola_seat(_wheel_gi)
+		hud.show_center("湖畔之眼 · 摩天轮", "全景观光中 · 按 F 随时下轮", 2400)
+		return true
+	return false
+
+
 func _toggle_on_foot() -> void:
 	var v := player.veh
 	if not on_foot:
@@ -1845,6 +1880,8 @@ func _handle_hotkeys() -> void:
 			airliner_i = airport_traffic.near_service_door(onfoot.pos)
 		if airliner_i >= 0:
 			_airliner_board(airliner_i)
+		elif _landmark_interact():
+			pass
 		else:
 			_toggle_on_foot()
 	if state == ST.BATTLE and Input.is_action_just_pressed("rr_interact"):
@@ -2018,7 +2055,12 @@ func _step_sim(h: float) -> void:
 			npc.player_on_foot = false
 		elif on_foot:
 			# 步行：第一人称移动/射击，车辆冻结在原地
-			onfoot.update(h)
+			if wheel_ride and freeroam != null:
+				# 摩天轮观景：人物贴吊舱座位，鼠标视角照常（不走路）
+				onfoot.pos = freeroam.gondola_seat(_wheel_gi)
+				onfoot.move_speed = 0.0
+			else:
+				onfoot.update(h)
 			npc.player_pos = onfoot.pos
 			npc.player_vel = Vector3(sin(onfoot.yaw), 0, cos(onfoot.yaw)) * onfoot.move_speed
 			npc.player_speed = onfoot.move_speed
@@ -2029,7 +2071,22 @@ func _step_sim(h: float) -> void:
 			hud.set_health(player_hp)
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(gun_equipped)["name"])
 			hud.set_scope(onfoot.scoped)
+			# 地标交互提示（摩天轮 / 电视塔观景电梯）
+			var lm_hint := ""
+			if wheel_ride:
+				lm_hint = "F 下摩天轮"
+			elif onfoot.pos.y > 100.0 and Vector2(onfoot.pos.x - 90,
+					onfoot.pos.z - 90).length() < 20.0:
+				lm_hint = "F 乘电梯下塔"
+			elif Vector2(onfoot.pos.x - 90,
+					onfoot.pos.z - 90).length() < 14.0:
+				lm_hint = "F 观景电梯上云顶"
+			elif freeroam != null and onfoot.pos.distance_to(
+					freeroam.wheel_board_pos()) < 14.0:
+				lm_hint = "F 乘坐摩天轮"
+			hud.set_board_hint(lm_hint != "", lm_hint)
 		else:
+			hud.set_board_hint(false)
 			var inp_r := _sample_input(h)
 			pin.input_throttle = inp_r["throttle"]
 			pin.input_brake = inp_r["brake"]
@@ -2464,6 +2521,12 @@ func _update_camera(dt: float) -> void:
 				66.0 + float(rplane["speed"]) * 0.14, 3.0, dt)
 		return
 
+	# 摩天轮吊舱第一人称：位置贴座位，视角交给 onfoot 的鼠标 yaw/pitch
+	if state == ST.ROAM and wheel_ride and onfoot != null:
+		camera.position = onfoot.pos + Vector3(0, 1.35, 0)
+		camera.rotation = Vector3(onfoot.pitch, onfoot.yaw + PI, 0)
+		camera.fov = RRUtil.damp(camera.fov, 68.0, 2.0, dt)
+		return
 	# 下车人模式：相机完全交给 onfoot（第一人称），这里不做任何覆盖
 	if on_foot and onfoot != null:
 		return

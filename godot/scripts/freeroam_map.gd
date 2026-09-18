@@ -3537,6 +3537,29 @@ func _build_landmarks() -> void:
 	_lm_solid(Vector2(90, 90), 23, 23, 6)
 	_lm_solid(Vector2(90, 90), 8, 8, 211)
 	_lm_label(root, "云顶之针 · 电视塔", lp + Vector3(0, 178, 30), 340)
+	# 观景台：塔顶 166m 步行垫区（vy 门控，地面车辆不受影响）+ 环形栏杆
+	road_pads.append({"c": Vector2(90, 90), "fx": 1.0, "fz": 0.0,
+			"hf": 14.0, "hl": 14.0, "y": 166.2})
+	var deck_rail := _lm_mat(Color(0.75, 0.85, 0.95),
+			Color(0.5, 0.8, 1.0), 0.7)
+	var deck_roof := MeshInstance3D.new()
+	var drmesh := TorusMesh.new()
+	drmesh.inner_radius = 30.5
+	drmesh.outer_radius = 33.5
+	drmesh.material = deck_rail
+	deck_roof.mesh = drmesh
+	deck_roof.position = lp + Vector3(0, 166.4, 0)
+	root.add_child(deck_roof)
+	var ki := 0
+	while ki < 8:
+		var rang := float(ki) * PI * 0.25
+		var rail_c := Vector2(90, 90) \
+				+ Vector2(sin(rang), -cos(rang)) * 15.2
+		_lm_solid(rail_c, 6.4, 0.7, 167.8, rang)
+		_lm_box(root, Vector3(rail_c.x, 167.0, rail_c.y),
+				Vector3(12.8 if ki % 2 == 0 else 1.4,
+						1.2, 1.4 if ki % 2 == 0 else 12.8), deck_rail)
+		ki += 1
 
 	# ---- 2) 双辉双子塔（450,90，135m + 空中连桥）----
 	for sx in [433.0, 467.0]:
@@ -3666,3 +3689,38 @@ func update_landmarks(dt: float) -> void:
 		var c := Color.from_hsv(fmod(_lm_t * 0.06, 1.0), 0.7, 1.0)
 		_led_mat.albedo_color = c
 		_led_mat.emission = c
+
+
+## 摩天轮登舱点（地面）
+func wheel_board_pos() -> Vector3:
+	return Vector3(-630, 0.03, 476.0)
+
+
+## 第 i 只吊舱的座位世界坐标
+func gondola_seat(i: int) -> Vector3:
+	if _wheel == null or i < 0 or i >= _gondolas.size():
+		return wheel_board_pos()
+	return _wheel.global_transform * (_gondolas[i].position
+			+ Vector3(0, 0.7, 0))
+
+
+## 最接近地面的吊舱序号（登舱时选它）
+func lowest_gondola() -> int:
+	var best := 0
+	var by := INF
+	for i in _gondolas.size():
+		var wy: float = (_wheel.global_transform
+				* _gondolas[i].position).y
+		if wy < by:
+			by = wy
+			best = i
+	return best
+
+
+## 电视塔观景台 / 塔底落点
+func tower_deck_pos() -> Vector3:
+	return Vector3(90, 166.2, 100.0)
+
+
+func tower_base_pos() -> Vector3:
+	return Vector3(90, 0.05, 116.0)   # 基座边缘（基座半宽 23m）
