@@ -944,6 +944,7 @@ func nav_pois() -> Array:
 		{"label": "枪械店", "pos": Vector2(-46, 46)},
 		{"label": "车库", "pos": Vector2(198, -505)},
 		{"label": "机 场", "pos": Vector2(-1520, -200)},
+		{"label": "截机任务 货机", "pos": Vector2(-1876, -720)},
 		{"label": "云顶之针 电视塔", "pos": Vector2(90, 116)},
 		{"label": "双辉双子塔", "pos": Vector2(450, 116)},
 		{"label": "云湖体育馆", "pos": Vector2(-450, -30)},
