@@ -836,18 +836,28 @@ func _los(from: Vector3, to: Vector3) -> bool:
 
 func _setup_army_mm(team: String, count: int) -> void:
 	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.14
-	head_mesh.height = 0.28
-	var torso_mesh := BoxMesh.new()
-	torso_mesh.size = Vector3(0.44, 0.62, 0.26)
-	var arm_mesh := BoxMesh.new()
-	arm_mesh.size = Vector3(0.11, 0.5, 0.12)
-	var leg_mesh := BoxMesh.new()
-	leg_mesh.size = Vector3(0.15, 0.82, 0.17)
+	head_mesh.radius = 0.12
+	head_mesh.height = 0.24
+	var helmet_mesh := SphereMesh.new()
+	helmet_mesh.radius = 0.135
+	helmet_mesh.height = 0.17
+	var torso_mesh := CylinderMesh.new()
+	torso_mesh.top_radius = 0.2
+	torso_mesh.bottom_radius = 0.16
+	torso_mesh.height = 0.62
+	var arm_mesh := CylinderMesh.new()
+	arm_mesh.top_radius = 0.07
+	arm_mesh.bottom_radius = 0.055
+	arm_mesh.height = 0.5
+	var leg_mesh := CylinderMesh.new()
+	leg_mesh.top_radius = 0.095
+	leg_mesh.bottom_radius = 0.08
+	leg_mesh.height = 0.82
 	var gun_mesh := BoxMesh.new()
 	gun_mesh.size = Vector3(0.08, 0.1, 0.72)
 	_mm[team] = {
 		"head": _make_mm(head_mesh, count),
+		"helmet": _make_mm(helmet_mesh, count),
 		"torso": _make_mm(torso_mesh, count),
 		"arm": _make_mm(arm_mesh, count * 2),
 		"leg": _make_mm(leg_mesh, count * 2),
@@ -862,6 +872,7 @@ func _setup_army_mm(team: String, count: int) -> void:
 	for i in count:
 		mm["torso"].multimesh.set_instance_color(i, uniform)
 		mm["head"].multimesh.set_instance_color(i, Color(0.85, 0.68, 0.55))
+		mm["helmet"].multimesh.set_instance_color(i, helmet)
 		mm["arm"].multimesh.set_instance_color(i * 2, uniform)
 		mm["arm"].multimesh.set_instance_color(i * 2 + 1, uniform)
 		mm["leg"].multimesh.set_instance_color(i * 2, Color(0.2, 0.22, 0.26))
@@ -906,6 +917,8 @@ func _write_pose(s: Dictionary) -> void:
 			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
 	mm["head"].multimesh.set_instance_transform(i,
 			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
+	mm["helmet"].multimesh.set_instance_transform(i,
+			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.65, 0)))
 	if dead:
 		# 倒地：四肢摊开、枪落地
 		mm["arm"].multimesh.set_instance_transform(i * 2, root *

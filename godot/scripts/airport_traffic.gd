@@ -476,14 +476,20 @@ func _make_walker(ap: Dictionary, i: int) -> Dictionary:
 func _setup_walkers_mm(ap: Dictionary, count: int) -> Dictionary:
 	# 人形 6 部件 MultiMesh（同城市行人配方）
 	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.14
-	head_mesh.height = 0.28
-	var torso_mesh := BoxMesh.new()
-	torso_mesh.size = Vector3(0.42, 0.62, 0.24)
-	var arm_mesh := BoxMesh.new()
-	arm_mesh.size = Vector3(0.11, 0.52, 0.13)
-	var leg_mesh := BoxMesh.new()
-	leg_mesh.size = Vector3(0.15, 0.82, 0.17)
+	head_mesh.radius = 0.12
+	head_mesh.height = 0.24
+	var torso_mesh := CylinderMesh.new()
+	torso_mesh.top_radius = 0.19
+	torso_mesh.bottom_radius = 0.155
+	torso_mesh.height = 0.62
+	var arm_mesh := CylinderMesh.new()
+	arm_mesh.top_radius = 0.065
+	arm_mesh.bottom_radius = 0.055
+	arm_mesh.height = 0.52
+	var leg_mesh := CylinderMesh.new()
+	leg_mesh.top_radius = 0.095
+	leg_mesh.bottom_radius = 0.075
+	leg_mesh.height = 0.82
 	var mm := {
 		"head": _make_mm(head_mesh, count),
 		"torso": _make_mm(torso_mesh, count),

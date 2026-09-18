@@ -28,6 +28,10 @@ const PED_SKIN := [
 const PED_PANTS := [
 	Color("#2c3038"), Color("#3a4a63"), Color("#4a3a2c"), Color("#26292e"),
 ]
+const PED_HAIR := [
+	Color("#191410"), Color("#2e2117"), Color("#4a3a20"), Color("#6b4a2a"),
+	Color("#b8a880"), Color("#8a8f96"), Color("#d8d4cc"),
+]
 const POLICE_FINE := 200
 
 var fm                     # FreeroamMap
@@ -63,6 +67,8 @@ var player_pos := Vector3.ZERO
 var player_vel := Vector3.ZERO
 var player_speed := 0.0
 var _ped_mm_head: MultiMeshInstance3D
+var _ped_mm_hair: MultiMeshInstance3D
+var _ped_mm_skirt: MultiMeshInstance3D
 var _ped_mm_torso: MultiMeshInstance3D
 var _ped_mm_arm: MultiMeshInstance3D
 var _ped_mm_leg: MultiMeshInstance3D
@@ -228,30 +234,54 @@ func _build_pedestrians() -> void:
 		spots.append({"origin": origin, "axis": axis, "range": 22.0})
 	while spots.size() > PED_TARGET:
 		spots.remove_at(rng.randi_range(0, spots.size() - 1))
-	# MultiMesh 完整人形：头 + 身体 + 双臂 + 双腿（每人 6 个实例）
+	# MultiMesh 完整人形：头 + 头发 + 身体 + 双臂 + 双腿 + 裙（每人 7 实例）
+	# 圆柱四肢/锥形躯干替代方块，肤色头发/上衣/裤子/裙独立配色
 	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.14
-	head_mesh.height = 0.28
-	var torso_mesh := BoxMesh.new()
-	torso_mesh.size = Vector3(0.42, 0.62, 0.24)
-	var arm_mesh := BoxMesh.new()
-	arm_mesh.size = Vector3(0.11, 0.52, 0.13)
-	var leg_mesh := BoxMesh.new()
-	leg_mesh.size = Vector3(0.15, 0.82, 0.17)
+	head_mesh.radius = 0.12
+	head_mesh.height = 0.24
+	var hair_mesh := SphereMesh.new()
+	hair_mesh.radius = 0.125
+	hair_mesh.height = 0.13
+	var torso_mesh := CylinderMesh.new()
+	torso_mesh.top_radius = 0.19
+	torso_mesh.bottom_radius = 0.155
+	torso_mesh.height = 0.62
+	var arm_mesh := CylinderMesh.new()
+	arm_mesh.top_radius = 0.065
+	arm_mesh.bottom_radius = 0.055
+	arm_mesh.height = 0.52
+	var leg_mesh := CylinderMesh.new()
+	leg_mesh.top_radius = 0.095
+	leg_mesh.bottom_radius = 0.075
+	leg_mesh.height = 0.82
+	var skirt_mesh := CylinderMesh.new()
+	skirt_mesh.top_radius = 0.17
+	skirt_mesh.bottom_radius = 0.30
+	skirt_mesh.height = 0.58
 	_ped_mm_head = _make_ped_mm(head_mesh, spots.size())
+	_ped_mm_hair = _make_ped_mm(hair_mesh, spots.size())
 	_ped_mm_torso = _make_ped_mm(torso_mesh, spots.size())
 	_ped_mm_arm = _make_ped_mm(arm_mesh, spots.size() * 2)
 	_ped_mm_leg = _make_ped_mm(leg_mesh, spots.size() * 2)
+	_ped_mm_skirt = _make_ped_mm(skirt_mesh, spots.size())
+	var skirts: Array[bool] = []
 	for s_i in spots.size():
 		var shirt: Color = PED_CLOTHES[rng.randi_range(0, PED_CLOTHES.size() - 1)]
 		var pants_c: Color = PED_PANTS[rng.randi_range(0, PED_PANTS.size() - 1)]
 		var skin: Color = PED_SKIN[rng.randi_range(0, PED_SKIN.size() - 1)]
+		var hair_c: Color = PED_HAIR[rng.randi_range(0, PED_HAIR.size() - 1)]
+		var skirt: bool = rng.randf() < 0.35
+		var skirt_c: Color = PED_CLOTHES[rng.randi_range(0, PED_CLOTHES.size() - 1)]
 		_ped_mm_torso.multimesh.set_instance_color(s_i, shirt)
 		_ped_mm_head.multimesh.set_instance_color(s_i, skin)
+		_ped_mm_hair.multimesh.set_instance_color(s_i, hair_c)
 		_ped_mm_arm.multimesh.set_instance_color(s_i * 2, shirt)
 		_ped_mm_arm.multimesh.set_instance_color(s_i * 2 + 1, shirt)
 		_ped_mm_leg.multimesh.set_instance_color(s_i * 2, pants_c)
 		_ped_mm_leg.multimesh.set_instance_color(s_i * 2 + 1, pants_c)
+		_ped_mm_skirt.multimesh.set_instance_color(s_i,
+				skirt_c if skirt else Color(0, 0, 0, 0))
+		skirts.append(skirt)
 	for s in spots:
 		peds.append({
 			"origin": s["origin"], "axis": s["axis"],
@@ -260,6 +290,7 @@ func _build_pedestrians() -> void:
 			"range": s["range"], "speed": rng.randf_range(1.2, 1.6),
 			"dodge": 0.0, "dodge_sign": 1.0, "knock_t": 0.0,
 			"phase": rng.randf() * TAU, "dead": false, "pos": Vector3.ZERO,
+			"skirt": skirts[peds.size()],
 		})
 
 
@@ -568,6 +599,14 @@ func _update_peds(dt: float) -> void:
 		var mm_l: MultiMesh = _ped_mm_leg.multimesh
 		mm_t.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
 		mm_h.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
+		_ped_mm_hair.multimesh.set_instance_transform(i,
+				root * Transform3D(Basis.IDENTITY, Vector3(0, 1.67, 0)))
+		var skirt_on: bool = ped.get("skirt", false)
+		var sk := Transform3D(
+				Basis.from_scale(Vector3.ONE
+				* (1.0 if skirt_on else 0.001)),
+				Vector3(0, 0.62, 0) if skirt_on else Vector3(0, -50, 0))
+		_ped_mm_skirt.multimesh.set_instance_transform(i, root * sk)
 		mm_a.set_instance_transform(i * 2, root * sh_l * arm_off)
 		mm_a.set_instance_transform(i * 2 + 1, root * sh_r * arm_off)
 		mm_l.set_instance_transform(i * 2, root * hip_l * leg_off)
