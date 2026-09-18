@@ -482,28 +482,44 @@ func _setup_walkers_mm(ap: Dictionary, count: int) -> Dictionary:
 	torso_mesh.top_radius = 0.19
 	torso_mesh.bottom_radius = 0.155
 	torso_mesh.height = 0.62
-	var arm_mesh := CylinderMesh.new()
-	arm_mesh.top_radius = 0.065
-	arm_mesh.bottom_radius = 0.055
-	arm_mesh.height = 0.52
-	var leg_mesh := CylinderMesh.new()
-	leg_mesh.top_radius = 0.095
-	leg_mesh.bottom_radius = 0.075
-	leg_mesh.height = 0.82
+	var ua_mesh := CylinderMesh.new()
+	ua_mesh.top_radius = 0.07
+	ua_mesh.bottom_radius = 0.062
+	ua_mesh.height = 0.3
+	var fa_mesh := CylinderMesh.new()
+	fa_mesh.top_radius = 0.058
+	fa_mesh.bottom_radius = 0.05
+	fa_mesh.height = 0.28
+	var th_mesh := CylinderMesh.new()
+	th_mesh.top_radius = 0.1
+	th_mesh.bottom_radius = 0.088
+	th_mesh.height = 0.44
+	var ca_mesh := CylinderMesh.new()
+	ca_mesh.top_radius = 0.085
+	ca_mesh.bottom_radius = 0.06
+	ca_mesh.height = 0.44
 	var mm := {
 		"head": _make_mm(head_mesh, count),
 		"torso": _make_mm(torso_mesh, count),
-		"arm": _make_mm(arm_mesh, count * 2),
-		"leg": _make_mm(leg_mesh, count * 2),
+		"ua": _make_mm(ua_mesh, count * 2),
+		"fa": _make_mm(fa_mesh, count * 2),
+		"th": _make_mm(th_mesh, count * 2),
+		"ca": _make_mm(ca_mesh, count * 2),
 	}
 	for i in count:
 		var shirt := Color(0.5 + randf() * 0.4, 0.5, 0.55 + randf() * 0.3)
 		mm["torso"].multimesh.set_instance_color(i, shirt)
 		mm["head"].multimesh.set_instance_color(i, Color(0.85, 0.68, 0.55))
-		mm["arm"].multimesh.set_instance_color(i * 2, shirt)
-		mm["arm"].multimesh.set_instance_color(i * 2 + 1, shirt)
-		mm["leg"].multimesh.set_instance_color(i * 2, Color(0.25, 0.28, 0.34))
-		mm["leg"].multimesh.set_instance_color(i * 2 + 1,
+		mm["ua"].multimesh.set_instance_color(i * 2, shirt)
+		mm["ua"].multimesh.set_instance_color(i * 2 + 1, shirt)
+		mm["fa"].multimesh.set_instance_color(i * 2, Color(0.85, 0.68, 0.55))
+		mm["fa"].multimesh.set_instance_color(i * 2 + 1,
+				Color(0.85, 0.68, 0.55))
+		mm["th"].multimesh.set_instance_color(i * 2, Color(0.25, 0.28, 0.34))
+		mm["th"].multimesh.set_instance_color(i * 2 + 1,
+				Color(0.25, 0.28, 0.34))
+		mm["ca"].multimesh.set_instance_color(i * 2, Color(0.25, 0.28, 0.34))
+		mm["ca"].multimesh.set_instance_color(i * 2 + 1,
 				Color(0.25, 0.28, 0.34))
 	return mm
 
@@ -533,7 +549,7 @@ func _update_walkers(ap: Dictionary, dt: float) -> void:
 			mm["torso"].multimesh.set_instance_transform(idx,
 					Transform3D(Basis.from_scale(Vector3.ONE * 0.0001),
 					Vector3(0, -50, 0)))
-			for key in ["arm", "leg"]:
+			for key in ["ua", "fa", "th", "ca"]:
 				mm[key].multimesh.set_instance_transform(idx * 2,
 						Transform3D(Basis.from_scale(Vector3.ONE * 0.0001),
 						Vector3(0, -50, 0)))
@@ -547,26 +563,48 @@ func _update_walkers(ap: Dictionary, dt: float) -> void:
 		var swing := sin(_t * 8.0 + float(w["i"]) * 1.3) * 0.4
 		var root := Transform3D(Basis.from_euler(Vector3(0, yaw, 0)), pos)
 		var mm2: Dictionary = mm
-		mm2["torso"].multimesh.set_instance_transform(idx,
-				root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
+		var lean := 0.07
+		var torso_tf := root * Transform3D(
+				Basis.from_euler(Vector3(lean, 0, 0)), Vector3(0, 1.12, 0))
+		mm2["torso"].multimesh.set_instance_transform(idx, torso_tf)
 		mm2["head"].multimesh.set_instance_transform(idx,
-				root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
-		var sh := Transform3D(Basis.from_euler(Vector3(-swing * 0.6, 0, 0)),
-				Vector3(-0.27, 1.4, 0))
-		var sh2 := Transform3D(Basis.from_euler(Vector3(swing * 0.6, 0, 0)),
-				Vector3(0.27, 1.4, 0))
-		var arm_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.26, 0))
-		mm2["arm"].multimesh.set_instance_transform(idx * 2, root * sh * arm_off)
-		mm2["arm"].multimesh.set_instance_transform(idx * 2 + 1,
-				root * sh2 * arm_off)
+				torso_tf * Transform3D(Basis.IDENTITY, Vector3(0, 0.46, 0)))
+		var sh := Transform3D(Basis.from_euler(Vector3(-swing * 0.8, 0, 0)),
+				Vector3(-0.23, 1.4, 0))
+		var sh2 := Transform3D(Basis.from_euler(Vector3(swing * 0.8, 0, 0)),
+				Vector3(0.23, 1.4, 0))
+		var ua_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.15, 0))
+		var fa_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.14, 0))
+		var elb := Transform3D(Basis.from_euler(Vector3(-0.35, 0, 0)),
+				Vector3(0, -0.3, 0))
+		mm2["ua"].multimesh.set_instance_transform(idx * 2, root * sh * ua_off)
+		mm2["ua"].multimesh.set_instance_transform(idx * 2 + 1,
+				root * sh2 * ua_off)
+		mm2["fa"].multimesh.set_instance_transform(idx * 2,
+				root * sh * elb * fa_off)
+		mm2["fa"].multimesh.set_instance_transform(idx * 2 + 1,
+				root * sh2 * elb * fa_off)
 		var hip := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)),
 				Vector3(-0.11, 0.83, 0))
 		var hip2 := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)),
 				Vector3(0.11, 0.83, 0))
-		var leg_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.41, 0))
-		mm2["leg"].multimesh.set_instance_transform(idx * 2, root * hip * leg_off)
-		mm2["leg"].multimesh.set_instance_transform(idx * 2 + 1,
-				root * hip2 * leg_off)
+		var th_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+		var ca_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+		var knee := Transform3D(Basis.from_euler(
+				Vector3(maxf(0.0, -sin(_t * 8.0
+				+ float(w["i"]) * 1.3)) * 0.7 + 0.08, 0, 0)),
+				Vector3(0, -0.44, 0))
+		mm2["th"].multimesh.set_instance_transform(idx * 2, root * hip * th_off)
+		mm2["ca"].multimesh.set_instance_transform(idx * 2,
+				root * hip * knee * ca_off)
+		var knee2 := Transform3D(Basis.from_euler(
+				Vector3(maxf(0.0, sin(_t * 8.0
+				+ float(w["i"]) * 1.3)) * 0.7 + 0.08, 0, 0)),
+				Vector3(0, -0.44, 0))
+		mm2["th"].multimesh.set_instance_transform(idx * 2 + 1,
+				root * hip2 * th_off)
+		mm2["ca"].multimesh.set_instance_transform(idx * 2 + 1,
+				root * hip2 * knee2 * ca_off)
 
 
 func _make_mm(mesh: Mesh, count: int) -> MultiMeshInstance3D:

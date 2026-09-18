@@ -70,6 +70,10 @@ var _ped_mm_head: MultiMeshInstance3D
 var _ped_mm_hair: MultiMeshInstance3D
 var _ped_mm_skirt: MultiMeshInstance3D
 var _ped_mm_torso: MultiMeshInstance3D
+var _ped_mm_ua: MultiMeshInstance3D    # 上臂
+var _ped_mm_fa: MultiMeshInstance3D    # 前臂（肘）
+var _ped_mm_th: MultiMeshInstance3D    # 大腿
+var _ped_mm_ca: MultiMeshInstance3D    # 小腿（膝）
 var _ped_mm_arm: MultiMeshInstance3D
 var _ped_mm_leg: MultiMeshInstance3D
 var _traffic_body: MultiMesh
@@ -234,8 +238,8 @@ func _build_pedestrians() -> void:
 		spots.append({"origin": origin, "axis": axis, "range": 22.0})
 	while spots.size() > PED_TARGET:
 		spots.remove_at(rng.randi_range(0, spots.size() - 1))
-	# MultiMesh 完整人形：头 + 头发 + 身体 + 双臂 + 双腿 + 裙（每人 7 实例）
-	# 圆柱四肢/锥形躯干替代方块，肤色头发/上衣/裤子/裙独立配色
+	# MultiMesh 程序化两级骨骼人形：头/发/躯干/裙 + 上下臂(肘) + 大小腿(膝)
+	# 每人 13 实例；行走时肘/膝按相位弯曲，躯干前倾+侧摆，接近骨骼动画
 	var head_mesh := SphereMesh.new()
 	head_mesh.radius = 0.12
 	head_mesh.height = 0.24
@@ -246,14 +250,22 @@ func _build_pedestrians() -> void:
 	torso_mesh.top_radius = 0.19
 	torso_mesh.bottom_radius = 0.155
 	torso_mesh.height = 0.62
-	var arm_mesh := CylinderMesh.new()
-	arm_mesh.top_radius = 0.065
-	arm_mesh.bottom_radius = 0.055
-	arm_mesh.height = 0.52
-	var leg_mesh := CylinderMesh.new()
-	leg_mesh.top_radius = 0.095
-	leg_mesh.bottom_radius = 0.075
-	leg_mesh.height = 0.82
+	var ua_mesh := CylinderMesh.new()       # 上臂（衣袖）
+	ua_mesh.top_radius = 0.07
+	ua_mesh.bottom_radius = 0.062
+	ua_mesh.height = 0.3
+	var fa_mesh := CylinderMesh.new()       # 前臂（肤色）
+	fa_mesh.top_radius = 0.058
+	fa_mesh.bottom_radius = 0.05
+	fa_mesh.height = 0.28
+	var th_mesh := CylinderMesh.new()       # 大腿（裤）
+	th_mesh.top_radius = 0.1
+	th_mesh.bottom_radius = 0.088
+	th_mesh.height = 0.44
+	var ca_mesh := CylinderMesh.new()       # 小腿（裤）
+	ca_mesh.top_radius = 0.085
+	ca_mesh.bottom_radius = 0.06
+	ca_mesh.height = 0.44
 	var skirt_mesh := CylinderMesh.new()
 	skirt_mesh.top_radius = 0.17
 	skirt_mesh.bottom_radius = 0.30
@@ -261,10 +273,13 @@ func _build_pedestrians() -> void:
 	_ped_mm_head = _make_ped_mm(head_mesh, spots.size())
 	_ped_mm_hair = _make_ped_mm(hair_mesh, spots.size())
 	_ped_mm_torso = _make_ped_mm(torso_mesh, spots.size())
-	_ped_mm_arm = _make_ped_mm(arm_mesh, spots.size() * 2)
-	_ped_mm_leg = _make_ped_mm(leg_mesh, spots.size() * 2)
+	_ped_mm_ua = _make_ped_mm(ua_mesh, spots.size() * 2)
+	_ped_mm_fa = _make_ped_mm(fa_mesh, spots.size() * 2)
+	_ped_mm_th = _make_ped_mm(th_mesh, spots.size() * 2)
+	_ped_mm_ca = _make_ped_mm(ca_mesh, spots.size() * 2)
 	_ped_mm_skirt = _make_ped_mm(skirt_mesh, spots.size())
 	var skirts: Array[bool] = []
+	var skins: Array[Color] = []
 	for s_i in spots.size():
 		var shirt: Color = PED_CLOTHES[rng.randi_range(0, PED_CLOTHES.size() - 1)]
 		var pants_c: Color = PED_PANTS[rng.randi_range(0, PED_PANTS.size() - 1)]
@@ -275,13 +290,18 @@ func _build_pedestrians() -> void:
 		_ped_mm_torso.multimesh.set_instance_color(s_i, shirt)
 		_ped_mm_head.multimesh.set_instance_color(s_i, skin)
 		_ped_mm_hair.multimesh.set_instance_color(s_i, hair_c)
-		_ped_mm_arm.multimesh.set_instance_color(s_i * 2, shirt)
-		_ped_mm_arm.multimesh.set_instance_color(s_i * 2 + 1, shirt)
-		_ped_mm_leg.multimesh.set_instance_color(s_i * 2, pants_c)
-		_ped_mm_leg.multimesh.set_instance_color(s_i * 2 + 1, pants_c)
+		_ped_mm_ua.multimesh.set_instance_color(s_i * 2, shirt)
+		_ped_mm_ua.multimesh.set_instance_color(s_i * 2 + 1, shirt)
+		_ped_mm_fa.multimesh.set_instance_color(s_i * 2, skin)
+		_ped_mm_fa.multimesh.set_instance_color(s_i * 2 + 1, skin)
+		_ped_mm_th.multimesh.set_instance_color(s_i * 2, pants_c)
+		_ped_mm_th.multimesh.set_instance_color(s_i * 2 + 1, pants_c)
+		_ped_mm_ca.multimesh.set_instance_color(s_i * 2, pants_c)
+		_ped_mm_ca.multimesh.set_instance_color(s_i * 2 + 1, pants_c)
 		_ped_mm_skirt.multimesh.set_instance_color(s_i,
 				skirt_c if skirt else Color(0, 0, 0, 0))
 		skirts.append(skirt)
+		skins.append(skin)
 	for s in spots:
 		peds.append({
 			"origin": s["origin"], "axis": s["axis"],
@@ -586,31 +606,60 @@ func _update_peds(dt: float) -> void:
 		var root_rot := Vector3(PI * 0.5, yaw, 0) if not walking \
 				else Vector3(0, yaw, tilt_sway(_t, phase))
 		var root := Transform3D(Basis.from_euler(root_rot), root_pos)
-		# 各部件：root × 肩/髋枢轴 × 摆动 × 偏移
+		# 两级骨骼：髋/肩枢轴 → 肢段 → 膝/肘枢轴 → 末段（按行走相位弯曲）
+		var walk_k := 1.0 if walking else 0.0
 		var hip_l := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)), Vector3(-0.11, 0.83, 0))
 		var hip_r := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)), Vector3(0.11, 0.83, 0))
-		var sh_l := Transform3D(Basis.from_euler(Vector3(-swing * 0.7, 0, 0)), Vector3(-0.27, 1.40, 0))
-		var sh_r := Transform3D(Basis.from_euler(Vector3(swing * 0.7, 0, 0)), Vector3(0.27, 1.40, 0))
-		var leg_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.41, 0))
-		var arm_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.26, 0))
-		var mm_t: MultiMesh = _ped_mm_torso.multimesh
-		var mm_h: MultiMesh = _ped_mm_head.multimesh
-		var mm_a: MultiMesh = _ped_mm_arm.multimesh
-		var mm_l: MultiMesh = _ped_mm_leg.multimesh
-		mm_t.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
-		mm_h.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
+		var sh_l := Transform3D(Basis.from_euler(Vector3(-swing * 0.8, 0, 0)), Vector3(-0.23, 1.40, 0))
+		var sh_r := Transform3D(Basis.from_euler(Vector3(swing * 0.8, 0, 0)), Vector3(0.23, 1.40, 0))
+		var th_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+		var ca_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+		var ua_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.15, 0))
+		var fa_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.14, 0))
+		var knee_l := maxf(0.0, -cos(_t * 8.0 + phase)) * 0.9 * walk_k + 0.06
+		var knee_r := maxf(0.0, cos(_t * 8.0 + phase)) * 0.9 * walk_k + 0.06
+		var elb_l := -0.3 - maxf(0.0, sin(_t * 8.0 + phase)) * 0.25 * walk_k
+		var elb_r := -0.3 - maxf(0.0, -sin(_t * 8.0 + phase)) * 0.25 * walk_k
+		var knee_pl := Transform3D(Basis.from_euler(Vector3(knee_l, 0, 0)),
+				Vector3(0, -0.44, 0))
+		var knee_pr := Transform3D(Basis.from_euler(Vector3(knee_r, 0, 0)),
+				Vector3(0, -0.44, 0))
+		var elb_pl := Transform3D(Basis.from_euler(Vector3(elb_l, 0, 0)),
+				Vector3(0, -0.3, 0))
+		var elb_pr := Transform3D(Basis.from_euler(Vector3(elb_r, 0, 0)),
+				Vector3(0, -0.3, 0))
+		# 躯干：行走前倾 + 侧摆；头/发跟随躯干
+		var torso_tf := root * Transform3D(
+				Basis.from_euler(Vector3(0.07 * walk_k,
+				sin(_t * 4.0 + phase) * 0.05 * walk_k, 0)),
+				Vector3(0, 1.12, 0))
+		_ped_mm_torso.multimesh.set_instance_transform(i, torso_tf)
+		_ped_mm_head.multimesh.set_instance_transform(i,
+				torso_tf * Transform3D(Basis.IDENTITY, Vector3(0, 0.46, 0)))
 		_ped_mm_hair.multimesh.set_instance_transform(i,
-				root * Transform3D(Basis.IDENTITY, Vector3(0, 1.67, 0)))
+				torso_tf * Transform3D(Basis.IDENTITY, Vector3(0, 0.55, 0)))
 		var skirt_on: bool = ped.get("skirt", false)
 		var sk := Transform3D(
 				Basis.from_scale(Vector3.ONE
 				* (1.0 if skirt_on else 0.001)),
 				Vector3(0, 0.62, 0) if skirt_on else Vector3(0, -50, 0))
 		_ped_mm_skirt.multimesh.set_instance_transform(i, root * sk)
-		mm_a.set_instance_transform(i * 2, root * sh_l * arm_off)
-		mm_a.set_instance_transform(i * 2 + 1, root * sh_r * arm_off)
-		mm_l.set_instance_transform(i * 2, root * hip_l * leg_off)
-		mm_l.set_instance_transform(i * 2 + 1, root * hip_r * leg_off)
+		# 腿：髋摆 → 大腿 → 膝弯 → 小腿
+		_ped_mm_th.multimesh.set_instance_transform(i * 2, root * hip_l * th_off)
+		_ped_mm_ca.multimesh.set_instance_transform(i * 2,
+				root * hip_l * knee_pl * ca_off)
+		_ped_mm_th.multimesh.set_instance_transform(i * 2 + 1,
+				root * hip_r * th_off)
+		_ped_mm_ca.multimesh.set_instance_transform(i * 2 + 1,
+				root * hip_r * knee_pr * ca_off)
+		# 臂：肩摆 → 上臂 → 肘弯 → 前臂（短袖露肤色）
+		_ped_mm_ua.multimesh.set_instance_transform(i * 2, root * sh_l * ua_off)
+		_ped_mm_fa.multimesh.set_instance_transform(i * 2,
+				root * sh_l * elb_pl * fa_off)
+		_ped_mm_ua.multimesh.set_instance_transform(i * 2 + 1,
+				root * sh_r * ua_off)
+		_ped_mm_fa.multimesh.set_instance_transform(i * 2 + 1,
+				root * sh_r * elb_pr * fa_off)
 		i += 1
 
 

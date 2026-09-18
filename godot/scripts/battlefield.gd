@@ -845,22 +845,32 @@ func _setup_army_mm(team: String, count: int) -> void:
 	torso_mesh.top_radius = 0.2
 	torso_mesh.bottom_radius = 0.16
 	torso_mesh.height = 0.62
-	var arm_mesh := CylinderMesh.new()
-	arm_mesh.top_radius = 0.07
-	arm_mesh.bottom_radius = 0.055
-	arm_mesh.height = 0.5
-	var leg_mesh := CylinderMesh.new()
-	leg_mesh.top_radius = 0.095
-	leg_mesh.bottom_radius = 0.08
-	leg_mesh.height = 0.82
+	var ua_mesh := CylinderMesh.new()       # 上臂
+	ua_mesh.top_radius = 0.07
+	ua_mesh.bottom_radius = 0.062
+	ua_mesh.height = 0.26
+	var fa_mesh := CylinderMesh.new()       # 前臂
+	fa_mesh.top_radius = 0.058
+	fa_mesh.bottom_radius = 0.05
+	fa_mesh.height = 0.26
+	var th_mesh := CylinderMesh.new()       # 大腿
+	th_mesh.top_radius = 0.1
+	th_mesh.bottom_radius = 0.088
+	th_mesh.height = 0.44
+	var ca_mesh := CylinderMesh.new()       # 小腿
+	ca_mesh.top_radius = 0.085
+	ca_mesh.bottom_radius = 0.06
+	ca_mesh.height = 0.44
 	var gun_mesh := BoxMesh.new()
 	gun_mesh.size = Vector3(0.08, 0.1, 0.72)
 	_mm[team] = {
 		"head": _make_mm(head_mesh, count),
 		"helmet": _make_mm(helmet_mesh, count),
 		"torso": _make_mm(torso_mesh, count),
-		"arm": _make_mm(arm_mesh, count * 2),
-		"leg": _make_mm(leg_mesh, count * 2),
+		"ua": _make_mm(ua_mesh, count * 2),
+		"fa": _make_mm(fa_mesh, count * 2),
+		"th": _make_mm(th_mesh, count * 2),
+		"ca": _make_mm(ca_mesh, count * 2),
 		"gun": _make_mm(gun_mesh, count),
 	}
 	# 队服配色
@@ -873,10 +883,16 @@ func _setup_army_mm(team: String, count: int) -> void:
 		mm["torso"].multimesh.set_instance_color(i, uniform)
 		mm["head"].multimesh.set_instance_color(i, Color(0.85, 0.68, 0.55))
 		mm["helmet"].multimesh.set_instance_color(i, helmet)
-		mm["arm"].multimesh.set_instance_color(i * 2, uniform)
-		mm["arm"].multimesh.set_instance_color(i * 2 + 1, uniform)
-		mm["leg"].multimesh.set_instance_color(i * 2, Color(0.2, 0.22, 0.26))
-		mm["leg"].multimesh.set_instance_color(i * 2 + 1,
+		mm["ua"].multimesh.set_instance_color(i * 2, uniform)
+		mm["ua"].multimesh.set_instance_color(i * 2 + 1, uniform)
+		mm["fa"].multimesh.set_instance_color(i * 2, Color(0.85, 0.68, 0.55))
+		mm["fa"].multimesh.set_instance_color(i * 2 + 1,
+				Color(0.85, 0.68, 0.55))
+		mm["th"].multimesh.set_instance_color(i * 2, Color(0.2, 0.22, 0.26))
+		mm["th"].multimesh.set_instance_color(i * 2 + 1,
+				Color(0.2, 0.22, 0.26))
+		mm["ca"].multimesh.set_instance_color(i * 2, Color(0.2, 0.22, 0.26))
+		mm["ca"].multimesh.set_instance_color(i * 2 + 1,
 				Color(0.2, 0.22, 0.26))
 		mm["gun"].multimesh.set_instance_color(i, Color(0.12, 0.12, 0.13))
 
@@ -920,35 +936,67 @@ func _write_pose(s: Dictionary) -> void:
 	mm["helmet"].multimesh.set_instance_transform(i,
 			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.65, 0)))
 	if dead:
-		# 倒地：四肢摊开、枪落地
-		mm["arm"].multimesh.set_instance_transform(i * 2, root *
+		# 倒地：四肢摊开（上下段微错位）、枪落地
+		mm["ua"].multimesh.set_instance_transform(i * 2, root *
 				Transform3D(Basis.from_euler(Vector3(0, 0, 1.2)),
 				Vector3(-0.3, 1.15, 0)))
-		mm["arm"].multimesh.set_instance_transform(i * 2 + 1, root *
+		mm["fa"].multimesh.set_instance_transform(i * 2, root *
+				Transform3D(Basis.from_euler(Vector3(0, 0, 1.7)),
+				Vector3(-0.48, 0.95, 0)))
+		mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root *
 				Transform3D(Basis.from_euler(Vector3(0, 0, -1.2)),
 				Vector3(0.3, 1.15, 0)))
-		mm["leg"].multimesh.set_instance_transform(i * 2, root *
+		mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root *
+				Transform3D(Basis.from_euler(Vector3(0, 0, -1.7)),
+				Vector3(0.48, 0.95, 0)))
+		mm["th"].multimesh.set_instance_transform(i * 2, root *
 				Transform3D(Basis.from_euler(Vector3(-0.3, 0, 0.2)),
 				Vector3(-0.11, 0.42, 0)))
-		mm["leg"].multimesh.set_instance_transform(i * 2 + 1, root *
+		mm["ca"].multimesh.set_instance_transform(i * 2, root *
+				Transform3D(Basis.from_euler(Vector3(0.5, 0, 0.2)),
+				Vector3(-0.16, 0.1, 0.1)))
+		mm["th"].multimesh.set_instance_transform(i * 2 + 1, root *
 				Transform3D(Basis.from_euler(Vector3(0.2, 0, -0.2)),
 				Vector3(0.11, 0.42, 0)))
+		mm["ca"].multimesh.set_instance_transform(i * 2 + 1, root *
+				Transform3D(Basis.from_euler(Vector3(-0.4, 0, -0.2)),
+				Vector3(0.2, 0.12, -0.08)))
 		mm["gun"].multimesh.set_instance_transform(i, root *
 				Transform3D(Basis.IDENTITY, Vector3(0.5, 0.1, 0.3)))
 		return
-	# 持枪双臂前伸 + 摆腿
+	# 持枪双臂前伸（上臂+前臂微内收）+ 两级骨骼摆腿（膝随相位弯曲）
 	var aim := Basis.from_euler(Vector3(-1.25, 0, 0))
-	mm["arm"].multimesh.set_instance_transform(i * 2, root *
-			Transform3D(aim, Vector3(-0.14, 1.32, 0.18)))
-	mm["arm"].multimesh.set_instance_transform(i * 2 + 1, root *
-			Transform3D(aim, Vector3(0.14, 1.32, 0.18)))
+	var aim_fa := Basis.from_euler(Vector3(-1.45, 0, 0))
+	mm["ua"].multimesh.set_instance_transform(i * 2, root *
+			Transform3D(aim, Vector3(-0.14, 1.32, 0.12)))
+	mm["fa"].multimesh.set_instance_transform(i * 2, root *
+			Transform3D(aim_fa, Vector3(-0.1, 1.3, 0.34)))
+	mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root *
+			Transform3D(aim, Vector3(0.14, 1.32, 0.12)))
+	mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root *
+			Transform3D(aim_fa, Vector3(0.1, 1.3, 0.34)))
 	var hip_l := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)),
 			Vector3(-0.11, 0.83, 0))
 	var hip_r := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)),
 			Vector3(0.11, 0.83, 0))
-	var leg_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.41, 0))
-	mm["leg"].multimesh.set_instance_transform(i * 2, root * hip_l * leg_off)
-	mm["leg"].multimesh.set_instance_transform(i * 2 + 1, root * hip_r * leg_off)
+	var walk_k := 1.0 if s["moving"] else 0.0
+	var knee_l := maxf(0.0, -cos(_t * 9.0 + float(s["phase"]))) * 0.8 \
+			* walk_k + 0.1
+	var knee_r := maxf(0.0, cos(_t * 9.0 + float(s["phase"]))) * 0.8 \
+			* walk_k + 0.1
+	var th_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+	var ca_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+	var knee_pl := Transform3D(Basis.from_euler(Vector3(knee_l, 0, 0)),
+			Vector3(0, -0.44, 0))
+	var knee_pr := Transform3D(Basis.from_euler(Vector3(knee_r, 0, 0)),
+			Vector3(0, -0.44, 0))
+	mm["th"].multimesh.set_instance_transform(i * 2, root * hip_l * th_off)
+	mm["ca"].multimesh.set_instance_transform(i * 2,
+			root * hip_l * knee_pl * ca_off)
+	mm["th"].multimesh.set_instance_transform(i * 2 + 1,
+			root * hip_r * th_off)
+	mm["ca"].multimesh.set_instance_transform(i * 2 + 1,
+			root * hip_r * knee_pr * ca_off)
 	# 枪贴胸前（双臂之间前指）
 	mm["gun"].multimesh.set_instance_transform(i, root *
 			Transform3D(Basis.from_euler(Vector3(-1.35, 0, 0)),
