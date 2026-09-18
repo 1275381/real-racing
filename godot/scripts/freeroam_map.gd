@@ -133,6 +133,7 @@ var _obst_hit := 0.0              # 本帧障碍撞击强度（供音效/震屏�
 var minimap_tex: ImageTexture
 
 # ---- 特色地标动画引用 ----
+var _elev_cabin: MeshInstance3D    # 电视塔电梯轿厢
 var _wheel: Node3D                 # 摩天轮转盘
 var _gondolas: Array[Node3D] = []
 var _beacon_mat: StandardMaterial3D
@@ -3528,13 +3529,27 @@ func _build_landmarks() -> void:
 
 	# ---- 1) 云顶之针 · 电视塔（中央广场 90,90，全城最高 210m）----
 	var lp := Vector3(90, 0, 90)
-	_lm_box(root, lp + Vector3(0, 3, 0), Vector3(46, 6, 46), white)
+	# 基座大堂：可进入（南门洞 6m），四墙 + 顶板 + 薄地板
+	_lm_box(root, lp + Vector3(0, 0.03, 0), Vector3(46, 0.06, 46), white)
+	var wall_col := _lm_mat(Color(0.8, 0.82, 0.86))
+	_lm_box(root, lp + Vector3(-10, 3, 23), Vector3(20, 6, 0.8), wall_col)
+	_lm_box(root, lp + Vector3(10, 3, 23), Vector3(20, 6, 0.8), wall_col)
+	_lm_box(root, lp + Vector3(0, 3, -23), Vector3(46, 6, 0.8), wall_col)
+	_lm_box(root, lp + Vector3(-23, 3, 0), Vector3(0.8, 6, 46), wall_col)
+	_lm_box(root, lp + Vector3(23, 3, 0), Vector3(0.8, 6, 46), wall_col)
+	_lm_box(root, lp + Vector3(0, 6.3, 0), Vector3(46, 0.6, 46), steel)
+	# 大堂碰撞（南墙留 6m 门洞 x 87..93）
+	_lm_solid(Vector2(lp.x - 10, lp.z + 23), 10, 0.4, 6)
+	_lm_solid(Vector2(lp.x + 10, lp.z + 23), 10, 0.4, 6)
+	_lm_solid(Vector2(lp.x, lp.z - 23), 23, 0.4, 6)
+	_lm_solid(Vector2(lp.x - 23, lp.z), 0.4, 23, 6)
+	_lm_solid(Vector2(lp.x + 23, lp.z), 0.4, 23, 6)
+	# 塔身
 	_lm_cyl(root, lp + Vector3(0, 81, 0), 4.5, 7.5, 150, white)
 	_lm_cyl(root, lp + Vector3(0, 161, 0), 16, 16, 10, glass)
 	_lm_cyl(root, lp + Vector3(0, 173, 0), 2.6, 3.2, 14, steel)
 	_lm_box(root, lp + Vector3(0, 195, 0), Vector3(1.1, 30, 1.1), steel)
 	_lm_box(root, lp + Vector3(0, 210.6, 0), Vector3(1.8, 1.8, 1.8), _beacon_mat)
-	_lm_solid(Vector2(90, 90), 23, 23, 6)
 	_lm_solid(Vector2(90, 90), 8, 8, 211)
 	_lm_label(root, "云顶之针 · 电视塔", lp + Vector3(0, 178, 30), 340)
 	# 观景台：塔顶 166m 步行垫区（vy 门控，地面车辆不受影响）+ 环形栏杆
@@ -3560,6 +3575,23 @@ func _build_landmarks() -> void:
 				Vector3(12.8 if ki % 2 == 0 else 1.4,
 						1.2, 1.4 if ki % 2 == 0 else 12.8), deck_rail)
 		ki += 1
+	# 塔内电梯：玻璃井道（贴塔身北侧，y 0..166）+ 可升降轿厢
+	var eglass := _lm_mat(Color(0.65, 0.8, 0.9, 0.28),
+			Color(0.5, 0.8, 1.0), 0.25)
+	_lm_box(root, Vector3(87.6, 83, 78), Vector3(0.4, 166, 4.8), eglass)
+	_lm_box(root, Vector3(92.4, 83, 78), Vector3(0.4, 166, 4.8), eglass)
+	_lm_box(root, Vector3(90, 83, 75.4), Vector3(5.2, 166, 0.4), eglass)
+	_lm_solid(Vector2(87.6, 78), 0.3, 2.4, 166)
+	_lm_solid(Vector2(92.4, 78), 0.3, 2.4, 166)
+	_lm_solid(Vector2(90, 75.4), 2.6, 0.3, 166)
+	_elev_cabin = MeshInstance3D.new()
+	var cmesh := BoxMesh.new()
+	cmesh.size = Vector3(2.8, 2.7, 2.6)
+	var cmat := _lm_mat(Color(0.85, 0.87, 0.9), Color(0.9, 0.95, 1.0), 0.5)
+	cmesh.material = cmat
+	_elev_cabin.mesh = cmesh
+	_elev_cabin.position = Vector3(90, 1.7, 78)
+	root.add_child(_elev_cabin)
 
 	# ---- 2) 双辉双子塔（450,90，135m + 空中连桥）----
 	for sx in [433.0, 467.0]:
@@ -3724,3 +3756,22 @@ func tower_deck_pos() -> Vector3:
 
 func tower_base_pos() -> Vector3:
 	return Vector3(90, 0.05, 116.0)   # 基座边缘（基座半宽 23m）
+
+
+## 电梯轿厢地板高度
+func set_elevator_y(y: float) -> void:
+	if _elev_cabin != null:
+		_elev_cabin.position.y = y + 1.35
+
+
+func elevator_y() -> float:
+	return _elev_cabin.position.y - 1.35 if _elev_cabin != null else 0.32
+
+
+## 井道内登梯点（大堂地面）
+func elevator_board_pos() -> Vector3:
+	return Vector3(90, 0.32, 78.0)
+
+
+const ELEV_BASE_Y := 0.32
+const ELEV_DECK_Y := 166.2

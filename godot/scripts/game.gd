@@ -454,6 +454,9 @@ var _roam_vs := 0.0                # 升降率平滑（仪表）
 var airliner_ride := false         # 正在乘班机飞行
 var wheel_ride := false            # 正在乘摩天轮（第一人称观景）
 var _wheel_gi := 0                 # 所乘吊舱序号
+var elev_ride := false             # 电视塔电梯乘坐中
+var _elev_y := 0.32                # 轿厢当前地板高度
+var _elev_target := 0.32           # 轿厢目标楼层
 var cargo_state := "ready"         # 货运任务：ready 备货 / escape 逃脱中 / rewarded 已结算
 var _cargo_last_day := 0           # 货物补充的日期标记
 var cargo_heist := "none"          # 劫案流程：none / chase 追赶 / flee 逃脱中
@@ -1385,16 +1388,27 @@ func _landmark_interact() -> bool:
 		hud.show_center("已下摩天轮", "", 1200)
 		return true
 	var p := onfoot.pos
-	# 电视塔底 → 观景电梯上塔（基座半宽 23，站在基座边即可按）
-	if p.y < 50.0 and Vector2(p.x - 90, p.z - 90).length() < 30.0:
-		onfoot.enter(freeroam.tower_deck_pos(), onfoot.yaw)
-		hud.show_center("云顶之针 · 观景台", "166m 塔顶环视全城 · 再按 F 下塔",
-				2400)
+	# 电视塔电梯：井道内按 F（轿厢到位才能乘，未到位自动呼叫）
+	var shaft_d: float = Vector2(p.x - 90, p.z - 78).length()
+	if p.y < 50.0 and shaft_d < 3.4:
+		if absf(freeroam.elevator_y() - freeroam.ELEV_BASE_Y) < 1.0:
+			elev_ride = true
+			_elev_y = freeroam.elevator_y()
+			_elev_target = freeroam.ELEV_DECK_Y
+			hud.set_board_hint(false)
+			hud.show_center("电梯上行", "云顶之针观景台 · 166m", 1800)
+		else:
+			hud.show_center("电梯呼叫中", "轿厢正在赶来 · 请稍候", 1400)
 		return true
-	# 塔顶 → 下塔
-	if p.y > 100.0 and Vector2(p.x - 90, p.z - 90).length() < 20.0:
-		onfoot.enter(freeroam.tower_base_pos(), onfoot.yaw)
-		hud.show_center("已返回地面", "", 1200)
+	if p.y > 100.0 and shaft_d < 3.4:
+		if absf(freeroam.elevator_y() - freeroam.ELEV_DECK_Y) < 1.0:
+			elev_ride = true
+			_elev_y = freeroam.elevator_y()
+			_elev_target = freeroam.ELEV_BASE_Y
+			hud.set_board_hint(false)
+			hud.show_center("电梯下行", "", 1400)
+		else:
+			hud.show_center("电梯呼叫中", "轿厢正在赶来 · 请稍候", 1400)
 		return true
 	# 摩天轮登舱
 	if p.distance_to(freeroam.wheel_board_pos()) < 14.0:
@@ -2055,12 +2069,31 @@ func _step_sim(h: float) -> void:
 			npc.player_on_foot = false
 		elif on_foot:
 			# 步行：第一人称移动/射击，车辆冻结在原地
-			if wheel_ride and freeroam != null:
+			if elev_ride and freeroam != null:
+				# 电视塔电梯：轿厢载人在井道内运行
+				_elev_y = move_toward(_elev_y, _elev_target, 26.0 * h)
+				freeroam.set_elevator_y(_elev_y)
+				onfoot.pos = Vector3(90, _elev_y + 0.05, 78)
+				if _elev_y >= _elev_target:
+					elev_ride = false
+					onfoot.enter(Vector3(90, _elev_target, 84.0)
+							if _elev_target > 100.0
+							else Vector3(90, _elev_target, 83.5),
+							onfoot.yaw)
+			elif wheel_ride and freeroam != null:
 				# 摩天轮观景：人物贴吊舱座位，鼠标视角照常（不走路）
 				onfoot.pos = freeroam.gondola_seat(_wheel_gi)
 				onfoot.move_speed = 0.0
 			else:
 				onfoot.update(h)
+				# 轿厢呼叫：走近井道自动派梯到所在层
+				if freeroam != null and Vector2(onfoot.pos.x - 90,
+						onfoot.pos.z - 78).length() < 4.0:
+					_elev_target = freeroam.ELEV_DECK_Y \
+							if onfoot.pos.y > 50.0 else freeroam.ELEV_BASE_Y
+				if freeroam != null and not elev_ride:
+					_elev_y = move_toward(_elev_y, _elev_target, 26.0 * h)
+					freeroam.set_elevator_y(_elev_y)
 			npc.player_pos = onfoot.pos
 			npc.player_vel = Vector3(sin(onfoot.yaw), 0, cos(onfoot.yaw)) * onfoot.move_speed
 			npc.player_speed = onfoot.move_speed
@@ -2073,14 +2106,20 @@ func _step_sim(h: float) -> void:
 			hud.set_scope(onfoot.scoped)
 			# 地标交互提示（摩天轮 / 电视塔观景电梯）
 			var lm_hint := ""
+			var shaft_d: float = Vector2(onfoot.pos.x - 90,
+					onfoot.pos.z - 78).length()
 			if wheel_ride:
 				lm_hint = "F 下摩天轮"
-			elif onfoot.pos.y > 100.0 and Vector2(onfoot.pos.x - 90,
-					onfoot.pos.z - 90).length() < 20.0:
-				lm_hint = "F 乘电梯下塔"
-			elif Vector2(onfoot.pos.x - 90,
-					onfoot.pos.z - 90).length() < 14.0:
-				lm_hint = "F 观景电梯上云顶"
+			elif elev_ride:
+				lm_hint = "电梯运行中"
+			elif shaft_d < 3.6 and onfoot.pos.y < 50.0:
+				lm_hint = "F 乘电梯上观景台" \
+						if absf(freeroam.elevator_y()
+						- freeroam.ELEV_BASE_Y) < 1.0 else "电梯呼叫中…"
+			elif shaft_d < 3.6 and onfoot.pos.y > 100.0:
+				lm_hint = "F 乘电梯下塔" \
+						if absf(freeroam.elevator_y()
+						- freeroam.ELEV_DECK_Y) < 1.0 else "电梯呼叫中…"
 			elif freeroam != null and onfoot.pos.distance_to(
 					freeroam.wheel_board_pos()) < 14.0:
 				lm_hint = "F 乘坐摩天轮"
@@ -2521,8 +2560,8 @@ func _update_camera(dt: float) -> void:
 				66.0 + float(rplane["speed"]) * 0.14, 3.0, dt)
 		return
 
-	# 摩天轮吊舱第一人称：位置贴座位，视角交给 onfoot 的鼠标 yaw/pitch
-	if state == ST.ROAM and wheel_ride and onfoot != null:
+	# 摩天轮吊舱 / 电视塔电梯：第一人称贴座位，视角交给 onfoot 鼠标
+	if state == ST.ROAM and (wheel_ride or elev_ride) and onfoot != null:
 		camera.position = onfoot.pos + Vector3(0, 1.35, 0)
 		camera.rotation = Vector3(onfoot.pitch, onfoot.yaw + PI, 0)
 		camera.fov = RRUtil.damp(camera.fov, 68.0, 2.0, dt)
