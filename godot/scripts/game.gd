@@ -284,6 +284,11 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# O 键：开/关自动导航（漫游）
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_O and state == ST.ROAM \
+			and not shop_open and not gunshop_open:
+		_toggle_nav()
 	# 步行模式：鼠标相对位移 → 视角（鼠标已捕获）
 	if on_foot and onfoot != null and event is InputEventMouseMotion \
 			and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
@@ -457,6 +462,14 @@ var _wheel_gi := 0                 # 所乘吊舱序号
 var elev_ride := false             # 电视塔电梯乘坐中
 var _elev_y := 0.32                # 轿厢当前地板高度
 var _elev_target := 0.32           # 轿厢目标楼层
+var map_open := false              # 大地图（导航）界面
+var nav_dest := Vector2(-9e9, -9e9)
+var nav_dest_label := ""
+var nav_on := false                # 自动导航驾驶中
+var nav_route := PackedVector2Array()
+var _nav_wp_i := 0
+var _nav_stuck_t := 0.0
+var _nav_rev_t := 0.0
 var cargo_state := "ready"         # 货运任务：ready 备货 / escape 逃脱中 / rewarded 已结算
 var _cargo_last_day := 0           # 货物补充的日期标记
 var cargo_heist := "none"          # 劫案流程：none / chase 追赶 / flee 逃脱中
@@ -1376,6 +1389,169 @@ func enter_roam() -> void:
 		hud.set_plane_panel(false)
 
 
+## ================= 大地图与自动导航 =================
+
+func _map_cars_data() -> Array:
+	var arr: Array = [{
+		"x": player.veh.pos.x, "z": player.veh.pos.z,
+		"heading": player.veh.heading,
+		"color": TrackData.TEAM_ROSTER[0]["color"], "is_player": true,
+	}]
+	if npc != null:
+		for c in npc.cars:
+			if not c.get("disabled", false):
+				arr.append({"x": c["pos"].x, "z": c["pos"].z,
+						"heading": 0.0, "color": Color(0.4, 0.5, 0.65),
+						"is_player": false})
+	return arr
+
+
+func _open_map() -> void:
+	map_open = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	hud.on_map_pick = func(w: Vector2):
+		nav_dest = w
+		nav_dest_label = "自定义点"
+		hud.map_set_dest(w)
+		var r: PackedVector2Array = freeroam.nav_route(
+				Vector2(player.veh.pos.x, player.veh.pos.z), nav_dest)
+		if not r.is_empty():
+			nav_route = r
+			hud.map_set_route(r)
+	hud.on_map_poi = func(poi: Dictionary):
+		nav_dest = poi["pos"]
+		nav_dest_label = str(poi["label"])
+		hud.map_set_dest(nav_dest)
+		_close_map()
+		_nav_start()
+	hud.open_map_screen(_map_cars_data())
+	if nav_dest.x > -8e8:
+		hud.map_set_dest(nav_dest)
+	if nav_route.size() > 1:
+		hud.map_set_route(nav_route)
+
+
+func _close_map() -> void:
+	map_open = false
+	hud.close_map_screen()
+	if not on_foot:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+func _toggle_nav() -> void:
+	if nav_on:
+		_nav_stop("自动导航已取消")
+		return
+	if nav_dest.x < -8e8:
+		hud.show_center("还没有目的地", "驾驶中按左键打开地图选择目的地",
+				2000)
+		return
+	_nav_start()
+
+
+func _nav_start() -> void:
+	var r: PackedVector2Array = freeroam.nav_route(
+			Vector2(player.veh.pos.x, player.veh.pos.z), nav_dest)
+	if r.is_empty():
+		hud.show_center("无法规划驾车路线", "目的地不可驾车抵达", 2200)
+		return
+	nav_route = r
+	_nav_wp_i = 0
+	_nav_stuck_t = 0.0
+	_nav_rev_t = 0.0
+	nav_on = true
+	if map_open:
+		_close_map()
+	if not on_foot:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	hud.map_set_route(nav_route)
+	hud.show_center("自动导航开始 · " + nav_dest_label,
+			"导航替你驾驶 · 任意手动驾驶键取消", 2400)
+
+
+func _nav_stop(msg: String) -> void:
+	nav_on = false
+	hud.map_clear_nav()
+	hud.set_board_hint(false)
+	hud.show_center(msg, "", 1600)
+
+
+## 自动导航驾驶：纯追踪路点 + 前方车辆避让 + 卡住倒车脱困
+func _nav_drive(h: float) -> Dictionary:
+	var v := player.veh
+	var p2 := Vector2(v.pos.x, v.pos.z)
+	# 手动干预 → 立即交还
+	var manual := _sample_input(h)
+	if manual["throttle"] > 0.0 or manual["brake"] > 0.0 \
+			or absf(manual["steer"]) > 0.15 or manual["handbrake"]:
+		_nav_stop("导航已取消 · 恢复手动驾驶")
+		return manual
+	# 到达
+	if p2.distance_to(nav_dest) < 15.0:
+		_nav_stop("已到达 " + nav_dest_label)
+		return {"throttle": 0.0, "brake": 1.0, "steer": 0.0,
+				"handbrake": false}
+	# 路点推进（16m 内切下一段）
+	while _nav_wp_i < nav_route.size() \
+			and p2.distance_to(nav_route[_nav_wp_i]) < 16.0:
+		_nav_wp_i += 1
+	var target: Vector2 = nav_route[_nav_wp_i] \
+			if _nav_wp_i < nav_route.size() else nav_dest
+	# 前方 12m 锥形范围有车 → 刹停等待
+	var fwd := Vector2(sin(v.heading), cos(v.heading))
+	var blocked := false
+	if npc != null:
+		for c in npc.cars:
+			if c.get("disabled", false):
+				continue
+			var rel: Vector2 = Vector2(c["pos"].x, c["pos"].z) - p2
+			var dd := rel.length()
+			if dd < 11.0 and dd > 0.01 and rel.dot(fwd) > dd * 0.55:
+				blocked = true
+				break
+		if not blocked:
+			for u in npc.police:
+				var rel2: Vector2 = Vector2(u["pos"].x, u["pos"].z) - p2
+				var dd2 := rel2.length()
+				if dd2 < 11.0 and dd2 > 0.01 and rel2.dot(fwd) > dd2 * 0.55:
+					blocked = true
+					break
+	var err: float = wrapf(
+			atan2(target.x - p2.x, target.y - p2.y) - v.heading, -PI, PI)
+	var steer := clampf(err * 1.6, -1.0, 1.0)
+	# 卡住脱困：2.5s 低速 → 倒车 1.2s
+	if absf(v.vf) < 0.6 and not blocked:
+		_nav_stuck_t += h
+	else:
+		_nav_stuck_t = 0.0
+	if _nav_rev_t > 0.0:
+		_nav_rev_t -= h
+		return {"throttle": 0.0, "brake": 1.0,
+				"steer": -signf(err) if absf(err) > 0.2 else 0.6,
+				"handbrake": false}
+	if _nav_stuck_t > 2.5:
+		_nav_rev_t = 1.2
+		_nav_stuck_t = 0.0
+	# 转向/油门分配：急弯减速，直道全速（~86km/h 封顶）
+	var thr := 0.0
+	var brk := 0.0
+	if blocked:
+		if absf(v.vf) > 1.5:
+			brk = 1.0
+	else:
+		if absf(err) > 1.1:
+			thr = 0.0
+			brk = 0.35
+		elif absf(err) > 0.45:
+			thr = 0.5
+		else:
+			thr = 0.9
+		# 巡航限速 ~79km/h：城市街道与转弯可控
+		thr = minf(thr, clampf(1.3 - absf(v.vf) / 22.0, 0.0, 1.0))
+	return {"throttle": thr, "brake": brk, "steer": steer,
+			"handbrake": false}
+
+
 ## 地标交互（摩天轮乘坐 / 电视塔观景电梯）——返回 true 表示 F 已消费
 func _landmark_interact() -> bool:
 	if not on_foot or freeroam == null:
@@ -1849,6 +2025,11 @@ func _process(dt_real: float) -> void:
 
 
 func _handle_hotkeys() -> void:
+	# 左键开大地图：漫游驾驶中（店内/图上除外）
+	if state == ST.ROAM and not on_foot and not shop_open \
+			and not gunshop_open and not map_open \
+			and Input.is_action_just_pressed("rr_fire"):
+		_open_map()
 	# 左键开门：下车后靠近关闭的门，左键开门（同时屏蔽枪击）
 	if on_foot and state == ST.ROAM and freeroam != null \
 			and freeroam.doors.size() > 0 \
@@ -1876,7 +2057,9 @@ func _handle_hotkeys() -> void:
 		audio.set_muted(not audio.muted)
 		hud.show_center("已静音" if audio.muted else "声音开启", "", 700)
 	if Input.is_action_just_pressed("rr_pause"):
-		if state == ST.ROAM and shop_open:
+		if state == ST.ROAM and map_open:
+			_close_map()
+		elif state == ST.ROAM and shop_open:
 			close_shop()   # 漫游店里 Esc/P 先关店，不直接回车库
 		elif state == ST.ROAM and gunshop_open:
 			close_gunshop()
@@ -1887,7 +2070,7 @@ func _handle_hotkeys() -> void:
 		elif state in [ST.RACING, ST.COUNTDOWN, ST.PAUSED]:
 			toggle_pause()
 	if Input.is_action_just_pressed("rr_interact") and state == ST.ROAM \
-			and not shop_open and not gunshop_open:
+			and not shop_open and not gunshop_open and not map_open:
 		# 班机舱门优先：站在航站楼旁的班机舱门边即登机
 		var airliner_i: int = -1
 		if on_foot and airport_traffic != null:
@@ -1912,7 +2095,7 @@ func _handle_hotkeys() -> void:
 	# 货运劫案：地面靠近停机货机接取 / 飞行中靠近货舱夺货
 	if state == ST.ROAM and airport_traffic != null \
 			and Input.is_action_just_pressed("rr_interact") \
-			and not shop_open and not gunshop_open:
+			and not shop_open and not gunshop_open and not map_open:
 		if on_foot and airport_traffic.cargo_mission == "parked" \
 				and onfoot.pos.distance_to(airport_traffic.cargo_plane_pos) < 15.0:
 			airport_traffic.begin_cargo_mission()
@@ -1931,7 +2114,7 @@ func _handle_hotkeys() -> void:
 	# 漫游战机：F 登机/下机（站在班机舱门边时优先登班机，不重复触发）
 	if state == ST.ROAM and plane_mode \
 			and Input.is_action_just_pressed("rr_interact") \
-			and not shop_open and not gunshop_open \
+			and not shop_open and not gunshop_open and not map_open \
 			and not (on_foot and airport_traffic != null \
 			and airport_traffic.near_service_door(onfoot.pos) >= 0):
 		if on_foot:
@@ -2033,8 +2216,8 @@ func _step_sim(h: float) -> void:
 
 	# ROAM：只有玩家车，物理照常（立体物理对路网高度自动生效）
 	if s == ST.ROAM:
-		if shop_open or gunshop_open:
-			return   # 店里：冻结，买完继续
+		if shop_open or gunshop_open or map_open:
+			return   # 店里/大地图：冻结，退完继续
 		var pin := player.veh
 		if airliner_ride and airport_traffic != null:
 			# 乘班机中：班机照常飞，玩家无实体；到达后自动下机
@@ -2125,8 +2308,14 @@ func _step_sim(h: float) -> void:
 				lm_hint = "F 乘坐摩天轮"
 			hud.set_board_hint(lm_hint != "", lm_hint)
 		else:
-			hud.set_board_hint(false)
-			var inp_r := _sample_input(h)
+			var inp_r: Dictionary
+			if nav_on:
+				inp_r = _nav_drive(h)
+				hud.set_board_hint(true, "自动导航中 · 目的地 %s · O 取消"
+						% nav_dest_label)
+			else:
+				hud.set_board_hint(false)
+				inp_r = _sample_input(h)
 			pin.input_throttle = inp_r["throttle"]
 			pin.input_brake = inp_r["brake"]
 			pin.input_steer = inp_r["steer"]
@@ -2744,6 +2933,8 @@ func _update_hud(dt: float) -> void:
 			"x": pv.pos.x, "z": pv.pos.z, "heading": pv.heading,
 			"color": TrackData.TEAM_ROSTER[0]["color"], "is_player": true,
 		}])
+		if map_open:
+			hud.open_map_screen(_map_cars_data())
 		hud.set_wrong_way(false)
 		return
 

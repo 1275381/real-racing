@@ -3775,3 +3775,109 @@ func elevator_board_pos() -> Vector3:
 
 const ELEV_BASE_Y := 0.32
 const ELEV_DECK_Y := 166.2
+
+
+## ================= 自动导航路网图（A*） =================
+## 节点 = 各路样点（每 10 采样 ≈ 15m）；边 = 同路相邻 + 异路交叉口
+## （水平 24m 内且高差 < 2.5m，高架与地面不误连）。机场与路网之间
+## 无样条衔接，用 _nav_link 补一条虚拟边（越野段，导航照常可达）。
+
+var _astar: AStar2D
+var _nav_road: PackedInt32Array
+var _nav_y: PackedFloat32Array
+var _nav_cells := {}
+const NAV_CELL := 40.0
+
+
+func _nav_cell(p: Vector2) -> Vector2i:
+	return Vector2i(int(floor(p.x / NAV_CELL)), int(floor(p.y / NAV_CELL)))
+
+
+func build_nav_graph() -> void:
+	if _astar != null:
+		return
+	_astar = AStar2D.new()
+	_nav_road = PackedInt32Array()
+	_nav_y = PackedFloat32Array()
+	var id := 0
+	for r in roads.size():
+		var rd = roads[r]
+		var prev := -1
+		for i in range(0, rd.pts.size(), 10):
+			var p := Vector2(rd.pts[i].x, rd.pts[i].z)
+			_astar.add_point(id, p)
+			_nav_road.append(r)
+			_nav_y.append(rd.pts[i].y)
+			var ck := _nav_cell(p)
+			if not _nav_cells.has(ck):
+				_nav_cells[ck] = []
+			_nav_cells[ck].append(id)
+			if prev >= 0:
+				_astar.connect_points(prev, id)
+			prev = id
+			id += 1
+	# 交叉口连边（不同路）
+	for ck in _nav_cells:
+		var arr: Array = _nav_cells[ck]
+		for ox in range(-1, 2):
+			for oz in range(-1, 2):
+				var nk: Vector2i = ck + Vector2i(ox, oz)
+				if not _nav_cells.has(nk):
+					continue
+				for a in arr:
+					var pa := _astar.get_point_position(a)
+					for b in _nav_cells[nk]:
+						if _nav_road[a] == _nav_road[b]:
+							continue
+						if pa.distance_to(_astar.get_point_position(b)) < 24.0 \
+								and absf(_nav_y[a] - _nav_y[b]) < 2.5:
+							_astar.connect_points(a, b)
+	# 机场 ↔ 西海岸路：补虚拟边（其间为可越野草地）
+	_nav_link(Vector2(-1040.0, -400.0), Vector2(-1448.0, -427.0))
+
+
+## 两点各自吸附最近路网节点并连边（用于无样条衔接的可达区域）
+func _nav_link(pa: Vector2, pb: Vector2) -> void:
+	var a := _nav_nearest(pa)
+	var b := _nav_nearest(pb)
+	if a >= 0 and b >= 0:
+		_astar.connect_points(a, b)
+
+
+func _nav_nearest(p: Vector2) -> int:
+	var ck := _nav_cell(p)
+	var best := -1
+	var bd := INF
+	for ox in range(-4, 5):
+		for oz in range(-4, 5):
+			var nk: Vector2i = ck + Vector2i(ox, oz)
+			if not _nav_cells.has(nk):
+				continue
+			for nid in _nav_cells[nk]:
+				var d: float = _astar.get_point_position(nid).distance_to(p)
+				if d < bd:
+					bd = d
+					best = nid
+	if best >= 0:
+		return best
+	# 兜底：全量线性扫描
+	for nid in _astar.get_point_count():
+		var d2: float = _astar.get_point_position(nid).distance_to(p)
+		if d2 < bd:
+			bd = d2
+			best = nid
+	return best
+
+
+## 任意两点驾车路线（世界坐标路点序列；不可达返回空）
+func nav_route(from: Vector2, to: Vector2) -> PackedVector2Array:
+	build_nav_graph()
+	var a := _nav_nearest(from)
+	var b := _nav_nearest(to)
+	if a < 0 or b < 0:
+		return PackedVector2Array()
+	var out := PackedVector2Array()
+	for pid in _astar.get_id_path(a, b):
+		out.append(_astar.get_point_position(pid))
+	out.append(to)
+	return out

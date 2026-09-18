@@ -730,6 +730,9 @@ class MinimapWidget:
 	var _tex: Texture2D
 	var _wmin := Vector2.ZERO
 	var _wmax := Vector2.ZERO
+	var _route := PackedVector2Array()
+	var _dest := Vector2(-9e9, -9e9)
+	var _line_w := 3.0
 
 	func set_track(track: RaceTrack) -> void:
 		_pts = track.pts
@@ -748,6 +751,20 @@ class MinimapWidget:
 	func set_cars(cars: Array) -> void:
 		_cars = cars
 		queue_redraw()
+
+	func set_route(pts: PackedVector2Array, line_w := 3.0) -> void:
+		_route = pts
+		_line_w = line_w
+		queue_redraw()
+
+	func set_dest(p: Vector2) -> void:
+		_dest = p
+		queue_redraw()
+
+	## 屏幕局部坐标 → 世界 XZ（仅地图纹理模式有效）
+	func local_to_world(lp: Vector2) -> Vector2:
+		var n := lp / size
+		return _wmin + n * (_wmax - _wmin)
 
 	var markers: Array = []   # 固定地标 [{"x","z","label"}]（配件店/枪械店）
 
@@ -790,6 +807,15 @@ class MinimapWidget:
 	func _draw() -> void:
 		if _tex != null:
 			draw_texture_rect(_tex, Rect2(Vector2.ZERO, size), false)
+		if _route.size() > 1:
+			var rp := PackedVector2Array()
+			for p in _route:
+				rp.append(_map(p))
+			draw_polyline(rp, Color(0.25, 0.7, 1.0, 0.95), _line_w, true)
+		if _dest.x > -8e8:
+			var dp := _map(_dest)
+			draw_circle(dp, _line_w + 4.0, Color(1.0, 0.25, 0.2, 0.9))
+			draw_circle(dp, _line_w + 1.5, Color(1, 1, 1))
 		elif _has_track:
 			if _transformed.is_empty():
 				_recompute()
@@ -838,6 +864,131 @@ func set_map_marker(x: float, z: float, label: String) -> void:
 ## 追加小地图地标（不替换已有标记）
 func add_map_marker(x: float, z: float, label: String) -> void:
 	_minimap.add_marker(x, z, label)
+
+
+# ================= 大地图（自由漫游导航） =================
+
+var _map_screen: Control
+var _bigmap: MinimapWidget
+var _map_hint: Label
+var on_map_pick: Callable          # 点击地图设目的地：Callable(world: Vector2)
+var on_map_poi: Callable           # 点地标按钮：Callable(poi: Dictionary)
+
+func _build_map_screen() -> void:
+	_map_screen = Control.new()
+	_map_screen.name = "bigmap"
+	_map_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_map_screen.visible = false
+	_root.add_child(_map_screen)
+	var vs := _map_screen.get_viewport_rect().size
+	var bg := ColorRect.new()
+	bg.color = Color(0.02, 0.03, 0.05, 0.72)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_map_screen.add_child(bg)
+	var title := Label.new()
+	title.text = "自由漫游地图"
+	title.position = Vector2(24, 14)
+	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_constant_override("outline_size", 8)
+	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
+	_map_screen.add_child(title)
+	# 中央大地图（可点击设目的地）
+	_bigmap = MinimapWidget.new()
+	_bigmap.position = Vector2((vs.x - 740.0) * 0.5, 56.0)
+	_bigmap.size = Vector2(740.0, minf(vs.y - 100.0, 740.0))
+	_bigmap.mouse_filter = Control.MOUSE_FILTER_STOP
+	_bigmap.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and ev.pressed \
+				and ev.button_index == MOUSE_BUTTON_LEFT \
+				and on_map_pick.is_valid():
+			on_map_pick.call(_bigmap.local_to_world(ev.position)))
+	_map_screen.add_child(_bigmap)
+	# 右侧地标/设施按钮列
+	var panel := PanelContainer.new()
+	panel.position = Vector2(vs.x - 268.0, 56.0)
+	panel.custom_minimum_size = Vector2(248, 500)
+	_map_screen.add_child(panel)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(230, 490)
+	panel.add_child(scroll)
+	var vbox := VBoxContainer.new()
+	vbox.custom_minimum_size = Vector2(214, 0)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(vbox)
+	var cap := Label.new()
+	cap.text = "目的地"
+	cap.add_theme_font_size_override("font_size", 20)
+	vbox.add_child(cap)
+	for poi: Dictionary in nav_pois():
+		var b := Button.new()
+		b.text = str(poi["label"])
+		b.add_theme_font_size_override("font_size", 17)
+		b.pressed.connect(func():
+			if on_map_poi.is_valid():
+				on_map_poi.call(poi))
+		vbox.add_child(b)
+	# 底部操作提示
+	_map_hint = Label.new()
+	_map_hint.text = "左键点击地图设目的地 · 点右侧地标直接开始导航 · O 开/关自动导航 · Esc 关闭"
+	_map_hint.position = Vector2(24.0, vs.y - 34.0)
+	_map_hint.add_theme_font_size_override("font_size", 18)
+	_map_hint.add_theme_color_override("font_outline_color",
+			Color(0, 0, 0, 0.75))
+	_map_hint.add_theme_constant_override("outline_size", 6)
+	_map_screen.add_child(_map_hint)
+
+
+func nav_pois() -> Array:
+	return [
+		{"label": "配件店", "pos": Vector2(34, 34)},
+		{"label": "枪械店", "pos": Vector2(-46, 46)},
+		{"label": "车库", "pos": Vector2(198, -505)},
+		{"label": "机 场", "pos": Vector2(-1520, -200)},
+		{"label": "云顶之针 电视塔", "pos": Vector2(90, 116)},
+		{"label": "双辉双子塔", "pos": Vector2(450, 116)},
+		{"label": "云湖体育馆", "pos": Vector2(-450, -30)},
+		{"label": "湖畔之眼 摩天轮", "pos": Vector2(-630, 476)},
+		{"label": "文笔塔", "pos": Vector2(630, -424)},
+		{"label": "天环中心", "pos": Vector2(-90, 476)},
+		{"label": "环球百货", "pos": Vector2(270, -60)},
+	]
+
+
+func open_map_screen(cars: Array) -> void:
+	if _map_screen == null:
+		_build_map_screen()
+		_bigmap.set_map_texture(_minimap._tex, _minimap._wmin, _minimap._wmax)
+	_bigmap.set_cars(cars)
+	_map_screen.visible = true
+
+
+func close_map_screen() -> void:
+	if _map_screen != null:
+		_map_screen.visible = false
+
+
+func map_screen_visible() -> bool:
+	return _map_screen != null and _map_screen.visible
+
+
+func map_set_route(pts: PackedVector2Array) -> void:
+	if _bigmap != null:
+		_bigmap.set_route(pts, 5.0)
+	_minimap.set_route(pts, 3.0)
+
+
+func map_set_dest(p: Vector2) -> void:
+	if _bigmap != null:
+		_bigmap.set_dest(p)
+	_minimap.set_dest(p)
+
+
+func map_clear_nav() -> void:
+	if _bigmap != null:
+		_bigmap.set_route(PackedVector2Array())
+		_bigmap.set_dest(Vector2(-9e9, -9e9))
+	_minimap.set_route(PackedVector2Array())
+	_minimap.set_dest(Vector2(-9e9, -9e9))
 
 
 # ================= 车库（选车 + 选比赛） =================
