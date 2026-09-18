@@ -738,6 +738,10 @@ func exit_battle() -> void:
 	env.set_race_props_visible(true)
 	env.set_fog_range(240.0, 1650.0)
 	state = ST.GARAGE
+	wheel_ride = false
+	elev_ride = false
+	nav_on = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)   # 兜底：车库必有光标
 	for i in cars.size():
 		cars[i].visual.visible = i == 0
 	refresh_menu_best()
@@ -1719,6 +1723,17 @@ func exit_roam() -> void:
 	env.set_ground_visible(true)
 	env.set_race_props_visible(true)
 	state = ST.GARAGE
+	# 漫游子状态全部清空：战机/电梯/摩天轮/导航/大地图——
+	# 此前乘班机或开战机时直接回车库，鼠标保持捕获态且 plane_mode
+	# 残留，初始页面光标消失
+	plane_mode = false
+	wheel_ride = false
+	elev_ride = false
+	nav_on = false
+	if map_open:
+		map_open = false
+		hud.close_map_screen()
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)   # 兜底：车库必有光标
 	for i in cars.size():
 		cars[i].visual.visible = i == 0
 	player.veh.on_lap_complete = Callable(self, "_on_lap_for_car").bind(0)
@@ -1775,10 +1790,12 @@ func toggle_pause() -> void:
 	if state == ST.RACING or state == ST.COUNTDOWN:
 		_paused_from = state
 		state = ST.PAUSED
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)   # 暂停菜单要点按钮
 		hud.show_only("pause")
 		hud.show_center("", "", 0)
 	elif state == ST.PAUSED:
 		state = _paused_from
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		hud.show_only("hud")
 
 
@@ -1912,6 +1929,11 @@ func set_track(idx: int) -> void:
 # ================= 主帧 =================
 
 func _process(dt_real: float) -> void:
+	# 初始页面/暂停菜单必须始终有鼠标光标：任何状态机路径漏恢复
+	# 捕获/隐藏态时在此强制纠正
+	if (state == ST.GARAGE or state == ST.PAUSED) \
+			and Input.get_mouse_mode() != Input.MOUSE_MODE_VISIBLE:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	var dt: float = minf(dt_real, 0.1)
 	_now_s += dt
 	_rescue_cd = maxf(0.0, _rescue_cd - dt)
