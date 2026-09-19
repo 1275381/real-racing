@@ -1604,7 +1604,7 @@ func _landmark_interact() -> bool:
 		return true
 	var p := onfoot.pos
 	# 电视塔电梯：井道内按 F（轿厢到位才能乘，未到位自动呼叫）
-	var shaft_d: float = Vector2(p.x - 90, p.z - 78).length()
+	var shaft_d: float = Vector2(p.x - 90, p.z - 102).length()
 	if p.y < 50.0 and shaft_d < 3.4:
 		if absf(freeroam.elevator_y() - freeroam.ELEV_BASE_Y) < 1.0:
 			elev_ride = true
@@ -2315,12 +2315,12 @@ func _step_sim(h: float) -> void:
 				# 电视塔电梯：轿厢载人在井道内运行
 				_elev_y = move_toward(_elev_y, _elev_target, 26.0 * h)
 				freeroam.set_elevator_y(_elev_y)
-				onfoot.pos = Vector3(90, _elev_y + 0.05, 78)
+				onfoot.pos = Vector3(90, _elev_y + 0.05, 102)
 				if _elev_y >= _elev_target:
 					elev_ride = false
-					onfoot.enter(Vector3(90, _elev_target, 84.0)
+					onfoot.enter(Vector3(90, _elev_target, 103.6)
 							if _elev_target > 100.0
-							else Vector3(90, _elev_target, 83.5),
+							else Vector3(90, _elev_target, 106.0),
 							onfoot.yaw)
 			elif wheel_ride and freeroam != null:
 				# 摩天轮观景：人物贴吊舱座位，鼠标视角照常（不走路）
@@ -2349,7 +2349,7 @@ func _step_sim(h: float) -> void:
 			# 地标交互提示（摩天轮 / 电视塔观景电梯）
 			var lm_hint := ""
 			var shaft_d: float = Vector2(onfoot.pos.x - 90,
-					onfoot.pos.z - 78).length()
+					onfoot.pos.z - 102).length()
 			if wheel_ride:
 				lm_hint = "F 下摩天轮"
 			elif elev_ride:

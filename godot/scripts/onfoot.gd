@@ -393,9 +393,14 @@ func update(dt: float) -> void:
 		pos += dir * move_speed * dt
 	else:
 		move_speed = 0.0
-	# 楼房 OBB 推出（半径 0.5）
+	# 楼房 OBB 推出（半径 0.5）。带 bot 的障碍（高处栏杆等）只在其
+	# 高度区间生效：行人在其下方可正常通行
 	for ob in fm.obstacles_box:
 		if ob.get("off", false):
+			continue
+		if ob.has("top") and pos.y > float(ob["top"]) - 1.0:
+			continue
+		if ob.has("bot") and pos.y + 1.6 < float(ob["bot"]):
 			continue
 		var dx: float = pos.x - ob["c"].x
 		var dz: float = pos.z - ob["c"].y

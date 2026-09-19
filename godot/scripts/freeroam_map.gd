@@ -780,6 +780,8 @@ func resolve_obstacles(v: Vehicle) -> void:
 	var r := 1.5
 	# 楼房 OBB（粗过滤：中心距 < 楼对角 + 车半径）
 	for ob in obstacles_box:
+		if ob.has("bot") and v.pos.y + 1.0 < float(ob["bot"]):
+			continue   # 车在障碍物下方（高处栏杆等）
 		var dx: float = v.pos.x - ob["c"].x
 		var dz: float = v.pos.z - ob["c"].y
 		if dx * dx + dz * dz > 90.0 * 90.0:
@@ -3537,7 +3539,13 @@ func _build_landmarks() -> void:
 	_lm_box(root, lp + Vector3(0, 3, -23), Vector3(46, 6, 0.8), wall_col)
 	_lm_box(root, lp + Vector3(-23, 3, 0), Vector3(0.8, 6, 46), wall_col)
 	_lm_box(root, lp + Vector3(23, 3, 0), Vector3(0.8, 6, 46), wall_col)
-	_lm_box(root, lp + Vector3(0, 6.3, 0), Vector3(46, 0.6, 46), steel)
+	# 顶板分四块：电梯井（塔身南侧 z 99.6..104.4）从洞中穿过
+	_lm_box(root, lp + Vector3(0, 6.3, -13.8), Vector3(46, 0.6, 32.4), steel)
+	_lm_box(root, lp + Vector3(0, 6.3, 26.2), Vector3(46, 0.6, 8.4), steel)
+	_lm_box(root, lp + Vector3(-12.85, 6.3, 12), Vector3(20.3, 0.6, 5.2),
+			steel)
+	_lm_box(root, lp + Vector3(12.85, 6.3, 12), Vector3(20.3, 0.6, 5.2),
+			steel)
 	# 大堂碰撞（南墙留 6m 门洞 x 87..93）
 	_lm_solid(Vector2(lp.x - 10, lp.z + 23), 10, 0.4, 6)
 	_lm_solid(Vector2(lp.x + 10, lp.z + 23), 10, 0.4, 6)
@@ -3571,26 +3579,28 @@ func _build_landmarks() -> void:
 		var rail_c := Vector2(90, 90) \
 				+ Vector2(sin(rang), -cos(rang)) * 15.2
 		_lm_solid(rail_c, 6.4, 0.7, 167.8, rang)
+		obstacles_box[-1]["bot"] = 165.9
 		_lm_box(root, Vector3(rail_c.x, 167.0, rail_c.y),
 				Vector3(12.8 if ki % 2 == 0 else 1.4,
 						1.2, 1.4 if ki % 2 == 0 else 12.8), deck_rail)
 		ki += 1
-	# 塔内电梯：玻璃井道（贴塔身北侧，y 0..166）+ 可升降轿厢
+	# 塔内电梯：玻璃井道贴塔身南侧（z 99.6..104.4，南面敞开），y 0..166
 	var eglass := _lm_mat(Color(0.65, 0.8, 0.9, 0.28),
 			Color(0.5, 0.8, 1.0), 0.25)
-	_lm_box(root, Vector3(87.6, 83, 78), Vector3(0.4, 166, 4.8), eglass)
-	_lm_box(root, Vector3(92.4, 83, 78), Vector3(0.4, 166, 4.8), eglass)
-	_lm_box(root, Vector3(90, 83, 75.4), Vector3(5.2, 166, 0.4), eglass)
-	_lm_solid(Vector2(87.6, 78), 0.3, 2.4, 166)
-	_lm_solid(Vector2(92.4, 78), 0.3, 2.4, 166)
-	_lm_solid(Vector2(90, 75.4), 2.6, 0.3, 166)
+	_lm_box(root, Vector3(87.6, 83, 102), Vector3(0.4, 166, 4.8), eglass)
+	_lm_box(root, Vector3(92.4, 83, 102), Vector3(0.4, 166, 4.8), eglass)
+	_lm_box(root, Vector3(90, 83, 99.6), Vector3(5.2, 166, 0.4), eglass)
+	_lm_box(root, Vector3(90, 166.6, 102), Vector3(5.2, 0.4, 4.8), steel)
+	_lm_solid(Vector2(87.6, 102), 0.3, 2.4, 166)
+	_lm_solid(Vector2(92.4, 102), 0.3, 2.4, 166)
+	_lm_solid(Vector2(90, 99.6), 2.6, 0.3, 166)
 	_elev_cabin = MeshInstance3D.new()
 	var cmesh := BoxMesh.new()
 	cmesh.size = Vector3(2.8, 2.7, 2.6)
 	var cmat := _lm_mat(Color(0.85, 0.87, 0.9), Color(0.9, 0.95, 1.0), 0.5)
 	cmesh.material = cmat
 	_elev_cabin.mesh = cmesh
-	_elev_cabin.position = Vector3(90, 1.7, 78)
+	_elev_cabin.position = Vector3(90, 1.7, 102)
 	root.add_child(_elev_cabin)
 
 	# ---- 2) 双辉双子塔（450,90，135m + 空中连桥）----
@@ -3770,7 +3780,7 @@ func elevator_y() -> float:
 
 ## 井道内登梯点（大堂地面）
 func elevator_board_pos() -> Vector3:
-	return Vector3(90, 0.32, 78.0)
+	return Vector3(90, 0.32, 102.0)
 
 
 const ELEV_BASE_Y := 0.32
