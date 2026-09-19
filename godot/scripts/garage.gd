@@ -3,7 +3,7 @@ extends Node3D
 ## 车库展示场景：封闭展厅 + 旋转展台 + 顶灯，玩家车停在展台上供挑选
 ## 位于赛道世界下方 400m 的独立空间，不影响赛道渲染
 
-const GARAGE_POS := Vector3(0, -400, 0)
+const GARAGE_POS := Vector3(198.5, 0.0, -520.0)   # 世界出生位（展示厅即漫游车库）
 const PLATFORM_TOP := 0.35
 const ROOM_HALF := 13.0
 
@@ -29,7 +29,9 @@ func build() -> void:
 	for w in [
 		[Vector3(0, 3, -ROOM_HALF), Vector3(ROOM_HALF * 2.0, 6, 0.5)],
 		[Vector3(0, 3, ROOM_HALF), Vector3(ROOM_HALF * 2.0, 6, 0.5)],
-		[Vector3(-ROOM_HALF, 3, 0), Vector3(0.5, 6, ROOM_HALF * 2.0)],
+		[Vector3(-ROOM_HALF, 3, -ROOM_HALF + 4.5), Vector3(0.5, 6, 9.0)],
+		[Vector3(-ROOM_HALF, 3, ROOM_HALF - 4.5), Vector3(0.5, 6, 9.0)],
+		[Vector3(-ROOM_HALF, 5.4, 0), Vector3(0.5, 1.7, 8.0)],
 		[Vector3(ROOM_HALF, 3, 0), Vector3(0.5, 6, ROOM_HALF * 2.0)],
 	]:
 		var mi := _box(w[1], w[0], wall_mat)

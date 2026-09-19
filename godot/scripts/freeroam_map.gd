@@ -181,6 +181,8 @@ const GAR_DOOR_HW := 4.0                # 门洞半宽（z 向 8m 通畅）
 var _door_panel: MeshInstance3D         # 卷帘门板（升起 = 底边收进门楣）
 var _door_base_y := 0.0
 var _door_open := 0.0                   # 0=落下 1=全开
+var garage_started := false             # 出库完成（展示旋转结束）
+var _gar_platform: MeshInstance3D
 var _door_piece := {}                   # 门体碰撞块（关门时才在 obstacles_box 里）
 
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
@@ -512,8 +514,7 @@ func _make_outskirts_roads() -> void:
 ## 出生点：卷帘门车库内（x=180 街东侧），车头朝西正对门洞——
 ## 菜单按 W/↑ 或点「自由漫游」进来后，踩油门顶开卷帘门即出发
 func get_spawn() -> Dictionary:
-	return {"pos": Vector3(GAR_C.x, _street_h(6, false), GAR_C.y),
-			"heading": -PI * 0.5}
+	return {"pos": Vector3(GAR_C.x, 0.36, GAR_C.y), "heading": -PI * 0.5}
 
 
 ## 复位到最近道路中心
@@ -2833,9 +2834,9 @@ func _place_buildings() -> void:
 			if Vector2(cx, cz).distance_to(lz["c"]) \
 					< float(lz["r"]) + maxf(hw, hd):
 						return false           # 特色地标预留地块
-		if absf(cx - GAR_C.x) < GAR_W * 0.5 + hw + 1.0 \
-				and absf(cz - GAR_C.y) < GAR_D * 0.5 + hd + 1.0:
-			return false                       # 卷帘门车库保留地
+		if absf(cx - GAR_C.x) < 14.0 + hw \
+				and absf(cz - GAR_C.y) < 14.0 + hd:
+			return false                       # 出生车库展厅保留地（26m 展厅）
 		# 楼脚不能越过人行道外缘（街半宽 8 + 人行道 2.2）。
 		# 沿街排本身就退到 13m，只有城郊散点会撞上这条 —— 原来它只用
 		# absf(sx) < 905 挡外圈街道，而街道人行道外缘在 910.2m，楼直接骑上去
@@ -3028,68 +3029,12 @@ func _place_buildings() -> void:
 ## 墙体碰撞按门洞分块（障碍碰撞是 2D 推出，门楣/屋顶不给碰撞）；
 ## 卷帘门贴图 + 升起动画，门体碰撞随门落下/升起挂摘。
 func _make_garage() -> void:
-	var y := STREET_Y
+	# 出生车库 = RRGarage 展厅（见 garage.gd，已挪到世界出生位）。
+	# 这里只建：卷帘门板 + 门体碰撞 + 展厅四周墙体 OBB + 展台垫区。
+	# 展厅墙体/地板/天花板/旋转展台/灯光/招牌由 RRGarage 提供。
 	var cx := GAR_C.x
 	var cz := GAR_C.y
-	# ---- 楼体（复用建筑 shader，随遮挡走廊一起淡出）----
-	var xfs: Array[Transform3D] = []
-	var cols: Array[Color] = []
-	var tint := Color(0.80, 0.81, 0.83, 0.5)   # a<0.25 走素面，a≈0.5 走墙砖纹理
-	var wall_h := GAR_H
-	var put_box := func(px: float, pz: float, sx: float, sy: float, sz: float,
-			col: Color, base_y: float = -1.0) -> void:
-		var by := y if base_y < 0.0 else base_y   # 盒底标高（默认贴地）
-		xfs.append(Transform3D(Basis.from_scale(Vector3(sx, sy, sz)),
-				Vector3(px, by + sy * 0.5, pz)))
-		cols.append(col)
-	# 北墙 / 南墙（z=±(GAR_D/2-0.3)）
-	put_box.call(cx, cz - GAR_D * 0.5 + 0.3, GAR_W, wall_h, 0.6, tint)
-	put_box.call(cx, cz + GAR_D * 0.5 - 0.3, GAR_W, wall_h, 0.6, tint)
-	# 东墙（封死）
-	put_box.call(cx + GAR_W * 0.5 - 0.3, cz, 0.6, wall_h, GAR_D - 1.2, tint)
-	# 西墙门洞两侧余段（门洞 z ∈ [cz-4, cz+4]）
-	put_box.call(cx - GAR_W * 0.5 + 0.3, cz - GAR_DOOR_HW - 1.35, 0.6, wall_h, 2.7, tint)
-	put_box.call(cx - GAR_W * 0.5 + 0.3, cz + GAR_DOOR_HW + 1.35, 0.6, wall_h, 2.7, tint)
-	# 门楣（门洞上方 0.9m）+ 平屋顶（都架在高处）
-	put_box.call(cx - GAR_W * 0.5 + 0.3, cz, 0.6, 0.9, GAR_DOOR_HW * 2.0, tint,
-			y + GAR_DOOR_H)
-	put_box.call(cx, cz, GAR_W + 0.6, 0.3, GAR_D + 0.6, Color(0.5, 0.52, 0.55, 0.0),
-			y + GAR_H - 0.3)
-	# ---- 塔楼主体：车库就是这栋楼的底层（嵌在楼里），从屋顶直接长上去 ----
-	# 主层：与车库外墙齐平（16×14），高 33m；退台层再收 0.72 竖 9.5m
-	put_box.call(cx, cz, GAR_W, 33.0, GAR_D, Color(0.74, 0.76, 0.79, 0.5),
-			y + GAR_H + 0.03)
-	put_box.call(cx, cz, GAR_W * 0.72, 9.5, GAR_D * 0.72, Color(0.78, 0.80, 0.83, 0.5),
-			y + GAR_H + 33.0)
-	# 塔楼不占碰撞：障碍推出是 2D（无高度），整栋 footprint 的碰撞体会把门洞
-	# 一起封死；地面周界就是车库墙的分块碰撞，车永远够不到高层
-	var bmesh := BoxMesh.new()
-	bmesh.size = Vector3.ONE
-	bmesh.material = _building_material()
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.use_colors = true
-	mm.mesh = bmesh
-	mm.instance_count = xfs.size()
-	for i in xfs.size():
-		mm.set_instance_transform(i, xfs[i])
-		mm.set_instance_color(i, cols[i])
-	var mmi := MultiMeshInstance3D.new()
-	mmi.multimesh = mm
-	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	add_child(mmi)
-	# ---- 墙体碰撞（分块留门洞；无高度判定，门楣/屋顶不参与）----
-	obstacles_box.append({"c": Vector2(cx, cz - GAR_D * 0.5 + 0.3),
-			"hx": GAR_W * 0.5, "hz": 0.3, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx, cz + GAR_D * 0.5 - 0.3),
-			"hx": GAR_W * 0.5, "hz": 0.3, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx + GAR_W * 0.5 - 0.3, cz),
-			"hx": 0.3, "hz": GAR_D * 0.5 - 0.6, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx - GAR_W * 0.5 + 0.3,
-			cz - GAR_DOOR_HW - 1.35), "hx": 0.3, "hz": 1.35, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx - GAR_W * 0.5 + 0.3,
-			cz + GAR_DOOR_HW + 1.35), "hx": 0.3, "hz": 1.35, "rot": 0.0})
-	# ---- 卷帘门板 + 门体碰撞 ----
+	# 卷帘门板（西门 x=185.5，门洞 z -524..-516，净高 4.6m）
 	var dm := BoxMesh.new()
 	dm.size = Vector3(0.3, GAR_DOOR_H, GAR_DOOR_HW * 2.0 + 0.2)
 	var dmat := StandardMaterial3D.new()
@@ -3099,17 +3044,39 @@ func _make_garage() -> void:
 	dm.material = dmat
 	_door_panel = MeshInstance3D.new()
 	_door_panel.mesh = dm
-	_door_base_y = y
-	_door_panel.position = Vector3(cx - GAR_W * 0.5 + 0.3, y + GAR_DOOR_H * 0.5, cz)
+	_door_base_y = 0.0
+	_door_panel.position = Vector3(cx - 13.0, GAR_DOOR_H * 0.5, cz)
 	add_child(_door_panel)
-	_door_piece = {"c": Vector2(cx - GAR_W * 0.5 + 0.3, cz),
-			"hx": 0.2, "hz": GAR_DOOR_HW, "rot": 0.0}
+	_door_piece = {"c": Vector2(cx - 13.0, cz), "hx": 0.2, "hz": GAR_DOOR_HW,
+			"rot": 0.0}
 	obstacles_box.append(_door_piece)
+	# 展厅四周墙体碰撞（与 RRGarage 墙体对齐：半宽 13m，西门洞 8m）
+	obstacles_box.append({"c": Vector2(cx, cz - 13.0), "hx": 13.0, "hz": 0.3,
+			"rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx, cz + 13.0), "hx": 13.0, "hz": 0.3,
+			"rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + 13.0, cz), "hx": 0.3, "hz": 13.0,
+			"rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - 13.0, cz - GAR_DOOR_HW - 2.25),
+			"hx": 0.3, "hz": 4.5, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx - 13.0, cz + GAR_DOOR_HW + 2.25),
+			"hx": 0.3, "hz": 4.5, "rot": 0.0})
+	# 旋转展台垫区（车/人站上展台按 0.36m 计）
+	road_pads.append({"c": Vector2(cx, cz), "fx": 1.0, "fz": 0.0,
+			"hf": 2.75, "hl": 2.75, "y": 0.36})
+
 
 
 ## 车库卷帘门：油门状态下 40m 内升起，或贴近门洞 6.5m（从外面回来）自动开；
 ## 离开范围落回。升起 0.7s，开过一半即摘掉门体碰撞。
+func spin_garage_platform(dt: float) -> void:
+	if _gar_platform != null and _door_open < 0.05 and not garage_started:
+		_gar_platform.rotate_y(dt * 0.45)
+
+
 func step_garage(dt: float, plr: Vector3, thr: bool) -> void:
+	if _gar_platform != null and _door_open < 0.05 and not garage_started:
+		_gar_platform.rotate_y(dt * 0.45)   # 展示模式：平台缓转
 	if _door_panel == null:
 		return
 	var dx := plr.x - (GAR_C.x - GAR_W * 0.5 + 0.3)
@@ -3434,6 +3401,7 @@ func _make_gunshop() -> void:
 
 ## 每次进漫游把卷帘门落回原位（出生在车库内，踩油门顶门出发）
 func reset_garage() -> void:
+	garage_started = false
 	if _door_panel == null:
 		return
 	_door_open = 0.0

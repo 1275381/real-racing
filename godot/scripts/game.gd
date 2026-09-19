@@ -183,7 +183,9 @@ func _ready() -> void:
 	add_child(day_cycle)
 	day_cycle.setup(env, camera)
 	_ensure_headlight()
-	hud.show_only("garage")
+	# 开机即漫游：出生车库（旋转展台）就是初始页面；Esc 仍可回菜单
+	# 车库选车/选比赛/进商店
+	enter_roam.call_deferred()
 
 	# 调试参数（-- 之后传参，等价网页版 URL 参数）：--autostart --laps=N --track=id --roam
 	for arg in OS.get_cmdline_user_args():
@@ -284,6 +286,9 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# 任意用户输入解锁音频（开机直达漫游，无车库点击手势）
+	if event is InputEventKey or event is InputEventMouseButton:
+		audio.ensure()
 	# O 键：漫游开/关自动导航；比赛中开/关领航员
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_O:
@@ -2372,6 +2377,29 @@ func _step_sim(h: float) -> void:
 				inp_r = _nav_drive(h)
 				hud.set_board_hint(true, "自动导航中 · 目的地 %s · O 取消"
 						% nav_dest_label)
+			elif not freeroam.garage_started \
+					and Vector2(pin.pos.x - freeroam.GAR_C.x,
+					pin.pos.z - freeroam.GAR_C.y).length() < 9.0:
+				# 出生车库展示模式：车随旋转平台缓转；踩油门自动回正
+				# 车头对准卷帘门后放行出库
+				freeroam.spin_garage_platform(h)
+				if _garage != null and _garage.pivot != null:
+					_garage.pivot.rotation.y += 0.42 * h   # 台面与车头同步
+				var man := _sample_input(h)
+				var to_door := wrapf(-PI * 0.5 - pin.heading, -PI, PI)
+				if man["throttle"] > 0.0 or man["brake"] > 0.0:
+					pin.heading = wrapf(
+							pin.heading + clampf(to_door, -1.0, 1.0)
+							* 3.0 * h, -PI, PI)
+					inp_r = {"throttle": 0.0, "brake": 0.0, "steer": 0.0,
+							"handbrake": false}
+					if absf(to_door) < 0.09:
+						freeroam.garage_started = true
+						hud.show_center("出发！", "", 900)
+				else:
+					pin.heading = wrapf(pin.heading + 0.42 * h, -PI, PI)
+					inp_r = {"throttle": 0.0, "brake": 0.0, "steer": 0.0,
+							"handbrake": false}
 			else:
 				hud.set_board_hint(false)
 				inp_r = _sample_input(h)
