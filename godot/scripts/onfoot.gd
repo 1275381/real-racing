@@ -53,6 +53,10 @@ var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
 var _reload_rot := Vector3.ZERO
 var _base_fov := 63.0
 var _gun_holder: Node3D
+var _ads := 0.0                      # 开镜过渡 0=腰射 1=瞄准位
+const GUN_HIP_POS := Vector3(0.26, -0.22, -0.55)
+const GUN_ADS_POS := Vector3(0.09, -0.075, -0.45)
+const GUN_HIP_ROT := Vector3(2.5, 4.0, 3.0)
 var _flash: OmniLight3D
 var _flash_mesh: MeshInstance3D
 var _flash_t := 0.0
@@ -142,18 +146,28 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 		return glb
 	var root := Node3D.new()
 	# 视模型材质一律关深度测试：下车点贴着车时枪模不会被车身吞掉
+	# 微自发光：开镜镜片视野/暗处枪模都清晰可读
 	var dark := StandardMaterial3D.new()
 	dark.albedo_color = Color(0.13, 0.14, 0.16)
 	dark.no_depth_test = true
 	dark.render_priority = 10
+	dark.emission_enabled = true
+	dark.emission = Color(0.16, 0.18, 0.2)
+	dark.emission_energy_multiplier = 0.55
 	var wood := StandardMaterial3D.new()
 	wood.albedo_color = Color(0.45, 0.3, 0.18)
 	wood.no_depth_test = true
 	wood.render_priority = 10
+	wood.emission_enabled = true
+	wood.emission = Color(0.3, 0.2, 0.12)
+	wood.emission_energy_multiplier = 0.55
 	var steel := StandardMaterial3D.new()
 	steel.albedo_color = Color(0.35, 0.38, 0.42)
 	steel.no_depth_test = true
 	steel.render_priority = 10
+	steel.emission_enabled = true
+	steel.emission = Color(0.4, 0.44, 0.5)
+	steel.emission_energy_multiplier = 0.55
 	var add_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
 			mat: Material) -> void:
 		var bm := BoxMesh.new()
@@ -445,9 +459,12 @@ func update(dt: float) -> void:
 	if slide_t > 0.0 and not scoped:
 		target_fov += 10.0   # 滑铲速度感
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
-	# 开镜 = 从瞄具里看（枪模整体隐藏，视野即镜内画面）；腰射显示持枪双手
-	_gun_holder.visible = not scoped
-	var target := Vector3(0.18, -0.10, -0.35)
+	# 开镜 = 枪模收到屏幕中心瞄准位（不再整体隐藏，镜内可见枪身）；
+	# 腰射回到持枪位
+	_ads = move_toward(_ads, 1.0 if scoped else 0.0, dt * 5.0)
+	_gun_holder.visible = true
+	_gun_holder.position = GUN_HIP_POS.lerp(GUN_ADS_POS, _ads)
+	_gun_holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3(1.5, 2.0, 0), _ads)
 	# 枪口火光衰减
 	if _flash_t > 0.0:
 		_flash_t -= dt
