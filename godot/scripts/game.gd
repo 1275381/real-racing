@@ -2873,8 +2873,9 @@ func _update_camera(dt: float) -> void:
 			# 锚高按各车模型实际顶高自适应（比车顶再高 0.12m）——
 			# 原来写死 1.02m，比多数车模的机盖/座舱还低，车头盖视角整个
 			# 埋进车壳里穿模挡视野。高度跟着车走，开上高架/盘山也不掉层
+			# （此前还叠加横向 G 力抬升项，转弯时视角会莫名升高，已移除）
 			_cam_pos = Vector3(pv.pos.x + f.x * 0.55,
-					pv.pos.y + _hood_anchor_height() + absf(pv.g_lat) * 0.15,
+					pv.pos.y + _hood_anchor_height(),
 					pv.pos.z + f.z * 0.55)
 			_cam_look = pv.pos + f * 26.0
 			want_fov = 72.0 + spd_ratio * 12.0
