@@ -6,6 +6,7 @@ extends RefCounted
 var veh: Vehicle
 var track               # RaceTrack（AI 仅用于比赛模式）
 var skill := 1.0                # 抓地/动力/限速整体系数
+var overtake := 1.0             # 超车激进系数：探测距离/变线宽度随其放大
 var base_lane := 0.0            # 常用走线横向偏移
 var rubber := 0.0               # 由 Game 注入 -0.06..+0.08
 var lane_offset := 0.0
@@ -137,11 +138,13 @@ func update(dt: float, others: Array) -> void:
 			var c := cos(v.heading)
 			var fwd_d := dx * s + dz * c
 			var lat_d := dx * c - dz * (-s)      # dot with left vector (c,-s)
-			if fwd_d > 0.0 and fwd_d < 11.0 and absf(lat_d) < 3.4 \
-					and o.speed_kmh < v.speed_kmh + 12.0:
-				target_lane = clampf((-1.0 if lat_d > 0.0 else 1.0) * 3.2, -5.0, 5.0)
-				if fwd_d < 5.5:
-					v.input_throttle *= 0.4
+			var det := 11.0 * overtake
+			if fwd_d > 0.0 and fwd_d < det and absf(lat_d) < 3.4 \
+					and o.speed_kmh < v.speed_kmh + 25.0:
+				target_lane = clampf((-1.0 if lat_d > 0.0 else 1.0)
+						* (3.2 * minf(overtake, 1.3)), -5.0, 5.0)
+				if fwd_d < 4.5:
+					v.input_throttle *= 0.55
 				dodged = true
 				break
 		if not dodged and absf(lane_offset) > 0.2:

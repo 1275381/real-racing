@@ -1405,7 +1405,8 @@ func _toggle_codriver() -> void:
 		return
 	codriver = not codriver
 	if codriver:
-		_codriver_ai = AIDriver.new(player.veh, track, {"skill": 0.95})
+		_codriver_ai = AIDriver.new(player.veh, track,
+				{"skill": 1.05, "overtake": 1.8})
 		hud.show_center("领航员接管", "老司机上车 · O 或任意手动驾驶键取消",
 				2400)
 	else:
@@ -2532,7 +2533,8 @@ func _step_sim(h: float) -> void:
 			hud.show_center("已恢复手动驾驶", "", 1200)
 		else:
 			if _codriver_ai == null:
-				_codriver_ai = AIDriver.new(pin, track, {"skill": 0.95})
+				_codriver_ai = AIDriver.new(pin, track,
+						{"skill": 1.05, "overtake": 1.8})
 			_codriver_ai.update(h, cars.map(func(c): return c.veh))
 			# 领航员直道用氮气：前方 70m 无弯 + 氮气余量充足 + 车已动起来
 			var straight := true
