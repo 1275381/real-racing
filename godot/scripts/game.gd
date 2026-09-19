@@ -284,11 +284,13 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# O 键：开/关自动导航（漫游）
+	# O 键：漫游开/关自动导航；比赛中开/关领航员
 	if event is InputEventKey and event.pressed and not event.echo \
-			and event.physical_keycode == KEY_O and state == ST.ROAM \
-			and not shop_open and not gunshop_open:
-		_toggle_nav()
+			and event.physical_keycode == KEY_O:
+		if state == ST.ROAM and not shop_open and not gunshop_open:
+			_toggle_nav()
+		elif state == ST.RACING:
+			_toggle_codriver()
 	# 步行模式：鼠标相对位移 → 视角（鼠标已捕获）
 	if on_foot and onfoot != null and event is InputEventMouseMotion \
 			and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
@@ -462,6 +464,8 @@ var _wheel_gi := 0                 # 所乘吊舱序号
 var elev_ride := false             # 电视塔电梯乘坐中
 var _elev_y := 0.32                # 轿厢当前地板高度
 var _elev_target := 0.32           # 轿厢目标楼层
+var codriver := false              # 比赛领航员（AI 代驾，水平有限）
+var _codriver_ai: AIDriver
 var map_open := false              # 大地图（导航）界面
 var nav_dest := Vector2(-9e9, -9e9)
 var nav_dest_label := ""
@@ -1394,6 +1398,21 @@ func enter_roam() -> void:
 		hud.set_plane_panel(false)
 
 
+## 比赛领航员：AI 代驾（skill 0.52，开得比较菜）
+func _toggle_codriver() -> void:
+	if player.veh.finished:
+		hud.show_center("比赛已结束", "", 1200)
+		return
+	codriver = not codriver
+	if codriver:
+		_codriver_ai = AIDriver.new(player.veh, track, {"skill": 0.52})
+		hud.show_center("领航员接管", "他开得比较菜 · O 或任意手动驾驶键取消",
+				2400)
+	else:
+		_codriver_ai = null
+		hud.show_center("已恢复手动驾驶", "", 1200)
+
+
 ## ================= 大地图与自动导航 =================
 
 func _map_cars_data() -> Array:
@@ -1745,6 +1764,8 @@ func exit_roam() -> void:
 	wheel_ride = false
 	elev_ride = false
 	nav_on = false
+	codriver = false
+	_codriver_ai = null
 	if map_open:
 		map_open = false
 		hud.close_map_screen()
@@ -2495,12 +2516,24 @@ func _step_sim(h: float) -> void:
 
 	# 输入
 	var inp := _sample_input(h)
-	player.veh.nitro_active = Input.is_physical_key_pressed(KEY_SHIFT)
+	player.veh.nitro_active = Input.is_physical_key_pressed(KEY_SHIFT) \
+			and not codriver
 	var pin := player.veh
 	if pin.finished:
 		if player.ai_cruise == null:
 			player.ai_cruise = AIDriver.new(pin, track, {})
 		player.ai_cruise.cruise()
+	elif codriver:
+		# 领航员代驾：任意手动驾驶键立即交还
+		if inp["throttle"] > 0.0 or inp["brake"] > 0.0 \
+				or absf(inp["steer"]) > 0.15 or inp["handbrake"]:
+			codriver = false
+			_codriver_ai = null
+			hud.show_center("已恢复手动驾驶", "", 1200)
+		else:
+			if _codriver_ai == null:
+				_codriver_ai = AIDriver.new(pin, track, {"skill": 0.52})
+			_codriver_ai.update(h, cars.map(func(c): return c.veh))
 	else:
 		pin.input_throttle = inp["throttle"]
 		pin.input_brake = inp["brake"]
@@ -3011,4 +3044,6 @@ func _update_hud(dt: float) -> void:
 		})
 	hud.draw_minimap(minimap_cars)
 
+	hud.set_board_hint(state == ST.RACING and codriver,
+			"领航员驾驶中 · 按 O 或任意手动驾驶键取消")
 	hud.set_wrong_way(state == ST.RACING and pv.wrong_way_timer > 1.4)
