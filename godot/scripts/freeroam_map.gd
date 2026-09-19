@@ -3068,7 +3068,7 @@ func _make_garage() -> void:
 			"hx": 0.3, "hz": 4.5, "rot": 0.0})
 	# 旋转展台垫区（车/人站上展台按 0.36m 计）
 	road_pads.append({"c": Vector2(cx, cz), "fx": 1.0, "fz": 0.0,
-			"hf": 2.75, "hl": 2.75, "y": 0.36})
+			"hf": 2.75, "hl": 2.75, "y": 0.34})
 
 
 

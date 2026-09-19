@@ -76,7 +76,9 @@ func build() -> void:
 	sign2.position = Vector3(0, 2.0, -ROOM_HALF + 0.35)
 	add_child(sign2)
 
-	# 旋转展台
+	# 旋转展台（重做）：埋入式底座——底面沉入地板下方 9cm，任何视角
+	# 都不存在与地板的共面面；哑光材质——金属圆盘旋转时聚光灯高光会
+	# 随旋转高频扫动（"底座一直闪"的另一半原因）；发光环带外贴侧面
 	pivot = Node3D.new()
 	pivot.position = Vector3(0, 0, 0)
 	add_child(pivot)
@@ -84,32 +86,31 @@ func build() -> void:
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 3.6
 	cyl.bottom_radius = 3.8
-	cyl.height = PLATFORM_TOP
+	cyl.height = 0.42
 	var plat_mat := StandardMaterial3D.new()
 	plat_mat.albedo_color = Color("#232730")
-	plat_mat.metallic = 0.65
-	plat_mat.roughness = 0.3
+	plat_mat.metallic = 0.1
+	plat_mat.roughness = 0.88
 	cyl.material = plat_mat
 	plat.mesh = cyl
-	# 抬高 2cm：底面与地面 y=0 共面会 z-fighting 闪烁
-	plat.position.y = PLATFORM_TOP / 2.0 + 0.02
+	plat.position.y = 0.12   # spans -0.09..0.33：底沉入地板，顶 0.33
 	plat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	pivot.add_child(plat)
-	# 发光环
-	var ring := MeshInstance3D.new()
-	var ring_mesh := CylinderMesh.new()
-	ring_mesh.top_radius = 4.15
-	ring_mesh.bottom_radius = 4.15
-	ring_mesh.height = 0.07
-	var ring_mat := StandardMaterial3D.new()
-	ring_mat.albedo_color = Color("#35c8ff")
-	ring_mat.emission_enabled = true
-	ring_mat.emission = Color("#35c8ff")
-	ring_mat.emission_energy_multiplier = 2.2
-	ring_mesh.material = ring_mat
-	ring.mesh = ring_mesh
-	ring.position.y = 0.05
-	pivot.add_child(ring)
+	# 侧面发光环带（半径大于底座该高度侧面，纯外贴无共面）
+	var band := MeshInstance3D.new()
+	var band_mesh := CylinderMesh.new()
+	band_mesh.top_radius = 3.82
+	band_mesh.bottom_radius = 3.86
+	band_mesh.height = 0.14
+	var band_mat := StandardMaterial3D.new()
+	band_mat.albedo_color = Color("#35c8ff")
+	band_mat.emission_enabled = true
+	band_mat.emission = Color("#35c8ff")
+	band_mat.emission_energy_multiplier = 2.0
+	band_mesh.material = band_mat
+	band.mesh = band_mesh
+	band.position.y = 0.1
+	pivot.add_child(band)
 
 	# 灯光：两盏顶灯斜打在车上 + 中央补光照明整个展厅
 	for sx in [-3.2, 3.2]:
