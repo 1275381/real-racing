@@ -622,6 +622,11 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 			if over > 0.0:
 				dist += over * 10.0
 		var vyy: float = vy if vy > -1.0e8 else vehicle_y
+		# 高度层过滤：与查询高度差 >3.5m 的路不作为本层候选——
+		# 否则地表单位（警车/NPC）追击经过地下车库/高架正上方时，
+		# 会被异层路网吸附高度，表现为直接坠入车库或跳上高架
+		if absf(road.pts[bi].y - vyy) > 3.5:
+			continue
 		var cost := dist + absf(road.pts[bi].y - vyy) * 6.0   # 高度迟滞
 		if r == hint_road:
 			cost -= 2.0   # 当前路粘性，避免并线/重叠处来回跳层
