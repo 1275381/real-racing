@@ -1398,15 +1398,15 @@ func enter_roam() -> void:
 		hud.set_plane_panel(false)
 
 
-## 比赛领航员：AI 代驾（skill 0.52，开得比较菜）
+## 比赛领航员：AI 代驾（skill 0.95，弯道与极速接近标准车手）
 func _toggle_codriver() -> void:
 	if player.veh.finished:
 		hud.show_center("比赛已结束", "", 1200)
 		return
 	codriver = not codriver
 	if codriver:
-		_codriver_ai = AIDriver.new(player.veh, track, {"skill": 0.52})
-		hud.show_center("领航员接管", "他开得比较菜 · O 或任意手动驾驶键取消",
+		_codriver_ai = AIDriver.new(player.veh, track, {"skill": 0.95})
+		hud.show_center("领航员接管", "老司机上车 · O 或任意手动驾驶键取消",
 				2400)
 	else:
 		_codriver_ai = null
@@ -2532,7 +2532,7 @@ func _step_sim(h: float) -> void:
 			hud.show_center("已恢复手动驾驶", "", 1200)
 		else:
 			if _codriver_ai == null:
-				_codriver_ai = AIDriver.new(pin, track, {"skill": 0.52})
+				_codriver_ai = AIDriver.new(pin, track, {"skill": 0.95})
 			_codriver_ai.update(h, cars.map(func(c): return c.veh))
 	else:
 		pin.input_throttle = inp["throttle"]
