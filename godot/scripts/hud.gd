@@ -1527,7 +1527,7 @@ func _build_roam_hud() -> void:
 	screen.add_child(hint)
 
 	var keys := Label.new()
-	keys.text = "F 上/下车 · 左键 开枪 · M 开/关镜 · C 滑铲/切镜头 · Esc 回车库 · R 复位 · N 静音"
+	keys.text = "F 上/下车 · 左键 开枪 · 右键 开/关镜 · C 滑铲/切镜头 · Esc 回车库 · R 复位 · N 静音"
 	keys.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	keys.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	keys.position = Vector2(18, -20)

@@ -322,7 +322,6 @@ func _register_inputs() -> void:
 		"rr_camera": [KEY_C],
 		"rr_rescue": [KEY_R],
 		"rr_mute": [KEY_N],
-		"rr_scope": [KEY_M],
 		"rr_gun1": [KEY_1], "rr_gun2": [KEY_2], "rr_gun3": [KEY_3],
 		"rr_gun4": [KEY_4], "rr_gun5": [KEY_5],
 		"rr_pause": [KEY_P, KEY_ESCAPE],
@@ -346,6 +345,12 @@ func _register_inputs() -> void:
 		var fire_ev := InputEventMouseButton.new()
 		fire_ev.button_index = MOUSE_BUTTON_LEFT
 		InputMap.action_add_event("rr_fire", fire_ev)
+	# 开镜动作：鼠标右键
+	if not InputMap.has_action("rr_scope"):
+		InputMap.add_action("rr_scope")
+	var scope_ev := InputEventMouseButton.new()
+	scope_ev.button_index = MOUSE_BUTTON_RIGHT
+	InputMap.action_add_event("rr_scope", scope_ev)
 
 
 func _sample_input(dt: float) -> Dictionary:
