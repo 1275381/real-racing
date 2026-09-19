@@ -2534,6 +2534,16 @@ func _step_sim(h: float) -> void:
 			if _codriver_ai == null:
 				_codriver_ai = AIDriver.new(pin, track, {"skill": 0.95})
 			_codriver_ai.update(h, cars.map(func(c): return c.veh))
+			# 领航员直道用氮气：前方 70m 无弯 + 氮气余量充足 + 车已动起来
+			var straight := true
+			for j in range(0, 5):
+				var nidx: int = track.ahead_idx(
+						pin.q_idx if pin.q_idx != null else 0, 10.0 + j * 15.0)
+				if absf(track.curv[nidx]) > 0.012:
+					straight = false
+					break
+			pin.nitro_active = straight and pin.nitro > 25.0 \
+					and absf(pin.vf) > 8.0
 	else:
 		pin.input_throttle = inp["throttle"]
 		pin.input_brake = inp["brake"]
