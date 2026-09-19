@@ -2536,16 +2536,17 @@ func _step_sim(h: float) -> void:
 				_codriver_ai = AIDriver.new(pin, track,
 						{"skill": 1.05, "overtake": 1.8})
 			_codriver_ai.update(h, cars.map(func(c): return c.veh))
-			# 领航员直道用氮气：前方 70m 无弯 + 氮气余量充足 + 车已动起来
+			# 领航员氮气用得凶：近前方 35m 无急弯就喷——出弯即喷、
+			# 见弯自然收（刹车时 vehicle 内部自动断氮，不会带氮入弯）
 			var straight := true
-			for j in range(0, 5):
+			for j in range(0, 2):
 				var nidx: int = track.ahead_idx(
 						pin.q_idx if pin.q_idx != null else 0, 10.0 + j * 15.0)
-				if absf(track.curv[nidx]) > 0.012:
+				if absf(track.curv[nidx]) > 0.018:
 					straight = false
 					break
-			pin.nitro_active = straight and pin.nitro > 25.0 \
-					and absf(pin.vf) > 8.0
+			pin.nitro_active = straight and pin.nitro > 3.0 \
+					and absf(pin.vf) > 5.0
 	else:
 		pin.input_throttle = inp["throttle"]
 		pin.input_brake = inp["brake"]

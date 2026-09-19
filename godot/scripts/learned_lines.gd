@@ -83,11 +83,14 @@ static func record_lap(track_id: String, lap: Array) -> void:
 		var old: Array = e["lat"]
 		var old_hits: Array = e["hits"]
 		for i in BUCKETS:
+			if i >= old.size():
+				continue
 			if old_hits[i] > 0:
 				hits[i] += int(old_hits[i])
-			if lat[i].is_empty() and not old[i].is_empty():
-				avg[i] = old[i]
-				lat[i] = [old[i]]
+			# 旧缓存 lat 存的是浮点标量（非数组），直接按数值融合
+			if lat[i].is_empty():
+				avg[i] = float(old[i])
+				lat[i] = [float(old[i])]
 	# 撞墙桶插值绕开：撞墙处的横向偏移用前后干净桶线性内插
 	for i in BUCKETS:
 		if hits[i] <= 0 or lat[i].is_empty():
