@@ -1653,7 +1653,7 @@ func _toggle_on_foot() -> void:
 		v.input_brake = 1.0
 		v.vf = 0.0
 		var side := Vector3(cos(v.heading), 0, -sin(v.heading))
-		onfoot.enter(v.pos + side * 2.2, v.heading)
+		onfoot.enter(v.pos + side * 3.0, v.heading)
 		player.visual.visible = false
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		hud.set_onfoot(true)

@@ -120,25 +120,40 @@ func set_gun(gun_id: String) -> void:
 	else:
 		ammo = _g.get("mag", 12)
 		gun_ammo[gun_id] = ammo
-	# 重建枪模
+	# 重建枪模：整个旧枪架释放（含手臂），避免相机上堆积
 	if _gun_holder != null:
-		for c in _gun_holder.get_children():
-			if c.name != "arms":
-				c.queue_free()
+		_gun_holder.queue_free()
 	mount_gun(_build_gun_visual(gun_id))
 
 
 ## 程序化低多边形枪模（rifle 用 SCAR GLB，其余按种类拼装）
 func _build_gun_visual(gun_id: String) -> Node3D:
 	if gun_id == "rifle":
-		return load("res://assets/cars/gun_rifle.glb").instantiate()
+		var glb: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
+		for mi in glb.find_children("*", "MeshInstance3D", true, false):
+			var m := mi as MeshInstance3D
+			for s in m.mesh.get_surface_count():
+				var bm2 := m.mesh.surface_get_material(s)
+				if bm2 is StandardMaterial3D:
+					var dup: StandardMaterial3D = bm2.duplicate()
+					dup.no_depth_test = true
+					dup.render_priority = 10
+					m.set_surface_override_material(s, dup)
+		return glb
 	var root := Node3D.new()
+	# 视模型材质一律关深度测试：下车点贴着车时枪模不会被车身吞掉
 	var dark := StandardMaterial3D.new()
 	dark.albedo_color = Color(0.13, 0.14, 0.16)
+	dark.no_depth_test = true
+	dark.render_priority = 10
 	var wood := StandardMaterial3D.new()
 	wood.albedo_color = Color(0.45, 0.3, 0.18)
+	wood.no_depth_test = true
+	wood.render_priority = 10
 	var steel := StandardMaterial3D.new()
 	steel.albedo_color = Color(0.35, 0.38, 0.42)
+	steel.no_depth_test = true
+	steel.render_priority = 10
 	var add_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
 			mat: Material) -> void:
 		var bm := BoxMesh.new()
@@ -260,39 +275,20 @@ func _tick_fx(dt: float) -> void:
 
 func mount_gun(gun: Node3D) -> void:
 	_gun_holder = Node3D.new()
+	# 锚点抬到视锥内：原点在相机上时枪/手臂的 y 偏移会落到画面底边
+	# 之外，平视时整把枪都在屏幕外（HUD 再一挡就"看不到枪"）
+	_gun_holder.position = Vector3(0.26, -0.22, -0.55)
+	_gun_holder.rotation_degrees = Vector3(2.5, 4.0, 3.0)
 	cam.add_child(_gun_holder)
-	gun.rotation_degrees = Vector3(0, -90, 0)
-	gun.scale = Vector3.ONE * 0.55
+	gun.scale = Vector3.ONE * 0.62
 	_gun_holder.add_child(gun)
-	# 双手：右臂握把 + 左臂护木（深色衣袖），手部肤色
-	var sleeve := StandardMaterial3D.new()
-	sleeve.albedo_color = Color(0.18, 0.2, 0.26)
-	var skin := StandardMaterial3D.new()
-	skin.albedo_color = Color(0.91, 0.71, 0.55)
-	var mk_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
-			mat: Material) -> MeshInstance3D:
-		var bm := BoxMesh.new()
-		bm.size = size
-		bm.material = mat
-		var mi := MeshInstance3D.new()
-		mi.mesh = bm
-		mi.position = pos
-		mi.rotation_degrees = rot_deg
-		_gun_holder.add_child(mi)
-		return mi
-	mk_box.call(Vector3(0.09, 0.09, 0.4), Vector3(0.2, -0.26, -0.18),
-			Vector3(-10, 10, -28), sleeve)   # 右臂（斜向握把）
-	mk_box.call(Vector3(0.075, 0.095, 0.1), Vector3(0.1, -0.15, -0.29),
-			Vector3(0, 10, 0), skin)         # 右手
-	mk_box.call(Vector3(0.09, 0.09, 0.38), Vector3(-0.16, -0.22, -0.4),
-			Vector3(-16, -12, 26), sleeve)   # 左臂（斜向护木）
-	mk_box.call(Vector3(0.075, 0.09, 0.11), Vector3(-0.075, -0.115, -0.5),
-			Vector3(0, -12, 0), skin)        # 左手
 	# 枪上弹匣（换弹动画：脱落/滑入用）
 	var mag_mesh := BoxMesh.new()
 	mag_mesh.size = Vector3(0.055, 0.17, 0.09)
 	var mag_mat := StandardMaterial3D.new()
 	mag_mat.albedo_color = Color(0.16, 0.18, 0.22)
+	mag_mat.no_depth_test = true
+	mag_mat.render_priority = 10
 	mag_mesh.material = mag_mat
 	_mag_mesh = MeshInstance3D.new()
 	_mag_mesh.mesh = mag_mesh
