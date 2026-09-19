@@ -91,14 +91,15 @@ func build() -> void:
 	plat_mat.roughness = 0.3
 	cyl.material = plat_mat
 	plat.mesh = cyl
-	plat.position.y = PLATFORM_TOP / 2.0
+	# 抬高 2cm：底面与地面 y=0 共面会 z-fighting 闪烁
+	plat.position.y = PLATFORM_TOP / 2.0 + 0.02
 	plat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	pivot.add_child(plat)
 	# 发光环
 	var ring := MeshInstance3D.new()
 	var ring_mesh := CylinderMesh.new()
-	ring_mesh.top_radius = 3.72
-	ring_mesh.bottom_radius = 3.72
+	ring_mesh.top_radius = 4.15
+	ring_mesh.bottom_radius = 4.15
 	ring_mesh.height = 0.07
 	var ring_mat := StandardMaterial3D.new()
 	ring_mat.albedo_color = Color("#35c8ff")
@@ -107,7 +108,7 @@ func build() -> void:
 	ring_mat.emission_energy_multiplier = 2.2
 	ring_mesh.material = ring_mat
 	ring.mesh = ring_mesh
-	ring.position.y = 0.06
+	ring.position.y = 0.05
 	pivot.add_child(ring)
 
 	# 灯光：两盏顶灯斜打在车上 + 中央补光照明整个展厅
