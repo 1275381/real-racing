@@ -480,6 +480,7 @@ var _plane_was_down := false       # 我方战机被击落（重生提示用）
 
 var plane_mode := false            # 车库选中战机（漫游专用，不能参赛）
 var rplane := {}                   # 漫游战机状态 {pos,heading,pitch,roll,speed,throttle,landed,hint}
+var _roam_exit_cd := 0.0           # 下机冷却：防同帧 F 下机后立刻被重新登机分支塞回
 var roam_plane_vis: Node3D         # 战机模型（车库展示 + 漫游飞行同用）
 var airport_traffic: AirportTraffic  # 机场氛围（客机起降 + 登机人流）
 var _roam_vs := 0.0                # 升降率平滑（仪表）
@@ -1320,6 +1321,7 @@ func _roam_exit_plane() -> void:
 	if not rplane["landed"] or alt > 5.0:
 		hud.show_center("无法下机", "先关油门贴地减速（S 键）", 1600)
 		return
+	_roam_exit_cd = 0.6
 	var side := Vector3(sin(float(rplane["heading"]) + PI * 0.5), 0,
 			cos(float(rplane["heading"]) + PI * 0.5))
 	on_foot = true
@@ -2175,6 +2177,8 @@ func _handle_hotkeys() -> void:
 			cargo_heist = "chase"
 			hud.show_center("任务接取", "货机正在起飞 · 驾驶战机追上它夺走货物",
 					3500)
+		elif plane_mode and not on_foot and not rplane.is_empty():
+			_roam_exit_plane()   # 战机内按 F = 下机（需已降落贴地）
 		elif _landmark_interact():
 			pass
 		else:
@@ -2212,7 +2216,8 @@ func _handle_hotkeys() -> void:
 			and not (on_foot and airport_traffic != null \
 			and airport_traffic.near_service_door(onfoot.pos) >= 0):
 		if on_foot:
-			if rplane.get("landed", false) and not rplane.is_empty() \
+			if _roam_exit_cd <= 0.0 \
+					and rplane.get("landed", false) and not rplane.is_empty() \
 					and onfoot.pos.distance_to(rplane["pos"]) < 9.0:
 				_roam_board_plane()
 		else:
@@ -2334,6 +2339,7 @@ func _step_sim(h: float) -> void:
 				hud.show_center("已抵达 " + airport_traffic.ride_names[di],
 						"", 2500)
 		elif plane_mode and not on_foot and not rplane.is_empty():
+			_roam_exit_cd = maxf(0.0, _roam_exit_cd - h)
 			# 漫游战机：飞行物理，车辆冻结（位置同步给 NPC/警察逻辑）
 			_roam_plane_step(h)
 			pin.pos = rplane["pos"]
