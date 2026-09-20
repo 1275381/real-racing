@@ -186,6 +186,10 @@ func _ready() -> void:
 	# 开机即漫游：出生车库（旋转展台）就是初始页面；Esc 仍可回菜单
 	# 车库选车/选比赛/进商店
 	enter_roam.call_deferred()
+	# 全车型预加载：后台线程把所有 GLB 载入资源缓存——高顶点车首次
+	# 选车/显示零等待（线程只做 load，不触碰场景树，线程安全）
+	_car_preload_thread = Thread.new()
+	_car_preload_thread.start(_car_preload_worker)
 
 	# 调试参数（-- 之后传参，等价网页版 URL 参数）：--autostart --laps=N --track=id --roam
 	for arg in OS.get_cmdline_user_args():
@@ -308,6 +312,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		audio.ensure()   # 用户手势里解锁音频，之后有怠速声浪
 	elif event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_garage_angle += event.relative.x * 0.008
+
+
+## 全车型预加载：后台逐个载入 GLB 进资源缓存（含步行 GLB 枪）
+func _car_preload_worker() -> void:
+	var files: Array[String] = []
+	for m in TrackData.CAR_MODELS:
+		if not files.has(m["file"]):
+			files.append(m["file"])
+	files.append("res://assets/cars/gun_rifle.glb")
+	for f in files:
+		ResourceLoader.load(f, "PackedScene", ResourceLoader.CACHE_MODE_REUSE)
 
 
 # ================= 输入 =================
@@ -476,6 +491,7 @@ var _elev_y := 0.32                # 轿厢当前地板高度
 var _elev_target := 0.32           # 轿厢目标楼层
 var codriver := false              # 比赛领航员（AI 代驾，水平有限）
 var _codriver_ai: AIDriver
+var _car_preload_thread: Thread    # 车型预加载后台线程
 var map_open := false              # 大地图（导航）界面
 var nav_dest := Vector2(-9e9, -9e9)
 var nav_dest_label := ""
