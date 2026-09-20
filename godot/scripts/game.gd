@@ -503,6 +503,7 @@ var _nav_rev_t := 0.0
 var cargo_state := "ready"         # 货运任务：ready 备货 / escape 逃脱中 / rewarded 已结算
 var _cargo_last_day := 0           # 货物补充的日期标记
 var cargo_heist := "none"          # 劫案流程：none / chase 追赶 / flee 逃脱中
+var _heist_hinted := false         # 未接任务驶入货仓的提示锁存
 var day_cycle: DayCycle            # 昼夜 + 天气
 var _headlight: SpotLight3D        # 玩家车头灯（夜色自动点亮）
 
@@ -2448,9 +2449,13 @@ func _step_sim(h: float) -> void:
 		if on_foot:
 			onfoot.fire_block = freeroam.nearest_closed_door(
 					onfoot.pos, 4.5) >= 0
-		# 货运任务：车辆驶入货仓夺货 → 大量警察 → 逃脱领赏
-		if cargo_state == "ready" and airport_traffic != null \
-				and airport_traffic.cargo_in_hold(pin.pos):
+		# 货运劫案：先在货机旁按 F 接取任务（货机起飞）——追上货机
+		# 飞进货仓才夺货触发警察；未接任务时驶入货仓只给提示
+		var in_hold: bool = airport_traffic != null \
+				and airport_traffic.cargo_in_hold(pin.pos)
+		if cargo_state == "ready" and in_hold and cargo_heist == "chase" \
+				and airport_traffic.cargo_mission in \
+				["taxi", "takeoff", "cruise"]:
 			cargo_state = "escape"
 			airport_traffic.take_cargo()
 			if npc != null:
@@ -2458,7 +2463,13 @@ func _step_sim(h: float) -> void:
 				npc.escalate()
 			hud.show_center("货物到手！", "大量警察正在赶来 · 甩掉他们领取报酬",
 					4000)
-		elif cargo_state == "escape" and npc != null and not npc.wanted \
+		elif cargo_state == "ready" and in_hold and not _heist_hinted \
+				and cargo_heist != "chase":
+			_heist_hinted = true
+			hud.show_center("截机任务", "先在货机旁按 F 接取任务", 2600)
+		elif not in_hold:
+			_heist_hinted = false
+		if cargo_state == "escape" and npc != null and not npc.wanted \
 				and npc.police.is_empty():
 			cargo_state = "rewarded"
 			coins += 5000

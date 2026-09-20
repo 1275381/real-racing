@@ -764,10 +764,14 @@ func update_cargo_mission(dt: float) -> void:
 				cargo_plane_pos = Vector3(-1876.0, 0.1, -720.0)
 				cargo_plane_heading = -0.35 + PI * 0.5
 				cargo_plane_speed = 0.0
-	# 货舱世界坐标（机身后段货门）
+	# 货舱世界坐标（机身后段货门）+ 货物判定点跟随货机
+	# （此前 cargo_pos 停留在建造时的停放坐标——货机滑行/起飞后
+	# cargo_in_hold 永远打不到，接取任务后无法完成夺货）
 	var back := Vector2(sin(cargo_plane_heading + PI), cos(cargo_plane_heading + PI))
 	cargo_hold_world = cargo_plane_pos \
 			+ Vector3(back.x, 0, back.y) * 12.0 + Vector3(0, -1.2, 0)
+	cargo_pos = Vector3(cargo_plane_pos.x + back.x * 8.0, 2.55,
+			cargo_plane_pos.z + back.y * 8.0)
 	_sync_cargo_vis()
 
 
