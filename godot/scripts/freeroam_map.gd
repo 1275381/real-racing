@@ -153,7 +153,7 @@ const SHOP_DOOR := Vector2(21.0, 34.0)      # 店门口（进入判定点）
 const GUNSHOP_POS := Vector2(-46.0, 46.0)   # 枪械店建筑中心（小地图「枪」标记用）
 
 # ---- 机场与远方城市 ----
-const AIRPORT_POS := Vector2(-1900.0, -400.0)   # 城市机场（西郊平地，避开沙漠岩山）
+const AIRPORT_POS := Vector2(-1500.0, -250.0)   # 城市机场（城区西南角，沿海，进城减半）
 const AIRPORT_HEADING := -0.35                   # 跑道朝向（弧度）
 const FAR_CITY_POS := Vector2(8200.0, 6600.0)    # 远方城市中心（只飞得到）
 const FAR_CITY_HEADING := 0.75
@@ -1505,9 +1505,9 @@ func _build_zones() -> void:
 	ocean.albedo_color = Color(0.1, 0.33, 0.56)
 	ocean.metallic = 0.35
 	ocean.roughness = 0.12
-	_ground_plane(2220, 9600, null, Color.WHITE, 1.0, Vector2(-3490, 0.02), 0.02, ocean)
-	_ground_plane(1300, 4290, null, Color.WHITE, 1.0, Vector2(-1730, 2655.0), 0.02, ocean)
-	_ground_plane(1300, 3530, null, Color.WHITE, 1.0, Vector2(-1730, -3035.0), 0.02, ocean)
+	_ground_plane(2650, 9600, null, Color.WHITE, 1.0, Vector2(-3275, 0.02), 0.02, ocean)
+	_ground_plane(870, 4120, null, Color.WHITE, 1.0, Vector2(-1515, 2740.0), 0.02, ocean)
+	_ground_plane(870, 3670, null, Color.WHITE, 1.0, Vector2(-1515, -2965.0), 0.02, ocean)
 	_mountains()
 	_desert_props()
 
@@ -2211,8 +2211,8 @@ func _build_zone_ground() -> void:
 func _zone_color(x: float, z: float, rng: RRUtil.Mulberry) -> Color:
 	var n := (rng.next() - 0.5) * 0.06
 	var c: Color
-	if x > -2350.0 and x < -1000.0 and z > -1240.0 and z < 480.0:
-		c = Color(0.42, 0.55, 0.33)      # 机场平地（西郊旱地，海面在此挖开）
+	if x > -1900.0 and x < -1000.0 and z > -1050.0 and z < 600.0:
+		c = Color(0.42, 0.55, 0.33)      # 机场平地（城区西南沿海旱地）
 	elif x < -1080.0:
 		c = Color(0.10, 0.33, 0.56)      # 海
 	elif x < -980.0:
@@ -3429,7 +3429,7 @@ func _build_minimap() -> void:
 	_fill_zone(img, size, 950, 2800, -2800, 2800, Color(0.66, 0.55, 0.35))      # 东沙漠
 	_fill_zone(img, size, -1080, -980, -2800, 2800, Color(0.72, 0.66, 0.50))    # 西沙滩
 	_fill_zone(img, size, -2800, -1080, -2800, 2800, Color(0.1, 0.28, 0.5))     # 西海
-	_fill_zone(img, size, -2350, -1000, -1240, 480, Color(0.17, 0.23, 0.15))    # 机场平地（西海挖开）
+	_fill_zone(img, size, -1900, -1000, -1050, 600, Color(0.17, 0.23, 0.15))    # 机场平地（西海挖开）
 	_fill_zone(img, size, -950, 950, -950, 950, Color(0.2, 0.22, 0.26))         # 城市核心
 	var scale := float(size) / (MAP_LIMIT * 2.0)
 	for road in roads:
@@ -3868,7 +3868,7 @@ func build_nav_graph() -> void:
 								and absf(_nav_y[a] - _nav_y[b]) < 2.5:
 							_astar.connect_points(a, b)
 	# 机场 ↔ 西海岸路：补虚拟边（其间为可越野草地）
-	_nav_link(Vector2(-1040.0, -400.0), Vector2(-1448.0, -427.0))
+	_nav_link(Vector2(-1040.0, -277.0), Vector2(-1048.6, -276.6))
 
 
 ## 两点各自吸附最近路网节点并连边（用于无样条衔接的可达区域）

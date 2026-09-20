@@ -761,7 +761,7 @@ func update_cargo_mission(dt: float) -> void:
 			cargo_mission_t -= dt
 			if cargo_mission_t <= 0.0:
 				cargo_mission = "parked"
-				cargo_plane_pos = Vector3(-1876.0, 0.1, -720.0)
+				cargo_plane_pos = Vector3(-1476.0, 0.1, -570.0)
 				cargo_plane_heading = -0.35 + PI * 0.5
 				cargo_plane_speed = 0.0
 	# 货舱世界坐标（机身后段货门）+ 货物判定点跟随货机
