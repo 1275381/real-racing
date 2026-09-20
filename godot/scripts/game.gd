@@ -2161,8 +2161,20 @@ func _handle_hotkeys() -> void:
 		var airliner_i: int = -1
 		if on_foot and airport_traffic != null:
 			airliner_i = airport_traffic.near_service_door(onfoot.pos)
+		# 货机接取优先：步行靠近停靠货机（未接取）直接接任务——
+		# 否则交互链的上下车兜底会吃掉 F，货机旁永远只能下车
+		var cargo_i := false
+		if on_foot and airport_traffic != null \
+				and airport_traffic.cargo_mission == "parked" \
+				and onfoot.pos.distance_to(airport_traffic.cargo_plane_pos) < 15.0:
+			cargo_i = true
 		if airliner_i >= 0:
 			_airliner_board(airliner_i)
+		elif cargo_i:
+			airport_traffic.begin_cargo_mission()
+			cargo_heist = "chase"
+			hud.show_center("任务接取", "货机正在起飞 · 驾驶战机追上它夺走货物",
+					3500)
 		elif _landmark_interact():
 			pass
 		else:
@@ -2182,12 +2194,8 @@ func _handle_hotkeys() -> void:
 	if state == ST.ROAM and airport_traffic != null \
 			and Input.is_action_just_pressed("rr_interact") \
 			and not shop_open and not gunshop_open and not map_open:
-		if on_foot and airport_traffic.cargo_mission == "parked" \
-				and onfoot.pos.distance_to(airport_traffic.cargo_plane_pos) < 15.0:
-			airport_traffic.begin_cargo_mission()
-			cargo_heist = "chase"
-			hud.show_center("任务接取", "货机正在起飞 · 驾驶战机追上它夺走货物", 3500)
-		elif not on_foot and airport_traffic.near_cargo_hold(
+		# 接取已前移至交互链；此处保留追赶阶段的夺货
+		if not on_foot and airport_traffic.near_cargo_hold(
 				player.veh.pos) \
 				and airport_traffic.cargo_mission in ["cruise", "takeoff"]:
 			airport_traffic.steal_cargo()
@@ -2423,7 +2431,14 @@ func _step_sim(h: float) -> void:
 					inp_r = {"throttle": 0.0, "brake": 0.0, "steer": 0.0,
 							"handbrake": false}
 			else:
-				hud.set_board_hint(false)
+				if airport_traffic != null \
+						and airport_traffic.cargo_mission == "parked" \
+						and Vector2(pin.pos.x - airport_traffic.cargo_plane_pos.x,
+						pin.pos.z - airport_traffic.cargo_plane_pos.z).length() < 22.0:
+					hud.set_board_hint(true,
+							"F 下车 · 下车后 F 接取截机任务")
+				else:
+					hud.set_board_hint(false)
 				inp_r = _sample_input(h)
 			pin.input_throttle = inp_r["throttle"]
 			pin.input_brake = inp_r["brake"]
