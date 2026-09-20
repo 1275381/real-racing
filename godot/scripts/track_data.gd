@@ -175,7 +175,7 @@ const CAR_MODELS := [
 		"class": "hybrid",
 		"stats": {"top": 91.0, "power": 69.0, "accel": 13.8, "grip": 1.05, "brake": 19.3, "no_shift": true}},
 	# 混动电驱终极旗舰（Tripo 2026-09）：全游戏加速与极速双最高
-	{"id": "aiped", "name": "雷鸣混动", "file": "res://assets/cars/car_tripo_o.glb", "desc": "混动电驱终极旗舰 · 全游戏加速极速双冠", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aiped", "name": "雷鸣混动", "file": "res://assets/cars/car_tripo_p.glb", "desc": "混动电驱终极旗舰 · 全游戏加速极速双冠", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid",
 		"stats": {"top": 98.0, "power": 74.0, "accel": 15.2, "grip": 1.1, "brake": 19.8, "no_shift": true}},
 ]
