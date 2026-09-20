@@ -1129,9 +1129,10 @@ func _ensure_headlight() -> void:
 		return
 	_headlight = SpotLight3D.new()
 	_headlight.light_color = Color(1.0, 0.93, 0.78)
-	_headlight.light_energy = 6.0
-	_headlight.spot_range = 55.0
-	_headlight.spot_angle = 38.0
+	_headlight.light_energy = 10.0
+	_headlight.spot_range = 115.0
+	_headlight.spot_angle = 31.0
+	_headlight.spot_attenuation = 0.55
 	_headlight.position = Vector3(0, 0.75, 1.6)
 	_headlight.rotation.x = -0.12
 	player.visual.add_child(_headlight)

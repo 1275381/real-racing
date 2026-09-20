@@ -168,7 +168,7 @@ func tick(dt: float) -> void:
 		if s.get("vis") != null:
 			continue
 		s["respawn"] = float(s.get("respawn", 0.0)) + dt
-		if float(s["respawn"]) < 30.0:
+		if float(s["respawn"]) < 8.0:
 			continue
 		s["vis"] = _build_airliner(Color(0.93, 0.94, 0.96),
 				Color(0.16, 0.34, 0.6))
@@ -446,13 +446,13 @@ func _update_plane(ap: Dictionary, p: Dictionary, dt: float) -> void:
 			if p["t"] <= 0.0:
 				p["gate_i"] = (int(p["gate_i"]) + 1) % PLANES_PER_AIRPORT
 				p["state"] = "board"
-				p["t"] = randf_range(6.0, 14.0)
+				p["t"] = randf_range(3.0, 6.0)
 				p["speed"] = 0.0
 				p["pitch"] = 0.0
 	if String(p["state"]) == "climb" \
 			and Vector3(p["pos"]).length() > 7000.0:
 		p["state"] = "gone"
-		p["t"] = randf_range(10.0, 22.0)
+		p["t"] = randf_range(4.0, 8.0)
 	var vis: Node3D = p["vis"]
 	vis.visible = String(p["state"]) != "gone"
 	vis.position = p["pos"]
