@@ -293,6 +293,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 任意用户输入解锁音频（开机直达漫游，无车库点击手势）
 	if event is InputEventKey or event is InputEventMouseButton:
 		audio.ensure()
+	# L 键：车灯开关（仅驾车；白天按了也没光）
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_L \
+			and state in [ST.ROAM, ST.RACING] and not on_foot \
+			and not plane_mode and not shop_open and not gunshop_open \
+			and not map_open:
+		headlight_on = not headlight_on
+		hud.show_center("车灯 " + ("开" if headlight_on else "关"), "", 800)
 	# O 键：漫游开/关自动导航；比赛中开/关领航员
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_O:
@@ -493,6 +501,7 @@ var _elev_target := 0.32           # 轿厢目标楼层
 var codriver := false              # 比赛领航员（AI 代驾，水平有限）
 var _codriver_ai: AIDriver
 var _car_preload_thread: Thread    # 车型预加载后台线程
+var headlight_on := false          # 车灯手动开关（L 键，车内/夜间）
 var map_open := false              # 大地图（导航）界面
 var nav_dest := Vector2(-9e9, -9e9)
 var nav_dest_label := ""
@@ -2046,7 +2055,8 @@ func _process(dt_real: float) -> void:
 		day_cycle.advance(dt)
 		day_cycle.apply(env)
 		if _headlight != null and is_instance_valid(_headlight):
-			_headlight.visible = day_cycle.night_f > 0.4 \
+			_headlight.visible = headlight_on \
+					and day_cycle.night_f > 0.4 \
 					and not on_foot and state != ST.GARAGE
 		hud.update_clock(day_cycle.clock_text(), day_cycle.phase_text(),
 				day_cycle.weather_text())
