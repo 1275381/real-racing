@@ -865,14 +865,36 @@ func _obstacle_bounce(v: Vehicle, nx: float, nz: float) -> void:
 		_obst_hit = maxf(_obst_hit, minf(absf(vn) / 13.0, 1.0))
 
 
+const SIG_CYCLE := 15.0     # 信号周期：每组绿 6.5 + 黄 1.5 + 红 7
+const SIG_GREEN := 6.5
+const SIG_YELLOW := 8.0     # 黄灯结束时刻（绿 0~6.5 / 黄 6.5~8 / 红 8~15）
+
+## 路口轴向相位（2绿 1黄 0红）。棋盘分组 p=(行+列)%2：NS 用组 p、EW 用组 p+1，
+## 邻近路口自动错相半周期形成绿波；与 update_signals 的灯光翻转严格同式。
+func tl_phase(ew: bool, p: int, t: float) -> int:
+	var g := (p + (1 if ew else 0)) % 2
+	var local := fmod(t + 7.5 * float(g), SIG_CYCLE)
+	if local < SIG_GREEN:
+		return 2
+	if local < SIG_YELLOW:
+		return 1
+	return 0
+
+
+## 信号灯覆盖的网格街索引：内城 ±180~±540（外环是快速路段、中心是广场，都不设灯）
+func tl_index(c: float) -> int:
+	var i := GRID_COORDS.find(float(c))
+	return i if (i >= 2 and i <= 8 and i != 5) else -1
+
+
 func update_signals(t: float) -> void:
 	if _sig_mats.is_empty():
 		return
-	var cycle := fmod(t, 15.0)
+	var cycle := fmod(t, SIG_CYCLE)
 	for g in 2:
-		var local := fmod(cycle + 7.5 * float(g), 15.0)
-		var green := local < 6.5
-		var yellow := local >= 6.5 and local < 8.0
+		var local := fmod(cycle + 7.5 * float(g), SIG_CYCLE)
+		var green := local < SIG_GREEN
+		var yellow := local >= SIG_GREEN and local < SIG_YELLOW
 		var m: Dictionary = _sig_mats[g]
 		(m["r"] as StandardMaterial3D).emission_energy_multiplier = 2.4 if (not green and not yellow) else 0.12
 		(m["y"] as StandardMaterial3D).emission_energy_multiplier = 2.4 if yellow else 0.12
@@ -2627,11 +2649,14 @@ func _build_intersections() -> void:
 		var cx: float = inner[ix]
 		for iz in inner.size():
 			var cz: float = inner[iz]
-			var group0 := (ix + iz) % 2
-			# 同一路口的两根灯必须反相，否则南北与东西同时绿灯
-			for ci2 in 2:
-				var corner: Vector2 = [Vector2(1, 1), Vector2(-1, -1)][ci2]
-				var group := (group0 + ci2) % 2
+			var p := (ix + iz) % 2
+			# 四角各一杆（进路口方向右侧远端：北行看 NE、南行看 SW、东行看 SE、
+			# 西行看 NW）——NE/SW 服务南北向（组 p）、SE/NW 服务东西向（组 p+1），
+			# 同轴对向车流读同一组灯，交叉车流必然反相
+			for ci2 in 4:
+				var corner: Vector2 = [Vector2(1, 1), Vector2(-1, -1),
+						Vector2(1, -1), Vector2(-1, 1)][ci2]
+				var group := (p + (1 if ci2 >= 2 else 0)) % 2
 				# 退到 11.0m：街道软墙允许车开到 half_w+2.6=10.6m，
 				# 原来灯杆立在 10.4m，车直接从灯杆里穿过去
 				var px: float = cx + corner.x * (GRID_HALF_W + 3.0)

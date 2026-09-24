@@ -80,21 +80,10 @@ var _traffic_body: MultiMesh
 var _traffic_wheel: MultiMesh
 
 # ================= 交通灯 =================
-const TL_GREEN := 8.0        # 每方向绿灯时长
-const TL_YELLOW := 1.5       # 黄灯时长
-const _TL_CYCLE := TL_GREEN * 2.0 + TL_YELLOW * 2.0
+# 相位来源是 freeroam_map 的路口信号灯（棋盘分组、四角灯杆），
+# 这里只做停止线判定：sig_t 由 game 每帧同步为全局时钟。
 const TL_STOP_OFF := 12.5    # 停止线距路口中心（路面半宽 8 + 引道余量）
-const TL_LIT_R := Color(1.0, 0.12, 0.06)
-const TL_LIT_Y := Color(1.0, 0.72, 0.08)
-const TL_LIT_G := Color(0.12, 1.0, 0.3)
-const TL_DIM_R := Color(0.14, 0.035, 0.025)
-const TL_DIM_Y := Color(0.13, 0.095, 0.02)
-const TL_DIM_G := Color(0.025, 0.11, 0.04)
-var _tl_t := 0.0
-var _tl_ns := -1             # 纵向轴相位（2绿 1黄 0红），-1 未初始化
-var _tl_ew := -1             # 横向轴相位
-var _tl_pole_mm: MultiMesh
-var _tl_lamp_mm: MultiMesh
+var sig_t := 0.0             # 与 freeroam.update_signals 同源的全局时钟
 
 
 ## 进入漫游时构建（freeroam 已 build）
@@ -107,10 +96,6 @@ func setup(freeroam, hud_ref) -> void:
 			_step[r] = maxf(pts[0].distance_to(pts[1]), 0.5)
 	_build_cars()
 	_build_pedestrians()
-	_build_traffic_lights()
-	_tl_ns = _tl_axis_state(false)
-	_tl_ew = _tl_axis_state(true)
-	_sync_tl_colors()
 
 
 func set_active(on: bool) -> void:
@@ -219,16 +204,6 @@ func _respawn_car_near_player(car: Dictionary) -> void:
 			return
 
 
-func _tl_axis_state(ew: bool) -> int:
-	# 东西向相位 = 南北向相位偏移半个周期（绿-黄 | 绿-黄）
-	var t := fmod(_tl_t + (TL_GREEN + TL_YELLOW if ew else 0.0), _TL_CYCLE)
-	if t < TL_GREEN:
-		return 2
-	if t < TL_GREEN + TL_YELLOW:
-		return 1
-	return 0
-
-
 ## 沿行进方向（s=±1）最近的网格路口坐标，出了网格返回 NAN（不限）
 func _next_grid(coord: float, s: float) -> float:
 	var best := NAN
@@ -250,6 +225,7 @@ func _car_coord(car: Dictionary, along_x: bool) -> float:
 
 ## 红灯停止线门：返回 0..1 速度系数（1=放行）
 ## 黄灯近距（<14m）通过、远距按红灯停；已越线进路口一律放行（不挡在箱内）
+## 相位来自路口棋盘分组（与四角灯杆同一套），灯区只覆盖内城 ±180~±540
 func _tl_gate(car: Dictionary) -> float:
 	var road = fm.roads[car["r"]]
 	if not road.xsec_cut:
@@ -259,7 +235,13 @@ func _tl_gate(car: Dictionary) -> float:
 	var q := _next_grid(coord, s)
 	if is_nan(q):
 		return 1.0
-	var st := _tl_ew if road.along_x else _tl_ns
+	var pts: PackedVector3Array = road.pts
+	var fixed: float = pts[0].z if road.along_x else pts[0].x
+	var gi_a: int = fm.tl_index(q)
+	var gi_b: int = fm.tl_index(fixed)
+	if gi_a < 0 or gi_b < 0:
+		return 1.0                  # 外环/广场路口不设灯
+	var st: int = fm.tl_phase(road.along_x, (gi_a + gi_b) % 2, sig_t)
 	if st == 2:
 		return 1.0
 	var dist := (q - TL_STOP_OFF - coord) * s   # 到停止线的带符号距离
@@ -287,101 +269,6 @@ func _queue_gate(car: Dictionary) -> float:
 		if gap > 0.0 and gap < 8.5:
 			gate = minf(gate, clampf((gap - 5.0) / 3.0, 0.0, 1.0))
 	return gate
-
-
-## 网格街 121 个路口各立一对信号杆（对角 +10.4/-10.4）：
-## 每杆两块灯板——NS 板显示纵向相位、EW 板显示横向相位，全局同相轮换
-func _build_traffic_lights() -> void:
-	var gc: Array = FreeroamMap.GRID_COORDS
-	var n := gc.size()
-	var pole_n := n * n * 2
-	# 杆体：柱 + 十字双遮光板（薄 Z 板载 NS 灯组、薄 X 板载 EW 灯组）
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var pole := CylinderMesh.new()
-	pole.top_radius = 0.09
-	pole.bottom_radius = 0.13
-	pole.height = 6.4
-	st.append_from(pole, 0, Transform3D(Basis.IDENTITY, Vector3(0, 3.2, 0)))
-	var plate_ns := BoxMesh.new()
-	plate_ns.size = Vector3(0.78, 1.9, 0.16)
-	st.append_from(plate_ns, 0, Transform3D(Basis.IDENTITY, Vector3(0, 4.6, 0)))
-	var plate_ew := BoxMesh.new()
-	plate_ew.size = Vector3(0.16, 1.9, 0.78)
-	st.append_from(plate_ew, 0, Transform3D(Basis.IDENTITY, Vector3(0, 5.5, 0)))
-	var pm := MultiMesh.new()
-	pm.transform_format = MultiMesh.TRANSFORM_3D
-	pm.mesh = st.commit()
-	pm.instance_count = pole_n
-	var pmat := StandardMaterial3D.new()
-	pmat.albedo_color = Color(0.16, 0.17, 0.19)
-	pm.mesh.surface_set_material(0, pmat)
-	# 灯泡：每杆 6 只（两板 × 红/黄/绿 纵排），无光照材质让相位色夜间也醒目
-	var lst := SurfaceTool.new()
-	lst.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var lamp := SphereMesh.new()
-	lamp.radius = 0.17
-	lamp.height = 0.34
-	lamp.radial_segments = 10
-	lamp.rings = 6
-	lst.append_from(lamp, 0, Transform3D.IDENTITY)
-	var lm := MultiMesh.new()
-	lm.transform_format = MultiMesh.TRANSFORM_3D
-	lm.use_colors = true
-	lm.mesh = lst.commit()
-	lm.instance_count = pole_n * 6
-	var lmat := StandardMaterial3D.new()
-	lmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	lmat.vertex_color_use_as_albedo = true
-	lm.mesh.surface_set_material(0, lmat)
-	var pmmi := MultiMeshInstance3D.new()
-	pmmi.multimesh = pm
-	add_child(pmmi)
-	var lmmi := MultiMeshInstance3D.new()
-	lmmi.multimesh = lm
-	add_child(lmmi)
-	_tl_pole_mm = pm
-	_tl_lamp_mm = lm
-	var ys := [0.55, 0.0, -0.55]
-	for iz in n:
-		for ix in n:
-			for p in 2:
-				var sx := 1.0 if p == 0 else -1.0
-				var xf := Transform3D(Basis.IDENTITY, Vector3(
-						float(gc[ix]) + 10.4 * sx, FreeroamMap.STREET_Y,
-						float(gc[iz]) + 10.4 * sx))
-				var pi := (iz * n + ix) * 2 + p
-				pm.set_instance_transform(pi, xf)
-				for h in 2:
-					var hy := 4.6 if h == 0 else 5.5
-					# 灯泡嵌在板厚中线：球径 0.34 > 板厚 0.16，双面各凸 9cm 双向可见
-					for li in 3:
-						var local := Vector3(0.0, hy + float(ys[li]), 0.0)
-						lm.set_instance_transform(pi * 6 + h * 3 + li,
-								xf * Transform3D(Basis.IDENTITY, local))
-
-
-## 按当前相位刷全部灯泡颜色（只在翻相瞬间调用）
-func _sync_tl_colors() -> void:
-	var n := FreeroamMap.GRID_COORDS.size()
-	for iz in n:
-		for ix in n:
-			for p in 2:
-				var pi := (iz * n + ix) * 2 + p
-				var ns := _tl_ns
-				var ew := _tl_ew
-				_tl_lamp_mm.set_instance_color(pi * 6 + 0,
-						TL_LIT_R if ns == 0 else TL_DIM_R)
-				_tl_lamp_mm.set_instance_color(pi * 6 + 1,
-						TL_LIT_Y if ns == 1 else TL_DIM_Y)
-				_tl_lamp_mm.set_instance_color(pi * 6 + 2,
-						TL_LIT_G if ns == 2 else TL_DIM_G)
-				_tl_lamp_mm.set_instance_color(pi * 6 + 3,
-						TL_LIT_R if ew == 0 else TL_DIM_R)
-				_tl_lamp_mm.set_instance_color(pi * 6 + 4,
-						TL_LIT_Y if ew == 1 else TL_DIM_Y)
-				_tl_lamp_mm.set_instance_color(pi * 6 + 5,
-						TL_LIT_G if ew == 2 else TL_DIM_G)
 
 
 # ================= 行人 =================
@@ -689,14 +576,6 @@ func update(dt: float) -> void:
 	if not active:
 		return
 	_t += dt
-	# 交通灯相位时钟：跨相位翻转时刷新灯色（仅翻相那一刻写 MultiMesh 颜色）
-	_tl_t = fmod(_tl_t + dt, _TL_CYCLE)
-	var ns := _tl_axis_state(false)
-	var ew := _tl_axis_state(true)
-	if ns != _tl_ns or ew != _tl_ew:
-		_tl_ns = ns
-		_tl_ew = ew
-		_sync_tl_colors()
 	for i in cars.size():
 		_update_car(cars[i], dt, i)
 	_update_peds(dt)

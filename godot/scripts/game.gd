@@ -2515,6 +2515,7 @@ func _step_sim(h: float) -> void:
 				airport_traffic._update_walkers(ap, h)
 		# NPC 交通/行人/警察
 		if npc != null and npc.active:
+			npc.sig_t = _now_s   # 信号灯相位时钟与地图 update_signals 同源
 			if not on_foot:
 				npc.player_pos = pin.pos
 				npc.player_vel = Vector3(
