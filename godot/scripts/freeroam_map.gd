@@ -186,6 +186,7 @@ var _gar_platform: MeshInstance3D
 var _door_piece := {}                   # 门体碰撞块（关门时才在 obstacles_box 里）
 
 var _sig_mats: Array = []  # [{"r": mat, "y": mat, "g": mat}] × 2 组
+var _shop_rows := []   # 商店街登记 [{e, a, b, front}]（front=所朝街中心线坐标）
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var obstacles_box := []    # 楼房碰撞体 [{c: Vector2, hx, hz, rot}]（含旋转的 OBB）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
@@ -240,6 +241,7 @@ func build() -> void:
 	_build_intersections()
 	print("[map] 路口 %dms" % [Time.get_ticks_msec() - t0])
 	_place_buildings()
+	_make_street_shops()
 	_build_landmarks()
 	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - t0])
 	_make_garage()
@@ -3053,6 +3055,344 @@ func _place_buildings() -> void:
 	ammi.multimesh = amm
 	ammi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ammi)
+
+
+## 街面小店：部分沿街边选为「商店街」，排一列 1~2 层小店（便利店/面馆/药房…），
+## 玻璃橱窗常亮 + 雨棚 + 彩色招牌（文字来自延迟渲染的名字图集），
+## 门口贩卖机/垃圾桶点缀。纯装饰不参与交互，碰撞入 obstacles_box。
+func _make_street_shops() -> void:
+	var rng := RRUtil.Mulberry.new(20260920)
+	# 品牌：店名 + 招牌底色（文字白色，图集 4×4 格，每格 256×64）
+	var brands := [
+		["好邻便利店", Color("#0f7a3d")], ["晨光便利店", Color("#d9601a")],
+		["24h超市", Color("#c8102e")], ["老王面馆", Color("#b34018")],
+		["兰州拉面", Color("#1653a0")], ["阳光咖啡", Color("#5a3a22")],
+		["康宁药店", Color("#0f6a8a")], ["鲜丰水果", Color("#e07800")],
+		["飞驰快递", Color("#2c2f33")], ["明星理发", Color("#8a1f6a")],
+		["社区超市", Color("#1f6a3a")], ["洁丰洗衣", Color("#2a6ad8")],
+	]
+	# 店身配色：奶白 / 米黄 / 砖红 / 灰蓝 / 浅绿
+	var shop_cols := [
+		Color(0.92, 0.90, 0.85), Color(0.90, 0.84, 0.72), Color(0.72, 0.45, 0.38),
+		Color(0.62, 0.68, 0.74), Color(0.70, 0.78, 0.68),
+	]
+	var awn_palette := [
+		Color(0.78, 0.22, 0.18), Color(0.16, 0.42, 0.68), Color(0.85, 0.62, 0.14),
+		Color(0.22, 0.52, 0.34), Color(0.5, 0.3, 0.55),
+	]
+	var body_xfs: Array[Transform3D] = []
+	var body_cols: Array[Color] = []
+	var glass_xfs: Array[Transform3D] = []
+	var awn_xfs: Array[Transform3D] = []
+	var awn_cols: Array[Color] = []
+	var board_xfs: Array[Transform3D] = []
+	var board_cols: Array[Color] = []
+	var sign_xfs: Array[Transform3D] = []
+	var sign_brand: Array[int] = []   # 每块文字板的品牌索引
+	var vend_xfs: Array[Transform3D] = []
+	var vendface_xfs: Array[Transform3D] = []
+	var bin_xfs: Array[Transform3D] = []
+	var n_shop := 0
+
+	for bi in GRID_COORDS.size() - 1:
+		for bj in GRID_COORDS.size() - 1:
+			var x0: float = GRID_COORDS[bi]
+			var x1: float = GRID_COORDS[bi + 1]
+			var z0: float = GRID_COORDS[bj]
+			var z1: float = GRID_COORDS[bj + 1]
+			for e in 4:
+				if rng.next() > 0.45:
+					continue
+				var horiz := e < 2
+				var run_a: float = (x0 + BLK_CORNER) if horiz else (z0 + BLK_CORNER)
+				var run_b: float = (x1 - BLK_CORNER) if horiz else (z1 - BLK_CORNER)
+				_shop_rows.append({"e": e, "a": run_a, "b": run_b,
+						"front": (z0 if e == 0 else z1) if e < 2
+								else (x0 if e == 2 else x1)})
+				# 店面朝街：e0 南边朝 -Z、e1 北边朝 +Z、e2 西边朝 -X、e3 东边朝 +X
+				var yaw: float = [0.0, PI, PI * 0.5, -PI * 0.5][e]
+				var basis := Basis.from_euler(Vector3(0, yaw, 0))
+				var cur := run_a
+				while cur < run_b - 14.0:
+					var w := minf(rng.range(9.0, 15.0), run_b - cur)
+					if w < 9.0:
+						break
+					var dep := rng.range(5.0, 6.4)
+					var along: float = cur + w * 0.5
+					var cx: float
+					var cz: float
+					if e == 0:
+						cx = along
+						cz = z0 + 10.9 + dep * 0.5
+					elif e == 1:
+						cx = along
+						cz = z1 - 10.9 - dep * 0.5
+					elif e == 2:
+						cx = x0 + 10.9 + dep * 0.5
+						cz = along
+					else:
+						cx = x1 - 10.9 - dep * 0.5
+						cz = along
+					cur += w + rng.range(2.0, 5.0)
+					# 中央广场 / 地标场地 / 出生车库周边不留店
+					if absf(cx) < 150.0 and absf(cz) < 150.0:
+						continue
+					var skip := false
+					for lz in LM_ZONES:
+						if Vector2(cx, cz).distance_to(lz["c"]) < float(lz["r"]) + 12.0:
+							skip = true
+							break
+					if skip:
+						continue
+					if absf(cx - GAR_C.x) < 21.0 and absf(cz - GAR_C.y) < 21.0:
+						continue
+					n_shop += 1
+					var h := rng.range(3.6, 4.4) if rng.next() < 0.6 \
+							else rng.range(6.2, 7.6)
+					var ground := STREET_Y
+					var ct := basis * Basis.from_scale(Vector3(w, h, dep))
+					var center := Vector3(cx, ground + h * 0.5 - 0.06, cz)
+					var tint: Color = shop_cols[mini(int(rng.next() * shop_cols.size()),
+							shop_cols.size() - 1)]
+					var j := rng.range(-0.04, 0.04)
+					tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
+							clampf(tint.b + j, 0, 1))
+					var fz := -dep * 0.5
+					# 店身 + 碰撞
+					body_xfs.append(Transform3D(ct, center))
+					body_cols.append(tint)
+					obstacles_box.append({"c": Vector2(cx, cz), "hx": w * 0.5,
+							"hz": dep * 0.5, "rot": -yaw})
+					# 二层住家色带（高店才有）
+					if h > 5.0:
+						var bh := h - 3.9
+						body_xfs.append(Transform3D(basis * Basis.from_scale(
+								Vector3(w * 0.96, bh, dep * 0.98)),
+								center + Vector3(0, bh * 0.5 + 3.9 - h * 0.5, 0)))
+						body_cols.append(Color(tint.r * 0.82, tint.g * 0.8, tint.b * 0.85))
+					# 玻璃橱窗（暖光常亮）+ 深色门
+					glass_xfs.append(Transform3D(basis * Basis.from_scale(
+							Vector3(w * 0.82, 1.55, 0.14)),
+							Vector3(cx, ground + 1.45, cz)
+									+ basis * Vector3(0, 0, fz - 0.03)))
+					body_xfs.append(Transform3D(basis * Basis.from_scale(
+							Vector3(1.15, 2.25, 0.12)),
+							Vector3(cx, ground + 1.12, cz)
+									+ basis * Vector3(w * 0.22, 0, fz - 0.02)))
+					body_cols.append(Color(0.24, 0.26, 0.3))
+					# 雨棚：外挑 1.5m、下倾
+					awn_xfs.append(Transform3D(
+							Basis.from_euler(Vector3(-0.2, yaw, 0))
+									* Basis.from_scale(Vector3(w * 0.92, 0.09, 1.5)),
+							Vector3(cx, ground + 2.62, cz)
+									+ basis * Vector3(0, 0, fz - 0.72)))
+					awn_cols.append(awn_palette[mini(int(rng.next() * awn_palette.size()),
+							awn_palette.size() - 1)])
+					# 招牌底板 + 品牌文字（文字板再转 180°：QuadMesh 法线朝街）
+					var bk := mini(int(rng.next() * brands.size()), brands.size() - 1)
+					board_xfs.append(Transform3D(basis * Basis.from_scale(
+							Vector3(w * 0.8, 0.95, 0.22)),
+							Vector3(cx, ground + 3.42, cz)
+									+ basis * Vector3(0, 0, fz - 0.13)))
+					board_cols.append(brands[bk][1])
+					sign_xfs.append(Transform3D(
+							Basis.from_euler(Vector3(0, yaw + PI, 0))
+									* Basis.from_scale(Vector3(3.2, 0.8, 1.0)),
+							Vector3(cx, ground + 3.42, cz)
+									+ basis * Vector3(0, 0, fz - 0.26)))
+					sign_brand.append(bk)
+					# 门口贩卖机（18%）与垃圾桶（45%）
+					if rng.next() < 0.18:
+						var side := 1.0 if rng.next() < 0.5 else -1.0
+						var vpos := Vector3(cx, ground + 0.98, cz) \
+								+ basis * Vector3(side * (w * 0.5 + 0.85), 0, fz + 0.1)
+						vend_xfs.append(Transform3D(basis
+								* Basis.from_scale(Vector3(1.1, 1.9, 0.75)), vpos))
+						vendface_xfs.append(Transform3D(basis
+								* Basis.from_scale(Vector3(0.92, 1.25, 0.06)),
+								vpos + basis * Vector3(0, 0.1, -0.42)))
+					if rng.next() < 0.45:
+						bin_xfs.append(Transform3D(Basis(),
+								Vector3(cx, ground + 0.42, cz)
+										+ basis * Vector3(-(w * 0.5 + 0.6), 0, fz + 0.15)))
+
+	if n_shop == 0:
+		return
+	_commit_shop_mm(body_xfs, body_cols, _shop_body_mesh(), true)
+	_commit_shop_mm(glass_xfs, [], _shop_glass_mesh(), false)
+	_commit_shop_mm(awn_xfs, awn_cols, _shop_awn_mesh(), true)
+	_commit_shop_mm(board_xfs, board_cols, _shop_board_mesh(), true)
+	_commit_shop_mm(vend_xfs, [], _shop_vend_mesh(), true)
+	_commit_shop_mm(vendface_xfs, [], _shop_vendface_mesh(), false)
+	_commit_shop_mm(bin_xfs, [], _shop_bin_mesh(), false)
+	print("[map] 街面小店 %d 家（招牌文字图集延迟装载）" % n_shop)
+	# 招牌文字：图集延迟渲染（首帧后画到 SubViewport，按品牌切图建 MultiMesh）
+	_defer_sign_atlas.call_deferred(sign_xfs, sign_brand)
+
+
+## 把 12 块店名渲染进 1024×256 图集，按品牌切图建文字 MultiMesh（建图晚于首帧）
+func _defer_sign_atlas(sign_xfs: Array[Transform3D], sign_brand: Array) -> void:
+	await RenderingServer.frame_post_draw
+	var names := ["好邻便利店", "晨光便利店", "24h超市", "老王面馆",
+			"兰州拉面", "阳光咖啡", "康宁药店", "鲜丰水果",
+			"飞驰快递", "明星理发", "社区超市", "洁丰洗衣"]
+	var vp := SubViewport.new()
+	vp.size = Vector2i(1024, 256)
+	vp.transparent_bg = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(vp)
+	for k in names.size():
+		var lb := Label.new()
+		lb.text = names[k]
+		lb.position = Vector2(float(k % 4) * 256.0 + 12.0,
+				float(floori(k / 4.0)) * 64.0 + 10.0)
+		lb.add_theme_font_size_override("font_size", 42)
+		lb.add_theme_color_override("font_color", Color.WHITE)
+		vp.add_child(lb)
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var atlas_img: Image = vp.get_texture().get_image()
+	vp.queue_free()
+	# 每个品牌：切出小图 → 镂空材质 → 同品牌文字板合并成一个 MultiMesh
+	var by_brand := {}
+	for i in sign_xfs.size():
+		var bk := int(sign_brand[i])
+		if not by_brand.has(bk):
+			by_brand[bk] = []
+		by_brand[bk].append(sign_xfs[i])
+	var qmesh := QuadMesh.new()
+	qmesh.size = Vector2.ONE
+	for k in by_brand:
+		var region := Rect2i((int(k) % 4) * 256, floori(int(k) / 4.0) * 64, 256, 64)
+		var cell_img: Image = atlas_img.get_region(region)
+		var tex := ImageTexture.create_from_image(cell_img)
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		mat.alpha_scissor_threshold = 0.5
+		mat.albedo_texture = tex
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.emission_enabled = true
+		mat.emission = Color(1, 1, 1)
+		mat.emission_energy_multiplier = 0.5
+		mat.emission_texture = tex
+		var bmesh := qmesh.duplicate() as QuadMesh
+		bmesh.material = mat
+		var xfs: Array = by_brand[k]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = bmesh
+		mm.instance_count = xfs.size()
+		for i in xfs.size():
+			mm.set_instance_transform(i, xfs[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.extra_cull_margin = 8.0
+		add_child(mmi)
+
+
+func _shop_body_mesh() -> Mesh:
+	var m := BoxMesh.new()
+	m.size = Vector3.ONE
+	var mat := StandardMaterial3D.new()
+	mat.roughness = 0.86
+	mat.vertex_color_use_as_albedo = true
+	m.material = mat
+	return m
+
+
+func _shop_glass_mesh() -> Mesh:
+	var m := BoxMesh.new()
+	m.size = Vector3.ONE
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.95, 0.88, 0.72)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.82, 0.55)
+	mat.emission_energy_multiplier = 1.25
+	m.material = mat
+	return m
+
+
+func _shop_awn_mesh() -> Mesh:
+	var m := BoxMesh.new()
+	m.size = Vector3.ONE
+	var mat := StandardMaterial3D.new()
+	mat.roughness = 0.8
+	mat.vertex_color_use_as_albedo = true
+	m.material = mat
+	return m
+
+
+func _shop_board_mesh() -> Mesh:
+	var m := BoxMesh.new()
+	m.size = Vector3.ONE
+	var mat := StandardMaterial3D.new()
+	mat.roughness = 0.55
+	mat.vertex_color_use_as_albedo = true
+	mat.emission_enabled = true
+	mat.emission = Color(0.3, 0.3, 0.32)
+	mat.emission_energy_multiplier = 0.55
+	m.material = mat
+	return m
+
+
+func _shop_vend_mesh() -> Mesh:
+	var m := BoxMesh.new()
+	m.size = Vector3.ONE
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.78, 0.8, 0.83)
+	mat.roughness = 0.5
+	mat.metallic = 0.4
+	m.material = mat
+	return m
+
+
+func _shop_vendface_mesh() -> Mesh:
+	var m := BoxMesh.new()
+	m.size = Vector3.ONE
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.2, 0.12)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.25, 0.12)
+	mat.emission_energy_multiplier = 1.1
+	m.material = mat
+	return m
+
+
+func _shop_bin_mesh() -> Mesh:
+	var m := CylinderMesh.new()
+	m.top_radius = 0.38
+	m.bottom_radius = 0.32
+	m.height = 0.85
+	m.radial_segments = 8
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.3, 0.24)
+	mat.roughness = 0.85
+	m.material = mat
+	return m
+
+
+## 统一提交一个店铺部件 MultiMesh（cols 为空则不上色）
+func _commit_shop_mm(xfs: Array[Transform3D], cols: Array, mesh: Mesh,
+		shadow: bool) -> void:
+	if xfs.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	if not cols.is_empty():
+		mm.use_colors = true
+	mm.mesh = mesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		if not cols.is_empty():
+			mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadow \
+			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mmi)
 
 
 ## 卷帘门车库：出生点建筑，西门洞（8m 宽 × 4.6m 高）正对 x=180 街。
