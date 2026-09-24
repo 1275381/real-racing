@@ -1688,7 +1688,9 @@ func _toggle_on_foot() -> void:
 		v.vf = 0.0
 		var side := Vector3(cos(v.heading), 0, -sin(v.heading))
 		onfoot.enter(v.pos + side * 3.0, v.heading)
-		player.visual.visible = false
+		# 车模保持可见：下车后人要能看到自己停的车
+		# （此前这里误将整车隐藏，下车后车直接消失）
+		player.visual.visible = true
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		hud.set_onfoot(true)
 		hud.show_center("", "", 0)
