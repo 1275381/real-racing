@@ -38,6 +38,9 @@ const CLASSES := [
 ]
 const BattleVehicles := preload("res://scripts/battle_vehicles.gd")
 const TracerPool := preload("res://scripts/tracer_pool.gd")
+## Blender 生成的士兵（tools/blender/make_soldier.py）：带骨骼与 idle/walk/run/aim/death 动画
+const SOLDIER_SCENE := preload("res://assets/battle/soldier.glb")
+const MUZZLE_LOCAL := Vector3(-0.12, 1.5, 0.95)   # 抵肩瞄准时枪口（模型局部，面朝 +Z）
 ## 两队呼号分开（同名会让击杀播报分不清是哪边的人）
 const CALLSIGNS := {
 	"atk": ["猎鹰", "山猫", "黑曜", "北风", "赤狐", "雷鸣"],
@@ -70,7 +73,8 @@ var _im_pool: Array = []
 var _im_i := 0
 var _ex_pool: Array = []
 var _ex_i := 0
-var _mm := {}                     # team -> MultiMesh 部件
+var _bodies := {}                 # team -> [{node, ap, anim}]（每个槽位一个士兵模型）
+var _team_mats := {}              # team -> {Uniform, Gear} 按阵营染色的材质
 var projectiles: Array = []       # 手雷/火箭/炮弹 {kind, vis, pos, vel, t, team, src, dmg, vdmg, r, weapon}
 var veh                           # 载具（battle_vehicles.gd）
 
@@ -80,8 +84,8 @@ func setup(bmap_ref, audio_ref) -> void:
 	audio = audio_ref
 	_setup_fx()
 	_setup_explosions()
-	_setup_army_mm("atk")
-	_setup_army_mm("def")
+	_setup_army("atk")
+	_setup_army("def")
 	veh = BattleVehicles.new()
 	add_child(veh)
 	veh.setup(self)
@@ -131,7 +135,7 @@ func _make_soldier(team: String, slot: int) -> Dictionary:
 		"strafe_t": 0.0, "strafe_dir": 1.0, "phase": randf() * TAU, "moving": false,
 		"goal": Vector3.ZERO, "goal_t": 0.0, "nade_cd": randf_range(8.0, 20.0),
 		"kills": 0, "deaths": 0, "score": 0, "spotted_t": 0.0, "last_hit_by": -1,
-		"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO, "pose_n": 0,
+		"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO, "engaged": false,
 		"rpg_cd": randf_range(4.0, 10.0), "aa_t": 0.0,
 	}
 
@@ -363,6 +367,7 @@ func _update_soldier(i: int, dt: float) -> void:
 			s["los_t"] = 0.4
 			s["los_ok"] = _los(s["pos"] + Vector3(0, 1.5, 0), t_pos)
 	var engaged: bool = has_t and s["los_ok"] and dist < float(cd["range"])
+	s["engaged"] = engaged
 	# 走位：交火中近距侧移 / 远距缓进；否则奔向任务点
 	var move := Vector2.ZERO
 	var to_g: Vector3 = s["goal"] - s["pos"]
@@ -382,12 +387,9 @@ func _update_soldier(i: int, dt: float) -> void:
 			move = gdir * 0.55   # 边打边压
 	elif gd > 2.0:
 		move = gdir
-	_apply_move(s, move, face, float(cd["speed"]), dt)
-	# 离玩家远的士兵每 3 个 tick 才写一次姿态（MultiMesh 写入是 AI 的大头开销）
-	s["pose_n"] = int(s["pose_n"]) + 1
-	if int(s["pose_n"]) >= 3 or s["pos"].distance_squared_to(player_pos) < 100.0 * 100.0:
-		s["pose_n"] = 0
-		_write_pose(s)
+	# 交火中边走边打降到步行速度（举枪行进动画；也比端枪冲刺真实）
+	_apply_move(s, move, face, float(cd["speed"]) * (0.45 if engaged else 1.0), dt)
+	_write_pose(s)
 	_anti_vehicle(i, s, dt, engaged)
 	if engaged:
 		_try_fire(i, s, t_pos, dist, dt)
@@ -425,7 +427,7 @@ func _anti_vehicle(i: int, s: Dictionary, dt: float, engaged: bool) -> void:
 		var k2: int = _nearest_enemy_vehicle(s, 70.0, true)
 		if k2 >= 0:
 			var v2: Dictionary = veh.vehicles[k2]
-			var eye2: Vector3 = s["pos"] + Vector3(0, 1.45, 0)
+			var eye2: Vector3 = s["pos"] + Vector3(0, 1.55, 0)
 			var d2: Vector3 = (v2["pos"] - eye2).normalized()
 			d2 = (d2 + Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * 0.08).normalized()
 			s["yaw"] = atan2(d2.x, d2.z)
@@ -585,11 +587,11 @@ func _try_fire(i: int, s: Dictionary, t_pos: Vector3, dist: float, dt: float) ->
 	if s["cls"] == 3:
 		s["fire_cd"] = randf_range(1.4, 2.4)
 	s["spotted_t"] = 2.0   # 开火暴露在敌方小地图上
-	var eye: Vector3 = s["pos"] + Vector3(0, 1.45, 0)
+	var eye: Vector3 = s["pos"] + Vector3(0, 1.55, 0)
 	var dir := (t_pos - eye).normalized()
 	var acc: float = cd["acc"] * (1.0 + dist / 60.0)
 	dir = (dir + Vector3(randf() - 0.5, (randf() - 0.5) * 0.5, randf() - 0.5) * acc).normalized()
-	var muzzle: Vector3 = s["pos"] + Vector3(sin(s["yaw"]) * 0.5, 1.38, cos(s["yaw"]) * 0.5)
+	var muzzle: Vector3 = s["pos"] + Basis(Vector3.UP, float(s["yaw"])) * MUZZLE_LOCAL
 	hitscan(eye, dir, float(cd["range"]) + 20.0, randf_range(cd["dmg"][0], cd["dmg"][1]),
 			s["team"], i, CLASSES[s["cls"]]["gun"], muzzle, -1)
 	var pd: float = s["pos"].distance_to(player_pos)
@@ -781,7 +783,7 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 		var s: Dictionary = soldiers[i]
 		if s["dead"]:
 			continue
-		var hc: Vector3 = s["pos"] + Vector3(0, 1.6, 0)
+		var hc: Vector3 = s["pos"] + Vector3(0, 1.65, 0)   # 模型头盔中心
 		var th: float = (hc - from).dot(dir)
 		if th > 0.5 and th < best["d"] and (hc - from - dir * th).length() < 0.2:
 			best = {"type": "soldier_head", "i": i, "d": th, "point": from + dir * th}
@@ -996,147 +998,86 @@ func explode_raw(pos: Vector3, radius: float, dmg: float, vdmg: float, team: Str
 	explosion_at.emit(pos)
 
 
-# ================= 渲染：每队 MultiMesh（头盔/头/躯干/四肢/枪） =================
+# ================= 渲染：Blender 士兵模型（骨骼动画） =================
 
-func _setup_army_mm(team: String) -> void:
-	var count := TEAM_SIZE
-	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.12
-	head_mesh.height = 0.24
-	var helmet_mesh := SphereMesh.new()
-	helmet_mesh.radius = 0.135
-	helmet_mesh.height = 0.17
-	var torso_mesh := CylinderMesh.new()
-	torso_mesh.top_radius = 0.2
-	torso_mesh.bottom_radius = 0.16
-	torso_mesh.height = 0.62
-	var ua_mesh := CylinderMesh.new()
-	ua_mesh.top_radius = 0.07
-	ua_mesh.bottom_radius = 0.062
-	ua_mesh.height = 0.26
-	var fa_mesh := CylinderMesh.new()
-	fa_mesh.top_radius = 0.058
-	fa_mesh.bottom_radius = 0.05
-	fa_mesh.height = 0.26
-	var th_mesh := CylinderMesh.new()
-	th_mesh.top_radius = 0.1
-	th_mesh.bottom_radius = 0.088
-	th_mesh.height = 0.44
-	var ca_mesh := CylinderMesh.new()
-	ca_mesh.top_radius = 0.085
-	ca_mesh.bottom_radius = 0.06
-	ca_mesh.height = 0.44
-	var gun_mesh := BoxMesh.new()
-	gun_mesh.size = Vector3(0.08, 0.1, 0.72)
-	var pack_mesh := BoxMesh.new()
-	pack_mesh.size = Vector3(0.34, 0.4, 0.18)
-	_mm[team] = {
-		"head": _make_mm(head_mesh, count), "helmet": _make_mm(helmet_mesh, count),
-		"torso": _make_mm(torso_mesh, count), "pack": _make_mm(pack_mesh, count),
-		"ua": _make_mm(ua_mesh, count * 2), "fa": _make_mm(fa_mesh, count * 2),
-		"th": _make_mm(th_mesh, count * 2), "ca": _make_mm(ca_mesh, count * 2),
-		"gun": _make_mm(gun_mesh, count),
-	}
-	# 开局前全部藏到地下（未占用的槽位也不显示）
-	for k in _mm[team]:
-		var mmi: MultiMeshInstance3D = _mm[team][k]
-		for n in mmi.multimesh.instance_count:
-			mmi.multimesh.set_instance_transform(n, Transform3D(Basis.from_scale(Vector3.ONE * 0.001),
-					Vector3(0, -50, 0)))
+## 每队 TEAM_SIZE 个槽位各实例化一个士兵（死亡后原地复用重生）
+func _setup_army(team: String) -> void:
+	var arr: Array = []
+	for i in TEAM_SIZE:
+		var node: Node3D = SOLDIER_SCENE.instantiate()
+		node.visible = false
+		add_child(node)
+		var ap: AnimationPlayer = node.find_children("*", "AnimationPlayer", true, false)[0]
+		var mi: MeshInstance3D = node.find_children("*", "MeshInstance3D", true, false)[0]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		# 友军头顶蓝色小标（三角洲同款：一眼分清敌我，别误伤）
+		var tag := Label3D.new()
+		tag.text = "▼"
+		tag.font_size = 28
+		tag.pixel_size = 0.0004   # fixed_size 下按屏幕比例：约 14px 的小三角
+		tag.modulate = Color(0.35, 0.7, 1.0)
+		tag.outline_size = 8
+		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		tag.no_depth_test = true
+		tag.fixed_size = true
+		tag.position = Vector3(0, 2.15, 0)
+		tag.visible = false
+		node.add_child(tag)
+		arr.append({"node": node, "ap": ap, "mesh": mi, "tag": tag, "anim": ""})
+	_bodies[team] = arr
 
 
-## 队服按「相对玩家」上色：友军蓝、敌军红（玩家可选任一阵营）
+## 队服按「相对玩家」上色：友军蓝灰迷彩、敌军赭红迷彩（玩家可选任一阵营）；
+## 迷彩/织物灰阶贴图来自模型，这里只换底色
 func _apply_team_colors() -> void:
 	for team in ["atk", "def"]:
 		var friendly: bool = team == player_team
-		var uniform := Color(0.28, 0.4, 0.58) if friendly else Color(0.55, 0.24, 0.2)
-		var helmet := Color(0.2, 0.28, 0.42) if friendly else Color(0.34, 0.16, 0.13)
-		var mm: Dictionary = _mm[team]
-		for i in TEAM_SIZE:
-			mm["torso"].multimesh.set_instance_color(i, uniform)
-			mm["pack"].multimesh.set_instance_color(i, uniform.darkened(0.35))
-			mm["head"].multimesh.set_instance_color(i, Color(0.85, 0.68, 0.55))
-			mm["helmet"].multimesh.set_instance_color(i, helmet)
-			mm["gun"].multimesh.set_instance_color(i, Color(0.12, 0.12, 0.13))
-			for k in 2:
-				mm["ua"].multimesh.set_instance_color(i * 2 + k, uniform)
-				mm["fa"].multimesh.set_instance_color(i * 2 + k, Color(0.85, 0.68, 0.55))
-				mm["th"].multimesh.set_instance_color(i * 2 + k, Color(0.2, 0.22, 0.26))
-				mm["ca"].multimesh.set_instance_color(i * 2 + k, Color(0.2, 0.22, 0.26))
+		var uni_col := Color(0.48, 0.56, 0.66) if friendly else Color(0.7, 0.5, 0.4)
+		var gear_col := Color(0.4, 0.44, 0.4) if friendly else Color(0.48, 0.41, 0.33)
+		var arr: Array = _bodies[team]
+		var src: Mesh = (arr[0]["mesh"] as MeshInstance3D).mesh
+		var mats := {}
+		for si in src.get_surface_count():
+			var m: Material = src.surface_get_material(si)
+			if m is StandardMaterial3D and (m.resource_name == "Uniform" or m.resource_name == "Gear"):
+				var t: StandardMaterial3D = m.duplicate()
+				t.albedo_color = uni_col if m.resource_name == "Uniform" else gear_col
+				mats[si] = t
+		for b in arr:
+			for si in mats:
+				(b["mesh"] as MeshInstance3D).set_surface_override_material(si, mats[si])
+			(b["tag"] as Label3D).visible = friendly
+			(b["node"] as Node3D).visible = false
 
 
-func _make_mm(mesh: Mesh, count: int) -> MultiMeshInstance3D:
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.use_colors = true
-	mm.mesh = mesh
-	mm.instance_count = count
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mesh.surface_set_material(0, mat)
-	var mmi := MultiMeshInstance3D.new()
-	mmi.multimesh = mm
-	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mmi)
-	return mmi
-
-
+## 同步模型位置朝向 + 按状态切动画：阵亡 death / 移动中交火 walk（举枪）/
+## 移动 run / 原地交火 aim / 其余 idle
 func _write_pose(s: Dictionary) -> void:
-	var i: int = s["slot"]
-	var mm: Dictionary = _mm[s["team"]]
-	var dead: bool = s["dead"]
-	var yaw: float = s["yaw"]
-	var ph: float = _t * 9.0 + float(s["phase"])
-	var bob: float = absf(sin(ph)) * 0.04 if s["moving"] else 0.0
-	var swing := sin(ph) * 0.45 if s["moving"] else 0.0
-	var root := Transform3D(Basis.from_euler(Vector3(PI * 0.5, yaw, 0)
-			if dead else Vector3(0, yaw, 0)), s["pos"] + Vector3(0, bob, 0))
-	mm["torso"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
-	mm["pack"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.15, -0.22)))
-	mm["head"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
-	mm["helmet"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.65, 0)))
-	if dead:
-		mm["ua"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, 1.2)), Vector3(-0.3, 1.15, 0)))
-		mm["fa"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, 1.7)), Vector3(-0.48, 0.95, 0)))
-		mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, -1.2)), Vector3(0.3, 1.15, 0)))
-		mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, -1.7)), Vector3(0.48, 0.95, 0)))
-		mm["th"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(-0.3, 0, 0.2)), Vector3(-0.11, 0.42, 0)))
-		mm["ca"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(0.5, 0, 0.2)), Vector3(-0.16, 0.1, 0.1)))
-		mm["th"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(0.2, 0, -0.2)), Vector3(0.11, 0.42, 0)))
-		mm["ca"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(-0.4, 0, -0.2)), Vector3(0.2, 0.12, -0.08)))
-		mm["gun"].multimesh.set_instance_transform(i, root *
-				Transform3D(Basis.IDENTITY, Vector3(0.5, 0.1, 0.3)))
-		return
-	var aim := Basis.from_euler(Vector3(-1.25, 0, 0))
-	var aim_fa := Basis.from_euler(Vector3(-1.45, 0, 0))
-	mm["ua"].multimesh.set_instance_transform(i * 2, root * Transform3D(aim, Vector3(-0.14, 1.32, 0.12)))
-	mm["fa"].multimesh.set_instance_transform(i * 2, root * Transform3D(aim_fa, Vector3(-0.1, 1.3, 0.34)))
-	mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root * Transform3D(aim, Vector3(0.14, 1.32, 0.12)))
-	mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root * Transform3D(aim_fa, Vector3(0.1, 1.3, 0.34)))
-	var hip_l := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)), Vector3(-0.11, 0.83, 0))
-	var hip_r := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)), Vector3(0.11, 0.83, 0))
-	var walk_k := 1.0 if s["moving"] else 0.0
-	var knee_l := maxf(0.0, -cos(ph)) * 0.8 * walk_k + 0.1
-	var knee_r := maxf(0.0, cos(ph)) * 0.8 * walk_k + 0.1
-	var off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
-	var knee_pl := Transform3D(Basis.from_euler(Vector3(knee_l, 0, 0)), Vector3(0, -0.44, 0))
-	var knee_pr := Transform3D(Basis.from_euler(Vector3(knee_r, 0, 0)), Vector3(0, -0.44, 0))
-	mm["th"].multimesh.set_instance_transform(i * 2, root * hip_l * off)
-	mm["ca"].multimesh.set_instance_transform(i * 2, root * hip_l * knee_pl * off)
-	mm["th"].multimesh.set_instance_transform(i * 2 + 1, root * hip_r * off)
-	mm["ca"].multimesh.set_instance_transform(i * 2 + 1, root * hip_r * knee_pr * off)
-	var glen := 1.25 if s["cls"] == 3 else (0.85 if s["cls"] == 2 else 1.0)   # 狙击枪长、机枪粗
-	mm["gun"].multimesh.set_instance_transform(i, root *
-			Transform3D(Basis.from_euler(Vector3(-1.35, 0, 0)).scaled(Vector3(1, 1, glen)),
-			Vector3(0, 1.32, 0.32)))
+	var b: Dictionary = _bodies[s["team"]][s["slot"]]
+	var node: Node3D = b["node"]
+	node.visible = true
+	node.position = s["pos"]
+	node.rotation = Vector3(0, float(s["yaw"]), 0)
+	var want := "idle"
+	if s["dead"]:
+		want = "death"
+	elif s["moving"]:
+		want = "walk" if s["engaged"] else "run"
+	elif s["engaged"]:
+		want = "aim"
+	var ap: AnimationPlayer = b["ap"]
+	if want != b["anim"]:
+		b["anim"] = want
+		ap.play(want, 0.18)
+		if want == "run":
+			ap.speed_scale = float(CLASSES[s["cls"]]["speed"]) / 6.5
+		else:
+			ap.speed_scale = 1.0
+	# 远处士兵头顶友军标淡出（只标 70m 内，免得满屏小三角）
+	var tag: Label3D = b["tag"]
+	if tag.visible or s["team"] == player_team:
+		tag.visible = s["team"] == player_team and not s["dead"] \
+				and s["pos"].distance_squared_to(player_pos) < 70.0 * 70.0
 
 
 # ================= 曳光 / 火花 / 爆炸对象池 =================

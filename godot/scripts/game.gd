@@ -756,6 +756,7 @@ func enter_battle() -> void:
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): audio.play_reload())
 	onfoot.retarget(bmap, bf)   # 开机先进过漫游：onfoot 原本指着城市
+	bf.visible = true
 	on_foot = false
 	onfoot.exit()
 	player.visual.visible = false
@@ -877,6 +878,9 @@ func exit_battle() -> void:
 		bf.active = false
 		bf.player_alive = false
 		bf._clear_projectiles()
+		# 士兵/载具/曳光挂在 bf 下而不是 bmap 下：不隐藏的话退场后
+		# 还站在战场坐标上——正好压在城市中心广场
+		bf.visible = false
 	if bf != null:
 		bf.veh.player_v = -1
 		bf.veh.hide_all()
