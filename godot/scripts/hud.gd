@@ -3,6 +3,12 @@ extends CanvasLayer
 ## HUD 与车库：转速表 / 小地图 / 计时面板 / 排位榜 / 倒计时 / 逆行警告 /
 ## 车库（选车 + 选比赛）/ 暂停 / 结算（移植自 js/hud.js 的信息结构）
 
+# 顶部居中三行：时钟（y=8，漫游/比赛/大战场都显示）→ 模式提示 / 战况条 → 通缉
+const TOP_ROW2_Y := 42.0
+const TOP_ROW3_Y := 80.0
+const ROAM_HINT := "自由漫游"
+const ROAM_HINT_GARAGE := "自由漫游 · 出生卷帘门车库 · 踩油门顶门驶出"
+
 var team_colors: Array = []
 
 # --- 车库控件（game.gd 直接绑定） ---
@@ -60,6 +66,7 @@ var info_rows: Label        # 车辆数据明细文本
 var shop_hint_label: Label  # 漫游商店进入提示
 var gunshop_hint_label: Label  # 漫游枪械店进入提示
 var wanted_label: Label     # 通缉指示（警察追捕）
+var _roam_hint: Label       # 漫游顶部提示（车库内给出库操作，出库后只留模式名）
 var wanted_on := false
 var wanted_progress := 0.0
 var _wanted_blink_t := 0.0
@@ -705,6 +712,13 @@ func _build_clock() -> void:
 	_clock_label.add_theme_constant_override("outline_size", 5)
 	_clock_label.visible = false
 	_root.add_child(_clock_label)
+
+
+## 漫游顶部提示：车库内显示出库操作，出库后只留模式名（原来全程挂着「踩油门顶门驶出」）
+func set_roam_in_garage(in_garage: bool) -> void:
+	var t := ROAM_HINT_GARAGE if in_garage else ROAM_HINT
+	if _roam_hint != null and _roam_hint.text != t:
+		_roam_hint.text = t
 
 
 func update_clock(time_str: String, phase: String, weather_str: String) -> void:
@@ -1523,15 +1537,16 @@ func _build_roam_hud() -> void:
 	_screens["roam"] = screen
 
 	var hint := Label.new()
-	hint.text = "自由漫游 · 出生卷帘门车库 · 踩油门顶门驶出"
+	hint.text = ROAM_HINT_GARAGE
 	hint.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	hint.position.y = 14
+	hint.position.y = TOP_ROW2_Y   # 时钟占第一行，提示放第二行（原来 y=14 与时钟 y=8 叠字）
 	hint.add_theme_font_size_override("font_size", 22)
 	hint.add_theme_constant_override("outline_size", 8)
 	hint.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
 	screen.add_child(hint)
+	_roam_hint = hint
 
 	var keys := Label.new()
 	keys.text = "F 上/下车 · 左键 开枪 · 右键 开/关镜 · C 滑铲/切镜头 · Esc 回车库 · R 复位 · N 静音"
@@ -1588,7 +1603,7 @@ func _build_wanted() -> void:
 	wanted_label.text = "通缉中 · 甩开警察！"
 	wanted_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	wanted_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	wanted_label.position.y = 52
+	wanted_label.position.y = TOP_ROW3_Y
 	wanted_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	wanted_label.add_theme_font_size_override("font_size", 24)
 	wanted_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.2))
@@ -1632,7 +1647,7 @@ func _build_battle_hud() -> void:
 	bar.add_theme_stylebox_override("panel", bs)
 	bar.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	bar.position.y = 14.0
+	bar.position.y = TOP_ROW2_Y   # 同漫游提示：让出第一行给时钟
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 26)
 	battle_lbl_ally = Label.new()

@@ -60,9 +60,23 @@ func _initialize() -> void:
 	Input.parse_input_event(er)
 	Input.flush_buffered_events()
 	print("[sm] === 3. 停车 → 步行 → 回车")
+	# 踩刹车停稳：游戏要求车速 <2m/s 才能下车，原来只滑行 3s（仍 40km/h+），
+	# 第一次 F 被「先停车再下车」拒掉，第二次 F 反而变成下车，输出与期望颠倒
+	var eb := InputEventKey.new()
+	eb.physical_keycode = KEY_S
+	eb.pressed = true
+	Input.parse_input_event(eb)
+	Input.flush_buffered_events()
 	for i in 3 * 60:
 		game._now_s += 1.0 / 60.0
 		game._step_sim(1.0 / 60.0)
+		if absf(game.player.veh.vf) < 0.5:
+			break
+	eb = InputEventKey.new()
+	eb.physical_keycode = KEY_S
+	eb.pressed = false
+	Input.parse_input_event(eb)
+	Input.flush_buffered_events()
 	await press_key(KEY_F)
 	await frames(20)
 	print("[sm] on_foot=%s（期望 true）" % game.on_foot)

@@ -75,6 +75,7 @@ const JUMPS := [
 
 
 func _ready() -> void:
+	RRFont.apply_global()
 	doc = CityData.default_def()
 	var want := CityData.pending_map_id
 	if want != "" and want != CityData.DEFAULT_ID:

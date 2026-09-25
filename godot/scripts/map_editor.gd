@@ -44,6 +44,7 @@ var open_list: ItemList
 
 
 func _ready() -> void:
+	RRFont.apply_global()
 	_build_world()
 	_build_ui()
 	_load_default_oval()

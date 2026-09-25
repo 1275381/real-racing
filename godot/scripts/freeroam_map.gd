@@ -741,20 +741,28 @@ func _make_raceway_props() -> void:
 		pn.modulate = Color(0.9, 0.2, 0.15)
 		pn.outline_size = 30
 		pn.position = Vector3(px - 7.0, 4.4, 2385.2)
+		# 贴在 P 房南立面（-z 一侧）外：Label3D 默认朝 +z，那面正对着 P 房墙体，
+		# 从外面看到的是镜像反字——转 180° 朝外
+		pn.rotation.y = PI
+		pn.double_sided = false
 		root.add_child(pn)
 
 	# 起点龙门架：东直道中点跨路 + 大字
 	_lm_box(root, Vector3(707, 8.0, 2430), Vector3(2.0, 1.6, 40.0), dark)
 	for gx in [-14.0, 14.0]:
 		_lm_box(root, Vector3(707, 4.0, 2430 + gx), Vector3(1.6, 8.0, 1.6), dark)
-	var gate := Label3D.new()
-	gate.text = "RR 国际赛车场"
-	gate.font_size = 260
-	gate.modulate = Color(1.0, 0.85, 0.3)
-	gate.outline_size = 40
-	gate.position = Vector3(707, 8.0, 2430)
-	gate.rotation.y = PI * 0.5
-	root.add_child(gate)
+	# 大字贴在横梁两个侧面外（梁厚 2m，中心 x=707）：原来立在梁中心，
+	# 整块字被梁体包住，两个方向都看不见。两面各一块、朝外，东西来车都能读
+	for side in [1.0, -1.0]:
+		var gate := Label3D.new()
+		gate.text = "RR 国际赛车场"
+		gate.font_size = 260
+		gate.modulate = Color(1.0, 0.85, 0.3)
+		gate.outline_size = 40
+		gate.double_sided = false
+		gate.position = Vector3(707 + side * 1.05, 8.0, 2430)
+		gate.rotation.y = PI * 0.5 * side
+		root.add_child(gate)
 	obstacles_box.append({"c": Vector2(707, 2416.0), "hx": 1.0, "hz": 1.0,
 			"rot": 0.0, "top": 8.0})
 	obstacles_box.append({"c": Vector2(707, 2444.0), "hx": 1.0, "hz": 1.0,
@@ -772,14 +780,18 @@ func _make_raceway_props() -> void:
 
 	# 东门欢迎牌（连接道旁）
 	_lm_box(root, Vector3(792, 3.4, 2348), Vector3(0.8, 6.8, 22.0), dark)
-	var welcome := Label3D.new()
-	welcome.text = "极速争锋国际赛车场"
-	welcome.font_size = 180
-	welcome.modulate = Color(1.0, 0.85, 0.3)
-	welcome.outline_size = 36
-	welcome.position = Vector3(792.6, 3.4, 2348)
-	welcome.rotation.y = -PI * 0.5
-	root.add_child(welcome)
+	# 牌厚 0.8m（x=791.6..792.4），两面各贴一块朝外的字。原来只有一块立在东面外侧
+	# 却朝西：西边被牌体挡住看不见，东边（落地广场一侧）看到的是镜像反字
+	for side in [1.0, -1.0]:
+		var welcome := Label3D.new()
+		welcome.text = "极速争锋国际赛车场"
+		welcome.font_size = 180
+		welcome.modulate = Color(1.0, 0.85, 0.3)
+		welcome.outline_size = 36
+		welcome.double_sided = false
+		welcome.position = Vector3(792.0 + side * 0.45, 3.4, 2348)
+		welcome.rotation.y = PI * 0.5 * side
+		root.add_child(welcome)
 
 	# 高速指示牌 ×2（绿底白字，行车方向右侧）
 	for s in [{"p": Vector2(196, 1600), "t": "国际赛车场 3km →"},
@@ -4841,7 +4853,8 @@ func build_nav_graph() -> void:
 func _nav_link(pa: Vector2, pb: Vector2) -> void:
 	var a := _nav_nearest(pa)
 	var b := _nav_nearest(pb)
-	if a >= 0 and b >= 0:
+	# 两端吸到同一节点 = 路网本来就在此相连，无需补边（自连会让 AStar 报错）
+	if a >= 0 and b >= 0 and a != b:
 		_astar.connect_points(a, b)
 
 

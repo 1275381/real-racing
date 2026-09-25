@@ -86,6 +86,7 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
+	RRFont.apply_global()
 	# 加载遮罩最先建：_ready 结束后的第一帧就是它，而不是半成品场景
 	_loading = LoadingScreen.new()
 	add_child(_loading)
@@ -2555,6 +2556,10 @@ func _step_sim(h: float) -> void:
 					airport_traffic._update_plane(ap, pl, h)
 				airport_traffic._update_walkers(ap, h)
 		freeroam.update_doors(h, onfoot.pos if on_foot else pin.pos)
+		var me: Vector3 = onfoot.pos if on_foot else pin.pos
+		hud.set_roam_in_garage(
+				absf(me.x - FreeroamMap.GAR_C.x) < RRGarage.ROOM_HALF
+				and absf(me.z - FreeroamMap.GAR_C.y) < RRGarage.ROOM_HALF)
 		if on_foot:
 			onfoot.fire_block = freeroam.nearest_closed_door(
 					onfoot.pos, 4.5) >= 0
