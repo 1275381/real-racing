@@ -77,7 +77,12 @@ var _ped_mm_ca: MultiMeshInstance3D    # 小腿（膝）
 var _ped_mm_arm: MultiMeshInstance3D
 var _ped_mm_leg: MultiMeshInstance3D
 var _traffic_body: MultiMesh
+var _traffic_glass: MultiMesh
+var _traffic_dark: MultiMesh
 var _traffic_wheel: MultiMesh
+var _traffic_lamp: MultiMesh
+var night_f := 0.0          # 夜色系数（game 每帧同步，驱动行车灯）
+var _lamp_t := -1.0         # 灯色刷新节拍
 
 # ================= 交通灯 =================
 # 相位来源是 freeroam_map 的路口信号灯（棋盘分组、四角灯杆），
@@ -115,7 +120,8 @@ func set_solid(on: bool) -> void:
 func _build_cars() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20260905
-	# 低多边形民用车（车身+座舱 一体，轮组独立深色）——不是跑车模型
+	# 民用车四件套：车色车身 / 固定色细节（玻璃·格栅·保险杠）/ 独立滚轮 /
+	# 动态灯组（行车灯+被撞双闪）——不是跑车模型
 	var body_st := SurfaceTool.new()
 	body_st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var body := BoxMesh.new()
@@ -129,23 +135,78 @@ func _build_cars() -> void:
 	body_mm.use_colors = true
 	body_mm.mesh = body_st.commit()
 	body_mm.instance_count = CAR_COUNT   # 必须先分配实例数，否则 set_instance_transform 全部无效
+	# 细节件：玻璃（深蓝黑）与格栅/保险杠（深灰）各自成 MultiMesh——
+	# BoxMesh 无顶点色，固定色必须走材质
+	var glass_st := SurfaceTool.new()
+	glass_st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var glass := BoxMesh.new()
+	glass.size = Vector3(1.52, 0.42, 1.9)
+	glass_st.append_from(glass, 0, Transform3D(Basis.IDENTITY,
+			Vector3(0, 1.1, -0.28)))
+	var glass_mm := MultiMesh.new()
+	glass_mm.transform_format = MultiMesh.TRANSFORM_3D
+	glass_mm.mesh = glass_st.commit()
+	glass_mm.instance_count = CAR_COUNT
+	var glass_mat := StandardMaterial3D.new()
+	glass_mat.albedo_color = Color(0.09, 0.13, 0.2)
+	glass_mat.roughness = 0.15
+	glass_mat.metallic = 0.5
+	glass_mm.mesh.surface_set_material(0, glass_mat)
+	var dark_st := SurfaceTool.new()
+	dark_st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var grill := BoxMesh.new()
+	grill.size = Vector3(1.2, 0.26, 0.1)
+	dark_st.append_from(grill, 0, Transform3D(Basis.IDENTITY,
+			Vector3(0, 0.52, 2.14)))
+	var bumper := BoxMesh.new()
+	bumper.size = Vector3(1.8, 0.2, 0.16)
+	dark_st.append_from(bumper, 0, Transform3D(Basis.IDENTITY,
+			Vector3(0, 0.3, 2.1)))
+	dark_st.append_from(bumper, 0, Transform3D(Basis.IDENTITY,
+			Vector3(0, 0.3, -2.1)))
+	var dark_mm := MultiMesh.new()
+	dark_mm.transform_format = MultiMesh.TRANSFORM_3D
+	dark_mm.mesh = dark_st.commit()
+	dark_mm.instance_count = CAR_COUNT
+	var dark_mat := StandardMaterial3D.new()
+	dark_mat.albedo_color = Color(0.14, 0.15, 0.17)
+	dark_mat.roughness = 0.6
+	dark_mm.mesh.surface_set_material(0, dark_mat)
+	# 车轮：胎 + 银毂（vertex 色合并），独立实例随车速滚动
 	var wheel_st := SurfaceTool.new()
 	wheel_st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var wheel := CylinderMesh.new()
-	wheel.top_radius = 0.31
-	wheel.bottom_radius = 0.31
-	wheel.height = 0.24
-	var roll := Basis.from_euler(Vector3(0, 0, PI * 0.5))
-	for wx in [-0.82, 0.82]:
-		for wz in [-1.38, 1.38]:
-			wheel_st.append_from(wheel, 0, Transform3D(roll, Vector3(wx, 0.31, wz)))
+	var tire := CylinderMesh.new()
+	tire.top_radius = 0.31
+	tire.bottom_radius = 0.31
+	tire.height = 0.22
+	wheel_st.append_from(tire, 0, Transform3D(Basis.from_euler(
+			Vector3(0, 0, PI * 0.5)), Vector3.ZERO))
+	var hub := CylinderMesh.new()
+	hub.top_radius = 0.17
+	hub.bottom_radius = 0.17
+	hub.height = 0.26
+	wheel_st.append_from(hub, 0, Transform3D(Basis.from_euler(
+			Vector3(0, 0, PI * 0.5)), Vector3.ZERO))
 	var wheel_mm := MultiMesh.new()
 	wheel_mm.transform_format = MultiMesh.TRANSFORM_3D
 	wheel_mm.mesh = wheel_st.commit()
-	wheel_mm.instance_count = CAR_COUNT
+	wheel_mm.instance_count = CAR_COUNT * 4
 	var wmat := StandardMaterial3D.new()
-	wmat.albedo_color = Color(0.13, 0.13, 0.15)
+	wmat.albedo_color = Color(0.1, 0.1, 0.12)
+	wmat.roughness = 0.7
 	wheel_mm.mesh.surface_set_material(0, wmat)
+	# 灯组：4 块/车（前左/前右/后左/后右），动态颜色（行车灯 + 双闪）
+	var lamp := BoxMesh.new()
+	lamp.size = Vector3(0.32, 0.13, 0.1)
+	var lamp_mm := MultiMesh.new()
+	lamp_mm.transform_format = MultiMesh.TRANSFORM_3D
+	lamp_mm.use_colors = true
+	lamp_mm.mesh = lamp
+	lamp_mm.instance_count = CAR_COUNT * 4
+	var lmat := StandardMaterial3D.new()
+	lmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	lmat.vertex_color_use_as_albedo = true
+	lamp_mm.mesh.surface_set_material(0, lmat)
 	var bmat := StandardMaterial3D.new()
 	bmat.vertex_color_use_as_albedo = true
 	body_mm.mesh.surface_set_material(0, bmat)
@@ -153,12 +214,27 @@ func _build_cars() -> void:
 	bmmi.multimesh = body_mm
 	bmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(bmmi)
+	var gmmi := MultiMeshInstance3D.new()
+	gmmi.multimesh = glass_mm
+	gmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(gmmi)
+	var dmmi := MultiMeshInstance3D.new()
+	dmmi.multimesh = dark_mm
+	dmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(dmmi)
 	var wmmi := MultiMeshInstance3D.new()
 	wmmi.multimesh = wheel_mm
 	wmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(wmmi)
+	var lmmi := MultiMeshInstance3D.new()
+	lmmi.multimesh = lamp_mm
+	lmmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(lmmi)
 	_traffic_body = body_mm
+	_traffic_glass = glass_mm
+	_traffic_dark = dark_mm
 	_traffic_wheel = wheel_mm
+	_traffic_lamp = lamp_mm
 	for i in CAR_COUNT:
 		var r := rng.randi_range(0, fm.roads.size() - 1)
 		var pts: PackedVector3Array = fm.roads[r].pts
@@ -167,9 +243,10 @@ func _build_cars() -> void:
 			"r": r, "idx": rng.randf_range(0.0, pts.size() - 2.0),
 			"dir": 1.0 if rng.randf() < 0.5 else -1.0,
 			"speed": rng.randf_range(8.0, 14.0), "stop_t": 0.0, "hit_cd": 0.0,
-			"hp": 4.0, "disabled": false,
+			"hp": 4.0, "disabled": false, "roll": 0.0,
 		})
 		_place_car(cars[i], true)
+	_refresh_lights(true)
 
 
 func _place_car(car: Dictionary, i: int, silent := false) -> void:
@@ -184,8 +261,44 @@ func _place_car(car: Dictionary, i: int, silent := false) -> void:
 	var yaw := atan2(tv.x, tv.y)
 	var xf := Transform3D(Basis.from_euler(Vector3(0, yaw, 0)), pos)
 	_traffic_body.set_instance_transform(i, xf)
-	_traffic_wheel.set_instance_transform(i, xf)
+	_traffic_glass.set_instance_transform(i, xf)
+	_traffic_dark.set_instance_transform(i, xf)
+	# 四轮独立实例：绕轮轴（车局部 X）按累计里程滚动；灯组四角各一块
+	var roll_b := Basis(Vector3(1, 0, 0), car["roll"])
+	var spin := Basis(Vector3(0, 0, 1), PI * 0.5)
+	for k in 4:
+		var wx: float = -0.82 if k % 2 == 0 else 0.82
+		var wz: float = -1.38 if k < 2 else 1.38
+		_traffic_wheel.set_instance_transform(i * 4 + k,
+				xf * Transform3D(roll_b * spin, Vector3(wx, 0.31, wz)))
+		var lz: float = 2.16 if k < 2 else -2.16
+		_traffic_lamp.set_instance_transform(i * 4 + k,
+				xf * Transform3D(Basis.IDENTITY, Vector3(wx * 0.72, 0.62, lz)))
 	car["pos"] = pos
+
+
+## 刷新全部车的灯组颜色（行车灯 / 夜间亮灯 / 被撞双闪），0.35s 一拍
+func _refresh_lights(force := false) -> void:
+	if not force and _t - _lamp_t < 0.35:
+		return
+	_lamp_t = _t
+	var flash: bool = fmod(_t, 0.7) < 0.35
+	var night: bool = night_f > 0.4
+	for i in cars.size():
+		var car: Dictionary = cars[i]
+		var hazard: bool = (car["stop_t"] > 0.0 or car["disabled"]) \
+				and flash
+		for k in 4:
+			var col: Color
+			if hazard:
+				col = Color(1.5, 0.72, 0.08)   # 双闪亮：琥珀
+			elif k < 2:
+				col = Color(1.5, 1.42, 1.15) if night \
+						else Color(0.6, 0.62, 0.65)   # 前灯
+			else:
+				col = Color(0.8, 0.07, 0.05) if night \
+						else Color(0.3, 0.05, 0.04)   # 尾灯
+			_traffic_lamp.set_instance_color(i * 4 + k, col)
 
 
 func _respawn_car_near_player(car: Dictionary) -> void:
@@ -584,6 +697,8 @@ func update(dt: float) -> void:
 		_wanted_t += dt
 		# _update_police 内可能本帧已逃脱/被捕（wanted 置 false），
 		# 此时不能再回写「通缉中」横幅——否则字幕逃脱后永远残留
+		# 车灯组颜色节拍刷新
+		_refresh_lights()
 		if wanted:
 			hud.set_wanted(true, _esc_t / 6.0)
 
@@ -596,9 +711,13 @@ func _update_car(car: Dictionary, dt: float, i: int) -> void:
 	else:
 		# 红灯停止线与前车排队两门同时生效（取最小）——
 		# 串行判断会让后车借自己的红灯门<1 绕过排队门贴上前车
+		var old_idx: float = car["idx"]
 		var gate := minf(_tl_gate(car), _queue_gate(car))
 		car["idx"] += car["dir"] * car["speed"] * dt * gate \
 				/ float(_step.get(car["r"], 1.3))
+		# 车轮联动：按实际位移滚动（半径 0.31m）
+		car["roll"] -= (float(car["idx"]) - old_idx) \
+				* float(_step.get(car["r"], 1.3)) / 0.31
 	if car["idx"] > pts.size() - 1.5 or car["idx"] < -0.5:
 		if fm.roads[car["r"]].closed:
 			car["idx"] = posmod(car["idx"], float(pts.size() - 1))

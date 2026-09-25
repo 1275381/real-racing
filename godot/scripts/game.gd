@@ -2532,6 +2532,7 @@ func _step_sim(h: float) -> void:
 		# NPC 交通/行人/警察
 		if npc != null and npc.active:
 			npc.sig_t = _now_s   # 信号灯相位时钟与地图 update_signals 同源
+			npc.night_f = day_cycle.night_f   # 行车灯夜亮昼暗
 			if not on_foot:
 				npc.player_pos = pin.pos
 				npc.player_vel = Vector3(
