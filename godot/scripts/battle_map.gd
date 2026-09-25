@@ -17,7 +17,36 @@ const SECTORS := [
 	{"name": "指挥所", "pts": [Vector2(-46, -126), Vector2(74, -134)]},
 ]
 
+## Blender 生成的场景道具（tools/blender/make_battle_props.py）。碰撞仍按原盒子登记，
+## 模型只负责外观：尺寸与盒子对齐（原点在底面中心、正面朝 +Z）
+const PROPS := {
+	"house": preload("res://assets/battle/props/house.glb"),
+	"barn": preload("res://assets/battle/props/barn.glb"),
+	"bunker": preload("res://assets/battle/props/bunker.glb"),
+	"warehouse": preload("res://assets/battle/props/warehouse.glb"),
+	"sandbags": preload("res://assets/battle/props/sandbags.glb"),
+	"container": preload("res://assets/battle/props/container.glb"),
+	"fuel_tank": preload("res://assets/battle/props/fuel_tank.glb"),
+	"barrier": preload("res://assets/battle/props/barrier.glb"),
+	"crate": preload("res://assets/battle/props/crate.glb"),
+	"barrel": preload("res://assets/battle/props/barrel.glb"),
+	"wreck": preload("res://assets/battle/props/wreck.glb"),
+	"rocks": preload("res://assets/battle/props/rocks.glb"),
+	"tent": preload("res://assets/battle/props/tent.glb"),
+	"dead_tree": preload("res://assets/battle/props/dead_tree.glb"),
+}
+## 模型原始尺寸（宽 x / 高 y / 深 z），按房屋占地缩放用
+const HOUSE_DIMS := {
+	"house": Vector3(7.0, 3.1, 6.0), "barn": Vector3(12.0, 4.8, 8.0),
+	"bunker": Vector3(14.0, 3.2, 9.0), "warehouse": Vector3(22.0, 6.5, 12.0),
+}
+## 可按实例染色的材质（贴图是灰阶/浅色，乘底色）
+const TINTABLE := ["Paint", "Plaster", "Concrete", "TankPaint"]
+
 var obstacles_box: Array = []   # OBB {c: Vector2, hx, hz, rot, top}（onfoot 推出 / 子弹墙体共用）
+var _tint_cache := {}
+var _box_mats := {}             # 颜色 → 带颗粒贴图的三平面材质（剩下的盒子用）
+var _grit: NoiseTexture2D
 var _flags: Array = []          # [sector][point] -> StandardMaterial3D（旗面，按归属改色）
 var _rings: Array = []          # [sector][point] -> StandardMaterial3D（地面占领圈）
 
@@ -190,6 +219,26 @@ func push_out(x: float, z: float, r: float) -> Vector2:
 
 # ================= 地面 =================
 
+## 共用颗粒贴图（可平铺 fbm 噪声）：地面 / 剩余盒体用世界坐标三平面贴，不随尺寸拉伸
+func _grit_tex() -> NoiseTexture2D:
+	if _grit == null:
+		var n := FastNoiseLite.new()
+		n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		n.frequency = 0.012
+		n.fractal_octaves = 5
+		n.seed = 20260926
+		_grit = NoiseTexture2D.new()
+		_grit.width = 512
+		_grit.height = 512
+		_grit.seamless = true
+		_grit.noise = n
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(0.72, 0.72, 0.72))
+		ramp.set_color(1, Color(1.0, 1.0, 1.0))
+		_grit.color_ramp = ramp
+	return _grit
+
+
 func _build_ground() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -213,7 +262,11 @@ func _build_ground() -> void:
 			st.add_index(r1 + 1)
 	var mesh := st.commit()
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.62, 0.53, 0.4)   # 荒漠尘土
+	mat.albedo_color = Color(0.74, 0.63, 0.47)   # 荒漠尘土（乘颗粒贴图后约原色）
+	mat.albedo_texture = _grit_tex()
+	mat.uv1_triplanar = true
+	mat.uv1_world_triplanar = true
+	mat.uv1_scale = Vector3(0.06, 0.06, 0.06)
 	mat.roughness = 1.0
 	mesh.surface_set_material(0, mat)
 	var mi := MeshInstance3D.new()
@@ -230,25 +283,37 @@ func _terrain_normal(x: float, z: float) -> Vector3:
 
 # ================= 构件 =================
 
-## 程序化盒体：视觉 + OBB 碰撞登记（pos.y 为离地基准，叠层用）
-func _add_box(size: Vector3, pos: Vector3, rot_y: float, color: Color,
-		rough := 0.95) -> void:
-	_add_vis_box(size, pos, rot_y, color, rough)
+## 只登记碰撞（外观由模型负责）
+func _col(size: Vector3, pos: Vector3, rot_y: float) -> void:
 	obstacles_box.append({
 		"c": Vector2(pos.x, pos.z), "hx": size.x * 0.5, "hz": size.z * 0.5,
 		"rot": rot_y, "top": terrain_height(pos.x, pos.z) + pos.y + size.y,
 	})
 
 
-## 纯视觉盒体（不参与碰撞/子弹）
+## 程序化盒体：视觉 + OBB 碰撞登记（pos.y 为离地基准，叠层用）
+func _add_box(size: Vector3, pos: Vector3, rot_y: float, color: Color,
+		rough := 0.95) -> void:
+	_add_vis_box(size, pos, rot_y, color, rough)
+	_col(size, pos, rot_y)
+
+
+## 纯视觉盒体（不参与碰撞/子弹）：带颗粒贴图的世界三平面材质，按颜色共用
 func _add_vis_box(size: Vector3, pos: Vector3, rot_y: float,
 		color: Color, rough := 0.95) -> void:
 	var mesh := BoxMesh.new()
 	mesh.size = size
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = rough
-	mesh.material = mat
+	var key := "%s|%.2f" % [color.to_html(), rough]
+	if not _box_mats.has(key):
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = color * 1.2
+		mat.albedo_texture = _grit_tex()
+		mat.uv1_triplanar = true
+		mat.uv1_world_triplanar = true
+		mat.uv1_scale = Vector3(0.25, 0.25, 0.25)
+		mat.roughness = rough
+		_box_mats[key] = mat
+	mesh.material = _box_mats[key]
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.position = Vector3(pos.x,
@@ -257,7 +322,42 @@ func _add_vis_box(size: Vector3, pos: Vector3, rot_y: float,
 	add_child(mi)
 
 
-## 圆柱（油罐/雷达座）：视觉 + 外接方形碰撞
+## 摆一个 Blender 道具：贴地（+y_off）、绕 Y 旋转、缩放；tint 乘到可染色材质上
+func _prop(name: String, x: float, z: float, rot_y: float, scl := Vector3.ONE,
+		tint := Color.WHITE, y_off := 0.0) -> Node3D:
+	var n: Node3D = PROPS[name].instantiate()
+	n.position = Vector3(x, terrain_height(x, z) + y_off, z)
+	n.rotation.y = rot_y
+	n.scale = scl
+	if tint != Color.WHITE:
+		for mi in n.find_children("*", "MeshInstance3D", true, false):
+			var m3: MeshInstance3D = mi
+			for si in m3.mesh.get_surface_count():
+				var m: Material = m3.mesh.surface_get_material(si)
+				if m is StandardMaterial3D and m.resource_name in TINTABLE:
+					m3.set_surface_override_material(si, _tinted(m, tint))
+	add_child(n)
+	return n
+
+
+func _tinted(m: StandardMaterial3D, tint: Color) -> StandardMaterial3D:
+	var key := "%s|%s" % [m.get_instance_id(), tint.to_html()]
+	if not _tint_cache.has(key):
+		var t: StandardMaterial3D = m.duplicate()
+		t.albedo_color = Color(m.albedo_color.r * tint.r, m.albedo_color.g * tint.g,
+				m.albedo_color.b * tint.b)
+		_tint_cache[key] = t
+	return _tint_cache[key]
+
+
+## 储油罐：模型 + 外接方形碰撞
+func _add_tank(r: float, h: float, pos: Vector3) -> void:
+	_prop("fuel_tank", pos.x, pos.z, 0.0, Vector3(r / 5.0, h / 7.0, r / 5.0))
+	obstacles_box.append({"c": Vector2(pos.x, pos.z), "hx": r * 0.9, "hz": r * 0.9,
+			"rot": 0.0, "top": terrain_height(pos.x, pos.z) + pos.y + h})
+
+
+## 圆柱（雷达座等）：视觉 + 外接方形碰撞
 func _add_cyl(r: float, h: float, pos: Vector3, color: Color) -> void:
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = r
@@ -265,9 +365,12 @@ func _add_cyl(r: float, h: float, pos: Vector3, color: Color) -> void:
 	mesh.height = h
 	mesh.radial_segments = 20
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
+	mat.albedo_color = color * 1.2
+	mat.albedo_texture = _grit_tex()
+	mat.uv1_triplanar = true
+	mat.uv1_world_triplanar = true
+	mat.uv1_scale = Vector3(0.25, 0.25, 0.25)
 	mat.roughness = 0.7
-	mat.metallic = 0.3
 	mesh.material = mat
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
@@ -277,12 +380,14 @@ func _add_cyl(r: float, h: float, pos: Vector3, color: Color) -> void:
 			"rot": 0.0, "top": terrain_height(pos.x, pos.z) + pos.y + h})
 
 
-## 带门洞的房子（四面墙 + 平顶可选），rot 绕 Y
-func _add_house(c: Vector2, w: float, d: float, h: float, rot: float, col: Color,
-		roof := true, door_sides := [0]) -> void:
+## 房屋：外观用 Blender 模型（model = house/barn/bunker/warehouse，按占地缩放），
+## 碰撞仍是四面墙 + 门洞。door_axis 0 = 门在前后墙，1 = 门在左右墙（模型转 90°）
+func _add_house(c: Vector2, w: float, d: float, h: float, rot: float, tint: Color,
+		model := "house", door_axis := 0) -> void:
 	var t := 0.45
 	var fwd := Vector2(sin(rot), cos(rot))      # 局部 +Z
 	var right := Vector2(cos(rot), -sin(rot))   # 局部 +X
+	var door_sides := [0, 1] if door_axis == 0 else [2, 3]
 	var walls := [
 		[Vector2(0, -d * 0.5), w, true],   # 0 前墙（-Z）
 		[Vector2(0, d * 0.5), w, true],    # 1 后墙
@@ -300,31 +405,47 @@ func _add_house(c: Vector2, w: float, d: float, h: float, rot: float, col: Color
 			for sgn in [-1.0, 1.0]:
 				var so: float = sgn * (gap * 0.5 + seg * 0.5)
 				var sc: Vector2 = wc + (right if along_x else fwd) * so
-				var sz := Vector3(seg, h, t) if along_x else Vector3(t, h, seg)
-				_add_box(sz, Vector3(sc.x, 0, sc.y), rot, col)
+				_col(Vector3(seg, h, t) if along_x else Vector3(t, h, seg), Vector3(sc.x, 0, sc.y), rot)
 		else:
-			var sz2 := Vector3(ln, h, t) if along_x else Vector3(t, h, ln)
-			_add_box(sz2, Vector3(wc.x, 0, wc.y), rot, col)
-	if roof:
-		_add_vis_box(Vector3(w + 0.4, 0.25, d + 0.4), Vector3(c.x, h, c.y), rot,
-				col.darkened(0.25))
+			_col(Vector3(ln, h, t) if along_x else Vector3(t, h, ln), Vector3(wc.x, 0, wc.y), rot)
+	var dim: Vector3 = HOUSE_DIMS[model]
+	if door_axis == 0:
+		_prop(model, c.x, c.y, rot, Vector3(w / dim.x, h / dim.y, d / dim.z), tint)
+	else:
+		_prop(model, c.x, c.y, rot + PI * 0.5, Vector3(d / dim.x, h / dim.y, w / dim.z), tint)
 
 
-## 沙袋短墙（双层错缝）
+## 沙袋墙：每段 2.5m 一个模型（逐袋堆叠），碰撞同原来的双层盒
 func _add_sandbags(c: Vector2, rot: float, n: int) -> void:
-	var sand := Color(0.72, 0.66, 0.5)
 	var dirv := Vector2(cos(rot), -sin(rot))
 	for k in n:
 		var ox := (float(k) - float(n - 1) * 0.5) * 2.5
 		var p := c + dirv * ox
-		_add_box(Vector3(2.5, 0.8, 0.75), Vector3(p.x, 0, p.y), rot, sand)
-		_add_box(Vector3(2.5, 0.8, 0.75), Vector3(p.x + dirv.x * 0.4, 0.8, p.y + dirv.y * 0.4),
-				rot + 0.04, sand)
+		_col(Vector3(2.5, 1.6, 0.75), Vector3(p.x, 0, p.y), rot)
+		_prop("sandbags", p.x, p.y, rot)
 
 
 func _add_container(c: Vector2, rot: float, col: Color, stack := 1) -> void:
-	for s in stack:
-		_add_box(Vector3(2.5, 2.6, 6.1), Vector3(c.x, s * 2.6, c.y), rot, col, 0.6)
+	for s2 in stack:
+		_col(Vector3(2.5, 2.6, 6.1), Vector3(c.x, s2 * 2.6, c.y), rot)
+		_prop("container", c.x, c.y, rot, Vector3(2.5 / 2.44, 1.0, 6.1 / 6.06),
+				col * 1.4, s2 * 2.6)
+
+
+func _add_crate(size: float, x: float, z: float, rot: float) -> void:
+	_col(Vector3(size, size, size), Vector3(x, 0, z), rot)
+	_prop("crate", x, z, rot, Vector3.ONE * size)
+
+
+## 油桶堆（纯装饰 + 一个外接碰撞）
+func _add_barrels(c: Vector2, n: int, rng: RandomNumberGenerator) -> void:
+	var cols := [Color(0.45, 0.55, 0.4), Color(0.7, 0.3, 0.2), Color(0.3, 0.45, 0.65)]
+	for k in n:
+		var p := c + Vector2(float(k % 3) * 0.68, float(k / 3) * 0.68) \
+				+ Vector2(rng.randf_range(-0.08, 0.08), rng.randf_range(-0.08, 0.08))
+		_prop("barrel", p.x, p.y, rng.randf_range(0.0, TAU), Vector3.ONE,
+				cols[rng.randi() % cols.size()])
+	_col(Vector3(2.1, 0.9, 2.1), Vector3(c.x + 0.68, 0, c.y + 0.68 * float((n - 1) / 3) * 0.5), 0.0)
 
 
 # ================= 总部 =================
@@ -337,14 +458,19 @@ func _build_hq(z_center: float, flag_color: Color, title: String) -> void:
 		var ang := deg_to_rad(-70.0 + k * 14.0)
 		var bx := sin(ang) * 22.0
 		var bz := z_center + cos(ang) * 22.0 * -dir_sign
-		_add_box(Vector3(3.4, 1.1, 0.8), Vector3(bx, 0, bz), -ang * dir_sign,
-				Color(0.72, 0.66, 0.5))
+		_col(Vector3(3.4, 1.1, 0.8), Vector3(bx, 0, bz), -ang * dir_sign)
+		_prop("sandbags", bx, bz, -ang * dir_sign, Vector3(3.4 / 2.5, 1.1 / 1.6, 0.8 / 0.75))
 	# 帐篷 + 物资
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(absf(z_center))
 	for k in 3:
 		var tx := -30.0 + k * 30.0
 		var tz := z_center + dir_sign * 8.0
-		_add_box(Vector3(6.0, 2.6, 4.0), Vector3(tx, 0, tz), 0.0,
-				Color(0.42, 0.44, 0.34))
+		_col(Vector3(6.0, 2.6, 4.0), Vector3(tx, 0, tz), 0.0)
+		_prop("tent", tx, tz, 0.0 if dir_sign < 0.0 else PI)
+	_add_crate(1.2, -14.0, z_center + dir_sign * 10.0, 0.2)
+	_add_crate(1.0, -12.6, z_center + dir_sign * 10.4, 0.6)
+	_add_barrels(Vector2(12.0, z_center + dir_sign * 9.0), 5, rng)
 	var pole := BoxMesh.new()
 	pole.size = Vector3(0.18, 8.0, 0.18)
 	var pmat := StandardMaterial3D.new()
@@ -369,10 +495,10 @@ func _build_hq(z_center: float, flag_color: Color, title: String) -> void:
 
 # ================= 三个区域的据点场景 =================
 
-## 区域 1 · 村落：A 点土房群 + 院墙；B 点农场围院 + 谷仓
+## 区域 1 · 村落：A 点土房群；B 点农场围院 + 谷仓
 func _build_sector_village(rng: RandomNumberGenerator) -> void:
-	var wall_a := Color(0.56, 0.5, 0.42)
-	var wall_b := Color(0.4, 0.35, 0.29)
+	var wall_a := Color(1.0, 1.0, 1.0)          # 土坯本色
+	var wall_b := Color(0.82, 0.78, 0.74)       # 旧墙发暗
 	var a: Vector2 = SECTORS[0]["pts"][0]
 	var houses := [Vector2(-16, -10), Vector2(15, -12), Vector2(-18, 14), Vector2(17, 13),
 			Vector2(0, 24), Vector2(-32, 0)]
@@ -380,39 +506,44 @@ func _build_sector_village(rng: RandomNumberGenerator) -> void:
 		var hc: Vector2 = a + houses[i]
 		_add_house(hc, rng.randf_range(6.0, 8.0), rng.randf_range(5.0, 7.0),
 				rng.randf_range(2.8, 3.4), rng.randf_range(-0.25, 0.25),
-				wall_a if i % 2 == 0 else wall_b, rng.randf() < 0.6, [i % 4, (i + 2) % 4])
+				wall_a if i % 2 == 0 else wall_b, "house", i % 2)
+		rng.randf()   # 保留原来「有无屋顶」那次抽签，布局随机序列不变
 	_add_sandbags(a + Vector2(0, 8), 0.0, 3)
 	_add_sandbags(a + Vector2(-6, -4), PI * 0.5, 2)
+	_add_barrels(a + Vector2(6, -2), 4, rng)
 	var b: Vector2 = SECTORS[0]["pts"][1]
-	# 围院（四角留口）
-	for s in [[Vector2(0, -20), 0.0, 30.0], [Vector2(0, 20), 0.0, 30.0],
+	# 围院土墙（四角留口）
+	for s2 in [[Vector2(0, -20), 0.0, 30.0], [Vector2(0, 20), 0.0, 30.0],
 			[Vector2(-20, 0), PI * 0.5, 30.0], [Vector2(20, 0), PI * 0.5, 30.0]]:
-		var sc: Vector2 = b + s[0]
-		var rot: float = s[1]
-		var ln: float = s[2]
+		var sc: Vector2 = b + s2[0]
+		var rot: float = s2[1]
+		var ln: float = s2[2]
 		var dirv := Vector2(cos(rot), -sin(rot))
 		for sg in [-1.0, 1.0]:
 			var p: Vector2 = sc + dirv * sg * ln * 0.3
-			_add_box(Vector3(ln * 0.38, 2.2, 0.5), Vector3(p.x, 0, p.y), rot, wall_a)
-	_add_house(b + Vector2(-8, -6), 12.0, 8.0, 4.8, 0.0, Color(0.5, 0.3, 0.22), true, [0, 1])
-	_add_house(b + Vector2(9, 8), 6.0, 5.0, 3.0, 0.1, wall_b, true, [2])
-	_add_box(Vector3(1.6, 1.6, 1.6), Vector3(b.x + 6, 0, b.y - 8), 0.3, Color(0.52, 0.38, 0.22))
-	_add_box(Vector3(1.2, 1.2, 1.2), Vector3(b.x + 7.6, 0, b.y - 7), 0.7, Color(0.52, 0.38, 0.22))
+			_add_box(Vector3(ln * 0.38, 2.2, 0.5), Vector3(p.x, 0, p.y), rot, Color(0.62, 0.53, 0.41))
+	_add_house(b + Vector2(-8, -6), 12.0, 8.0, 4.8, 0.0, Color(0.95, 0.62, 0.5), "barn", 0)
+	_add_house(b + Vector2(9, 8), 6.0, 5.0, 3.0, 0.1, wall_b, "house", 1)
+	_add_crate(1.6, b.x + 6, b.y - 8, 0.3)
+	_add_crate(1.2, b.x + 7.6, b.y - 7, 0.7)
 	_add_sandbags(b + Vector2(2, 2), 0.3, 2)
 
 
 ## 区域 2 · 油库：A 点储油罐区 + 管廊；B 点仓库 + 集装箱堆场
 func _build_sector_depot(rng: RandomNumberGenerator) -> void:
 	var a: Vector2 = SECTORS[1]["pts"][0]
-	for t in [Vector2(-14, -12), Vector2(14, -12), Vector2(-14, 13), Vector2(15, 12)]:
-		var tc: Vector2 = a + t
-		_add_cyl(5.0, rng.randf_range(6.0, 8.0), Vector3(tc.x, 0, tc.y), Color(0.78, 0.76, 0.7))
-	_add_box(Vector3(30.0, 0.6, 0.6), Vector3(a.x, 3.2, a.y), 0.0, Color(0.4, 0.42, 0.44))
-	_add_box(Vector3(0.6, 0.6, 26.0), Vector3(a.x, 3.2, a.y), 0.0, Color(0.4, 0.42, 0.44))
+	for t2 in [Vector2(-14, -12), Vector2(14, -12), Vector2(-14, 13), Vector2(15, 12)]:
+		var tc: Vector2 = a + t2
+		_add_tank(5.0, rng.randf_range(6.0, 8.0), Vector3(tc.x, 0, tc.y))
+	_add_box(Vector3(30.0, 0.6, 0.6), Vector3(a.x, 3.2, a.y), 0.0, Color(0.4, 0.42, 0.44), 0.5)
+	_add_box(Vector3(0.6, 0.6, 26.0), Vector3(a.x, 3.2, a.y), 0.0, Color(0.4, 0.42, 0.44), 0.5)
+	for px in [-9.0, 9.0]:   # 管廊支架
+		_add_vis_box(Vector3(0.3, 3.2, 0.3), Vector3(a.x + px, 0, a.y), 0.0, Color(0.35, 0.36, 0.38))
 	_add_sandbags(a + Vector2(0, 5), 0.0, 2)
 	_add_sandbags(a + Vector2(-5, -3), PI * 0.5, 2)
+	_add_barrels(a + Vector2(4, -4), 6, rng)
 	var b: Vector2 = SECTORS[1]["pts"][1]
-	_add_house(b + Vector2(0, -16), 22.0, 12.0, 6.5, 0.0, Color(0.5, 0.52, 0.5), true, [1, 2])
+	_add_house(b + Vector2(0, -16), 22.0, 12.0, 6.5, 0.0, Color(0.72, 0.76, 0.74), "warehouse", 0)
 	var cols := [Color(0.62, 0.22, 0.16), Color(0.16, 0.36, 0.52), Color(0.72, 0.52, 0.16),
 			Color(0.3, 0.44, 0.28)]
 	for k in 6:
@@ -422,12 +553,12 @@ func _build_sector_depot(rng: RandomNumberGenerator) -> void:
 				cols[k % cols.size()], 2 if k == 1 or k == 4 else 1)
 
 
-## 区域 3 · 指挥所：A 点混凝土掩体群 + 战壕；B 点雷达站 + 通讯楼
+## 区域 3 · 指挥所：A 点混凝土掩体群 + 沙袋环；B 点雷达站 + 通讯楼
 func _build_sector_command(rng: RandomNumberGenerator) -> void:
 	var concrete := Color(0.58, 0.58, 0.56)
 	var a: Vector2 = SECTORS[2]["pts"][0]
-	_add_house(a + Vector2(0, -12), 14.0, 9.0, 3.2, 0.0, concrete, true, [0, 1])
-	_add_house(a + Vector2(-18, 6), 8.0, 7.0, 3.0, 0.3, concrete, true, [3])
+	_add_house(a + Vector2(0, -12), 14.0, 9.0, 3.2, 0.0, Color.WHITE, "bunker", 0)
+	_add_house(a + Vector2(-18, 6), 8.0, 7.0, 3.0, 0.3, Color(0.92, 0.92, 0.9), "bunker", 1)
 	for k in 5:
 		var ang := float(k) / 5.0 * TAU
 		_add_sandbags(a + Vector2(cos(ang), sin(ang)) * 9.0, ang + PI * 0.5, 2)
@@ -439,15 +570,18 @@ func _build_sector_command(rng: RandomNumberGenerator) -> void:
 	dish.height = 1.4
 	var dmat := StandardMaterial3D.new()
 	dmat.albedo_color = Color(0.85, 0.86, 0.88)
+	dmat.metallic = 0.4
+	dmat.roughness = 0.4
 	dish.material = dmat
 	var dmi := MeshInstance3D.new()
 	dmi.mesh = dish
 	dmi.position = Vector3(b.x + 10, terrain_height(b.x + 10, b.y - 6) + 4.2, b.y - 6)
 	dmi.rotation.x = 0.5
 	add_child(dmi)
-	_add_house(b + Vector2(-10, 4), 10.0, 10.0, 7.0, 0.0, Color(0.46, 0.48, 0.52), true, [0, 3])
+	_add_house(b + Vector2(-10, 4), 10.0, 10.0, 7.0, 0.0, Color(0.86, 0.9, 0.98), "bunker", 0)
 	_add_sandbags(b + Vector2(4, 8), 0.0, 3)
-	_add_box(Vector3(4.2, 1.25, 0.5), Vector3(b.x - 2, 0, b.y - 8), 0.2, concrete)
+	_col(Vector3(4.2, 1.25, 0.5), Vector3(b.x - 2, 0, b.y - 8), 0.2)
+	_prop("barrier", b.x - 2, b.y - 8, 0.2)
 
 
 ## 据点：旗杆 + 可改色旗面 + 地面占领圈 + 字母标
@@ -513,11 +647,8 @@ func _near_point(p: Vector2, r: float) -> bool:
 	return false
 
 
-## 区域之间的无人区掩体：水泥墙 / 木箱堆 / 断墙 / 锈蚀车壳 / 沙袋
+## 区域之间的无人区掩体：防爆墙 / 木箱堆 / 断墙 / 烧毁车辆 / 沙袋
 func _build_cover(rng: RandomNumberGenerator) -> void:
-	var concrete := Color(0.58, 0.58, 0.56)
-	var wood := Color(0.52, 0.38, 0.22)
-	var rust := Color(0.36, 0.24, 0.16)
 	var placed: Array[Vector2] = []
 	for k in 60:
 		var pos := Vector2.ZERO
@@ -537,14 +668,16 @@ func _build_cover(rng: RandomNumberGenerator) -> void:
 		var rot := rng.randf_range(0.0, TAU)
 		match rng.randi_range(0, 4):
 			0:
-				_add_box(Vector3(4.2, 1.25, 0.5), Vector3(pos.x, 0, pos.y), rot, concrete)
+				_col(Vector3(4.2, 1.25, 0.5), Vector3(pos.x, 0, pos.y), rot)
+				_prop("barrier", pos.x, pos.y, rot)
 			1:
-				_add_box(Vector3(1.7, 1.7, 1.7), Vector3(pos.x, 0, pos.y), rot, wood)
-				_add_box(Vector3(1.2, 1.2, 1.2), Vector3(pos.x + 1.6, 0, pos.y + 0.5), rot + 0.5, wood)
+				_add_crate(1.7, pos.x, pos.y, rot)
+				_add_crate(1.2, pos.x + 1.6, pos.y + 0.5, rot + 0.5)
 			2:
-				_add_box(Vector3(0.45, 2.6, 5.0), Vector3(pos.x, 0, pos.y), rot, Color(0.5, 0.47, 0.42))
+				_add_box(Vector3(0.45, 2.6, 5.0), Vector3(pos.x, 0, pos.y), rot, Color(0.6, 0.52, 0.42))
 			3:
-				_add_box(Vector3(2.0, 1.5, 4.4), Vector3(pos.x, 0, pos.y), rot, rust)
+				_col(Vector3(2.0, 1.5, 4.4), Vector3(pos.x, 0, pos.y), rot)
+				_prop("wreck", pos.x, pos.y, rot)
 			4:
 				_add_sandbags(pos, rot, 3)
 
@@ -555,7 +688,11 @@ func _build_craters(rng: RandomNumberGenerator) -> void:
 	mesh.bottom_radius = 1.0
 	mesh.height = 1.0
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.24, 0.2, 0.16)
+	mat.albedo_color = Color(0.3, 0.25, 0.2)
+	mat.albedo_texture = _grit_tex()
+	mat.uv1_triplanar = true
+	mat.uv1_world_triplanar = true
+	mat.uv1_scale = Vector3(0.2, 0.2, 0.2)
 	mat.roughness = 1.0
 	mesh.material = mat
 	for k in 22:
@@ -570,29 +707,31 @@ func _build_craters(rng: RandomNumberGenerator) -> void:
 
 
 func _build_dead_trees(rng: RandomNumberGenerator) -> void:
-	var bark := Color(0.22, 0.18, 0.15)
-	for t in 14:
+	for t2 in 14:
 		var x := rng.randf_range(-230.0, 230.0)
 		var z := rng.randf_range(-175.0, 170.0)
 		if _near_point(Vector2(x, z), 18.0):
 			continue
 		var h := rng.randf_range(3.2, 5.2)
-		_add_box(Vector3(0.34, h, 0.34), Vector3(x, 0, z), rng.randf_range(0.0, TAU), bark)
+		var rot0 := rng.randf_range(0.0, TAU)
+		_col(Vector3(0.34, h, 0.34), Vector3(x, 0, z), rot0)
 		var rot := rng.randf_range(0.0, TAU)
-		_add_vis_box(Vector3(0.18, 1.8, 0.18), Vector3(x, h * 0.62, z), rot, bark)
+		_prop("dead_tree", x, z, rot, Vector3(1.0, h / 4.2, 1.0))
 
 
-## 周界石墙：连续封闭（原来石块间留 5m 缺口，人能走出场外）
+## 周界石墙：连续封闭（碰撞按段盒子，外观为乱石）
 func _build_perimeter() -> void:
-	var rock := Color(0.44, 0.4, 0.35)
 	var step := 12.0
+	var sx := (step + 0.5) / 13.4
 	var cx := -ARENA_X
 	while cx <= ARENA_X:
-		_add_box(Vector3(step + 0.5, 2.8, 2.8), Vector3(cx, 0, -ARENA_Z), 0.0, rock)
-		_add_box(Vector3(step + 0.5, 2.8, 2.8), Vector3(cx, 0, ARENA_Z), 0.0, rock)
+		for z in [-ARENA_Z, ARENA_Z]:
+			_col(Vector3(step + 0.5, 2.8, 2.8), Vector3(cx, 0, z), 0.0)
+			_prop("rocks", cx, z, 0.0 if z < 0.0 else PI, Vector3(sx, 1.0, 1.0))
 		cx += step
 	var cz := -ARENA_Z
 	while cz <= ARENA_Z:
-		_add_box(Vector3(2.8, 2.8, step + 0.5), Vector3(-ARENA_X, 0, cz), 0.0, rock)
-		_add_box(Vector3(2.8, 2.8, step + 0.5), Vector3(ARENA_X, 0, cz), 0.0, rock)
+		for x in [-ARENA_X, ARENA_X]:
+			_col(Vector3(2.8, 2.8, step + 0.5), Vector3(x, 0, cz), 0.0)
+			_prop("rocks", x, cz, PI * 0.5 if x < 0.0 else -PI * 0.5, Vector3(sx, 1.0, 1.0))
 		cz += step
