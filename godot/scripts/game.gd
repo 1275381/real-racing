@@ -198,9 +198,10 @@ func _ready() -> void:
 	# 车库选车/选比赛/进商店
 	enter_roam.call_deferred()
 	# 全车型预加载：后台线程把所有 GLB 载入资源缓存——高顶点车首次
-	# 选车/显示零等待（线程只做 load，不触碰场景树，线程安全）
-	_car_preload_thread = Thread.new()
-	_car_preload_thread.start(_car_preload_worker)
+	# 选车/显示零等待（线程只做 load，不触碰场景树，线程安全）。
+	# 排在 enter_roam 之后的延迟调用：enter_roam 会阻塞到城市建完，
+	# 预加载线程才开始读盘，不跟建城线程抢 CPU / 渲染服务器
+	_start_car_preload.call_deferred()
 
 	# 调试参数（-- 之后传参，等价网页版 URL 参数）：--autostart --laps=N --track=id --roam
 	for arg in OS.get_cmdline_user_args():
@@ -339,6 +340,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		audio.ensure()   # 用户手势里解锁音频，之后有怠速声浪
 	elif event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_garage_angle += event.relative.x * 0.008
+
+
+func _start_car_preload() -> void:
+	_car_preload_thread = Thread.new()
+	_car_preload_thread.start(_car_preload_worker)
 
 
 ## 全车型预加载：后台逐个载入 GLB 进资源缓存（含步行 GLB 枪）
@@ -531,7 +537,6 @@ var codriver := false              # 比赛领航员（AI 代驾，水平有限�
 var _codriver_ai: AIDriver
 var _car_preload_thread: Thread    # 车型预加载后台线程
 var _loading: RRLoadingScreen      # 加载遮罩（开机/换城市），进漫游后淡出释放
-var _roam_building := false        # 城市分步构建中（跨帧）
 var _car_preload_stop := false     # 退出时让预加载线程在两个文件之间停手
 var headlight_on := false          # 车灯手动开关（L 键，车内/夜间）
 var map_open := false              # 大地图（导航）界面
@@ -1385,10 +1390,9 @@ func _roam_exit_plane() -> void:
 	hud.set_health(player_hp)
 
 
-## 进入自由漫游：首次会同步生成大地图（1~2 秒）
+## 进入自由漫游：首次会在后台线程生成大地图（约 1 秒，加载页显示进度）
 func enter_roam() -> void:
-	# 分步建城期间会跨帧：开机 deferred 与 --roam 参数可能各调一次，第二次直接让路
-	if state == ST.ROAM or _roam_building:
+	if state == ST.ROAM:
 		return
 	audio.ensure()
 	hud.show_only("roam")
@@ -1403,16 +1407,17 @@ func enter_roam() -> void:
 		if _loading == null:
 			_loading = RRLoadingScreen.new()
 			add_child(_loading)
-		# 建完才赋给 freeroam：分步构建跨帧，其它逻辑不能看到半成品地图
-		_roam_building = true
+		# 后台线程建城（节点未入树），主线程在 wait_thread 里约 60fps 刷进度条；
+		# 线程结束后再入树并赋给 freeroam —— 其它逻辑永远看不到半成品地图
 		var fm := FreeroamMap.new()
-		add_child(fm)
 		roam_city_id = want_city
-		var ld := _loading
-		await fm.build_async(CityData.map_by_id(want_city) if want_city != "" else {},
-				func(f: float, t: String) -> void: ld.set_progress(0.12 + f * 0.8, t))
+		var th := fm.build_threaded(
+				CityData.map_by_id(want_city) if want_city != "" else {})
+		_loading.wait_thread(th, fm.build_progress, 0.12, 0.92)
+		th.wait_to_finish()
+		add_child(fm)
+		fm.finish_threaded_build()
 		freeroam = fm
-		_roam_building = false
 		_loading.set_progress(0.94, "召唤车流与行人")
 	CityData.pending_map_id = ""
 	freeroam.visible = true

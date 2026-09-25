@@ -263,48 +263,81 @@ func _init() -> void:
 
 ## city 为空字典 = 默认城市，行为与改造前逐位相同（golden 测试守着这条）
 func build(city := {}) -> void:
-	_build_begin(city)
-	for st in _build_steps():
-		(st[2] as Callable).call()
-
-
-## 分步构建（游戏开机/换城市用）：步骤与 build() 完全相同、顺序相同，产出逐位一致；
-## 每步之前让出一帧，progress(比例 0..1, 步骤文案) 驱动加载进度条。
-## 需已挂进场景树（要 get_tree() 等帧）。
-func build_async(city := {}, progress := Callable()) -> void:
-	_build_begin(city)
+	_city = city
+	_build_t0 = Time.get_ticks_msec()
 	var steps := _build_steps()
+	for i in steps.size():
+		_prog_mx.lock()
+		_prog_i = i
+		_prog_t0 = Time.get_ticks_msec()
+		_prog_mx.unlock()
+		(steps[i] as Callable).call()
+	_prog_mx.lock()
+	_prog_i = steps.size()
+	_prog_mx.unlock()
+
+
+## 后台线程构建（游戏开机/换城市用）：步骤与 build() 完全相同，产出逐位一致。
+## 节点必须尚未入树；线程结束（wait_to_finish）后由主线程 add_child，
+## 再调 finish_threaded_build() 补上必须在树内做的事。
+## 主线程等待期间不能回主循环，见 RRLoadingScreen.wait_thread。
+func build_threaded(city := {}) -> Thread:
+	_threaded = true
+	var th := Thread.new()
+	th.start(build.bind(city))
+	return th
+
+
+## 入树后补做：招牌文字图集要 SubViewport 渲染，只能在树内、主线程上跑
+func finish_threaded_build() -> void:
+	if not _sign_atlas_args.is_empty():
+		_defer_sign_atlas.call_deferred(_sign_atlas_args[0], _sign_atlas_args[1])
+		_sign_atlas_args = []
+
+
+## 构建进度（主线程读，工作线程写）：[0..1, 当前步骤文案]。
+## 步骤内按实测耗时权重估算、封顶 97%，进度条在长步骤里也连续前进
+func build_progress() -> Array:
+	_prog_mx.lock()
+	var i := _prog_i
+	var t0 := _prog_t0
+	_prog_mx.unlock()
 	var total := 0.0
-	for st in steps:
-		total += float(st[0])
 	var done := 0.0
-	for st in steps:
-		if progress.is_valid():
-			progress.call(done / total, String(st[1]))
-		await get_tree().process_frame
-		(st[2] as Callable).call()
-		done += float(st[0])
-	if progress.is_valid():
-		progress.call(1.0, "")
+	for k in BUILD_STEPS.size():
+		var w: float = BUILD_STEPS[k][0]
+		total += w
+		if k < i:
+			done += w
+		elif k == i:
+			done += w * minf((Time.get_ticks_msec() - t0) / w, 0.97)
+	if i < 0:
+		return [0.0, String(BUILD_STEPS[0][1])]
+	if i >= BUILD_STEPS.size():
+		return [1.0, ""]
+	return [done / total, String(BUILD_STEPS[i][1])]
 
 
 var _build_t0 := 0
+var _threaded := false             # build_threaded 构建：推迟必须在树内做的事
+var _sign_atlas_args: Array = []   # 待入树后启动的招牌图集参数
+var _prog_mx := Mutex.new()
+var _prog_i := -1                  # 当前步骤序号；-1 未开始，=步骤数 已完成
+var _prog_t0 := 0
+
+## 构建步骤：[进度权重（≈实测耗时 ms，进度条按它估算步骤内进度）, 文案]。
+## 与 _build_steps() 一一对应，顺序即产出契约
+const BUILD_STEPS := [
+	[60.0, "规划路网"],
+	[400.0, "铺设路面与高架"],
+	[280.0, "生成地形与海岸"],
+	[30.0, "排布路口与建筑"],
+	[10.0, "布置车库与小地图"],
+]
 
 
-func _build_begin(city: Dictionary) -> void:
-	_city = city
-	_build_t0 = Time.get_ticks_msec()
-
-
-## 构建步骤表：[进度权重（≈实测耗时 ms）, 进度条文案, 步骤]。顺序即产出契约
 func _build_steps() -> Array:
-	return [
-		[60.0, "规划路网", _step_roads],
-		[400.0, "铺设路面与高架", _step_road_meshes],
-		[280.0, "生成地形与海岸", _step_zones],
-		[30.0, "排布路口与建筑", _step_buildings],
-		[10.0, "布置车库与小地图", _step_finish],
-	]
+	return [_step_roads, _step_road_meshes, _step_zones, _step_buildings, _step_finish]
 
 
 func _step_roads() -> void:
@@ -3791,8 +3824,13 @@ func _make_street_shops() -> void:
 	_commit_shop_mm(vendface_xfs, [], _shop_vendface_mesh(), false)
 	_commit_shop_mm(bin_xfs, [], _shop_bin_mesh(), false)
 	print("[map] 街面小店 %d 家（招牌文字图集延迟装载）" % n_shop)
-	# 招牌文字：图集延迟渲染（首帧后画到 SubViewport，按品牌切图建 MultiMesh）
-	_defer_sign_atlas.call_deferred(sign_xfs, sign_brand)
+	# 招牌文字：图集延迟渲染（首帧后画到 SubViewport，按品牌切图建 MultiMesh）。
+	# 后台线程构建时节点还不在树里、且 call_deferred 会落到主线程，
+	# 留给 finish_threaded_build() 入树后再启动
+	if _threaded:
+		_sign_atlas_args = [sign_xfs, sign_brand]
+	else:
+		_defer_sign_atlas.call_deferred(sign_xfs, sign_brand)
 
 
 ## 把 12 块店名渲染进 1024×256 图集，按品牌切图建文字 MultiMesh（建图晚于首帧）
