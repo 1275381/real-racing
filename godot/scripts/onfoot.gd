@@ -214,7 +214,9 @@ func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	_falling_mag.mesh = fm_mesh
 	_falling_mag.visible = false
 	add_child(_falling_mag)
-	set_gun("rifle")
+	# 占位用程序化手枪：每次下车 game 都会 set_gun(当前装备) 重建枪模，
+	# 这里若装步枪会在进漫游时同步加载 60MB 的 SCAR GLB（约 0.4s）再立刻丢掉
+	set_gun("pistol")
 
 ## 曳光弹与命中火花的对象池
 func _setup_fx() -> void:

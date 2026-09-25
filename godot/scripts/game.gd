@@ -85,6 +85,10 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
+	# 加载遮罩最先建：_ready 结束后的第一帧就是它，而不是半成品场景
+	_loading = RRLoadingScreen.new()
+	add_child(_loading)
+	_loading.set_progress(0.04, "加载赛道与车辆")
 	_load_settings()
 
 	camera = Camera3D.new()
@@ -189,6 +193,7 @@ func _ready() -> void:
 	add_child(day_cycle)
 	day_cycle.setup(env, camera)
 	_ensure_headlight()
+	_loading.set_progress(0.12, "准备城市")
 	# 开机即漫游：出生车库（旋转展台）就是初始页面；Esc 仍可回菜单
 	# 车库选车/选比赛/进商店
 	enter_roam.call_deferred()
@@ -338,11 +343,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## 全车型预加载：后台逐个载入 GLB 进资源缓存（含步行 GLB 枪）
 func _car_preload_worker() -> void:
-	var files: Array[String] = []
+	# 步枪排第一：它是步行时唯一的 GLB 枪模，下车切枪要用；车型按表序在后
+	var files: Array[String] = ["res://assets/cars/gun_rifle.glb"]
 	for m in TrackData.CAR_MODELS:
 		if not files.has(m["file"]):
 			files.append(m["file"])
-	files.append("res://assets/cars/gun_rifle.glb")
 	for f in files:
 		if _car_preload_stop:
 			return
@@ -525,6 +530,8 @@ var _elev_target := 0.32           # 轿厢目标楼层
 var codriver := false              # 比赛领航员（AI 代驾，水平有限）
 var _codriver_ai: AIDriver
 var _car_preload_thread: Thread    # 车型预加载后台线程
+var _loading: RRLoadingScreen      # 加载遮罩（开机/换城市），进漫游后淡出释放
+var _roam_building := false        # 城市分步构建中（跨帧）
 var _car_preload_stop := false     # 退出时让预加载线程在两个文件之间停手
 var headlight_on := false          # 车灯手动开关（L 键，车内/夜间）
 var map_open := false              # 大地图（导航）界面
@@ -1380,7 +1387,8 @@ func _roam_exit_plane() -> void:
 
 ## 进入自由漫游：首次会同步生成大地图（1~2 秒）
 func enter_roam() -> void:
-	if state == ST.ROAM:
+	# 分步建城期间会跨帧：开机 deferred 与 --roam 参数可能各调一次，第二次直接让路
+	if state == ST.ROAM or _roam_building:
 		return
 	audio.ensure()
 	hud.show_only("roam")
@@ -1392,13 +1400,20 @@ func enter_roam() -> void:
 		freeroam.queue_free()
 		freeroam = null
 	if freeroam == null:
-		hud.show_center("正在生成城市…", "首次进入需要一点时间", 4000)
-		await get_tree().process_frame
-		await get_tree().process_frame
-		freeroam = FreeroamMap.new()
-		add_child(freeroam)
+		if _loading == null:
+			_loading = RRLoadingScreen.new()
+			add_child(_loading)
+		# 建完才赋给 freeroam：分步构建跨帧，其它逻辑不能看到半成品地图
+		_roam_building = true
+		var fm := FreeroamMap.new()
+		add_child(fm)
 		roam_city_id = want_city
-		freeroam.build(CityData.map_by_id(want_city) if want_city != "" else {})
+		var ld := _loading
+		await fm.build_async(CityData.map_by_id(want_city) if want_city != "" else {},
+				func(f: float, t: String) -> void: ld.set_progress(0.12 + f * 0.8, t))
+		freeroam = fm
+		_roam_building = false
+		_loading.set_progress(0.94, "召唤车流与行人")
 	CityData.pending_map_id = ""
 	freeroam.visible = true
 	for t in tracks:
@@ -1480,6 +1495,9 @@ func enter_roam() -> void:
 				4000)
 	else:
 		hud.set_plane_panel(false)
+	if _loading != null:
+		_loading.finish()
+		_loading = null
 
 
 ## 比赛领航员：AI 代驾（skill 0.95，弯道与极速接近标准车手）

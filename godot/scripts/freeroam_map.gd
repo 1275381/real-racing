@@ -24,7 +24,7 @@ const CROSS_ELEV_EW := 19.0   # 东西快速路：与南北在 (0,0) 立体交�
 ## 地形分区：3D 顶点色与小地图的唯一数据源。
 ## 顺序 = 判定优先级（从高到低），这个顺序本身是契约：
 ## 3D 正序取首个命中；小地图逆序铺色（后画覆盖先画 == 正序首个命中）。
-## 原来这张表在 _zone_color 与 _build_minimap 里各写一份，
+## 原来这张表在地面配色与 _build_minimap 里各写一份，
 ## 上次不同步的后果是「西北角世界里是海、小地图画成山地」，
 ## 东沙漠阈值还写成了 1080（实际 950）。
 const ZONE_INF := 1e9
@@ -263,8 +263,51 @@ func _init() -> void:
 
 ## city 为空字典 = 默认城市，行为与改造前逐位相同（golden 测试守着这条）
 func build(city := {}) -> void:
+	_build_begin(city)
+	for st in _build_steps():
+		(st[2] as Callable).call()
+
+
+## 分步构建（游戏开机/换城市用）：步骤与 build() 完全相同、顺序相同，产出逐位一致；
+## 每步之前让出一帧，progress(比例 0..1, 步骤文案) 驱动加载进度条。
+## 需已挂进场景树（要 get_tree() 等帧）。
+func build_async(city := {}, progress := Callable()) -> void:
+	_build_begin(city)
+	var steps := _build_steps()
+	var total := 0.0
+	for st in steps:
+		total += float(st[0])
+	var done := 0.0
+	for st in steps:
+		if progress.is_valid():
+			progress.call(done / total, String(st[1]))
+		await get_tree().process_frame
+		(st[2] as Callable).call()
+		done += float(st[0])
+	if progress.is_valid():
+		progress.call(1.0, "")
+
+
+var _build_t0 := 0
+
+
+func _build_begin(city: Dictionary) -> void:
 	_city = city
-	var t0 := Time.get_ticks_msec()
+	_build_t0 = Time.get_ticks_msec()
+
+
+## 构建步骤表：[进度权重（≈实测耗时 ms）, 进度条文案, 步骤]。顺序即产出契约
+func _build_steps() -> Array:
+	return [
+		[60.0, "规划路网", _step_roads],
+		[400.0, "铺设路面与高架", _step_road_meshes],
+		[280.0, "生成地形与海岸", _step_zones],
+		[30.0, "排布路口与建筑", _step_buildings],
+		[10.0, "布置车库与小地图", _step_finish],
+	]
+
+
+func _step_roads() -> void:
 	_make_grid_roads()
 	_make_ring()
 	_make_cross_highways()
@@ -273,24 +316,36 @@ func build(city := {}) -> void:
 	_make_raceway()
 	_build_airport(AIRPORT_POS, AIRPORT_HEADING)
 	_build_far_city()
-	print("[map] 路网采样 %d 点 %dms" % [n, Time.get_ticks_msec() - t0])
+	print("[map] 路网采样 %d 点 %dms" % [n, Time.get_ticks_msec() - _build_t0])
+
+
+func _step_road_meshes() -> void:
 	_mark_road_blocks()
 	_build_road_meshes()
-	print("[map] 路面网格 %dms" % [Time.get_ticks_msec() - t0])
+	print("[map] 路面网格 %dms" % [Time.get_ticks_msec() - _build_t0])
+
+
+func _step_zones() -> void:
 	_build_merge_fills()
 	_build_zones()
-	print("[map] 区域场景 %dms" % [Time.get_ticks_msec() - t0])
+	print("[map] 区域场景 %dms" % [Time.get_ticks_msec() - _build_t0])
+
+
+func _step_buildings() -> void:
 	_build_intersections()
-	print("[map] 路口 %dms" % [Time.get_ticks_msec() - t0])
+	print("[map] 路口 %dms" % [Time.get_ticks_msec() - _build_t0])
 	_place_buildings()
 	_make_street_shops()
 	_build_landmarks()
-	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - t0])
+	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - _build_t0])
+
+
+func _step_finish() -> void:
 	_make_garage()
 	_make_parts_shop()
 	_make_gunshop()
 	_build_minimap()
-	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
+	print("[map] 完成 %dms" % [Time.get_ticks_msec() - _build_t0])
 
 
 func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bool,
@@ -1284,17 +1339,23 @@ func _flush(mat: Material, cast_shadow := false) -> void:
 ## 预计算护栏修剪掩码：高架采样点若与「同层」的其它高架路面过近
 ## （匝道并入主线段），该段不建护栏 —— 避免护栏横穿桥面
 func _mark_rail_skips() -> void:
-	for road in roads:
+	var boxes := _road_xz_boxes()
+	for ri in roads.size():
+		var road: Road = roads[ri]
 		if not road.elevated:
 			continue
 		road.rail_skip.resize(road.pts.size())
 		for i in road.pts.size():
 			var skip := false
 			var p := road.pts[i]
-			for other in roads:
-				if other == road or not other.elevated:
+			for oi in roads.size():
+				var other: Road = roads[oi]
+				if oi == ri or not other.elevated:
 					continue
 				var gap: float = road.half_w + other.half_w + 0.8
+				# 包围盒粗筛：离这条路全程都远于 gap 的点不可能命中，免掉整轮格子查找
+				if not (boxes[oi] as Rect2).grow(gap).has_point(Vector2(p.x, p.z)):
+					continue
 				var rr := int(ceil(gap / CELL)) + 1
 				var gx := int(p.x / CELL)
 				var gz := int(p.z / CELL)
@@ -1313,12 +1374,17 @@ func _mark_rail_skips() -> void:
 								break
 						if done:
 							break
-				road.rail_skip[i] = skip
+					if done:
+						break
+				if skip:
+					break   # 已命中：结果只看「是否有任一条路贴近」，不必再查其它路
+			road.rail_skip[i] = skip
 
 
 ## 预计算路面裁剪掩码：与「同层」路面共面重叠的采样段跳过路面四边形
 ## （如两条高架十字交叉：交叉块由主路面覆盖，副路虚线止于边缘，不再深度打架）
 func _mark_surf_skips() -> void:
+	var boxes := _road_xz_boxes()
 	for ri in roads.size():
 		var road: Road = roads[ri]
 		if not road.elevated:
@@ -1340,6 +1406,8 @@ func _mark_surf_skips() -> void:
 				var gap: float = other.half_w - 1.0
 				if gap <= 0.0:
 					continue
+				if not (boxes[oi] as Rect2).grow(gap).has_point(Vector2(p.x, p.z)):
+					continue
 				var rr := int(ceil(gap / CELL)) + 1
 				var gx := int(p.x / CELL)
 				var gz := int(p.z / CELL)
@@ -1360,7 +1428,22 @@ func _mark_surf_skips() -> void:
 							break
 					if done:
 						break
+				if skip:
+					break
 			road.surf_skip[i] = skip
+
+
+## 每条路中心线的 XZ 包围盒（与 roads 同序），给两个掩码预计算做粗筛
+func _road_xz_boxes() -> Array:
+	var out := []
+	for road in roads:
+		var r := Rect2()
+		if road.pts.size() > 0:
+			r = Rect2(road.pts[0].x, road.pts[0].z, 0.0, 0.0)
+			for q in road.pts:
+				r = r.expand(Vector2(q.x, q.z))
+		out.append(r)
+	return out
 
 
 ## 该段落在路口方块外的参数区间（0..1）。段长 1.5m 远小于方块 16m，
@@ -1847,7 +1930,7 @@ func _build_zones() -> void:
 	# 海面（独立光泽层，驶入即浅水漫过轮组）
 	# 机场平地（西郊）从海里挖开：整块水面盖过机场时，坪面/跑道只高出水面
 	# 8~12cm，中远距离深度精度不够，机场一带的路面会与水面闪烁。
-	# 豁口矩形比 _zone_color 的机场草地矩形四边各外扩 30m，水线内永远
+	# 豁口矩形比 ZONES 里的机场草地矩形四边各外扩 30m，水线内永远
 	# 压着草地色海床，不会露出蓝色旱地。
 	var ocean := StandardMaterial3D.new()
 	ocean.albedo_color = Color(0.1, 0.33, 0.56)
@@ -2520,36 +2603,67 @@ func _build_zone_ground() -> void:
 	mat.metallic_specular = 0.0   # 同上：干地面不反天空，否则俯视一片亮蓝
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
+	# 顶点级缓存：每个格点被四个格子共用，高程与分区底色只算一次
+	# （原来每格 4 次 _terrain_h + 4 次 zone_at，共 41 万次查询，是开机最慢的一段）。
+	# 顶点色的随机抖动仍由 rng 按原顺序逐格逐角抽取 —— 产出逐位不变
+	var vn := CELLS + 1
+	var hv := PackedFloat32Array()
+	hv.resize(vn * vn)
+	var zc: Array[Color] = []
+	zc.resize(vn * vn)
+	for gz in vn:
+		for gx in vn:
+			var x := -EXT + gx * cell
+			var z := -EXT + gz * cell
+			hv[gz * vn + gx] = _terrain_h(x, z)
+			zc[gz * vn + gx] = zone_at(x, z)["col"]
+
 	for bz in CELLS / BLOCK:
 		for bx in CELLS / BLOCK:
-			var st := SurfaceTool.new()
-			st.begin(Mesh.PRIMITIVE_TRIANGLES)
+			var vpos := PackedVector3Array()
+			var vnrm := PackedVector3Array()
+			var vcol := PackedColorArray()
+			vpos.resize(BLOCK * BLOCK * 6)
+			vnrm.resize(BLOCK * BLOCK * 6)
+			vcol.resize(BLOCK * BLOCK * 6)
+			var w := 0
 			for iz in BLOCK:
 				for ix in BLOCK:
 					var gx: int = bx * BLOCK + ix
 					var gz: int = bz * BLOCK + iz
 					var x0 := -EXT + gx * cell
 					var z0 := -EXT + gz * cell
-					var c00 := _zone_color(x0, z0, rng)
-					var c10 := _zone_color(x0 + cell, z0, rng)
-					var c01 := _zone_color(x0, z0 + cell, rng)
-					var c11 := _zone_color(x0 + cell, z0 + cell, rng)
-					var p00 := Vector3(x0, _terrain_h(x0, z0), z0)
-					var p10 := Vector3(x0 + cell, _terrain_h(x0 + cell, z0), z0)
-					var p01 := Vector3(x0, _terrain_h(x0, z0 + cell), z0 + cell)
-					var p11 := Vector3(x0 + cell, _terrain_h(x0 + cell, z0 + cell), z0 + cell)
-					for tri in [[p00, c00, p10, c10, p11, c11], [p00, c00, p11, c11, p01, c01]]:
-						# 法线按实际三角形算，山脊才有明暗；全 UP 会把山坡打成平地
-						var nrm: Vector3 = (tri[2] - tri[0]).cross(tri[4] - tri[0])
-						nrm = nrm.normalized() if nrm.length() > 1e-6 else Vector3.UP
-						if nrm.y < 0.0:
-							nrm = -nrm
-						for kk in [0, 2, 4]:
-							st.set_normal(nrm)
-							st.set_color(tri[kk + 1])
-							st.add_vertex(tri[kk])
+					var k00 := gz * vn + gx
+					var k01 := k00 + vn
+					# 抽取顺序必须是 00 → 10 → 01 → 11（见 _jitter）
+					var c00 := _jitter(zc[k00], rng)
+					var c10 := _jitter(zc[k00 + 1], rng)
+					var c01 := _jitter(zc[k01], rng)
+					var c11 := _jitter(zc[k01 + 1], rng)
+					var p00 := Vector3(x0, hv[k00], z0)
+					var p10 := Vector3(x0 + cell, hv[k00 + 1], z0)
+					var p01 := Vector3(x0, hv[k01], z0 + cell)
+					var p11 := Vector3(x0 + cell, hv[k01 + 1], z0 + cell)
+					# 两个三角形 (00,10,11) / (00,11,01)；法线按实际三角形算，
+					# 山脊才有明暗；全 UP 会把山坡打成平地
+					var n1 := _up_normal((p10 - p00).cross(p11 - p00))
+					var n2 := _up_normal((p11 - p00).cross(p01 - p00))
+					vpos[w] = p00; vcol[w] = c00; vnrm[w] = n1
+					vpos[w + 1] = p10; vcol[w + 1] = c10; vnrm[w + 1] = n1
+					vpos[w + 2] = p11; vcol[w + 2] = c11; vnrm[w + 2] = n1
+					vpos[w + 3] = p00; vcol[w + 3] = c00; vnrm[w + 3] = n2
+					vpos[w + 4] = p11; vcol[w + 4] = c11; vnrm[w + 4] = n2
+					vpos[w + 5] = p01; vcol[w + 5] = c01; vnrm[w + 5] = n2
+					w += 6
+			var arrays := []
+			arrays.resize(Mesh.ARRAY_MAX)
+			arrays[Mesh.ARRAY_VERTEX] = vpos
+			arrays[Mesh.ARRAY_NORMAL] = vnrm
+			arrays[Mesh.ARRAY_COLOR] = vcol
+			var am := ArrayMesh.new()
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			var mi := MeshInstance3D.new()
-			mi.mesh = st.commit()
+			mi.mesh = am
 			mi.material_override = mat
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(mi)
@@ -2567,12 +2681,16 @@ func zone_at(x: float, z: float) -> Dictionary:
 	return ZONES[-1]
 
 
-func _zone_color(x: float, z: float, rng: RRUtil.Mulberry) -> Color:
-	# rng.next() 必须仍是第一行、无条件执行：_build_zone_ground 对 320×320
-	# 网格每格调 4 次（约 41 万笔），挪位置或加 early-return 会让地面顶点色全变
+## 分区底色 + 随机抖动。rng.next() 必须每次无条件抽一次：_build_zone_ground
+## 对 320×320 网格每格按 00→10→01→11 调 4 次，改动抽取次数或顺序会让地面顶点色全变
+static func _jitter(c: Color, rng: RRUtil.Mulberry) -> Color:
 	var n := (rng.next() - 0.5) * 0.06
-	var c: Color = zone_at(x, z)["col"]
 	return Color(clampf(c.r + n, 0, 1), clampf(c.g + n, 0, 1), clampf(c.b + n, 0, 1))
+
+
+static func _up_normal(nrm: Vector3) -> Vector3:
+	nrm = nrm.normalized() if nrm.length() > 1e-6 else Vector3.UP
+	return -nrm if nrm.y < 0.0 else nrm
 
 
 ## 区域地面平面（y 为绝对高度；at 为平面中心 XZ）
