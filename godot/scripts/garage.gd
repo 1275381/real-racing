@@ -21,9 +21,10 @@ func build() -> void:
 	floor_mat.metallic = 0.35
 	floor_mat.roughness = 0.35
 
-	# 地板
+	# 地板：顶面抬到 +0.02——城市区域地面在城区正好 y=0，与地板顶面共面，
+	# 展厅地面会一块深一块浅地闪（z-fighting）。只动视觉，车/人高度仍按路网查询
 	var floor_mi := _box(Vector3(ROOM_HALF * 2.0, 0.5, ROOM_HALF * 2.0),
-			Vector3(0, -0.25, 0), floor_mat)
+			Vector3(0, -0.23, 0), floor_mat)
 	floor_mi.name = "Floor"
 	# 四面墙 + 天花板（天花板投阴影，挡住外部阳光）
 	for w in [
