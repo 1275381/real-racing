@@ -370,6 +370,7 @@ func _step_buildings() -> void:
 	_place_buildings()
 	_make_street_shops()
 	_build_landmarks()
+	_make_street_lights()   # 放在楼/店/地标之后：要避开它们的碰撞体
 	print("[map] 建筑 %dms" % [Time.get_ticks_msec() - _build_t0])
 
 
@@ -1096,8 +1097,8 @@ func is_clear_of_roads(x: float, z: float, clearance: float) -> bool:
 func resolve_obstacles(v: Vehicle) -> void:
 	_obst_hit = 0.0   # 每帧重置：hit_impulse 只反映「本帧」的新撞击
 	var r := 1.5
-	# 楼房 OBB（粗过滤：中心距 < 楼对角 + 车半径）
-	for ob in obstacles_box:
+	# 楼房 OBB：只查车所在格（格表已含外扩余量，产出与遍历全表一致）
+	for ob in obstacles_near(v.pos.x, v.pos.z):
 		if ob.has("bot") and v.pos.y + 1.0 < float(ob["bot"]):
 			continue   # 车在障碍物下方（高处栏杆等）
 		var dx: float = v.pos.x - ob["c"].x
@@ -1157,6 +1158,74 @@ func resolve_obstacles(v: Vehicle) -> void:
 		v.pos.z += nz * push
 		_obstacle_bounce(v, nx, nz)
 	v.hit_impulse = maxf(v.hit_impulse, _obst_hit)
+
+
+## 通用「圆 vs 楼房/门/墙 OBB」推出，给没有 Vehicle 物理的物体用（警车等）。
+## 与 resolve_obstacles 同一套判定（不做速度反弹），开着的门（off）不挡；返回推出后的位置
+func push_out_circle(p: Vector3, r: float) -> Vector3:
+	for ob in obstacles_near(p.x, p.z):
+		if ob.get("off", false):
+			continue
+		if ob.has("bot") and p.y + 1.0 < float(ob["bot"]):
+			continue
+		var dx: float = p.x - ob["c"].x
+		var dz: float = p.z - ob["c"].y
+		var ca: float = cos(ob["rot"])
+		var sa: float = sin(ob["rot"])
+		var lx: float = ca * dx + sa * dz
+		var lz: float = -sa * dx + ca * dz
+		var ddx: float = lx - clampf(lx, -ob["hx"], ob["hx"])
+		var ddz: float = lz - clampf(lz, -ob["hz"], ob["hz"])
+		var d2 := ddx * ddx + ddz * ddz
+		if d2 > r * r:
+			continue
+		var d := sqrt(d2)
+		var n_lx: float
+		var n_lz: float
+		if d > 0.001:
+			n_lx = ddx / d
+			n_lz = ddz / d
+		elif float(ob["hx"]) - absf(lx) < float(ob["hz"]) - absf(lz):
+			n_lx = signf(lx) if lx != 0.0 else 1.0
+			n_lz = 0.0
+		else:
+			n_lx = 0.0
+			n_lz = signf(lz) if lz != 0.0 else 1.0
+		var push := r - d
+		p.x += (ca * n_lx - sa * n_lz) * push
+		p.z += (sa * n_lx + ca * n_lz) * push
+	return p
+
+
+## 障碍物空间格：每个 OBB 按外接圆 + OBS_MARGIN 登记进所有覆盖格，
+## 查询只取点所在一格。全表 3000+ 个、碰撞在 120Hz 定步里跑，逐个遍历约 1ms/次。
+## obstacles_box 被替换或增删（门开关、编辑器改楼）后自动重建
+const OBS_CELL := 64.0
+const OBS_MARGIN := 4.0   # ≥ 车半径 1.5 / 人半径 0.5，含余量
+var _obs_grid := {}
+var _obs_grid_src: Array = []
+var _obs_grid_n := -1
+
+
+func obstacles_near(x: float, z: float) -> Array:
+	if not is_same(_obs_grid_src, obstacles_box) or _obs_grid_n != obstacles_box.size():
+		_rebuild_obs_grid()
+	return _obs_grid.get(Vector2i(floori(x / OBS_CELL), floori(z / OBS_CELL)), [])
+
+
+func _rebuild_obs_grid() -> void:
+	_obs_grid = {}
+	_obs_grid_src = obstacles_box
+	_obs_grid_n = obstacles_box.size()
+	for ob in obstacles_box:
+		var c: Vector2 = ob["c"]
+		var rad: float = Vector2(float(ob["hx"]), float(ob["hz"])).length() + OBS_MARGIN
+		for gx in range(floori((c.x - rad) / OBS_CELL), floori((c.x + rad) / OBS_CELL) + 1):
+			for gz in range(floori((c.y - rad) / OBS_CELL), floori((c.y + rad) / OBS_CELL) + 1):
+				var k := Vector2i(gx, gz)
+				if not _obs_grid.has(k):
+					_obs_grid[k] = []
+				_obs_grid[k].append(ob)
 
 
 func _obstacle_bounce(v: Vehicle, nx: float, nz: float) -> void:
@@ -3403,8 +3472,7 @@ func _gen_buildings() -> Array:
 			h: float) -> void:
 		if not buildable.call(cx, cz, w * 0.5, dep * 0.5):
 			return
-		# 楼房碰撞体（轴对齐 OBB，供漫游车辆撞墙反馈）
-		obstacles_box.append({"c": Vector2(cx, cz), "hx": w * 0.5, "hz": dep * 0.5, "rot": 0.0})
+		# 楼房碰撞体不在这里登记：统一由 _sync_building_obstacles 按最终记录生成
 		var tint: Color = palette[mini(int(rng.next() * palette.size()), palette.size() - 1)]
 		var j := rng.range(-0.05, 0.05)
 		tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
@@ -3569,6 +3637,174 @@ func _building_instances(recs: Array) -> Dictionary:
 	return {"xfs": xfs, "cols": cols, "ants": ants}
 
 
+# ============================================================
+#  路灯：网格街两侧人行道外缘，夜间灯头发光 + 玩家附近一池真实光源
+# ============================================================
+const LAMP_STEP := 36.0      # 同侧间距（对侧错开半格）
+const LAMP_OFF := 8.6        # 距街道中心线：路缘石内侧人行道上（商店街店面在 10.9，不能再往外）
+const LAMP_H := 7.5          # 灯杆高
+const LAMP_ARM := 1.6        # 灯臂向路面伸出
+const LAMP_POOL := 12        # 真实光源数：只点亮离玩家最近的几盏
+var street_lamps := PackedVector3Array()   # 灯头位置（光源池按它挑最近的）
+var _lamp_mat: StandardMaterial3D
+var _lamp_lights: Array[SpotLight3D] = []
+var _lamp_pool_t := 0.0
+
+
+func _make_street_lights() -> void:
+	var poles: Array[Transform3D] = []
+	var arms: Array[Transform3D] = []
+	var heads: Array[Transform3D] = []
+	var pole_obs := []   # 最后一次性并入 obstacles_box（逐个 append 会让空间格反复重建）
+	for street in GRID_COORDS:
+		for along_x in [false, true]:
+			for side in [-1.0, 1.0]:
+				var t := -900.0 + (LAMP_STEP * 0.5 if side > 0.0 else 0.0)
+				while t <= 900.0:
+					var a := t
+					t += LAMP_STEP
+					# 路口前后留空（斑马线 + 转角人行道 + 红绿灯杆）
+					var near_x := false
+					for c2 in GRID_COORDS:
+						if absf(a - float(c2)) < GRID_HALF_W + 6.0:
+							near_x = true
+							break
+					if near_x:
+						continue
+					var px: float = a if along_x else float(street) + side * LAMP_OFF
+					var pz: float = float(street) + side * LAMP_OFF if along_x else a
+					if absf(px) > 905.0 or absf(pz) > 905.0 or _in_surf_hole(px, pz):
+						continue
+					if not _lamp_spot_clear(px, pz):
+						continue
+					# 灯臂朝路中心
+					var dir := Vector3(0, 0, -side) if along_x else Vector3(-side, 0, 0)
+					var yaw := atan2(dir.x, dir.z)
+					var base := Vector3(px, 0.0, pz)
+					poles.append(Transform3D(Basis(), base + Vector3(0, LAMP_H * 0.5, 0)))
+					arms.append(Transform3D(Basis.from_euler(Vector3(0, yaw, 0)),
+							base + Vector3(0, LAMP_H - 0.1, 0) + dir * (LAMP_ARM * 0.5)))
+					var hp := base + Vector3(0, LAMP_H - 0.3, 0) + dir * LAMP_ARM
+					heads.append(Transform3D(Basis.from_euler(Vector3(0, yaw, 0)), hp))
+					street_lamps.append(hp)
+					# 灯杆立在车开得上去的人行道上：给个细碰撞，免得车从杆子里穿过去
+					pole_obs.append({"c": Vector2(px, pz), "hx": 0.18, "hz": 0.18, "rot": 0.0})
+	obstacles_box.append_array(pole_obs)
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color("#3a3f46")
+	steel.metallic = 0.5
+	steel.roughness = 0.5
+	var pole_mesh := CylinderMesh.new()
+	pole_mesh.top_radius = 0.07
+	pole_mesh.bottom_radius = 0.11
+	pole_mesh.height = LAMP_H
+	pole_mesh.radial_segments = 8
+	pole_mesh.material = steel
+	var arm_mesh := BoxMesh.new()
+	arm_mesh.size = Vector3(0.08, 0.08, LAMP_ARM)
+	arm_mesh.material = steel
+	_lamp_mat = StandardMaterial3D.new()
+	_lamp_mat.albedo_color = Color(0.85, 0.85, 0.8)
+	_lamp_mat.emission_enabled = true
+	_lamp_mat.emission = Color(1.0, 0.82, 0.55)
+	_lamp_mat.emission_energy_multiplier = 0.0
+	var head_mesh := BoxMesh.new()
+	head_mesh.size = Vector3(0.36, 0.12, 0.7)
+	head_mesh.material = _lamp_mat
+	for pack in [[pole_mesh, poles, true], [arm_mesh, arms, false], [head_mesh, heads, false]]:
+		var list: Array[Transform3D] = pack[1]
+		if list.is_empty():
+			continue
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = pack[0]
+		mm.instance_count = list.size()
+		for i in list.size():
+			mm.set_instance_transform(i, list[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if pack[2] \
+				else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mmi)
+	print("[map] 路灯 %d 盏" % street_lamps.size())
+
+
+## 灯杆落点不能压在楼/店/地标碰撞体或高架桥墩上
+func _lamp_spot_clear(x: float, z: float) -> bool:
+	for ob in obstacles_near(x, z):
+		var dx: float = x - ob["c"].x
+		var dz: float = z - ob["c"].y
+		var ca: float = cos(ob["rot"])
+		var sa: float = sin(ob["rot"])
+		var lx: float = ca * dx + sa * dz
+		var lz: float = -sa * dx + ca * dz
+		if absf(lx) < float(ob["hx"]) + 0.6 and absf(lz) < float(ob["hz"]) + 0.6:
+			return false
+	for pp in pillar_pts:
+		if Vector2(pp.x - x, pp.z - z).length() < 3.0:
+			return false
+	return true
+
+
+## 每帧由 game 调用：灯头亮度跟夜色走；光源池每 0.25s 挪到离玩家最近的几盏
+func update_street_lights(night: float, at: Vector3, dt: float) -> void:
+	if _lamp_mat == null:
+		return
+	var e := smoothstep(0.2, 0.6, night)
+	_lamp_mat.emission_energy_multiplier = 3.2 * e
+	if _lamp_lights.is_empty():
+		for i in LAMP_POOL:
+			var l := SpotLight3D.new()
+			l.light_color = Color(1.0, 0.8, 0.55)
+			l.spot_range = 24.0
+			l.spot_angle = 64.0
+			l.spot_attenuation = 0.7
+			l.shadow_enabled = false
+			l.rotation = Vector3(-PI * 0.5, 0.0, 0.0)   # SpotLight 沿 -Z 照：转成朝下
+			l.visible = false
+			add_child(l)
+			_lamp_lights.append(l)
+	if e <= 0.0:
+		for l in _lamp_lights:
+			l.visible = false
+		return
+	_lamp_pool_t -= dt
+	if _lamp_pool_t <= 0.0:
+		_lamp_pool_t = 0.25
+		var best: Array = []   # [距离², 序号]，保持升序，最多 LAMP_POOL 个
+		for i in street_lamps.size():
+			var q := street_lamps[i]
+			var d2 := (q.x - at.x) * (q.x - at.x) + (q.z - at.z) * (q.z - at.z)
+			if d2 > 110.0 * 110.0:
+				continue
+			if best.size() < LAMP_POOL or d2 < float(best[-1][0]):
+				var k := best.size()
+				while k > 0 and float(best[k - 1][0]) > d2:
+					k -= 1
+				best.insert(k, [d2, i])
+				if best.size() > LAMP_POOL:
+					best.pop_back()
+		for li in _lamp_lights.size():
+			var l := _lamp_lights[li]
+			l.visible = li < best.size()
+			if l.visible:
+				l.position = street_lamps[int(best[li][1])] - Vector3(0, 0.15, 0)
+	for l in _lamp_lights:
+		l.light_energy = 9.0 * e
+
+
+## 楼房碰撞体按「最终建筑记录」（烘焙底板 + 编辑器补丁）生成，打 bld 标记。
+## 原来只在现跑生成器的 put() 里登记；改为取烘焙底板后生成器不再运行，
+## 全城 1600 多栋楼都没有碰撞，车和人直接穿楼。编辑器改楼后也要重登。
+## 主楼体占地最大（退台/设备房都在其上方内缩），一栋一个轴对齐 OBB 即可
+func _sync_building_obstacles(recs: Array) -> void:
+	obstacles_box = obstacles_box.filter(func(o: Dictionary) -> bool: return not o.has("bld"))
+	for r in recs:
+		obstacles_box.append({"c": Vector2(float(r["x"]), float(r["z"])),
+				"hx": float(r["w"]) * 0.5, "hz": float(r["dep"]) * 0.5,
+				"rot": 0.0, "bld": true})
+
+
 ## 建筑记录 → MultiMesh（楼体一个、天线一个）
 func _emit_buildings(recs: Array) -> void:
 	var inst := _building_instances(recs)
@@ -3634,6 +3870,7 @@ func _place_buildings() -> void:
 		print("[map] ⚠ %d 条补丁找不到宿主（底板变过？）" % orphans.size())
 	bld_recs = res["recs"]
 	_emit_buildings(bld_recs)
+	_sync_building_obstacles(bld_recs)
 
 
 ## 编辑器改完建筑后就地刷新两个 MultiMesh（2450 实例，几毫秒）。
@@ -3641,6 +3878,7 @@ func _place_buildings() -> void:
 ## 会让旧节点在本帧继续渲染、叠出陈的画面，而且白白制造节点churn。
 func refresh_buildings(recs_in: Array) -> void:
 	bld_recs = recs_in
+	_sync_building_obstacles(recs_in)
 	if bld_mmi == null:
 		_emit_buildings(recs_in)
 		return

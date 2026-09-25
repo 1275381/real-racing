@@ -407,7 +407,7 @@ func update(dt: float) -> void:
 		move_speed = 0.0
 	# 楼房 OBB 推出（半径 0.5）。带 bot 的障碍（高处栏杆等）只在其
 	# 高度区间生效：行人在其下方可正常通行
-	for ob in fm.obstacles_box:
+	for ob in fm.obstacles_near(pos.x, pos.z):
 		if ob.get("off", false):
 			continue
 		if ob.has("top") and pos.y > float(ob["top"]) - 1.0:

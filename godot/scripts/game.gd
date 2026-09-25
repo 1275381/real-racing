@@ -315,14 +315,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 任意用户输入解锁音频（开机直达漫游，无车库点击手势）
 	if event is InputEventKey or event is InputEventMouseButton:
 		audio.ensure()
-	# L 键：车灯开关（仅驾车；白天按了也没光）
+	# L 键：车灯模式 自动 → 常开 → 关闭 循环（仅驾车）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_L \
 			and state in [ST.ROAM, ST.RACING] and not on_foot \
 			and not plane_mode and not shop_open and not gunshop_open \
 			and not map_open:
-		headlight_on = not headlight_on
-		hud.show_center("车灯 " + ("开" if headlight_on else "关"), "", 800)
+		headlight_mode = (headlight_mode + 1) % 3
+		hud.show_center("车灯 " + ["自动", "常开", "关闭"][headlight_mode], "", 800)
 	# O 键：漫游开/关自动导航；比赛中开/关领航员
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_O:
@@ -540,7 +540,7 @@ var _codriver_ai: AIDriver
 var _car_preload_thread: Thread    # 车型预加载后台线程
 var _loading: LoadingScreen        # 加载遮罩（开机/换城市），进漫游后淡出释放
 var _car_preload_stop := false     # 退出时让预加载线程在两个文件之间停手
-var headlight_on := false          # 车灯手动开关（L 键，车内/夜间）
+var headlight_mode := 0            # 车灯：0 自动（夜间/雾雨雪亮）1 常开 2 关闭（L 键循环）
 var map_open := false              # 大地图（导航）界面
 var nav_dest := Vector2(-9e9, -9e9)
 var nav_dest_label := ""
@@ -1181,6 +1181,17 @@ func start_from_garage() -> void:
 # ================= 漫游战机（车库/漫游） =================
 
 ## 夜色车头灯（挂在车模前部，随车型重建）
+## 车灯该不该亮：自动模式下入夜（night_f>0.35）或浓雾/雨/雪（强度>0.5）点亮
+func _headlights_wanted() -> bool:
+	match headlight_mode:
+		1:
+			return true
+		2:
+			return false
+	return day_cycle.night_f > 0.35 or (day_cycle.weather != "clear"
+			and day_cycle.weather_intensity > 0.5)
+
+
 func _ensure_headlight() -> void:
 	if _headlight != null and is_instance_valid(_headlight):
 		return
@@ -2133,9 +2144,11 @@ func _process(dt_real: float) -> void:
 		day_cycle.advance(dt)
 		day_cycle.apply(env)
 		if _headlight != null and is_instance_valid(_headlight):
-			_headlight.visible = headlight_on \
-					and day_cycle.night_f > 0.4 \
+			_headlight.visible = _headlights_wanted() \
 					and not on_foot and state != ST.GARAGE
+		if state == ST.ROAM and freeroam != null:
+			freeroam.update_street_lights(day_cycle.night_f,
+					onfoot.pos if on_foot else player.veh.pos, dt)
 		hud.update_clock(day_cycle.clock_text(), day_cycle.phase_text(),
 				day_cycle.weather_text())
 		hud.set_clock_visible(state != ST.GARAGE)
@@ -2148,7 +2161,6 @@ func _process(dt_real: float) -> void:
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
 		freeroam.update_landmarks(dt)
-		freeroam.resolve_obstacles(player.veh)   # 楼房/桥墩碰撞（路边无空气墙）
 
 	# 音效参数
 	var pv := player.veh
@@ -2545,6 +2557,9 @@ func _step_sim(h: float) -> void:
 			freeroam.step_garage(h, pin.pos, inp_r["throttle"] > 0.1)
 			pin.step(h)
 			_roam_bound(pin)
+			# 楼房/桥墩碰撞放在定步物理里逐步做（120Hz）：原来在 _process 每帧一次，
+			# 低帧率 + 高速时一帧能走好几米，推出方向会判错
+			freeroam.resolve_obstacles(pin)
 			npc.player_on_foot = false
 		# 机场氛围（客机起降 + 登机人流 + 班机补充）+ 门动画 + 货运任务
 		if airport_traffic != null:

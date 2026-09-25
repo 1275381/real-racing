@@ -13,6 +13,9 @@ const CAR_COUNT := 20
 const POLICE_COUNT := 4
 const POLICE_MAX := 6
 const POLICE_TOP_SPEED := 62.0   # 警车极速硬上限（~223km/h）：无论玩家开多快都不超越
+const POLICE_GAP := 5.0          # 警车之间最小中心距（车长约 4.5m）
+const POLICE_SLOT_R := 7.0       # 包抄点：各车瞄玩家周围一圈不同的点
+const POLICE_SLOT_NEAR := 14.0   # 进入这个距离后直扑玩家（逮捕需要贴身）
 const PED_TARGET := 220
 const SEDAN_COLORS := [
 	Color("#d8d9dd"), Color("#b8bcc4"), Color("#23262c"), Color("#7d1f1f"),
@@ -528,6 +531,10 @@ func trigger_wanted() -> void:
 		var ang := float(i) / float(POLICE_COUNT) * TAU + randf() * 0.5
 		var px := player_pos.x + sin(ang) * 80.0
 		var pz := player_pos.z + cos(ang) * 80.0
+		# 出生点随机落在环上，可能正好在楼里：先推出楼体
+		var sp: Vector3 = fm.push_out_circle(Vector3(px, player_pos.y, pz), 1.4)
+		px = sp.x
+		pz = sp.z
 		var q: Dictionary = fm.query(px, pz, null, player_pos.y)
 		var vis := CarVisual.create("gt3", Color(0.95, 0.95, 0.97), Color(0.08, 0.1, 0.14))
 		add_child(vis)
@@ -866,11 +873,19 @@ func tilt_sway(t: float, phase: float) -> float:
 func _update_police(dt: float) -> void:
 	var min_d := INF
 	_update_heli(dt)
-	for u in police:
+	for ui in police.size():
+		var u: Dictionary = police[ui]
 		var pos: Vector3 = u["pos"]
 		var to_p := player_pos - pos
 		to_p.y = 0.0
 		var d := to_p.length()
+		# 远处各瞄玩家周围一圈不同的包抄点（按序号均分角度），近身再直扑玩家。
+		# 原来全体纯追踪玩家同一点，几辆车越追越挤，最后叠成一辆
+		var goal := to_p
+		if d > POLICE_SLOT_NEAR:
+			var sa := float(ui) / float(police.size()) * TAU
+			goal = to_p + Vector3(sin(sa), 0.0, cos(sa)) * POLICE_SLOT_R
+		var gd := goal.length()
 		min_d = minf(min_d, d)
 		# 追击动力：加速 16 m/s²，极速 165km/h 起步；随玩家车速水涨船高
 		# （玩家车速 +2），但有硬上限 ~223km/h——顶配车直线全油门即可拉开。
@@ -882,8 +897,19 @@ func _update_police(dt: float) -> void:
 			u["speed"] = minf(float(u["speed"]),
 					minf(player_speed + 6.0, POLICE_TOP_SPEED))
 		var spd: float = u["speed"]
-		if d > 2.0:
-			pos += to_p / d * spd * dt
+		if d > 2.0 and gd > 0.01:
+			pos += goal / gd * minf(spd * dt, gd)
+		# 与前面已更新的警车保持间距（互不重叠）；恰好重合时按序号错开
+		for uj in ui:
+			var op: Vector3 = police[uj]["pos"]
+			var sep := Vector2(pos.x - op.x, pos.z - op.z)
+			var sd := sep.length()
+			if sd < POLICE_GAP:
+				var sn := sep / sd if sd > 0.01 else Vector2(sin(float(ui)), cos(float(ui)))
+				pos.x += sn.x * (POLICE_GAP - sd)
+				pos.z += sn.y * (POLICE_GAP - sd)
+		# 楼房碰撞：原来警车直线穿楼
+		pos = fm.push_out_circle(pos, 1.4)
 		var q: Dictionary = fm.query(pos.x, pos.z, u["last_idx"], pos.y)
 		u["last_idx"] = q["idx"]
 		pos.y = q["height"]
@@ -903,11 +929,14 @@ func _update_police(dt: float) -> void:
 				u["fire_cd"] = 1.2
 				var dmg := randf_range(6.0, 10.0)
 				police_shot.emit(dmg)
+		# 车头朝实际行驶方向（包抄/避让/推出后不一定正对玩家）；几乎没动时朝玩家
+		var mv: Vector3 = pos - (u["pos"] as Vector3)
+		var face := Vector2(mv.x, mv.z) if Vector2(mv.x, mv.z).length() > 0.02 \
+				else Vector2(to_p.x, to_p.z)
 		u["pos"] = pos
 		var vis: Node3D = u["vis"]
 		vis.position = pos
-		# 车头指向行驶方向（原来误用被清零的 to_p.y，恒朝东西向=原地平移）
-		vis.rotation.y = atan2(to_p.x, to_p.z)
+		vis.rotation.y = atan2(face.x, face.y)
 		# 警灯交替闪烁
 		var blink := int(_wanted_t * 4.0) % 2 == 0
 		(u["light_r"] as MeshInstance3D).visible = blink
@@ -920,8 +949,8 @@ func _update_police(dt: float) -> void:
 		u["last"] = pos
 		if float(u["stuck"]) > 3.0 and d < 120.0:
 			var ang := randf() * TAU
-			u["pos"] = Vector3(player_pos.x + sin(ang) * 60.0, pos.y,
-					player_pos.z + cos(ang) * 60.0)
+			u["pos"] = fm.push_out_circle(Vector3(player_pos.x + sin(ang) * 60.0, pos.y,
+					player_pos.z + cos(ang) * 60.0), 1.4)
 			u["stuck"] = 0.0
 	# 警车已全部清空（逃脱/脱离后）：不再驱动通缉横幅——否则空表 min_d=INF
 	# 恒大于 180m，会把「通缉中」字幕重新刷出来（逃脱后字幕残留的根因）
@@ -988,7 +1017,7 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	var t2 := 2.0
 	while t2 < best["d"]:
 		var p: Vector3 = from + dir * t2
-		for ob in fm.obstacles_box:
+		for ob in fm.obstacles_near(p.x, p.z):
 			var dx: float = p.x - ob["c"].x
 			var dz: float = p.z - ob["c"].y
 			if dx * dx + dz * dz > 8100.0:
@@ -1050,6 +1079,10 @@ func escalate() -> void:
 		var ang := randf() * TAU
 		var px := player_pos.x + sin(ang) * 60.0
 		var pz := player_pos.z + cos(ang) * 60.0
+		# 出生点随机落在环上，可能正好在楼里：先推出楼体
+		var sp: Vector3 = fm.push_out_circle(Vector3(px, player_pos.y, pz), 1.4)
+		px = sp.x
+		pz = sp.z
 		var q: Dictionary = fm.query(px, pz, null, player_pos.y)
 		var vis := CarVisual.create("gt3", Color(0.95, 0.95, 0.97), Color(0.08, 0.1, 0.14))
 		add_child(vis)
