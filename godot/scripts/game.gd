@@ -1388,6 +1388,7 @@ func enter_roam() -> void:
 	hud.set_map_marker(FreeroamMap.SHOP_POS.x, FreeroamMap.SHOP_POS.y, "店")
 	hud.add_map_marker(FreeroamMap.GUNSHOP_POS.x, FreeroamMap.GUNSHOP_POS.y, "枪")
 	hud.add_map_marker(-1476.0, -570.0, "货")   # 截机任务·停靠货机
+	hud.add_map_marker(480.0, 2470.0, "赛")     # RR 国际赛车场
 	hud.set_roam_tach()
 	# NPC 交通 + 行人 + 警察
 	if npc == null:

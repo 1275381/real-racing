@@ -229,6 +229,7 @@ func build() -> void:
 	_make_cross_highways()
 	_make_ramps()
 	_make_outskirts_roads()
+	_make_raceway()
 	_build_airport(AIRPORT_POS, AIRPORT_HEADING)
 	_build_far_city()
 	print("[map] 路网采样 %d 点 %dms" % [n, Time.get_ticks_msec() - t0])
@@ -511,6 +512,149 @@ func _make_outskirts_roads() -> void:
 			[0.03], false, 7.0, false)
 	_make_road([Vector2(-540, 900), Vector2(-540, 1250), Vector2(-420, 1500)],
 			[0.03], false, 6.0, false)
+
+
+## 东南向赛车场高速 + RR 国际赛车场：城南 x=180 街引出高架（10m）一路南下
+## 约 2.6km，大弯后落地即赛车场东门；闭环赛道可自由绕圈。导航图自动收录。
+func _make_raceway() -> void:
+	# ---- 赛车场高速：爬升 → 10m 等高高架 → 落地（一条路避免接缝）----
+	_make_road([
+		Vector2(180, 905), Vector2(200, 1150), Vector2(180, 1450),
+		Vector2(120, 1800), Vector2(140, 2150), Vector2(330, 2420),
+		Vector2(560, 2530), Vector2(700, 2545), Vector2(790, 2500),
+		Vector2(830, 2420), Vector2(845, 2340),
+	], [0.03, 0.2, 6.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 8.0, 4.0, 0.2],
+			false, 10.0, true)
+	# ---- 连接道：高速落地口 → 赛道东直道入口 ----
+	_make_road([Vector2(845, 2340), Vector2(800, 2380), Vector2(755, 2415),
+			Vector2(716, 2432)], [0.2, 0.1, 0.05, 0.03], false, 7.0, false)
+	# ---- 赛道闭环（东大直道 + 发卡 + S 弯，周长约 1.7km，宽 24m）----
+	_make_road([
+		Vector2(700, 2300), Vector2(715, 2560), Vector2(640, 2700),
+		Vector2(460, 2735), Vector2(300, 2690), Vector2(230, 2560),
+		Vector2(320, 2470), Vector2(440, 2520), Vector2(540, 2450),
+		Vector2(560, 2300), Vector2(450, 2230), Vector2(280, 2250),
+		Vector2(170, 2330),
+	], [0.03], true, 12.0, false)
+	_make_raceway_props()
+
+
+## 赛车场配套设施：主看台 / 维修 P 房 / 起点龙门架 / 四角灯塔 / 广场垫层
+func _make_raceway_props() -> void:
+	var root := Node3D.new()
+	root.name = "Raceway"
+	add_child(root)
+	var white := _lm_mat(Color(0.88, 0.89, 0.91))
+	var steel := _lm_mat(Color(0.52, 0.55, 0.6))
+	var dark := _lm_mat(Color(0.16, 0.17, 0.2))
+	var red := _lm_mat(Color(0.72, 0.2, 0.16))
+	var grass_y := 0.0
+
+	# 广场垫层（高速落地 → 东门之间，避开赛道东缘 727m）
+	var plaza := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(200, 260)
+	var pmat := StandardMaterial3D.new()
+	pmat.albedo_color = Color(0.36, 0.37, 0.4)
+	pmat.roughness = 0.95
+	pm.material = pmat
+	plane_setup(plaza, pm, Vector3(838, 0.05, 2390))
+	root.add_child(plaza)
+
+	# 主看台：南直道外侧，阶梯 3 层 + 顶棚 + 支柱（长 200m）
+	var st_x := 400.0
+	var st_z := 2140.0
+	for l in 3:
+		_lm_box(root, Vector3(st_x, grass_y + 1.6 + l * 2.6, st_z - l * 5.0),
+				Vector3(200, 2.6, 5.0), steel)
+	_lm_box(root, Vector3(st_x, grass_y + 11.5, st_z - 9.0),
+			Vector3(204, 0.5, 14.0), white)
+	for px in [-90.0, -30.0, 30.0, 90.0]:
+		_lm_box(root, Vector3(st_x + px, grass_y + 6.0, st_z - 13.5),
+				Vector3(1.2, 12.0, 1.2), dark)
+	obstacles_box.append({"c": Vector2(st_x, st_z - 5.0), "hx": 100.0,
+			"hz": 9.0, "rot": 0.0, "top": grass_y + 8.0})
+	# 看台坐席色带（红白相间）
+	for l in 3:
+		_lm_box(root, Vector3(st_x, grass_y + 2.95 + l * 2.6, st_z + 2.2 - l * 5.0),
+				Vector3(198, 0.4, 0.6), red if l % 2 == 0 else white)
+
+	# 维修 P 房：发卡区西侧内场一排 4 间（带卷帘门色带）
+	for i in 4:
+		var px := 250.0 + i * 26.0
+		_lm_box(root, Vector3(px, grass_y + 3.0, 2390.0),
+				Vector3(20, 6, 9), white)
+		_lm_box(root, Vector3(px, grass_y + 2.2, 2385.4),
+				Vector3(14, 3.4, 0.3), red)
+		obstacles_box.append({"c": Vector2(px, 2390.0), "hx": 10.0,
+				"hz": 4.5, "rot": 0.0, "top": 6.0})
+		var pn := Label3D.new()
+		pn.text = "P%d" % (i + 1)
+		pn.font_size = 220
+		pn.modulate = Color(0.9, 0.2, 0.15)
+		pn.outline_size = 30
+		pn.position = Vector3(px - 7.0, 4.4, 2385.2)
+		root.add_child(pn)
+
+	# 起点龙门架：东直道中点跨路 + 大字
+	_lm_box(root, Vector3(707, 8.0, 2430), Vector3(2.0, 1.6, 40.0), dark)
+	for gx in [-14.0, 14.0]:
+		_lm_box(root, Vector3(707, 4.0, 2430 + gx), Vector3(1.6, 8.0, 1.6), dark)
+	var gate := Label3D.new()
+	gate.text = "RR 国际赛车场"
+	gate.font_size = 260
+	gate.modulate = Color(1.0, 0.85, 0.3)
+	gate.outline_size = 40
+	gate.position = Vector3(707, 8.0, 2430)
+	gate.rotation.y = PI * 0.5
+	root.add_child(gate)
+	obstacles_box.append({"c": Vector2(707, 2416.0), "hx": 1.0, "hz": 1.0,
+			"rot": 0.0, "top": 8.0})
+	obstacles_box.append({"c": Vector2(707, 2444.0), "hx": 1.0, "hz": 1.0,
+			"rot": 0.0, "top": 8.0})
+
+	# 四角灯塔（高杆灯，夜间灯头发光）
+	for c in [Vector2(690, 2180), Vector2(690, 2690), Vector2(200, 2690),
+			Vector2(195, 2180)]:
+		_lm_box(root, Vector3(c.x, grass_y + 15.0, c.y), Vector3(1.4, 30.0, 1.4),
+				steel)
+		_lm_box(root, Vector3(c.x, grass_y + 30.4, c.y), Vector3(6.0, 0.9, 2.2),
+				_lm_mat(Color(1.0, 0.95, 0.8), Color(1.0, 0.92, 0.7), 1.6))
+		obstacles_box.append({"c": c, "hx": 0.8, "hz": 0.8, "rot": 0.0,
+				"top": 30.0})
+
+	# 东门欢迎牌（连接道旁）
+	_lm_box(root, Vector3(792, 3.4, 2348), Vector3(0.8, 6.8, 22.0), dark)
+	var welcome := Label3D.new()
+	welcome.text = "极速争锋国际赛车场"
+	welcome.font_size = 180
+	welcome.modulate = Color(1.0, 0.85, 0.3)
+	welcome.outline_size = 36
+	welcome.position = Vector3(792.6, 3.4, 2348)
+	welcome.rotation.y = -PI * 0.5
+	root.add_child(welcome)
+
+	# 高速指示牌 ×2（绿底白字，行车方向右侧）
+	for s in [{"p": Vector2(196, 1600), "t": "国际赛车场 3km →"},
+			{"p": Vector2(560, 2570), "t": "赛车场出口 →"}]:
+		_lm_box(root, Vector3(s["p"].x, 12.6, s["p"].y), Vector3(0.6, 3.0, 12.0),
+				_lm_mat(Color(0.1, 0.42, 0.2)))
+		_lm_box(root, Vector3(s["p"].x, 10.9, s["p"].y), Vector3(0.5, 2.6, 0.5),
+				steel)
+		var sg := Label3D.new()
+		sg.text = s["t"]
+		sg.font_size = 130
+		sg.modulate = Color(0.95, 1.0, 0.95)
+		sg.outline_size = 20
+		sg.position = Vector3(s["p"].x - 0.4, 12.6, s["p"].y)
+		sg.rotation.y = -PI * 0.5
+		root.add_child(sg)
+
+
+## PlaneMesh 节点快捷摆放
+func plane_setup(mi: MeshInstance3D, pm: PlaneMesh, at: Vector3) -> void:
+	mi.mesh = pm
+	mi.position = at
 
 
 ## 出生点：卷帘门车库内（x=180 街东侧），车头朝西正对门洞——
