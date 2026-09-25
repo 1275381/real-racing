@@ -417,7 +417,9 @@ func update(dt: float) -> void:
 		var run := Input.is_physical_key_pressed(KEY_SHIFT)
 		move_speed = (RUN if run else WALK) * clampf(Vector2(mf, ms).length(), 0.0, 1.0)
 		var fwd := Vector3(sin(yaw), 0, cos(yaw))
-		var right := Vector3(cos(yaw), 0, -sin(yaw))
+		# 屏幕右 = 前向 × 上 = (-cos, 0, sin)。原来写成 (cos, 0, -sin) 是屏幕左，
+		# A/D 左右平移一直是反的
+		var right := Vector3(-cos(yaw), 0, sin(yaw))
 		var dir := (fwd * mf + right * ms).normalized()
 		pos += dir * move_speed * dt
 	else:

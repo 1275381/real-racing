@@ -45,6 +45,12 @@ var respawn_wait := 0.0
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 挂在 HUD CanvasLayer 下、不在 _root 主题树里：必须自带中文字体主题，
+	# 否则回退字体缺「敌」等简体字，击杀播报/计分板出方框
+	var th := Theme.new()
+	th.default_font = RRFont.get_font()
+	th.default_font_size = 16
+	theme = th
 
 
 func setup(bf_ref) -> void:
