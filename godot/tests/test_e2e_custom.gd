@@ -3,6 +3,9 @@ extends SceneTree
 
 func _initialize() -> void:
 	OS.set_environment("RR_SETTINGS_PATH", "user://rr_settings_probe.cfg")
+	# 探针共用一份隔离存档：起跑前清掉，免得上一个探针留下的状态
+	# （如冒烟测试持久化的 plane=true）让本探针的结果取决于运行顺序
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://rr_settings_probe.cfg"))
 	# 1) 模拟编辑器编译保存（带高度起伏的椭圆）
 	var pts := []
 	for k in 12:

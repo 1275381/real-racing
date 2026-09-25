@@ -344,7 +344,17 @@ func _car_preload_worker() -> void:
 			files.append(m["file"])
 	files.append("res://assets/cars/gun_rifle.glb")
 	for f in files:
+		if _car_preload_stop:
+			return
 		ResourceLoader.load(f, "PackedScene", ResourceLoader.CACHE_MODE_REUSE)
+
+
+## 退出时回收预加载线程：不 join 的话引擎关闭会把正在进行的 load 腰斩，
+## 报 Error loading resource + 「Thread object is being destroyed」
+func _exit_tree() -> void:
+	if _car_preload_thread != null and _car_preload_thread.is_started():
+		_car_preload_stop = true
+		_car_preload_thread.wait_to_finish()
 
 
 # ================= 输入 =================
@@ -515,6 +525,7 @@ var _elev_target := 0.32           # 轿厢目标楼层
 var codriver := false              # 比赛领航员（AI 代驾，水平有限）
 var _codriver_ai: AIDriver
 var _car_preload_thread: Thread    # 车型预加载后台线程
+var _car_preload_stop := false     # 退出时让预加载线程在两个文件之间停手
 var headlight_on := false          # 车灯手动开关（L 键，车内/夜间）
 var map_open := false              # 大地图（导航）界面
 var nav_dest := Vector2(-9e9, -9e9)

@@ -124,4 +124,7 @@ func _init() -> void:
 				"不符 %d 点 %s" % [mbad, mfirst])
 
 	print("[test] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
+	# 地图没挂进场景树，退出前手动释放——否则孤儿节点的渲染 RID
+	# 拖到渲染服务器关闭之后才析构，引擎退出时 SIGSEGV（退出码 134）
+	m.free()
 	quit(1 if fails > 0 else 0)
