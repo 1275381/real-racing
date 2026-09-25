@@ -3,6 +3,8 @@ extends Node3D
 ## 自由漫游下车人模式：第一人称持枪步行 + 射击（左键开枪+自动三倍开镜）。
 ## 角色碰撞复用楼房 OBB 推出；地面高度走 freeroam query。
 
+const TracerPool := preload("res://scripts/tracer_pool.gd")
+
 signal shoot_hit(kind: String, idx: int, point: Vector3, dmg: float)
 signal reload_done
 
@@ -61,8 +63,7 @@ const GUN_HIP_ROT := Vector3(2.5, 4.0, 3.0)
 var _flash: OmniLight3D
 var _flash_mesh: MeshInstance3D
 var _flash_t := 0.0
-var _tr_pool: Array = []   # 曳光弹对象池 {mi, t}
-var _tr_i := 0
+var _tracers                # 曳光弹（tracer_pool.gd：短亮线从枪口飞向落点）
 var _im_pool: Array = []   # 命中火花对象池 {mi, t}
 var _im_i := 0
 var _identity := Transform3D()
@@ -97,6 +98,8 @@ func exit() -> void:
 		_flash_mesh.visible = false
 	if _falling_mag != null:
 		_falling_mag.visible = false
+	if _tracers != null:
+		_tracers.hide_all()
 	if cam != null:
 		cam.fov = _base_fov
 
@@ -235,20 +238,10 @@ func retarget(map_ref, targets_ref) -> void:
 
 ## 曳光弹与命中火花的对象池
 func _setup_fx() -> void:
-	var tmat := StandardMaterial3D.new()
-	tmat.albedo_color = Color(1.0, 0.9, 0.5)
-	tmat.emission_enabled = true
-	tmat.emission = Color(1.0, 0.8, 0.35)
-	tmat.emission_energy_multiplier = 4.0
-	var tmesh := BoxMesh.new()
-	tmesh.size = Vector3(0.025, 0.025, 1.0)
-	tmesh.material = tmat
-	for i in 4:
-		var mi := MeshInstance3D.new()
-		mi.mesh = tmesh
-		mi.visible = false
-		add_child(mi)
-		_tr_pool.append({"mi": mi, "t": 0.0})
+	_tracers = TracerPool.new()
+	add_child(_tracers)
+	_tracers.setup(12, _ammo_color, 4.0, 0.02)
+	_tracers.on_arrive = _spawn_impact   # 火花等曳光飞到才出
 	var imat := StandardMaterial3D.new()
 	imat.albedo_color = Color(1.0, 0.75, 0.3)
 	imat.emission_enabled = true
@@ -266,18 +259,6 @@ func _setup_fx() -> void:
 		_im_pool.append({"mi": mi, "t": 0.0})
 
 
-func _spawn_tracer(from: Vector3, to: Vector3) -> void:
-	var slot: Dictionary = _tr_pool[_tr_i]
-	_tr_i = (_tr_i + 1) % _tr_pool.size()
-	var mi: MeshInstance3D = slot["mi"]
-	var mid := (from + to) * 0.5
-	mi.global_position = mid
-	mi.look_at_from_position(mid, to, Vector3.UP)
-	mi.scale = Vector3(1, 1, from.distance_to(to))
-	mi.visible = true
-	slot["t"] = 0.18
-
-
 func _spawn_impact(p: Vector3) -> void:
 	var slot: Dictionary = _im_pool[_im_i]
 	_im_i = (_im_i + 1) % _im_pool.size()
@@ -292,11 +273,7 @@ func _tick_fx(dt: float) -> void:
 		_falling_vel.y -= 9.8 * dt
 		_falling_mag.position += _falling_vel * dt
 		_falling_mag.rotation_degrees.z += 140.0 * dt
-	for s in _tr_pool:
-		if float(s["t"]) > 0.0:
-			s["t"] = float(s["t"]) - dt
-			if float(s["t"]) <= 0.0:
-				s["mi"].visible = false
+	_tracers.tick(dt)
 	for s in _im_pool:
 		if float(s["t"]) > 0.0:
 			s["t"] = float(s["t"]) - dt
@@ -525,16 +502,19 @@ func _shoot() -> void:
 		var hit: Dictionary = npc.raycast(from, pdir, range)
 		var end: Vector3 = from + pdir * range if hit["type"] == "" \
 				else Vector3(hit["point"])
-		_spawn_tracer(muzzle_world(), end)
+		_tracers.spawn(muzzle_world(), end, hit["type"] != "")
 		if hit["type"] != "":
-			_spawn_impact(end)
 			shoot_hit.emit(hit["type"], hit["i"], end, dmg)
 	audio.play_shot()
 
 
-## 枪口世界坐标
+## 枪口世界坐标：枪架（相机子节点）局部的枪口点，与枪口火光同位。
+## 原来误按相机局部算，落在眼前 0.6m 的准星正上方——曳光几乎沿视线方向，
+## 屏幕上缩成一团楔形光斑，不像一条弹道
 func muzzle_world() -> Vector3:
-	return cam.global_transform * Vector3(0.02, 0.06, -0.62)
+	if _gun_holder != null:
+		return _gun_holder.to_global(Vector3(0.02, 0.06, -0.62))
+	return cam.global_transform * Vector3(0.26, -0.16, -1.1)
 
 
 ## 装备弹药类型（伤害倍率 + 曳光/火花颜色）
@@ -542,9 +522,9 @@ func set_ammo_type(ammo_id: String) -> void:
 	var a: Dictionary = Guns.ammo_by_id(ammo_id)
 	ammo_mul = a.get("dmg_mul", 1.0)
 	_ammo_color = a.get("color", Color(1.0, 0.8, 0.35))
-	for s in _tr_pool:
-		(s["mi"].mesh as BoxMesh).material.set("emission", _ammo_color)
-		(s["mi"].mesh as BoxMesh).material.set("albedo_color", _ammo_color)
+	if _tracers != null:
+		_tracers.mat.emission = _ammo_color
+		_tracers.mat.albedo_color = _ammo_color
 	for s in _im_pool:
 		(s["mi"].mesh as SphereMesh).material.set("emission", _ammo_color)
 		(s["mi"].mesh as SphereMesh).material.set("albedo_color", _ammo_color)

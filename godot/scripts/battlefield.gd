@@ -37,6 +37,7 @@ const CLASSES := [
 		"gun": "sniper", "gadget": "scan", "gadget_name": "侦察信标", "gadget_cd": 25.0},
 ]
 const BattleVehicles := preload("res://scripts/battle_vehicles.gd")
+const TracerPool := preload("res://scripts/tracer_pool.gd")
 ## 两队呼号分开（同名会让击杀播报分不清是哪边的人）
 const CALLSIGNS := {
 	"atk": ["猎鹰", "山猫", "黑曜", "北风", "赤狐", "雷鸣"],
@@ -64,9 +65,8 @@ var _t := 0.0
 var _ai_acc := 0.0
 var _cap_acc := 0.0
 var _snd_budget := 6.0
-var _tr_pool: Array = []
+var _tracers                      # 曳光弹（tracer_pool.gd）
 var _im_pool: Array = []
-var _tr_i := 0
 var _im_i := 0
 var _ex_pool: Array = []
 var _ex_i := 0
@@ -633,9 +633,7 @@ func hitscan(from: Vector3, dir: Vector3, max_d: float, dmg: float, team: String
 		best_d = wall_d
 		kind = "wall"
 	var end := from + dir * best_d
-	_spawn_tracer(tracer_from, end)
-	if kind != "":
-		_spawn_impact(end)
+	_spawn_tracer(tracer_from, end, kind != "")
 	match kind:
 		"soldier":
 			_damage_soldier(best_j, dmg, src, false, weapon)
@@ -1144,20 +1142,10 @@ func _write_pose(s: Dictionary) -> void:
 # ================= 曳光 / 火花 / 爆炸对象池 =================
 
 func _setup_fx() -> void:
-	var tmat := StandardMaterial3D.new()
-	tmat.albedo_color = Color(1.0, 0.85, 0.45)
-	tmat.emission_enabled = true
-	tmat.emission = Color(1.0, 0.75, 0.3)
-	tmat.emission_energy_multiplier = 4.0
-	var tmesh := BoxMesh.new()
-	tmesh.size = Vector3(0.025, 0.025, 1.0)
-	tmesh.material = tmat
-	for i in 40:
-		var mi := MeshInstance3D.new()
-		mi.mesh = tmesh
-		mi.visible = false
-		add_child(mi)
-		_tr_pool.append({"mi": mi, "t": 0.0})
+	_tracers = TracerPool.new()
+	add_child(_tracers)
+	_tracers.setup(48, Color(1.0, 0.8, 0.4), 4.0, 0.03)
+	_tracers.on_arrive = _spawn_impact   # 火花等曳光飞到才出
 	var imat := StandardMaterial3D.new()
 	imat.albedo_color = Color(1.0, 0.75, 0.3)
 	imat.emission_enabled = true
@@ -1175,20 +1163,13 @@ func _setup_fx() -> void:
 		_im_pool.append({"mi": mi, "t": 0.0})
 
 
-func _spawn_tracer(from: Vector3, to: Vector3) -> void:
-	# 离玩家很远的曳光不画（省节点更新）
+func _spawn_tracer(from: Vector3, to: Vector3, impact: bool) -> void:
+	# 离玩家很远的曳光不画（省节点更新）；火花自己也按距离剔除
 	if from.distance_to(player_pos) > 220.0 and to.distance_to(player_pos) > 220.0:
+		if impact:
+			_spawn_impact(to)
 		return
-	var slot: Dictionary = _tr_pool[_tr_i]
-	_tr_i = (_tr_i + 1) % _tr_pool.size()
-	var mi: MeshInstance3D = slot["mi"]
-	var mid := (from + to) * 0.5
-	if from.distance_to(to) < 0.05:
-		return
-	mi.look_at_from_position(mid, to, Vector3.UP)
-	mi.scale = Vector3(1, 1, from.distance_to(to))
-	mi.visible = true
-	slot["t"] = 0.14
+	_tracers.spawn(from, to, impact)
 
 
 func _spawn_impact(p: Vector3) -> void:
@@ -1238,11 +1219,7 @@ func _tick_explosions(dt: float) -> void:
 
 
 func _tick_fx(dt: float) -> void:
-	for s in _tr_pool:
-		if float(s["t"]) > 0.0:
-			s["t"] = float(s["t"]) - dt
-			if float(s["t"]) <= 0.0:
-				s["mi"].visible = false
+	_tracers.tick(dt)
 	for s in _im_pool:
 		if float(s["t"]) > 0.0:
 			s["t"] = float(s["t"]) - dt
