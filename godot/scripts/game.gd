@@ -7,6 +7,10 @@ enum ST { GARAGE, COUNTDOWN, RACING, PAUSED, FINISHED, ROAM, BATTLE }
 const H_STEP := 1.0 / 120.0        # 固定物理步长
 const CAM_MODE_NAMES: Array = TrackData.CAM_MODES
 const SETTINGS_PATH := "user://rr_settings.cfg"
+## 探针/自动化设 RR_SETTINGS_PATH 环境变量即用隔离存档（防止测试污染玩家进度，
+## 例如战机模式 plane_mode 被持久化后每次开机都直接进战机）
+var settings_path: String = OS.get_environment("RR_SETTINGS_PATH") \
+		if OS.get_environment("RR_SETTINGS_PATH") != "" else SETTINGS_PATH
 
 var state: int = ST.GARAGE
 var tracks: Array[RaceTrack] = []
@@ -414,7 +418,7 @@ var _saved_track_idx := 0
 
 func _load_settings() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(SETTINGS_PATH) == OK:
+	if cf.load(settings_path) == OK:
 		car_model_id = cf.get_value("settings", "car", "gt3")
 		total_laps = cf.get_value("settings", "laps", 3)
 		difficulty = cf.get_value("settings", "diff", "normal")
@@ -452,7 +456,7 @@ func _save_settings() -> void:
 	cf.set_value("parts", "owned", parts_owned)
 	cf.set_value("parts", "equipped", parts_equipped)
 	cf.set_value("records", "best_lap", best_stored)
-	cf.save(SETTINGS_PATH)
+	cf.save(settings_path)
 
 
 # ================= 配件店 =================

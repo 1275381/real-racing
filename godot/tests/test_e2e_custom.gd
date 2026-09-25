@@ -2,6 +2,7 @@ extends SceneTree
 ## 端到端：编辑器产出的带高度赛道 → 主游戏加载 → 开赛
 
 func _initialize() -> void:
+	OS.set_environment("RR_SETTINGS_PATH", "user://rr_settings_probe.cfg")
 	# 1) 模拟编辑器编译保存（带高度起伏的椭圆）
 	var pts := []
 	for k in 12:

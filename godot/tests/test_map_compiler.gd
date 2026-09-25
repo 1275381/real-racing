@@ -19,6 +19,7 @@ func oval(points: int, rx: float, rz: float, y_fn := Callable()) -> Array:
 	return out
 
 func _initialize() -> void:
+	OS.set_environment("RR_SETTINGS_PATH", "user://rr_settings_probe.cfg")
 	# 1) 合法赛道通过
 	var ok_def := oval(12, 200, 140)
 	var r1: Dictionary = TrackData.validate_track(ok_def)
@@ -67,7 +68,9 @@ func _initialize() -> void:
 	var q: Dictionary = trk.query(trk.pts[trk.n / 4].x, trk.pts[trk.n / 4].y, null)
 	check("query 返回真实高度", absf(q["height"] - trk.heights[trk.n / 4]) < 0.01,
 			"q=%.2f" % q["height"])
-	check("query 返回坡度", absf(q["slope"]) > 0.001 or trk.slope[trk.n / 4] == 0.0)
+	# 坡度语义：查询返回值应与该点标定坡度一致（平缓处可能 <0.001）
+	check("query 返回坡度", absf(q["slope"] - trk.slope[trk.n / 4]) < 0.001,
+			"q=%.5f ref=%.5f" % [q["slope"], trk.slope[trk.n / 4]])
 	var gp: Dictionary = trk.grid_pose(0)
 	check("发车位带高度", absf(gp["pos"].y - trk.heights[gp["idx"]]) < 0.01)
 	# 6) 清理
