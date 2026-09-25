@@ -38,7 +38,9 @@ func _init() -> void:
 
 	# --- 空气墙回归：匝道口外的宽街道上（横向 7m > 匝道半宽 6m）应取街道宽墙 ---
 	var ramp2: FreeroamMap.Road = null
-	for r in range(23, map.roads.size()):
+	for r in map.roads.size():
+		if map.roads[r].kind != "ramp":
+			continue
 		if map.roads[r].pts[0].y < 0.5 and map.roads[r].pts[map.roads[r].pts.size() - 1].y > 5.0:
 			ramp2 = map.roads[r]
 			break
@@ -51,9 +53,11 @@ func _init() -> void:
 		print("ramp-mouth wall=%.2f (期望 >=10.6，旧版为 6.15 隐形墙) surf=%s" % [float(qw["wall"]), qw["surf"]])
 
 	# --- 物理：匝道爬升到高架环线 ---
-	# 找环线（roads[22]）上西北 45° 附近的匝道起点，从地面端开上去
+	# 找一条从地面爬到环线的匝道，从地面端开上去
 	var ramp: FreeroamMap.Road = null
-	for r in range(23, map.roads.size()):
+	for r in map.roads.size():
+		if map.roads[r].kind != "ramp":
+			continue
 		if map.roads[r].pts[0].y < 0.5 and map.roads[r].pts[map.roads[r].pts.size() - 1].y > 5.0:
 			ramp = map.roads[r]
 			break

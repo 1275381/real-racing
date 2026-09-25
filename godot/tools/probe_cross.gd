@@ -8,7 +8,6 @@ const CLEAR := 4.5       # 立体交叉的最小净空（车高约 1.4m + 桥面
 func _init() -> void:
 	var m := FreeroamMap.new()
 	m.build()
-	var grid_n := 22
 	var kinds := {}
 	var bad := []
 	var seen := {}
@@ -41,8 +40,8 @@ func _init() -> void:
 								tag = "高差不足"
 							else:
 								continue
-							var ta := ("网格街" if a < grid_n else ("高架" if ra.elevated else "公路"))
-							var tb := ("网格街" if b < grid_n else ("高架" if rb.elevated else "公路"))
+							var ta: String = FreeroamMap.KIND_LABEL.get(ra.kind, "?")
+							var tb: String = FreeroamMap.KIND_LABEL.get(rb.kind, "?")
 							var kk := "%s×%s %s" % [ta, tb, tag]
 							kinds[kk] = int(kinds.get(kk, 0)) + 1
 							if bad.size() < 14:

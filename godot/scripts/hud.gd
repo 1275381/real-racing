@@ -25,6 +25,7 @@ var btn_quit_pause: Button
 var btn_again: Button
 var btn_quit_results: Button
 var btn_editor: Button
+var btn_city: Button
 var btn_del_track: Button
 var btn_shop: Button
 var btn_carinfo: Button
@@ -1117,6 +1118,11 @@ func _build_garage() -> void:
 	btn_editor.custom_minimum_size = Vector2(0, 40)
 	btn_editor.add_theme_font_size_override("font_size", 18)
 	box.add_child(btn_editor)
+	btn_city = Button.new()
+	btn_city.text = "城 市 编 辑 器"
+	btn_city.custom_minimum_size = Vector2(0, 40)
+	btn_city.add_theme_font_size_override("font_size", 18)
+	box.add_child(btn_city)
 
 	var hint := Label.new()
 	hint.text = "W/↑ 油门 · S/↓ 刹车 · A D/← → 转向 · 空格 手刹漂移\nC 切换镜头 · R 回到赛道 · P/Esc 暂停 · M 静音\n车库菜单按 W/↑ 直接出发：出生在卷帘门车库，踩油门顶门驶出"

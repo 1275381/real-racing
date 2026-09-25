@@ -5,7 +5,9 @@ func _init() -> void:
 	map.build()
 	var ramp: FreeroamMap.Road = null
 	var ri0 := -1
-	for r in range(23, map.roads.size()):
+	for r in map.roads.size():
+		if map.roads[r].kind != "ramp":
+			continue
 		var rr: FreeroamMap.Road = map.roads[r]
 		if rr.pts[0].y < 0.5 and rr.pts[rr.pts.size() - 1].y > 5.0:
 			ramp = rr

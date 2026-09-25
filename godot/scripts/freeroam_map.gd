@@ -21,6 +21,35 @@ const CROSS_ELEV := 14.0      # 南北快速路
 const CROSS_ELEV_EW := 19.0   # 东西快速路：与南北在 (0,0) 立体交叉，净空 5m
                               # （原来两条都是 14m，在 (0,0) 完全同高，
                               #   surf_skip 裁掉一条后合成一个平面十字 —— 不是立交）
+## 地形分区：3D 顶点色与小地图的唯一数据源。
+## 顺序 = 判定优先级（从高到低），这个顺序本身是契约：
+## 3D 正序取首个命中；小地图逆序铺色（后画覆盖先画 == 正序首个命中）。
+## 原来这张表在 _zone_color 与 _build_minimap 里各写一份，
+## 上次不同步的后果是「西北角世界里是海、小地图画成山地」，
+## 东沙漠阈值还写成了 1080（实际 950）。
+const ZONE_INF := 1e9
+const ZONES := [
+	# 机场平地（城区西南沿海，从海里挖开）：必须排最前——矩形与西海/沙滩
+	# 重叠，正序首个命中要压过海色，否则机场一带 3D 画成水、小地图画成海
+	{"id": "airport", "rect": [-1900.0, -1000.0, -1050.0, 600.0],
+			"col": Color(0.42, 0.55, 0.33), "mini": Color(0.17, 0.23, 0.15)},
+	{"id": "sea", "rect": [-ZONE_INF, -1080.0, -ZONE_INF, ZONE_INF],
+			"col": Color(0.10, 0.33, 0.56), "mini": Color(0.10, 0.28, 0.50)},
+	{"id": "beach", "rect": [-ZONE_INF, -980.0, -ZONE_INF, ZONE_INF],
+			"col": Color(0.85, 0.78, 0.60), "mini": Color(0.72, 0.66, 0.50)},
+	{"id": "desert", "rect": [950.0, ZONE_INF, -ZONE_INF, ZONE_INF],
+			"col": Color(0.80, 0.68, 0.44), "mini": Color(0.66, 0.55, 0.35)},
+	{"id": "mount", "rect": [-ZONE_INF, ZONE_INF, -ZONE_INF, -1080.0],
+			"col": Color(0.28, 0.40, 0.26), "mini": Color(0.16, 0.26, 0.18)},
+	{"id": "city", "rect": [-950.0, 950.0, -950.0, 950.0],
+			"col": Color(0.44, 0.46, 0.49), "mini": Color(0.20, 0.22, 0.26)},
+	{"id": "grass", "rect": null,   # 兜底
+			"col": Color(0.42, 0.55, 0.33), "mini": Color(0.17, 0.23, 0.15)},
+]
+
+## 路类中文名：调试 HUD 与各探针共用，避免各写一份 if-else
+const KIND_LABEL := {"grid": "网格街", "ring": "高架环线", "hw": "高架快速路",
+		"ramp": "匝道", "out": "城外公路"}
 const STREET_Y := 0.03        # 网格街统一标高：路口靠拼块拼接，不再靠错高避让
 
 # 建筑排布
@@ -190,6 +219,14 @@ var _shop_rows := []   # 商店街登记 [{e, a, b, front}]（front=所朝街中
 var _block := {}           # 24m 网格：距任意道路中心线过近的建筑禁建区（预计算）
 var obstacles_box := []    # 楼房碰撞体 [{c: Vector2, hx, hz, rot}]（含旋转的 OBB）
 var _terr := {}            # 50m 网格：地形高程场（盘山公路下方的山脊）
+var _road_ix := {}         # road.id -> roads[] 下标
+var _city: Dictionary = {}   # 当前城市存档（补丁层）；空 = 默认城市
+var orphans: Array = []      # 找不到宿主的补丁，交给编辑器提示用户
+var bld_recs: Array = []     # 当前建筑记录（编辑器直接操作这一份）
+var bld_mmi: MultiMeshInstance3D   # 楼体 MultiMesh，编辑后就地刷新
+var ant_mmi: MultiMeshInstance3D   # 天线 MultiMesh
+
+const CityData := preload("res://scripts/city_data.gd")
 var _fade_shader: Shader
 var _fade_mats: Array = []   # 需要每帧写入相机/车位的遮挡淡出材质
 var pillar_pts := PackedVector3Array()   # 桥墩 (x, 柱顶高, z)，供体检探针核对
@@ -205,6 +242,8 @@ class Road:
 	var closed := false                   # 闭环（仅环线）；开放路不可首尾相连
 	var xsec_cut := false                 # 网格街：路口方块内不铺面（由路口拼块接管）
 	var along_x := false                  # 沿 X 走（水平街）
+	var id := ""                          # 稳定标识：数组下标是隐式契约，散落在 9 个文件里
+	var kind := ""                        # grid / ring / hw / ramp / out
 	var elevated := false
 	var mono := false                     # 等高主线高架（环线/快速路）：桥面单独材质走淡出走廊档
 	var wall := 10.0
@@ -222,7 +261,9 @@ func _init() -> void:
 #  路网数据
 # ============================================================
 
-func build() -> void:
+## city 为空字典 = 默认城市，行为与改造前逐位相同（golden 测试守着这条）
+func build(city := {}) -> void:
+	_city = city
 	var t0 := Time.get_ticks_msec()
 	_make_grid_roads()
 	_make_ring()
@@ -252,8 +293,11 @@ func build() -> void:
 	print("[map] 完成 %dms" % [Time.get_ticks_msec() - t0])
 
 
-func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bool) -> Road:
+func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bool,
+		rid := "", rkind := "") -> Road:
 	var road := Road.new()
+	road.id = rid
+	road.kind = rkind
 	road.half_w = half_w
 	road.closed = closed
 	road.elevated = elevated
@@ -345,6 +389,8 @@ func _make_road(cps: Array, ys: Array, closed: bool, half_w: float, elevated: bo
 			road.grid[key] = PackedInt32Array()
 		road.grid[key].append(i)
 
+	if road.id != "":
+		_road_ix[road.id] = roads.size()
 	roads.append(road)
 	n += cnt
 	return road
@@ -362,10 +408,10 @@ func _make_grid_roads() -> void:
 	for k in GRID_COORDS.size():
 		var c: float = GRID_COORDS[k]
 		var rv := _make_road([Vector2(c, -900.0), Vector2(c, 900.0)],
-				[STREET_Y], false, GRID_HALF_W, false)
+				[STREET_Y], false, GRID_HALF_W, false, "ns%d" % k, "grid")
 		rv.xsec_cut = true
 		var rh := _make_road([Vector2(-900.0, c), Vector2(900.0, c)],
-				[STREET_Y], false, GRID_HALF_W, false)
+				[STREET_Y], false, GRID_HALF_W, false, "ew%d" % k, "grid")
 		rh.xsec_cut = true
 		rh.along_x = true
 
@@ -390,17 +436,19 @@ func _make_ring() -> void:
 		for i in 6:                        # 圆角每 15° 一个控制点
 			var th: float = arc_a0[q] + PI * 0.5 * float(i) / 6.0
 			cps.append(arc_c[q] + Vector2(cos(th), sin(th)) * r)
-	_make_road(cps, [RING_ELEV], true, 10.0, true)
+	_make_road(cps, [RING_ELEV], true, 10.0, true, "ring", "ring")
 
 
 func _make_cross_highways() -> void:
 	# 东西 19m / 南北 14m / 环线 10m —— 三层互不同高，才是立交
-	_make_road([Vector2(-900.0, 0.0), Vector2(900.0, 0.0)], [CROSS_ELEV_EW], false, 10.0, true)
-	_make_road([Vector2(0.0, -900.0), Vector2(0.0, 900.0)], [CROSS_ELEV], false, 10.0, true)
+	_make_road([Vector2(-900.0, 0.0), Vector2(900.0, 0.0)], [CROSS_ELEV_EW],
+			false, 10.0, true, "hw_ew", "hw")
+	_make_road([Vector2(0.0, -900.0), Vector2(0.0, 900.0)], [CROSS_ELEV],
+			false, 10.0, true, "hw_ns", "hw")
 
 
 func _make_ramps() -> void:
-	var ring := roads[22]   # 网格 22 条之后紧接环线
+	var ring := road_by_id("ring")
 	var rn := ring.pts.size()
 	# 4 条环线匝道：东北/西北/东南/西南
 	for d in [[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]]:
@@ -443,7 +491,7 @@ func _make_ramps() -> void:
 			merge_c + rtan * 10.0,
 		]
 		_make_road(cps, [g_y, crown_y, 5.0, 8.5, RING_ELEV, RING_ELEV],
-				false, 6.0, true)
+				false, 6.0, true, "ramp/ring/%d%d" % [int(d[0]), int(d[1])], "ramp")
 	# 4 条快速路匝道（东西向 2 条 + 南北向 2 条）
 	for sx in [-1.0, 1.0]:
 		var hx: float = 560.0 * sx
@@ -460,7 +508,7 @@ func _make_ramps() -> void:
 			Vector2(hx + 40.0 * sx, -30.0), Vector2(hx + 75.0 * sx, -80.0),
 			Vector2(hx + 80.0 * sx, -190.0), Vector2(hx + 80.0 * sx, -349.5),
 		], [CROSS_ELEV_EW, CROSS_ELEV_EW, 17.0, 13.0, 4.0, STREET_Y],
-				false, 6.0, true)
+				false, 6.0, true, "ramp/hw_ew/%d" % int(sx), "ramp")
 	for sz in [-1.0, 1.0]:
 		var hz: float = 560.0 * sz
 		# 同上：16.5 = 主线半宽 10 + 0.5 缝 + 匝道半宽 6
@@ -468,7 +516,8 @@ func _make_ramps() -> void:
 			Vector2(16.5, hz - 150.0 * sz), Vector2(16.5, hz - 40.0 * sz),
 			Vector2(30.0, hz + 40.0 * sz), Vector2(80.0, hz + 75.0 * sz),
 			Vector2(190.0, hz + 80.0 * sz), Vector2(349.5, hz + 80.0 * sz),
-		], [CROSS_ELEV, CROSS_ELEV, 12.5, 9.0, 3.0, STREET_Y], false, 6.0, true)
+		], [CROSS_ELEV, CROSS_ELEV, 12.5, 9.0, 3.0, STREET_Y],
+				false, 6.0, true, "ramp/hw_ns/%d" % int(sz), "ramp")
 
 
 ## 城市外的四大区域路网：北盘山 / 西海岸 / 东沙漠 / 南郊野
@@ -482,21 +531,26 @@ func _make_outskirts_roads() -> void:
 		Vector2(880, -1660), Vector2(830, -1500), Vector2(920, -1340), Vector2(870, -1180),
 		Vector2(900, -1020), Vector2(900, -900),
 	], [0.1, 1.5, 5.0, 10.0, 16.0, 23.0, 30.0, 38.0, 47.0, 56.0, 65.0, 72.0,
-		70.0, 60.0, 48.0, 38.0, 28.0, 19.0, 11.0, 5.0, 1.0, 0.1], false, 7.0, false)
+		70.0, 60.0, 48.0, 38.0, 28.0, 19.0, 11.0, 5.0, 1.0, 0.1],
+			false, 7.0, false, "out/mountain", "out")
 
 	# ---- 西：海岸大道（西侧是海）+ 城市联络线 ----
 	_make_road([
 		Vector2(-1040, -1150), Vector2(-1020, -800), Vector2(-1060, -400),
 		Vector2(-1020, 0), Vector2(-1060, 400), Vector2(-1020, 800), Vector2(-1040, 1150),
-	], [0.03], false, 8.0, false)
-	_make_road([Vector2(-900, -540), Vector2(-1020, -540)], [0.03], false, 6.0, false)
-	_make_road([Vector2(-900, 540), Vector2(-1020, 540)], [0.03], false, 6.0, false)
+	], [0.03], false, 8.0, false, "out/coast", "out")
+	_make_road([Vector2(-900, -540), Vector2(-1020, -540)], [0.03],
+			false, 6.0, false, "out/link_w_s", "out")
+	_make_road([Vector2(-900, 540), Vector2(-1020, 540)], [0.03],
+			false, 6.0, false, "out/link_w_n", "out")
 	# 接到 x=-180 那条街，而不是 x=0 —— 盘山公路正是从 (0,-900) 起步，
 	# 原来两条路在那里重合约 100m 且高差 0.6m，车开过去会陷进路面
 	_make_road([Vector2(-1040, -1150), Vector2(-880, -1150), Vector2(-300, -1140),
-			Vector2(-180, -1010), Vector2(-180, -900)], [0.03], false, 6.0, false)
+			Vector2(-180, -1010), Vector2(-180, -900)], [0.03],
+			false, 6.0, false, "out/link_nw", "out")
 	_make_road([Vector2(-1040, 1150), Vector2(-880, 1150), Vector2(-300, 1140),
-			Vector2(-150, 1020), Vector2(-150, 900)], [0.03], false, 6.0, false)
+			Vector2(-150, 1020), Vector2(-150, 900)], [0.03],
+			false, 6.0, false, "out/link_sw", "out")
 
 	# ---- 东：沙漠环线（沙丘缓起伏，峰谷 3~9m）----
 	_make_road([
@@ -504,14 +558,15 @@ func _make_outskirts_roads() -> void:
 		Vector2(1800, -560), Vector2(2100, -420), Vector2(2350, -150),
 		Vector2(2400, 150), Vector2(2250, 480), Vector2(1950, 560), Vector2(1650, 460),
 		Vector2(1350, 560), Vector2(1100, 480), Vector2(900, 540),
-	], [0.03, 2.0, 5.0, 3.0, 7.0, 4.0, 8.0, 5.0, 9.0, 4.0, 7.0, 3.0, 0.03], false, 8.0, false)
+	], [0.03, 2.0, 5.0, 3.0, 7.0, 4.0, 8.0, 5.0, 9.0, 4.0, 7.0, 3.0, 0.03],
+			false, 8.0, false, "out/desert", "out")
 
 	# ---- 南：郊野线 ----
 	_make_road([Vector2(0, 900), Vector2(0, 1150), Vector2(-120, 1400),
 			Vector2(-80, 1700), Vector2(120, 1900), Vector2(400, 2000)],
-			[0.03], false, 7.0, false)
+			[0.03], false, 7.0, false, "out/south", "out")
 	_make_road([Vector2(-540, 900), Vector2(-540, 1250), Vector2(-420, 1500)],
-			[0.03], false, 6.0, false)
+			[0.03], false, 6.0, false, "out/south_w", "out")
 
 
 ## 东南向赛车场高速 + RR 国际赛车场：城南 x=180 街引出高架（10m）一路南下
@@ -659,6 +714,13 @@ func _make_raceway_props() -> void:
 func plane_setup(mi: MeshInstance3D, pm: PlaneMesh, at: Vector3) -> void:
 	mi.mesh = pm
 	mi.position = at
+
+
+## 按稳定标识取路。原来靠 roads[22] 这种硬编码下标找环线，
+## 路网一旦可编辑（增删道路）索引布局立刻失效，而且是静默失效。
+func road_by_id(rid: String) -> Road:
+	var i: int = _road_ix.get(rid, -1)
+	return roads[i] if i >= 0 else null
 
 
 ## 出生点：卷帘门车库内（x=180 街东侧），车头朝西正对门洞——
@@ -2380,23 +2442,22 @@ func _build_zone_ground() -> void:
 
 
 ## 区域配色：海 / 沙滩 / 沙漠 / 山地 / 城市水泥 / 草地（+ 噪声抖动）
+## 正序取首个命中的分区
+func zone_at(x: float, z: float) -> Dictionary:
+	for zn in ZONES:
+		var r = zn["rect"]
+		if r == null:
+			return zn
+		if x >= r[0] and x < r[1] and z >= r[2] and z < r[3]:
+			return zn
+	return ZONES[-1]
+
+
 func _zone_color(x: float, z: float, rng: RRUtil.Mulberry) -> Color:
+	# rng.next() 必须仍是第一行、无条件执行：_build_zone_ground 对 320×320
+	# 网格每格调 4 次（约 41 万笔），挪位置或加 early-return 会让地面顶点色全变
 	var n := (rng.next() - 0.5) * 0.06
-	var c: Color
-	if x > -1900.0 and x < -1000.0 and z > -1050.0 and z < 600.0:
-		c = Color(0.42, 0.55, 0.33)      # 机场平地（城区西南沿海旱地）
-	elif x < -1080.0:
-		c = Color(0.10, 0.33, 0.56)      # 海
-	elif x < -980.0:
-		c = Color(0.85, 0.78, 0.60)      # 沙滩
-	elif x > 950.0:
-		c = Color(0.80, 0.68, 0.44)      # 沙漠
-	elif z < -1080.0:
-		c = Color(0.28, 0.40, 0.26)      # 山地
-	elif absf(x) < 950.0 and absf(z) < 950.0:
-		c = Color(0.44, 0.46, 0.49)      # 城市水泥（中灰防过曝）
-	else:
-		c = Color(0.42, 0.55, 0.33)      # 草地
+	var c: Color = zone_at(x, z)["col"]
 	return Color(clampf(c.r + n, 0, 1), clampf(c.g + n, 0, 1), clampf(c.b + n, 0, 1))
 
 
@@ -2871,9 +2932,13 @@ func _street_y(cx: float, cz: float) -> float:
 ## 旧版对「所有」道路各标 ±2 格 × 24m ≈ 60m，而街距只有 180m，
 ## 楼全被推到街区正中，沿街两侧空荡荡 —— 城市不像城市的主因。
 func _mark_road_blocks() -> void:
-	var grid_roads := GRID_COORDS.size() * 2   # 前 22 条是网格街道
-	for ri in range(grid_roads, roads.size()):
-		var road: Road = roads[ri]
+	# 网格街不入表：沿街楼按街区边界精确排布，不靠位图掩码。
+	# 原来写 range(GRID_COORDS.size()*2, ...) 依赖「前 22 条是网格街」的
+	# 索引布局 —— _block[key]=true 是幂等插入、与顺序无关，改按 kind 过滤
+	# 后产出完全相同，还额外获得了顺序无关性。
+	for road in roads:
+		if road.kind == "grid":
+			continue
 		var rad: float = road.half_w + (16.0 if road.elevated else 7.0)
 		var rc := int(ceil(rad / BLOCK_CELL))
 		for i in range(0, road.pts.size(), 4):
@@ -2994,11 +3059,9 @@ void fragment() {
 ## + 城郊散点；高层带退台、屋顶设备房与天线。朝向与街道网格严格正交
 ## （旧版 rng.range(0, PI) 随机转，楼歪着站，而且 Basis.scaled 是先转后按世界轴
 ## 缩放，非 90° 倍数时盒子会被剪切成平行六面体）。
-func _place_buildings() -> void:
+func _gen_buildings() -> Array:
 	var rng := RRUtil.Mulberry.new(20260830)
-	var xfs: Array[Transform3D] = []
-	var cols: Array[Color] = []
-	var ants: Array[Transform3D] = []
+	var recs: Array = []
 
 	# 冷玻璃 / 暖混凝土 / 深灰石材 / 浅色面砖 / 灰绿
 	var palette := [
@@ -3044,7 +3107,11 @@ func _place_buildings() -> void:
 		return rng.range(7.0, 16.0)
 
 	# 放一栋：主体 →（退台）→（屋顶设备房）→（天线）
-	var put := func(cx: float, cz: float, w: float, dep: float, h: float) -> void:
+	# 产出「一栋逻辑楼」的记录而不是直接产实例：编辑器要能逐栋操作，
+	# 而一栋楼在渲染上是 1~3 个盒 + 0~1 根天线，分散在两个 MultiMesh 里。
+	# 随机数消费顺序与产实例的旧版逐笔一致（append 不消费随机数）。
+	var put := func(bid: String, cx: float, cz: float, w: float, dep: float,
+			h: float) -> void:
 		if not buildable.call(cx, cz, w * 0.5, dep * 0.5):
 			return
 		# 楼房碰撞体（轴对齐 OBB，供漫游车辆撞墙反馈）
@@ -3053,9 +3120,8 @@ func _place_buildings() -> void:
 		var j := rng.range(-0.05, 0.05)
 		tint = Color(clampf(tint.r + j, 0, 1), clampf(tint.g + j, 0, 1),
 				clampf(tint.b + j, 0, 1), 1.0)
-		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
-				Vector3(cx, h * 0.5, cz)))
-		cols.append(tint)
+		var rec := {"id": bid, "x": cx, "z": cz, "w": w, "dep": dep, "h": h,
+				"tint": tint}
 		var top := h
 		var tw := w
 		var td := dep
@@ -3065,26 +3131,20 @@ func _place_buildings() -> void:
 			var uh := h * rng.range(0.20, 0.42)
 			tw = w * k
 			td = dep * k
-			# 底面埋进主体 0.5m，不与主体顶面共面
-			xfs.append(Transform3D(Basis.from_scale(Vector3(tw, uh, td)),
-					Vector3(cx, h + uh * 0.5 - 0.5, cz)))
-			cols.append(Color(tint.r, tint.g, tint.b, 0.5))
+			rec["sb"] = {"k": k, "uh": uh}
 			top = h + uh - 0.5
-		# 屋顶设备房
+		# 屋顶设备房（mw/md/ox/oz 依赖退台后的 tw/td，故存钳制后的终值）
 		if top > 16.0 and rng.next() < 0.5:
 			var mw := minf(rng.range(4.0, 9.0), tw * 0.5)
 			var md := minf(rng.range(4.0, 9.0), td * 0.5)
 			var mh := rng.range(2.4, 4.2)
 			var ox := rng.range(-1.0, 1.0) * maxf(tw * 0.5 - mw * 0.5 - 0.8, 0.0)
 			var oz := rng.range(-1.0, 1.0) * maxf(td * 0.5 - md * 0.5 - 0.8, 0.0)
-			xfs.append(Transform3D(Basis.from_scale(Vector3(mw, mh, md)),
-					Vector3(cx + ox, top + mh * 0.5 - 0.5, cz + oz)))
-			cols.append(Color(0.55, 0.56, 0.58, 0.0))
+			rec["rf"] = {"mw": mw, "md": md, "mh": mh, "ox": ox, "oz": oz}
 		# 天线：只给最高的那批
 		if top > 78.0 and rng.next() < 0.65:
-			var ah := rng.range(9.0, 24.0)
-			ants.append(Transform3D(Basis.from_scale(Vector3(1.0, ah, 1.0)),
-					Vector3(cx, top + ah * 0.5, cz)))
+			rec["ant"] = rng.range(9.0, 24.0)
+		recs.append(rec)
 
 	# ---- 逐街区排布（11 条街 → 10×10 个 180m 街区）----
 	for bi in GRID_COORDS.size() - 1:
@@ -3093,6 +3153,9 @@ func _place_buildings() -> void:
 			var x1: float = GRID_COORDS[bi + 1]
 			var z0: float = GRID_COORDS[bj]
 			var z1: float = GRID_COORDS[bj + 1]
+			# 街区标识用两条边界街的 id，不用下标 —— 插一条新街时，
+			# 只有它所在的那个街区会分裂，其余街区的楼补丁全部存活
+			var blk_id := "blk/ns%d/ew%d" % [bi, bj]
 
 			# 四角角楼：转角有楼，街道才闭合
 			for c in 4:
@@ -3103,7 +3166,8 @@ func _place_buildings() -> void:
 				var ccz: float = (z0 + BLK_FRONT + dcz * 0.5) if (c == 0 or c == 1) \
 						else (z1 - BLK_FRONT - dcz * 0.5)
 				var ch: float = zone_h.call(ccx, ccz)
-				put.call(ccx, ccz, dcx, dcz, ch * rng.range(0.80, 1.25))
+				put.call("bld/%s/c%d" % [blk_id, c], ccx, ccz, dcx, dcz,
+						ch * rng.range(0.80, 1.25))
 
 			# 四条沿街排（同一排高度相近，真实街道就是这样）
 			for e in 4:
@@ -3115,6 +3179,7 @@ func _place_buildings() -> void:
 				var mid_z: float = (((z0 + BLK_FRONT + 18.0) if e == 0 \
 						else (z1 - BLK_FRONT - 18.0)) if horiz else (z0 + z1) * 0.5)
 				var base_h: float = zone_h.call(mid_x, mid_z)
+				var slot := 0
 				var cur := run_a
 				while cur < run_b - 12.0:
 					var w := minf(rng.range(12.0, 30.0), run_b - cur)
@@ -3134,8 +3199,10 @@ func _place_buildings() -> void:
 					var hh: float = base_h * rng.range(0.72, 1.32)
 					if maxf(absf(bx), absf(bz)) < 300.0 and rng.next() < 0.10:
 						hh *= 1.45          # 市中心偶尔冒一根超高
-					put.call(bx, bz, w if horiz else dep, dep if horiz else w,
+					put.call("bld/%s/e%d_%d" % [blk_id, e, slot], bx, bz,
+							w if horiz else dep, dep if horiz else w,
 							minf(hh, 165.0))
+					slot += 1
 					cur += w + rng.range(0.8, 4.5)
 
 			# 街区内部低层填充（留出与沿街排的间距）
@@ -3145,7 +3212,8 @@ func _place_buildings() -> void:
 			var hi_z := z1 - BLK_CORNER - 18.0
 			if hi_x > lo_x and hi_z > lo_z:
 				for k in int(rng.range(0.0, 2.6)):
-					put.call(rng.range(lo_x, hi_x), rng.range(lo_z, hi_z),
+					put.call("bld/%s/f%d" % [blk_id, k],
+							rng.range(lo_x, hi_x), rng.range(lo_z, hi_z),
 							rng.range(12.0, 24.0), rng.range(12.0, 24.0),
 							rng.range(7.0, 15.0))
 
@@ -3160,9 +3228,64 @@ func _place_buildings() -> void:
 		if occ.has(cell):
 			continue
 		occ[cell] = true
-		put.call(sx, sz, rng.range(11.0, 20.0), rng.range(11.0, 20.0),
+		put.call("bld/sub/%d" % guard, sx, sz,
+				rng.range(11.0, 20.0), rng.range(11.0, 20.0),
 				rng.range(6.0, 15.0))
 
+	return recs
+
+
+## 建筑记录 → 渲染实例（纯函数）。一栋逻辑楼展开成 1~3 个盒 + 0~1 根天线：
+## 主体 →（退台，底面埋进主体 0.5m 不共面）→（屋顶设备房）→（天线）。
+## 单独拆出来是因为 headless 的 dummy 渲染器不保存 MultiMesh 实例数据
+## （回读全是零），烘焙与 golden 断言必须有明文数组可比。
+func _building_instances(recs: Array) -> Dictionary:
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var ants: Array[Transform3D] = []
+	for r in recs:
+		var cx: float = r["x"]
+		var cz: float = r["z"]
+		var w: float = r["w"]
+		var dep: float = r["dep"]
+		var h: float = r["h"]
+		var tint: Color = r["tint"]
+		xfs.append(Transform3D(Basis.from_scale(Vector3(w, h, dep)),
+				Vector3(cx, h * 0.5, cz)))
+		cols.append(tint)
+		var top := h
+		var tw := w
+		var td := dep
+		if r.has("sb"):
+			var k: float = r["sb"]["k"]
+			var uh: float = r["sb"]["uh"]
+			tw = w * k
+			td = dep * k
+			xfs.append(Transform3D(Basis.from_scale(Vector3(tw, uh, td)),
+					Vector3(cx, h + uh * 0.5 - 0.5, cz)))
+			cols.append(Color(tint.r, tint.g, tint.b, 0.5))
+			top = h + uh - 0.5
+		if r.has("rf"):
+			var rf: Dictionary = r["rf"]
+			var mh: float = rf["mh"]
+			xfs.append(Transform3D(
+					Basis.from_scale(Vector3(rf["mw"], mh, rf["md"])),
+					Vector3(cx + float(rf["ox"]), top + mh * 0.5 - 0.5,
+					cz + float(rf["oz"]))))
+			cols.append(Color(0.55, 0.56, 0.58, 0.0))
+		if r.has("ant"):
+			var ah: float = r["ant"]
+			ants.append(Transform3D(Basis.from_scale(Vector3(1.0, ah, 1.0)),
+					Vector3(cx, top + ah * 0.5, cz)))
+	return {"xfs": xfs, "cols": cols, "ants": ants}
+
+
+## 建筑记录 → MultiMesh（楼体一个、天线一个）
+func _emit_buildings(recs: Array) -> void:
+	var inst := _building_instances(recs)
+	var xfs: Array[Transform3D] = inst["xfs"]
+	var cols: Array[Color] = inst["cols"]
+	var ants: Array[Transform3D] = inst["ants"]
 	if xfs.is_empty():
 		return
 	var bmesh := BoxMesh.new()
@@ -3180,7 +3303,9 @@ func _place_buildings() -> void:
 	mmi.multimesh = mm
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mmi)
-	print("[map] 楼 %d 体块（含退台/设备房）+ %d 天线" % [xfs.size(), ants.size()])
+	bld_mmi = mmi
+	print("[map] 楼 %d 栋 / %d 体块（含退台/设备房）+ %d 天线"
+			% [recs.size(), xfs.size(), ants.size()])
 
 	if ants.is_empty():
 		return
@@ -3203,6 +3328,54 @@ func _place_buildings() -> void:
 	ammi.multimesh = amm
 	ammi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ammi)
+	ant_mmi = ammi
+
+
+func _place_buildings() -> void:
+	# 底板取烘焙快照而不是现跑生成器：生成器的随机流是数据相关的，
+	# 任何常量一改就会让之后每一栋楼重排，按 id 挂靠的补丁会张冠李戴。
+	# 烘焙缺失时回退到生成器（默认城市下两者逐位相同，golden 守着）。
+	var base: Array = CityData.base_buildings()
+	if base.is_empty():
+		push_warning("[map] 取不到烘焙底板，回退到现跑生成器")
+		base = _gen_buildings()
+	var res: Dictionary = CityData.apply_patches(base, _city)
+	orphans = res["orphans"]
+	if not orphans.is_empty():
+		print("[map] ⚠ %d 条补丁找不到宿主（底板变过？）" % orphans.size())
+	bld_recs = res["recs"]
+	_emit_buildings(bld_recs)
+
+
+## 编辑器改完建筑后就地刷新两个 MultiMesh（2450 实例，几毫秒）。
+## 复用已有节点而不是 queue_free 再建：queue_free 是延迟的，连续多次编辑
+## 会让旧节点在本帧继续渲染、叠出陈的画面，而且白白制造节点churn。
+func refresh_buildings(recs_in: Array) -> void:
+	bld_recs = recs_in
+	if bld_mmi == null:
+		_emit_buildings(recs_in)
+		return
+	var inst: Dictionary = _building_instances(recs_in)
+	var xfs: Array = inst["xfs"]
+	var cols: Array = inst["cols"]
+	var ants: Array = inst["ants"]
+	var mm := bld_mmi.multimesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	if ant_mmi != null:
+		var am := ant_mmi.multimesh
+		am.instance_count = ants.size()
+		for i in ants.size():
+			am.set_instance_transform(i, ants[i])
+
+
+## 编辑器初始化时调：遮挡淡出的通道二没有「相机离车足够远」的保护，
+## plr_w 保持默认 vec3(0) 时会把原点 15m 内、高于 1.6m 的几何全 discard
+## —— 而两条高架快速路正好在 (0,0) 交叉，一进编辑器就看见立交中心有个洞。
+func disable_occluder_fade() -> void:
+	update_occluder_fade(Vector3(0, -1e5, 0), Vector3(0, -1e5, 0), Vector2(0, 1))
 
 
 ## 街面小店：部分沿街边选为「商店街」，排一列 1~2 层小店（便利店/面馆/药房…），
@@ -3933,17 +4106,15 @@ func reset_garage() -> void:
 func _build_minimap() -> void:
 	var size := 600
 	var img := Image.create(size, size, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.17, 0.23, 0.15))   # 底色 = 草地（与 _zone_color 的兜底一致）
-	# 分区底色的叠放顺序必须与 _zone_color 的判定优先级一致
-	# （海 > 沙滩 > 沙漠 > 山地 > 城市），阈值也要对齐。
-	# 原来先画海再用「整条北带」的山地盖上去，西北角世界里是海、
-	# 小地图却是山地；东沙漠的阈值也写成 1080（实际是 950）。
-	_fill_zone(img, size, -2800, 2800, -2800, -1080, Color(0.16, 0.26, 0.18))   # 北山地
-	_fill_zone(img, size, 950, 2800, -2800, 2800, Color(0.66, 0.55, 0.35))      # 东沙漠
-	_fill_zone(img, size, -1080, -980, -2800, 2800, Color(0.72, 0.66, 0.50))    # 西沙滩
-	_fill_zone(img, size, -2800, -1080, -2800, 2800, Color(0.1, 0.28, 0.5))     # 西海
-	_fill_zone(img, size, -1900, -1000, -1050, 600, Color(0.17, 0.23, 0.15))    # 机场平地（西海挖开）
-	_fill_zone(img, size, -950, 950, -950, 950, Color(0.2, 0.22, 0.26))         # 城市核心
+	# 与 3D 共用 ZONES 一张表，逆序铺（后画覆盖先画 == 正序首个命中）
+	for zi in range(ZONES.size() - 1, -1, -1):
+		var zn: Dictionary = ZONES[zi]
+		var r = zn["rect"]
+		if r == null:
+			img.fill(zn["mini"])
+			continue
+		_fill_zone(img, size, maxf(r[0], -MAP_LIMIT), minf(r[1], MAP_LIMIT),
+				maxf(r[2], -MAP_LIMIT), minf(r[3], MAP_LIMIT), zn["mini"])
 	var scale := float(size) / (MAP_LIMIT * 2.0)
 	for road in roads:
 		var col := Color(0.62, 0.66, 0.72) if road.elevated else Color(0.30, 0.33, 0.38)
