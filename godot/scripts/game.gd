@@ -335,6 +335,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_toggle_nav()
 		elif state == ST.RACING:
 			_toggle_codriver()
+	# 大战场载具：鼠标相对位移 → 炮塔 / 机炮瞄准
+	if state == ST.BATTLE and bf != null and bf.veh.player_v >= 0 \
+			and event is InputEventMouseMotion \
+			and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		bf.veh.add_look(event.relative)
+		return
 	# 步行模式：鼠标相对位移 → 视角（鼠标已捕获）
 	if on_foot and onfoot != null and event is InputEventMouseMotion \
 			and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
@@ -735,6 +741,7 @@ func enter_battle() -> void:
 		bf.sector_captured.connect(_on_bf_sector)
 		bf.over.connect(_on_bf_over)
 		bf.explosion_at.connect(_on_bf_explosion)
+		bf.veh.player_vehicle_destroyed.connect(_on_player_vehicle_destroyed)
 	if bhud == null:
 		bhud = BattleHud.new()
 		hud.add_child(bhud)
@@ -801,6 +808,45 @@ func _on_battle_deploy(cls: int, spawn_i: int) -> void:
 			"G 使用%s · Tab 计分板 · Esc 退出" % cd["gadget_name"], 2.5)
 
 
+## F 键：上/下就近的本方载具（坦克 / 步战车 / 直升机）
+func _battle_toggle_vehicle() -> void:
+	var vm = bf.veh
+	if vm.player_v >= 0:
+		var yaw: float = vm.aim_yaw
+		var ex: Vector3 = vm.player_exit()
+		if ex == Vector3.INF:
+			bhud.banner("", "先降低高度再下机（Shift 下降）", 1.5)
+			return
+		on_foot = true
+		camera.near = 0.02
+		onfoot.enter(ex, yaw)
+		hud.set_onfoot(true)
+		hud.set_health(player_hp)
+		return
+	if not on_foot:
+		return
+	var k: int = vm.nearest_enterable(onfoot.pos, bf.player_team)
+	if k < 0:
+		return
+	vm.player_enter(k)
+	on_foot = false
+	onfoot.exit()
+	hud.set_onfoot(false)
+	hud.set_scope(false)
+	camera.near = 0.3
+	var td: Dictionary = vm.type_def(vm.vehicles[k])
+	var sec: Dictionary = td["sec"]
+	var ctl := "W/S 前后 · A/D 转向 · 空格升 / Shift 降" if vm.vehicles[k]["type"] == "heli" \
+			else "W/S 前后 · A/D 转向"
+	bhud.banner(str(td["name"]), "%s · 鼠标瞄准 · 左键%s%s · F 下车" % [ctl,
+			td["main"]["name"], ("" if sec.is_empty() else " · 右键" + str(sec["name"]))], 3.5)
+
+
+func _on_player_vehicle_destroyed() -> void:
+	player_hp = 0.0
+	_battle_downed()
+
+
 ## G 键：兵种道具（手雷 / 火箭筒 / 医疗包 / 侦察信标）
 func _battle_gadget() -> void:
 	if bf == null or not bf.player_alive or not on_foot or _gadget_cd > 0.0:
@@ -831,6 +877,9 @@ func exit_battle() -> void:
 		bf.active = false
 		bf.player_alive = false
 		bf._clear_projectiles()
+	if bf != null:
+		bf.veh.player_v = -1
+		bf.veh.hide_all()
 	if bhud != null:
 		bhud.close_deploy()
 		bhud.visible = false
@@ -899,7 +948,7 @@ func _battle_downed() -> void:
 func _on_bf_killed(info: Dictionary) -> void:
 	bhud.add_kill(info)
 	if info.get("by_player", false):
-		coins += 75 if info.get("head", false) else 50
+		coins += 200 if info.get("vehicle", false) else (75 if info.get("head", false) else 50)
 		battle_kills_total += 1
 		_save_settings()
 	if info.get("player_died", false):
@@ -2339,6 +2388,9 @@ func _handle_hotkeys() -> void:
 					bhud.select_cls_key(ci)
 			if Input.is_action_just_pressed("rr_handbrake"):
 				bhud.try_deploy()
+		elif bf != null and bf.player_alive and not bf.battle_over \
+				and Input.is_action_just_pressed("rr_interact"):
+			_battle_toggle_vehicle()
 	# 货运劫案：地面靠近停机货机接取 / 飞行中靠近货舱夺货
 	if state == ST.ROAM and airport_traffic != null \
 			and Input.is_action_just_pressed("rr_interact") \
@@ -2682,6 +2734,8 @@ func _step_sim(h: float) -> void:
 		if on_foot and bf.player_alive and not bf.battle_over:
 			onfoot.update(h)
 			bf.player_pos = onfoot.pos
+		elif bf.veh.player_v >= 0:
+			bf.player_pos = bf.veh.vehicles[bf.veh.player_v]["pos"]
 		bf.update(h)
 		if on_foot and bf.player_alive:
 			_no_dmg_t += h
@@ -2988,6 +3042,14 @@ func _update_camera(dt: float) -> void:
 	var spd_ratio := clampf(absf(pv.vf) / pv.top_speed, 0.0, 1.0)
 	var want_fov := 63.0
 
+	# 大战场载具：瞄准方向后上方第三人称；准星落点每帧更新（武器朝它打）
+	if state == ST.BATTLE and bf != null and bf.veh.player_v >= 0:
+		var pose: Array = bf.veh.camera_pose()
+		camera.position = camera.position.lerp(pose[0], 1.0 - exp(-12.0 * dt))
+		camera.look_at(pose[1], Vector3.UP)
+		camera.fov = RRUtil.damp(camera.fov, 70.0, 4.0, dt)
+		bf.veh.update_aim(camera)
+		return
 	# 大战场部署/阵亡：俯瞰当前争夺区域
 	if state == ST.BATTLE and not on_foot and bmap != null and bf != null:
 		var si: int = mini(bf.sector, bmap.SECTORS.size() - 1)

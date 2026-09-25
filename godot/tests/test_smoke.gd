@@ -105,7 +105,18 @@ func _initialize() -> void:
 			game.bf.count_alive("atk"), game.bf.count_alive("def"), game.bf.tickets,
 			game.on_foot])
 	game._battle_gadget()            # 扔一颗手雷
-	await step_s(10.0)
+	await step_s(6.0)
+	# 载具：走到本方坦克旁上车开 2 秒再下车
+	var vm = game.bf.veh
+	var tk: Dictionary = vm.vehicles[0]
+	if not tk["dead"]:
+		game.onfoot.enter(tk["pos"] + Vector3(4.5, 0, 0), PI)
+		game._battle_toggle_vehicle()
+		print("[sm] 上坦克 player_v=%d（期望 0）" % vm.player_v)
+		await step_s(2.0)
+		game._battle_toggle_vehicle()
+		print("[sm] 下车 on_foot=%s（期望 true）" % game.on_foot)
+	await step_s(4.0)
 	game.exit_battle()
 	await frames(10)
 	print("[sm] 退场 state=%s（期望 0）" % game.state)

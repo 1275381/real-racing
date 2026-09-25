@@ -135,8 +135,12 @@ func _draw() -> void:
 	_draw_feed(sz, font)
 	if bf.player_alive and not _deploy.visible:
 		_draw_hitmark(sz)
-		_draw_dmg_dirs(sz)
-		_draw_gadget(sz, font)
+		if bf.veh.player_v >= 0:
+			_draw_vehicle(sz, font)
+		else:
+			_draw_dmg_dirs(sz)
+			_draw_gadget(sz, font)
+			_draw_enter_hint(sz, font)
 	if _banner_t > 0.0:
 		var a := clampf(_banner_t / 0.4, 0.0, 1.0)
 		draw_string(font, Vector2(0, sz.y * 0.32), _banner, HORIZONTAL_ALIGNMENT_CENTER,
@@ -245,6 +249,15 @@ func _draw_minimap(sz: Vector2, font: Font) -> void:
 	var db: Vector3 = bf.def_base()
 	draw_rect(Rect2(_w2m(ab, org) - Vector2(4, 4), Vector2(8, 8)), _team_col("atk"))
 	draw_rect(Rect2(_w2m(db, org) - Vector2(4, 4), Vector2(8, 8)), _team_col("def"))
+	# 载具：方块 + 类型字（敌方载具动静大，始终可见）
+	for v in bf.veh.vehicles:
+		if v["dead"]:
+			continue
+		var vp := _w2m(v["pos"], org)
+		var vc := FRIEND if v["team"] == bf.player_team else ENEMY
+		draw_rect(Rect2(vp - Vector2(5, 5), Vector2(10, 10)), vc)
+		draw_string(font, vp + Vector2(-5, 4), {"tank": "坦", "ifv": "车", "heli": "机"}[v["type"]],
+				HORIZONTAL_ALIGNMENT_CENTER, 10, 8, Color.WHITE)
 	for s in bf.soldiers:
 		if s["dead"]:
 			continue
@@ -322,6 +335,52 @@ func _draw_gadget(sz: Vector2, font: Font) -> void:
 			Color(0.3, 0.7, 0.35, 0.6) if ready else Color(0.5, 0.5, 0.5, 0.45))
 	draw_string(font, Vector2(x + 8, y + 16), "G  " + _gadget_txt + ("" if ready else "  冷却中"),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+
+
+## 驾驶载具：准星 + 底部面板（车名/耐久/主副武器装填）
+func _draw_vehicle(sz: Vector2, font: Font) -> void:
+	var v: Dictionary = bf.veh.vehicles[bf.veh.player_v]
+	var td: Dictionary = bf.veh.type_def(v)
+	var c := sz * 0.5
+	draw_arc(c, 18.0, 0, TAU, 32, Color(1, 1, 1, 0.85), 1.5)
+	draw_circle(c, 2.0, Color(1, 1, 1, 0.9))
+	for d in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+		draw_line(c + d * 22.0, c + d * 30.0, Color(1, 1, 1, 0.8), 2.0)
+	var w := 380.0
+	var x := sz.x * 0.5 - w * 0.5
+	var y := sz.y - 104.0
+	draw_rect(Rect2(x, y, w, 78), PANEL_BG)
+	var hp_k := clampf(float(v["hp"]) / float(td["hp"]), 0.0, 1.0)
+	draw_string(font, Vector2(x + 12, y + 20), "%s   耐久 %d" % [td["name"], int(v["hp"])],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color.WHITE)
+	draw_rect(Rect2(x + 12, y + 28, w - 24, 8), Color(0, 0, 0, 0.6))
+	draw_rect(Rect2(x + 12, y + 28, (w - 24) * hp_k, 8),
+			Color(0.35, 0.85, 0.35) if hp_k > 0.35 else Color(0.95, 0.3, 0.2))
+	var wy := y + 56.0
+	for wi in 2:
+		var wd: Dictionary = td["main"] if wi == 0 else td["sec"]
+		if wd.is_empty():
+			continue
+		var cd_left: float = v["main_cd"] if wi == 0 else v["sec_cd"]
+		var k := 1.0 - clampf(cd_left / float(wd["cd"]), 0.0, 1.0)
+		var wx := x + 12 + wi * (w * 0.5)
+		draw_string(font, Vector2(wx, wy), ("左键 " if wi == 0 else "右键 ") + str(wd["name"]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.9, 0.9))
+		draw_rect(Rect2(wx, wy + 6, w * 0.5 - 30, 5), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(wx, wy + 6, (w * 0.5 - 30) * k, 5),
+				Color(1.0, 0.8, 0.3) if k >= 1.0 else Color(0.6, 0.6, 0.6))
+	draw_string(font, Vector2(x, y - 8), "F 下车", HORIZONTAL_ALIGNMENT_CENTER, w, 13,
+			Color(1, 1, 1, 0.7))
+
+
+## 步行靠近本方载具：F 上车提示
+func _draw_enter_hint(sz: Vector2, font: Font) -> void:
+	var k: int = bf.veh.nearest_enterable(bf.player_pos, bf.player_team)
+	if k < 0:
+		return
+	var name: String = bf.veh.type_def(bf.veh.vehicles[k])["name"]
+	draw_string(font, Vector2(0, sz.y * 0.6), "按 F 驾驶 " + name, HORIZONTAL_ALIGNMENT_CENTER,
+			sz.x, 20, Color(1.0, 0.9, 0.4))
 
 
 ## 计分板（Tab 按住 / 战斗结束常驻）

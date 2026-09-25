@@ -36,8 +36,12 @@ const CLASSES := [
 		"dmg": [38.0, 52.0], "cd": 1.5, "burst": 1, "range": 150.0, "acc": 0.012,
 		"gun": "sniper", "gadget": "scan", "gadget_name": "侦察信标", "gadget_cd": 25.0},
 ]
-const CALLSIGNS := ["猎鹰", "山猫", "黑曜", "北风", "赤狐", "雷鸣", "夜枭", "磐石",
-		"疾风", "铁砧", "苍狼", "寒霜"]
+const BattleVehicles := preload("res://scripts/battle_vehicles.gd")
+## 两队呼号分开（同名会让击杀播报分不清是哪边的人）
+const CALLSIGNS := {
+	"atk": ["猎鹰", "山猫", "黑曜", "北风", "赤狐", "雷鸣"],
+	"def": ["夜枭", "磐石", "疾风", "铁砧", "苍狼", "寒霜"],
+}
 
 var bmap                          # BattleMap
 var audio                         # RRAudio
@@ -67,7 +71,8 @@ var _im_i := 0
 var _ex_pool: Array = []
 var _ex_i := 0
 var _mm := {}                     # team -> MultiMesh 部件
-var projectiles: Array = []       # 手雷/火箭弹 {kind, vis, pos, vel, t, team, src}
+var projectiles: Array = []       # 手雷/火箭/炮弹 {kind, vis, pos, vel, t, team, src, dmg, vdmg, r, weapon}
+var veh                           # 载具（battle_vehicles.gd）
 
 
 func setup(bmap_ref, audio_ref) -> void:
@@ -77,6 +82,9 @@ func setup(bmap_ref, audio_ref) -> void:
 	_setup_explosions()
 	_setup_army_mm("atk")
 	_setup_army_mm("def")
+	veh = BattleVehicles.new()
+	add_child(veh)
+	veh.setup(self)
 
 
 # ================= 开局 =================
@@ -108,13 +116,14 @@ func start(side: String) -> void:
 			soldiers.append(s)
 	_apply_team_colors()
 	_refresh_point_colors()
+	veh.start()
 
 
 func _make_soldier(team: String, slot: int) -> Dictionary:
 	var cls: int = [0, 0, 0, 1, 1, 2, 2, 3][slot % 8]   # 突击多、侦察少
 	return {
 		"team": team, "slot": slot, "cls": cls,
-		"name": "%s-%02d" % [CALLSIGNS[slot % CALLSIGNS.size()], slot + 1],
+		"name": "%s-%02d" % [CALLSIGNS[team][slot % 6], slot + 1],
 		"pos": Vector3.ZERO, "yaw": 0.0, "hp": 100.0, "dead": true,
 		"respawn_t": 0.0, "tgt_i": -1, "tgt_player": false,
 		"fire_cd": randf_range(0.5, 1.5), "burst": 0, "mag": 30, "reload_t": 0.0,
@@ -123,6 +132,7 @@ func _make_soldier(team: String, slot: int) -> Dictionary:
 		"goal": Vector3.ZERO, "goal_t": 0.0, "nade_cd": randf_range(8.0, 20.0),
 		"kills": 0, "deaths": 0, "score": 0, "spotted_t": 0.0, "last_hit_by": -1,
 		"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO, "pose_n": 0,
+		"rpg_cd": randf_range(4.0, 10.0), "aa_t": 0.0,
 	}
 
 
@@ -179,7 +189,7 @@ func _update_capture(dt: float) -> void:
 					an += 1
 				else:
 					dn += 1
-		if player_alive and Vector2(player_pos.x - c.x, player_pos.z - c.z).length() \
+		if player_counts() and Vector2(player_pos.x - c.x, player_pos.z - c.z).length() \
 				< bmap.POINT_R:
 			if player_team == "atk":
 				an += 1
@@ -245,9 +255,17 @@ func _refresh_point_colors() -> void:
 			bmap.set_point_color(si, pi, col, si == sector)
 
 
+## 玩家是否计入占点：步行或开地面车算，飞在天上的直升机不算
+func player_counts() -> bool:
+	if not player_alive:
+		return false
+	var pv: Dictionary = veh.player_vehicle()
+	return pv.is_empty() or pv["type"] != "heli"
+
+
 ## 玩家当前站在哪个据点圈里（-1 = 不在）
 func player_point() -> int:
-	if not player_alive or sector >= pts.size():
+	if not player_counts() or sector >= pts.size():
 		return -1
 	for pi in 2:
 		var c: Vector3 = bmap.point_pos(sector, pi)
@@ -266,6 +284,7 @@ func update(dt: float) -> void:
 	_update_projectiles(dt)
 	if not active or battle_over:
 		return
+	veh.update(dt)
 	_cap_acc += dt
 	if _cap_acc >= 0.1:
 		_update_capture(_cap_acc)
@@ -369,6 +388,7 @@ func _update_soldier(i: int, dt: float) -> void:
 	if int(s["pose_n"]) >= 3 or s["pos"].distance_squared_to(player_pos) < 100.0 * 100.0:
 		s["pose_n"] = 0
 		_write_pose(s)
+	_anti_vehicle(i, s, dt, engaged)
 	if engaged:
 		_try_fire(i, s, t_pos, dist, dt)
 		# 突击兵：中距离对着扎堆的目标扔手雷
@@ -376,6 +396,59 @@ func _update_soldier(i: int, dt: float) -> void:
 		if s["cls"] == 0 and float(s["nade_cd"]) <= 0.0 and dist > 12.0 and dist < 32.0:
 			s["nade_cd"] = randf_range(18.0, 30.0)
 			_ai_grenade(i, s, t_pos)
+
+
+## 反载具：工程兵 70m 内有视线就打火箭（带提前量）；
+## 其他兵种手头没步兵目标时拿枪打低空直升机
+func _anti_vehicle(i: int, s: Dictionary, dt: float, engaged: bool) -> void:
+	s["rpg_cd"] = float(s["rpg_cd"]) - dt
+	s["aa_t"] = float(s["aa_t"]) - dt
+	if s["cls"] == 1 and float(s["rpg_cd"]) <= 0.0:
+		s["rpg_cd"] = 1.0
+		var k: int = _nearest_enemy_vehicle(s, 55.0, false, true)
+		if k >= 0:
+			var v: Dictionary = veh.vehicles[k]
+			var eye: Vector3 = s["pos"] + Vector3(0, 1.5, 0)
+			var tgt: Vector3 = v["pos"] + Vector3(0, 1.2, 0)
+			var lead: Vector3 = Vector3(sin(v["yaw"]), 0, cos(v["yaw"])) * float(v["speed"]) \
+					* eye.distance_to(tgt) / 75.0
+			tgt += lead
+			if _los(eye, tgt):
+				s["rpg_cd"] = randf_range(20.0, 30.0)
+				s["yaw"] = atan2(tgt.x - eye.x, tgt.z - eye.z)
+				spawn_projectile("rocket", eye + (tgt - eye).normalized() * 0.8,
+						(tgt - eye).normalized() * 75.0, s["team"], i, 120.0, 260.0, 4.5,
+						"火箭筒", -1)
+		return
+	if not engaged and float(s["aa_t"]) <= 0.0:
+		s["aa_t"] = randf_range(0.3, 0.6)
+		var k2: int = _nearest_enemy_vehicle(s, 70.0, true)
+		if k2 >= 0:
+			var v2: Dictionary = veh.vehicles[k2]
+			var eye2: Vector3 = s["pos"] + Vector3(0, 1.45, 0)
+			var d2: Vector3 = (v2["pos"] - eye2).normalized()
+			d2 = (d2 + Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * 0.08).normalized()
+			s["yaw"] = atan2(d2.x, d2.z)
+			s["spotted_t"] = 2.0
+			hitscan(eye2, d2, 80.0, randf_range(7.0, 10.0), s["team"], i,
+					CLASSES[s["cls"]]["gun"], eye2, -1)
+
+
+## heli_only：只找直升机（对空）；ground_only：只找地面车（火箭打不中直升机）
+func _nearest_enemy_vehicle(s: Dictionary, max_d: float, heli_only := false,
+		ground_only := false) -> int:
+	var best := -1
+	var bd := max_d
+	for k in veh.vehicles.size():
+		var v: Dictionary = veh.vehicles[k]
+		if v["dead"] or v["team"] == s["team"] or (heli_only and v["type"] != "heli") \
+				or (ground_only and v["type"] == "heli"):
+			continue
+		var d: float = s["pos"].distance_to(v["pos"])
+		if d < bd:
+			bd = d
+			best = k
+	return best
 
 
 func _pick_target(i: int, s: Dictionary, max_d: float) -> void:
@@ -392,7 +465,7 @@ func _pick_target(i: int, s: Dictionary, max_d: float) -> void:
 			best = j
 	s["tgt_i"] = best
 	s["tgt_player"] = false
-	if player_alive and player_team != s["team"]:
+	if player_alive and player_team != s["team"] and veh.player_v < 0:
 		var pd2 := sp.distance_squared_to(Vector2(player_pos.x, player_pos.z))
 		if pd2 < bd:
 			s["tgt_i"] = -1
@@ -516,51 +589,69 @@ func _try_fire(i: int, s: Dictionary, t_pos: Vector3, dist: float, dt: float) ->
 	var dir := (t_pos - eye).normalized()
 	var acc: float = cd["acc"] * (1.0 + dist / 60.0)
 	dir = (dir + Vector3(randf() - 0.5, (randf() - 0.5) * 0.5, randf() - 0.5) * acc).normalized()
-	_ballistic_shot(i, s, eye, dir, float(cd["range"]) + 20.0)
-
-
-func _ballistic_shot(i: int, s: Dictionary, eye: Vector3, dir: Vector3, max_d: float) -> void:
-	var best_d := max_d
-	var best_j := -1
-	var hit_player := false
-	for j in soldiers.size():
-		var f: Dictionary = soldiers[j]
-		if f["dead"] or f["team"] == s["team"]:
-			continue
-		var c: Vector3 = f["pos"] + Vector3(0, 1.1, 0)
-		var t: float = (c - eye).dot(dir)
-		if t < 0.5 or t > best_d:
-			continue
-		if (c - eye - dir * t).length() < 0.55:
-			best_d = t
-			best_j = j
-	if player_alive and player_team != s["team"]:
-		var c2: Vector3 = player_pos + Vector3(0, 1.2, 0)
-		var t2: float = (c2 - eye).dot(dir)
-		if t2 > 0.5 and t2 < best_d and (c2 - eye - dir * t2).length() < 0.55:
-			best_d = t2
-			hit_player = true
-			best_j = -1
-	var wall_d := _wall_dist(eye, dir, best_d)
-	var end := eye + dir * minf(best_d, wall_d)
 	var muzzle: Vector3 = s["pos"] + Vector3(sin(s["yaw"]) * 0.5, 1.38, cos(s["yaw"]) * 0.5)
-	_spawn_tracer(muzzle, end)
-	_spawn_impact(end)
-	if wall_d >= best_d:
-		var cd: Dictionary = CLASSES[s["cls"]]
-		var dmg := randf_range(cd["dmg"][0], cd["dmg"][1])
-		if hit_player:
-			player_hit.emit(dmg, s["pos"])
-			player_last_hit_by = i
-		elif best_j >= 0:
-			_damage_soldier(best_j, dmg, i, false, CLASSES[s["cls"]]["gun"])
+	hitscan(eye, dir, float(cd["range"]) + 20.0, randf_range(cd["dmg"][0], cd["dmg"][1]),
+			s["team"], i, CLASSES[s["cls"]]["gun"], muzzle, -1)
 	var pd: float = s["pos"].distance_to(player_pos)
 	if _snd_budget >= 1.0 and pd < 150.0:
 		_snd_budget -= 1.0
 		audio.play_police_shot(pd)
 
 
-var player_last_hit_by := -1      # 最近一次打中玩家的士兵（阵亡播报用）
+## 通用即时弹道：命中射线上最近的敌方士兵 / 步行玩家 / 敌方载具 / 墙体。
+## src：士兵序号 >=0 / 玩家 -1 / 载具 SRC_VEH-k；skip_v = 开火载具自身
+func hitscan(from: Vector3, dir: Vector3, max_d: float, dmg: float, team: String, src: int,
+		weapon: String, tracer_from: Vector3, skip_v: int) -> void:
+	var best_d := max_d
+	var best_j := -1
+	var kind := ""
+	for j in soldiers.size():
+		var f: Dictionary = soldiers[j]
+		if f["dead"] or f["team"] == team:
+			continue
+		var c: Vector3 = f["pos"] + Vector3(0, 1.1, 0)
+		var t: float = (c - from).dot(dir)
+		if t < 0.5 or t > best_d:
+			continue
+		if (c - from - dir * t).length() < 0.55:
+			best_d = t
+			best_j = j
+			kind = "soldier"
+	if player_alive and player_team != team and veh.player_v < 0:
+		var c2: Vector3 = player_pos + Vector3(0, 1.2, 0)
+		var t2: float = (c2 - from).dot(dir)
+		if t2 > 0.5 and t2 < best_d and (c2 - from - dir * t2).length() < 0.55:
+			best_d = t2
+			kind = "player"
+	var vh: Array = veh.ray_hit(from, dir, best_d, skip_v)
+	if int(vh[0]) >= 0 and veh.vehicles[vh[0]]["team"] != team:
+		best_d = vh[1]
+		best_j = vh[0]
+		kind = "vehicle"
+	var wall_d := _wall_dist(from, dir, best_d)
+	if wall_d < best_d:
+		best_d = wall_d
+		kind = "wall"
+	var end := from + dir * best_d
+	_spawn_tracer(tracer_from, end)
+	if kind != "":
+		_spawn_impact(end)
+	match kind:
+		"soldier":
+			_damage_soldier(best_j, dmg, src, false, weapon)
+		"player":
+			player_hit.emit(dmg, from)
+			player_last_hit_by = src
+		"vehicle":
+			var v: Dictionary = veh.vehicles[best_j]
+			var destroyed: bool = veh.damage(best_j, dmg * float(veh.type_def(v)["armor"]), src, weapon)
+			if src == -1:
+				hitmark.emit(destroyed, false)
+			if best_j == veh.player_v:
+				player_last_hit_by = src
+
+
+var player_last_hit_by := -1      # 最近一次打中玩家（或玩家载具）的来源（阵亡播报用）
 
 
 ## 射线到第一堵墙的距离（最远 max_d，没有则 INF）
@@ -593,20 +684,44 @@ func _damage_soldier(j: int, dmg: float, src: int, head: bool, weapon: String) -
 	var info := {"victim": s["name"], "victim_team": s["team"], "weapon": weapon,
 			"head": head, "by_player": src == -1, "player_died": false,
 			"victim_cls": s["cls"]}
+	_credit_kill(info, src, 150 if head else 100)
+	killed.emit(info)
+
+
+## 击杀归属：填 killer/killer_team 并给击杀者记分（玩家 / 士兵 / 载具）
+func _credit_kill(info: Dictionary, src: int, pts_gain: int) -> void:
+	info["killer"] = ""
+	info["killer_team"] = ""
 	if src == -1:
 		info["killer"] = "你"
 		info["killer_team"] = player_team
+		info["by_player"] = true
 		player_stats["kills"] = int(player_stats["kills"]) + 1
-		player_stats["score"] = int(player_stats["score"]) + (150 if head else 100)
-	elif src >= 0:
+		player_stats["score"] = int(player_stats["score"]) + pts_gain
+	elif src >= 0 and src < soldiers.size():
 		var k: Dictionary = soldiers[src]
 		info["killer"] = k["name"]
 		info["killer_team"] = k["team"]
+		info["killer_cls"] = k["cls"]
 		k["kills"] = int(k["kills"]) + 1
-		k["score"] = int(k["score"]) + 100
-	else:
-		info["killer"] = ""
-		info["killer_team"] = ""
+		k["score"] = int(k["score"]) + pts_gain
+	elif src <= BattleVehicles.SRC_VEH:
+		var vk: int = BattleVehicles.SRC_VEH - src
+		if vk < veh.vehicles.size():
+			info["killer"] = veh.display_name(vk)
+			info["killer_team"] = veh.vehicles[vk]["team"]
+
+
+func damage_soldier_ext(j: int, dmg: float, src: int, weapon: String) -> void:
+	_damage_soldier(j, dmg, src, false, weapon)
+
+
+## 载具被毁播报（battle_vehicles 调）
+func vehicle_destroyed(k: int, src: int, weapon: String) -> void:
+	var v: Dictionary = veh.vehicles[k]
+	var info := {"victim": veh.display_name(k), "victim_team": v["team"], "weapon": weapon,
+			"head": false, "by_player": false, "player_died": false, "vehicle": true}
+	_credit_kill(info, src, 300)
 	killed.emit(info)
 
 
@@ -619,17 +734,12 @@ func report_player_death() -> void:
 	var src := player_last_hit_by
 	var info := {"victim": "你", "victim_team": player_team, "weapon": "",
 			"head": false, "by_player": false, "player_died": true, "victim_cls": player_cls}
-	if src >= 0 and src < soldiers.size():
-		var k: Dictionary = soldiers[src]
-		info["killer"] = k["name"]
-		info["killer_team"] = k["team"]
-		info["weapon"] = CLASSES[k["cls"]]["gun"]
-		info["killer_cls"] = k["cls"]
-		k["kills"] = int(k["kills"]) + 1
-		k["score"] = int(k["score"]) + 100
-	else:
-		info["killer"] = ""
-		info["killer_team"] = ""
+	if src != -1:
+		_credit_kill(info, src, 100)
+		if info.has("killer_cls"):
+			info["weapon"] = CLASSES[info["killer_cls"]]["gun"]
+	info["by_player"] = false
+	info["player_died"] = true
 	player_last_hit_by = -1
 	killed.emit(info)
 
@@ -644,7 +754,16 @@ func player_deploy(cls: int, at: Vector3) -> void:
 
 ## 玩家子弹结算（game._on_foot_shot 转发）
 func player_shot(kind: String, idx: int, dmg: float) -> void:
-	if battle_over or idx < 0 or idx >= soldiers.size():
+	if battle_over or idx < 0:
+		return
+	if kind != "vehicle" and idx >= soldiers.size():
+		return
+	if kind == "vehicle":
+		if idx < veh.vehicles.size() and veh.vehicles[idx]["team"] != player_team:
+			var v: Dictionary = veh.vehicles[idx]
+			var destroyed: bool = veh.damage(idx, dmg * float(veh.type_def(v)["armor"]), -1,
+					CLASSES[player_cls]["gun"])
+			hitmark.emit(destroyed, false)
 		return
 	if kind != "soldier" and kind != "soldier_head":
 		return
@@ -673,6 +792,9 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 		var t: float = (c - from).dot(dir)
 		if t > 0.5 and t < best["d"] and (c - from - dir * t).length() < 0.5:
 			best = {"type": "soldier", "i": i, "d": t, "point": from + dir * t}
+	var vh: Array = veh.ray_hit(from, dir, best["d"], veh.player_v)
+	if int(vh[0]) >= 0:
+		best = {"type": "vehicle", "i": vh[0], "d": vh[1], "point": from + dir * float(vh[1])}
 	var wd := _wall_dist(from, dir, best["d"])
 	if wd < best["d"]:
 		best = {"type": "wall", "i": -1, "d": wd, "point": from + dir * wd}
@@ -707,13 +829,44 @@ func _make_proj_vis(rocket: bool) -> MeshInstance3D:
 
 ## src：-1 玩家，>=0 士兵序号
 func throw_grenade(from: Vector3, dir: Vector3, team: String, src: int) -> void:
-	projectiles.append({"kind": "grenade", "vis": _make_proj_vis(false), "pos": from,
-			"vel": dir * 19.0 + Vector3(0, 4.5, 0), "t": 2.2, "team": team, "src": src})
+	spawn_projectile("grenade", from, dir * 19.0 + Vector3(0, 4.5, 0), team, src,
+			110.0, 60.0, 7.0, "手雷", -1)
 
 
 func fire_rocket(from: Vector3, dir: Vector3, team: String, src: int) -> void:
-	projectiles.append({"kind": "rocket", "vis": _make_proj_vis(true), "pos": from,
-			"vel": dir * 75.0, "t": 4.0, "team": team, "src": src})
+	spawn_projectile("rocket", from, dir * 75.0, team, src, 120.0, 260.0, 4.5, "火箭筒", -1)
+
+
+## 通用投射物：grenade 抛物线 + 引信；rocket / rockets / shell / cannon 直飞触发。
+## dmg 对人、vdmg 对载具、r 爆炸半径；skip_v = 发射载具（不炸自己）
+func spawn_projectile(kind: String, from: Vector3, vel: Vector3, team: String, src: int,
+		dmg: float, vdmg: float, r: float, weapon: String, skip_v: int) -> void:
+	var vis: MeshInstance3D
+	if kind == "grenade":
+		vis = _make_proj_vis(false)
+	elif kind == "rocket" or kind == "rockets":
+		vis = _make_proj_vis(true)
+	else:
+		vis = _make_shell_vis(kind == "shell")
+	projectiles.append({"kind": kind, "vis": vis, "pos": from, "vel": vel,
+			"t": 1.8 if kind == "grenade" and src >= 0 else (2.2 if kind == "grenade" else 3.5),
+			"team": team, "src": src, "dmg": dmg, "vdmg": vdmg, "r": r, "weapon": weapon,
+			"skip_v": skip_v})
+
+
+func _make_shell_vis(big: bool) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.12, 0.12, 1.2) if big else Vector3(0.07, 0.07, 0.7)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.8, 0.4)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.7, 0.3)
+	mat.emission_energy_multiplier = 3.0
+	bm.material = mat
+	mi.mesh = bm
+	add_child(mi)
+	return mi
 
 
 ## 医疗包：自己回满 + 周围 12m 队友 +60
@@ -742,9 +895,8 @@ func _ai_grenade(i: int, s: Dictionary, t_pos: Vector3) -> void:
 	var d := flat.length()
 	# 按落点距离给水平速度（飞行约 1.1s），稍带误差
 	var dir := flat / maxf(d, 0.01)
-	projectiles.append({"kind": "grenade", "vis": _make_proj_vis(false), "pos": from,
-			"vel": dir * (d / 1.1) * randf_range(0.85, 1.1) + Vector3(0, 5.5, 0),
-			"t": 1.8, "team": s["team"], "src": i})
+	spawn_projectile("grenade", from, dir * (d / 1.1) * randf_range(0.85, 1.1)
+			+ Vector3(0, 5.5, 0), s["team"], i, 110.0, 60.0, 7.0, "手雷", -1)
 
 
 func _update_projectiles(dt: float) -> void:
@@ -767,31 +919,44 @@ func _update_projectiles(dt: float) -> void:
 			p["t"] = float(p["t"]) - dt
 			boom = float(p["t"]) <= 0.0
 		else:
+			if p["kind"] == "shell":
+				v.y -= 2.0 * dt
 			var np2 := pos + v * dt
-			pos = np2
 			p["t"] = float(p["t"]) - dt
-			boom = float(p["t"]) <= 0.0 or np2.y < bmap.terrain_height(np2.x, np2.z) + 0.2 \
-					or bmap.solid_at(np2)
+			# 这一步走过的线段上有墙：炸在墙面
+			var seg := np2 - pos
+			var sl := seg.length()
+			var wd: float = bmap.ray_wall(pos, seg / maxf(sl, 0.001), sl) if sl > 0.001 else INF
+			if wd < INF:
+				np2 = pos + seg / sl * wd
+				boom = true
+			pos = np2
+			if not boom:
+				boom = float(p["t"]) <= 0.0 or np2.y < bmap.terrain_height(np2.x, np2.z) + 0.2
+			if not boom and veh.hit_test(np2, p["team"], int(p["skip_v"])) >= 0:
+				boom = true
 			if not boom:
 				for s in soldiers:
 					if not s["dead"] and s["team"] != p["team"] \
 							and (s["pos"] + Vector3(0, 1.0, 0)).distance_to(np2) < 1.0:
 						boom = true
 						break
+			if not boom and player_alive and player_team != p["team"] and veh.player_v < 0 \
+					and (player_pos + Vector3(0, 1.0, 0)).distance_to(np2) < 1.0:
+				boom = true
 		p["vel"] = v
 		p["pos"] = pos
 		var vis: MeshInstance3D = p["vis"]
 		vis.position = pos
-		if p["kind"] == "rocket" and v.length_squared() > 0.01:
+		if p["kind"] != "grenade" and v.length_squared() > 0.01:
 			vis.look_at(pos + v, Vector3.UP)
-			vis.rotate_object_local(Vector3.RIGHT, PI * 0.5)
+			if p["kind"] == "rocket" or p["kind"] == "rockets":
+				vis.rotate_object_local(Vector3.RIGHT, PI * 0.5)
 		if boom:
 			vis.queue_free()
 			projectiles.remove_at(k)
-			if p["kind"] == "grenade":
-				_explode(pos, 7.0, 110.0, p["team"], int(p["src"]), "手雷")
-			else:
-				_explode(pos, 4.5, 120.0, p["team"], int(p["src"]), "火箭筒")
+			explode_raw(pos, float(p["r"]), float(p["dmg"]), float(p["vdmg"]), p["team"],
+					int(p["src"]), str(p["weapon"]))
 
 
 func _clear_projectiles() -> void:
@@ -800,8 +965,9 @@ func _clear_projectiles() -> void:
 	projectiles.clear()
 
 
-## 爆炸：半径内按距离衰减伤害，不伤友军（自伤除外：玩家被自己的手雷炸到照样扣血）
-func _explode(pos: Vector3, radius: float, dmg: float, team: String, src: int,
+## 爆炸：半径内按距离衰减伤害，不伤友军（team="" 不分敌我，如载具殉爆）；
+## 玩家被自己的手雷炸到照样扣血；vdmg 为对载具伤害
+func explode_raw(pos: Vector3, radius: float, dmg: float, vdmg: float, team: String, src: int,
 		weapon: String) -> void:
 	var slot: Dictionary = _ex_pool[_ex_i]
 	_ex_i = (_ex_i + 1) % _ex_pool.size()
@@ -814,20 +980,21 @@ func _explode(pos: Vector3, radius: float, dmg: float, team: String, src: int,
 	slot["radius"] = radius
 	for j in soldiers.size():
 		var s: Dictionary = soldiers[j]
-		if s["dead"] or s["team"] == team:
+		if s["dead"] or (team != "" and s["team"] == team):
 			continue
 		var d: float = s["pos"].distance_to(pos)
 		if d <= radius:
-			var was_alive: bool = not s["dead"]
 			_damage_soldier(j, dmg * (1.0 - d / radius * 0.6), src, false, weapon)
-			if src == -1 and was_alive:
+			if src == -1:
 				hitmark.emit(s["dead"], false)
-	if player_alive:
+	if player_alive and veh.player_v < 0:
 		var pd := player_pos.distance_to(pos)
-		if pd <= radius and (team != player_team or src == -1):
+		if pd <= radius and (team != player_team or src == -1 or team == ""):
 			player_hit.emit(dmg * (1.0 - pd / radius * 0.6) * 0.8, pos)
-			if src >= 0:
+			if src != -1:
 				player_last_hit_by = src
+	if vdmg > 0.0:
+		veh.explosion(pos, radius, vdmg, team, src, weapon)
 	explosion_at.emit(pos)
 
 
