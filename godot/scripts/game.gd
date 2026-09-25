@@ -1151,7 +1151,8 @@ func _ensure_headlight() -> void:
 	_headlight.spot_angle = 31.0
 	_headlight.spot_attenuation = 0.55
 	_headlight.position = Vector3(0, 0.75, 1.6)
-	_headlight.rotation.x = -0.12
+	# SpotLight 沿自身 -Z 照射：转 180° 才朝车头（+Z），再微下压照路面
+	_headlight.rotation = Vector3(-0.12, PI, 0.0)
 	player.visual.add_child(_headlight)
 
 
