@@ -1011,11 +1011,19 @@ func _carinfo_text() -> String:
 	if m.has("modes"):
 		base = m["modes"][dual_mode]
 	var cur: Dictionary = _effective_stats(car_model_id, base)
+	# top_disp：仪表极速（与物理渐近线 top 解耦的车型的显示值）
+	var bd: Dictionary = base
+	var cd: Dictionary = cur
+	if base.has("top_disp"):
+		bd = base.duplicate()
+		cd = cur.duplicate()
+		bd["top"] = base["top_disp"]
+		cd["top"] = cur.get("top_disp", cur.get("top", 0))
 	var lines := [
-		"马力    %d → %d %s" % [roundi(base.get("power", 0) * 10.0),
-			roundi(cur.get("power", 0) * 10.0), _arrow(cur.power, base.power)],
-		"极速    %d km/h → %d km/h %s" % [roundi(base.get("top", 0) * 3.6),
-			roundi(cur.get("top", 0) * 3.6), _arrow(cur.top, base.top)],
+		"马力    %d → %d %s" % [roundi(bd.get("power", 0) * 10.0),
+			roundi(cd.get("power", 0) * 10.0), _arrow(cur.power, base.power)],
+		"极速    %d km/h → %d km/h %s" % [roundi(bd.get("top", 0) * 3.6),
+			roundi(cd.get("top", 0) * 3.6), _arrow(cd.top, bd.top)],
 		"牵引    %.1f → %.1f m/s² %s" % [base.get("accel", 0.0),
 			cur.get("accel", 0.0), _arrow(cur.accel, base.accel)],
 		"抓地    %d%% → %d%% %s" % [roundi(base.get("grip", 1.0) * 100.0),

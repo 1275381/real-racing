@@ -178,10 +178,13 @@ const CAR_MODELS := [
 	{"id": "aiped", "name": "雷鸣混动", "file": "res://assets/cars/car_tripo_p.glb", "desc": "混动电驱终极旗舰 · 全游戏加速极速双冠", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid",
 		"stats": {"top": 98.0, "power": 74.0, "accel": 15.2, "grip": 1.1, "brake": 19.8, "no_shift": true}},
-	# 燃油旗舰（Tripo 2026-09）：极速 400 km/h 全游戏第一，加速仅次于雷鸣混动
+	# 燃油旗舰（Tripo 2026-09）：极速 400 km/h 全游戏第一，加速仅次于雷鸣混动。
+	# top 是物理渐近线（实际极速由动力-风阻平衡决定，略低于 top）：
+	# top=125 + power=62 → 实际平衡 ≈111.3 m/s；top_disp 让面板仍显示 400
 	{"id": "aigale", "name": "烈风 GT", "file": "res://assets/cars/car_tripo_q.glb", "desc": "燃油旗舰 · 极速 400 km/h · 加速次席", "yaw_deg": -90.0, "scale": 4.7,
 		"class": "combustion",
-		"stats": {"top": 111.2, "power": 130.0, "accel": 14.8, "grip": 1.08, "brake": 19.6}},
+		"stats": {"top": 125.0, "power": 62.0, "accel": 14.8, "grip": 1.08,
+				"brake": 19.6, "top_disp": 111.2}},
 ]
 
 ## 漫游战机（非赛车）：车库可选，仅限自由漫游驾驶
