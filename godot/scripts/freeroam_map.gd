@@ -560,6 +560,10 @@ func _make_raceway_props() -> void:
 	pm.material = pmat
 	plane_setup(plaza, pm, Vector3(838, 0.05, 2390))
 	root.add_child(plaza)
+	# 垫层登记为铺装区：视觉是广场，物理也必须是路——否则 3.6 倍草地阻力
+	# 把落地后的车压到只能跑七八十
+	road_pads.append({"c": Vector2(838, 2390), "fx": 1.0, "fz": 0.0,
+			"hf": 100.0, "hl": 130.0, "y": 0.05})
 
 	# 主看台：南直道外侧，阶梯 3 层 + 顶棚 + 支柱（长 200m）
 	var st_x := 400.0
