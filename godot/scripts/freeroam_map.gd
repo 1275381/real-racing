@@ -280,7 +280,7 @@ func build(city := {}) -> void:
 ## 后台线程构建（游戏开机/换城市用）：步骤与 build() 完全相同，产出逐位一致。
 ## 节点必须尚未入树；线程结束（wait_to_finish）后由主线程 add_child，
 ## 再调 finish_threaded_build() 补上必须在树内做的事。
-## 主线程等待期间不能回主循环，见 RRLoadingScreen.wait_thread。
+## 主线程等待期间不能回主循环，见 loading_screen.gd 的 wait_thread。
 func build_threaded(city := {}) -> Thread:
 	_threaded = true
 	var th := Thread.new()

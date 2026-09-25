@@ -1,5 +1,7 @@
-class_name RRLoadingScreen
 extends CanvasLayer
+## （不注册 class_name：由 game.gd 按路径 preload，不依赖不入库的全局类缓存 ——
+##  新 pull 下来、编辑器还没重新扫描过的机器上，未登记的类名会让 game.gd 解析失败，
+##  整个主场景没脚本，画面只剩天空底色）
 ## 加载遮罩：开机 / 换城市时盖住画面，显示标题 + 进度条 + 当前步骤。
 ## 画面直接用 RenderingServer 画在自有 canvas item 上，不走 Control 重绘 ——
 ## Control 的重绘靠 call_deferred，而 wait_thread() 等后台建城时主线程刻意

@@ -24,6 +24,7 @@ var audio: RRAudio
 var freeroam: FreeroamMap   # 漫游大地图（首次进入漫游时生成）
 var roam_city_id := ""      # 当前漫游城市存档 id；变了要重建，否则看到旧城
 const CityData := preload("res://scripts/city_data.gd")
+const LoadingScreen := preload("res://scripts/loading_screen.gd")
 
 var cars: Array = []               # CarRec 列表
 var player: CarRec
@@ -86,7 +87,7 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	# 加载遮罩最先建：_ready 结束后的第一帧就是它，而不是半成品场景
-	_loading = RRLoadingScreen.new()
+	_loading = LoadingScreen.new()
 	add_child(_loading)
 	_loading.set_progress(0.04, "加载赛道与车辆")
 	_load_settings()
@@ -536,7 +537,7 @@ var _elev_target := 0.32           # 轿厢目标楼层
 var codriver := false              # 比赛领航员（AI 代驾，水平有限）
 var _codriver_ai: AIDriver
 var _car_preload_thread: Thread    # 车型预加载后台线程
-var _loading: RRLoadingScreen      # 加载遮罩（开机/换城市），进漫游后淡出释放
+var _loading: LoadingScreen        # 加载遮罩（开机/换城市），进漫游后淡出释放
 var _car_preload_stop := false     # 退出时让预加载线程在两个文件之间停手
 var headlight_on := false          # 车灯手动开关（L 键，车内/夜间）
 var map_open := false              # 大地图（导航）界面
@@ -1405,7 +1406,7 @@ func enter_roam() -> void:
 		freeroam = null
 	if freeroam == null:
 		if _loading == null:
-			_loading = RRLoadingScreen.new()
+			_loading = LoadingScreen.new()
 			add_child(_loading)
 		# 后台线程建城（节点未入树），主线程在 wait_thread 里约 60fps 刷进度条；
 		# 线程结束后再入树并赋给 freeroam —— 其它逻辑永远看不到半成品地图
