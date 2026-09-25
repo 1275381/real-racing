@@ -1144,6 +1144,120 @@ func _quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3, col: Co
 	_v_uv.append(uv_c)
 
 
+## 地面铺装挖洞区（XZ）：出生车库展厅地板范围内不铺街面 / 人行道 / 路口拼块 /
+## 斑马线 / 灯杆。x=180 街东半幅、z=-540 路口东北角伸进展厅 2~5m，
+## 原来沥青、人行道、斑马线和一根红绿灯杆全露在门内。
+## 只裁视觉；路网数据（车/人高度、软墙）不动。
+var _surf_holes: Array[Rect2] = [Rect2(GAR_C.x - RRGarage.ROOM_HALF,
+		GAR_C.y - RRGarage.ROOM_HALF, RRGarage.ROOM_HALF * 2.0, RRGarage.ROOM_HALF * 2.0)]
+
+
+func _in_surf_hole(x: float, z: float) -> bool:
+	for h in _surf_holes:
+		if h.has_point(Vector2(x, z)):
+			return true
+	return false
+
+
+## 同 _quad，但先减掉挖洞区（只处理离地 1m 内的平铺面）。
+## 与洞不相交的四边形原样走 _quad —— 绝大多数路面零开销、顶点完全不变。
+## 洞相交的：XZ 多边形求差 → 三角化 → 按原四边形两个三角形的重心坐标
+## 回插 y 与 UV，绕向对齐 _quad（a,c,b）。
+## 洞只会削掉四边形的边角（路面条带窄于洞），不会被整个包进四边形里，
+## 所以 clip_polygons 不会返回带孔多边形。
+func _quad_cut(a: Vector3, b: Vector3, c: Vector3, d: Vector3, nrm: Vector3, col: Color,
+		uv_a := Vector2.ZERO, uv_b := Vector2.ZERO, uv_c := Vector2.ZERO, uv_d := Vector2.ZERO) -> void:
+	var x0 := minf(minf(a.x, b.x), minf(c.x, d.x))
+	var x1 := maxf(maxf(a.x, b.x), maxf(c.x, d.x))
+	var z0 := minf(minf(a.z, b.z), minf(c.z, d.z))
+	var z1 := maxf(maxf(a.z, b.z), maxf(c.z, d.z))
+	var qbox := Rect2(x0, z0, x1 - x0, z1 - z0)
+	var hit := false
+	for h in _surf_holes:
+		if h.intersects(qbox):
+			hit = true
+			break
+	if not hit or maxf(maxf(a.y, b.y), maxf(c.y, d.y)) > 1.0:
+		_quad(a, b, c, d, nrm, col, uv_a, uv_b, uv_c, uv_d)
+		return
+	var polys: Array = [PackedVector2Array([Vector2(a.x, a.z), Vector2(b.x, b.z),
+			Vector2(c.x, c.z), Vector2(d.x, d.z)])]
+	for h in _surf_holes:
+		var hp := PackedVector2Array([h.position, Vector2(h.end.x, h.position.y),
+				h.end, Vector2(h.position.x, h.end.y)])
+		var nxt: Array = []
+		for p in polys:
+			nxt.append_array(Geometry2D.clip_polygons(p, hp))
+		polys = nxt
+	# 原四边形拆成 _quad 的两个三角形：(a,c,b) 与 (a,d,c)
+	var src := [[a, c, b, uv_a, uv_c, uv_b], [a, d, c, uv_a, uv_d, uv_c]]
+	var ref_s := _xz_cross(c - a, b - a)
+	for p in polys:
+		var idx := Geometry2D.triangulate_polygon(p)
+		for t in range(0, idx.size(), 3):
+			var q0: Vector2 = p[idx[t]]
+			var q1: Vector2 = p[idx[t + 1]]
+			var q2: Vector2 = p[idx[t + 2]]
+			var s := (q1.x - q0.x) * (q2.y - q0.y) - (q1.y - q0.y) * (q2.x - q0.x)
+			var q := PackedVector2Array([q0, q1, q2] if s * ref_s >= 0.0 else [q0, q2, q1])
+			for v in q:
+				var got := false
+				for tri in src:
+					var bc: Vector3 = _bary(v, Vector2(tri[0].x, tri[0].z),
+							Vector2(tri[1].x, tri[1].z), Vector2(tri[2].x, tri[2].z))
+					if bc.x < -1e-3 or bc.y < -1e-3 or bc.z < -1e-3:
+						continue
+					_v_pos.append(Vector3(v.x, tri[0].y * bc.x + tri[1].y * bc.y
+							+ tri[2].y * bc.z, v.y))
+					_v_uv.append(tri[3] * bc.x + tri[4] * bc.y + tri[5] * bc.z)
+					got = true
+					break
+				if not got:   # 数值边界外（不应发生）：按 a 的高度/UV 兜底，保持顶点数成三
+					_v_pos.append(Vector3(v.x, a.y, v.y))
+					_v_uv.append(uv_a)
+				_v_nrm.append(nrm)
+				_v_col.append(col)
+
+
+static func _xz_cross(u: Vector3, v: Vector3) -> float:
+	return u.x * v.z - u.z * v.x
+
+
+## 二维重心坐标 (对 a, b, c 的权重)；退化三角形返回全负
+static func _bary(p: Vector2, a: Vector2, b: Vector2, c: Vector2) -> Vector3:
+	var v0 := b - a
+	var v1 := c - a
+	var v2 := p - a
+	var den := v0.x * v1.y - v1.x * v0.y
+	if absf(den) < 1e-9:
+		return Vector3(-1, -1, -1)
+	var v := (v2.x * v1.y - v1.x * v2.y) / den
+	var w := (v0.x * v2.y - v2.x * v0.y) / den
+	return Vector3(1.0 - v - w, v, w)
+
+
+## 一段沿长轴的线状物（斑马线）减掉挖洞区：只从端头削短，不拆段。
+## 返回 Vector2(新中心长轴坐标, 新半长)；整段被吃掉时半长 <= 0。
+func _trim_by_holes(c_long: float, half: float, c_short: float, half_short: float,
+		along_x: bool) -> Vector2:
+	var lo := c_long - half
+	var hi := c_long + half
+	for h in _surf_holes:
+		var h0: float = h.position.x if along_x else h.position.y
+		var h1: float = h.end.x if along_x else h.end.y
+		var s0: float = h.position.y if along_x else h.position.x
+		var s1: float = h.end.y if along_x else h.end.x
+		if c_short + half_short <= s0 or c_short - half_short >= s1:
+			continue
+		if h0 <= lo and h1 >= hi:
+			return Vector2(c_long, 0.0)
+		if h0 <= lo and h1 > lo:
+			lo = h1
+		elif h0 < hi and h1 >= hi:
+			hi = h0
+	return Vector2((lo + hi) * 0.5, (hi - lo) * 0.5)
+
+
 func _flush(mat: Material, cast_shadow := false) -> void:
 	if _v_pos.is_empty():
 		return
@@ -1470,7 +1584,7 @@ func _build_road_meshes() -> void:
 						Vector3.UP,
 						Vector2(0, ru0), Vector2(0, ru1), Vector2(1, ru1), Vector2(1, ru0))
 				else:
-					_quad(
+					_quad_cut(
 						ra + Vector3(-rla.x * w, 0, -rla.y * w),
 						rb + Vector3(-rlb.x * w, 0, -rlb.y * w),
 						rb + Vector3(rlb.x * w, 0, rlb.y * w),
@@ -1605,7 +1719,7 @@ func _build_road_meshes() -> void:
 						wlb.y * side * (w + 2.2))
 				var d := wa + Vector3(wla.x * side * (w + 2.2), 0.05,
 						wla.y * side * (w + 2.2))
-				_quad(a, b, c, d, Vector3.UP, Color.WHITE)
+				_quad_cut(a, b, c, d, Vector3.UP, Color.WHITE)
 	_flush(walk_mat)
 
 	# 高架桥墩（每 ~45m 一根，从地面顶到桥面）
@@ -2753,7 +2867,7 @@ func _build_intersections() -> void:
 	var wk := hw + 2.2
 	for cx in GRID_COORDS:
 		for cz in GRID_COORDS:
-			_quad(Vector3(cx - hw, STREET_Y, cz - hw), Vector3(cx - hw, STREET_Y, cz + hw),
+			_quad_cut(Vector3(cx - hw, STREET_Y, cz - hw), Vector3(cx - hw, STREET_Y, cz + hw),
 					Vector3(cx + hw, STREET_Y, cz + hw), Vector3(cx + hw, STREET_Y, cz - hw),
 					Vector3.UP, Color.WHITE,
 					Vector2(0, 0), Vector2(0, 2), Vector2(2, 2), Vector2(2, 0))
@@ -2769,7 +2883,7 @@ func _build_intersections() -> void:
 					var z0: float = cz + minf(sz * hw, sz * wk)
 					var z1: float = cz + maxf(sz * hw, sz * wk)
 					var yy := STREET_Y + 0.05
-					_quad(Vector3(x0, yy, z0), Vector3(x0, yy, z1),
+					_quad_cut(Vector3(x0, yy, z0), Vector3(x0, yy, z1),
 							Vector3(x1, yy, z1), Vector3(x1, yy, z0),
 							Vector3.UP, Color.WHITE)
 	var corner_mat := _fade_material(Color("#787e88"))
@@ -2788,14 +2902,24 @@ func _build_intersections() -> void:
 		for cz in GRID_COORDS:
 			var y := _street_y(cx, cz) + 0.014
 			var off := GRID_HALF_W + 1.9
+			var zhalf := zebra_mesh.size.x * 0.5
 			for app in 4:
-				var xf := Transform3D()
-				match app:
-					0: xf = Transform3D(Basis.from_euler(Vector3(0, 0, 0)), Vector3(cx, y, cz + off))
-					1: xf = Transform3D(Basis.from_euler(Vector3(0, 0, 0)), Vector3(cx, y, cz - off))
-					2: xf = Transform3D(Basis.from_euler(Vector3(0, PI / 2, 0)), Vector3(cx + off, y, cz))
-					3: xf = Transform3D(Basis.from_euler(Vector3(0, PI / 2, 0)), Vector3(cx - off, y, cz))
-				zebra_list.append(xf)
+				# 0/1 横跨南北街（长轴沿 x），2/3 横跨东西街（长轴沿 z）
+				var along_x := app < 2
+				var ctr := Vector3(cx, y, cz + (off if app == 0 else -off)) if along_x \
+						else Vector3(cx + (off if app == 2 else -off), y, cz)
+				var span := _trim_by_holes(ctr.x if along_x else ctr.z, zhalf,
+						ctr.z if along_x else ctr.x, zebra_mesh.size.y * 0.5, along_x)
+				if span.y <= 0.0:
+					continue
+				var sc := Basis.from_scale(Vector3(span.y / zhalf, 1, 1))
+				if along_x:
+					ctr.x = span.x
+					zebra_list.append(Transform3D(sc, ctr))
+				else:
+					ctr.z = span.x
+					zebra_list.append(Transform3D(
+							Basis.from_euler(Vector3(0, PI / 2, 0)) * sc, ctr))
 	var zmm := MultiMesh.new()
 	zmm.transform_format = MultiMesh.TRANSFORM_3D
 	zmm.mesh = zebra_mesh
@@ -2872,6 +2996,8 @@ func _build_intersections() -> void:
 				# 原来灯杆立在 10.4m，车直接从灯杆里穿过去
 				var px: float = cx + corner.x * (GRID_HALF_W + 3.0)
 				var pz: float = cz + corner.y * (GRID_HALF_W + 3.0)
+				if _in_surf_hole(px, pz):
+					continue   # 转角落在车库展厅里（180,-540 东北角）
 				var dir := Vector2(cx - px, cz - pz).normalized()
 				var yaw := atan2(dir.x, dir.y)
 				pole_list.append(Transform3D(Basis(), Vector3(px, 3.0, pz)))
