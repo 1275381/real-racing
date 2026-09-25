@@ -25,6 +25,7 @@ var freeroam: FreeroamMap   # 漫游大地图（首次进入漫游时生成）
 var roam_city_id := ""      # 当前漫游城市存档 id；变了要重建，否则看到旧城
 const CityData := preload("res://scripts/city_data.gd")
 const LoadingScreen := preload("res://scripts/loading_screen.gd")
+const BattleHud := preload("res://scripts/battle_hud.gd")
 
 var cars: Array = []               # CarRec 列表
 var player: CarRec
@@ -315,6 +316,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 任意用户输入解锁音频（开机直达漫游，无车库点击手势）
 	if event is InputEventKey or event is InputEventMouseButton:
 		audio.ensure()
+	# G 键：大战场兵种道具
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_G and state == ST.BATTLE:
+		_battle_gadget()
 	# L 键：车灯模式 自动 → 常开 → 关闭 循环（仅驾车）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_L \
@@ -516,10 +521,11 @@ var bmap: BattleMap                # 独立战场地图（荒漠 500×400m）
 var bf: RRBattleField              # 战斗管理器（两军 AI 士兵）
 var battle_kills_total := 0        # 累计击杀（存档）
 var battle_wins := 0               # 累计胜场（存档）
-var _battle_respawn_t := 0.0       # 阵亡重生倒计时（>0 = 死亡等待）
 var _battle_prev_theme := "country"  # 进场前主题（退场恢复）
-var flying := false                # 玩家驾驶我方战机中
-var _plane_was_down := false       # 我方战机被击落（重生提示用）
+var bhud                           # 大战场界面（battle_hud.gd）：目标栏/小地图/播报/部署
+var _battle_cls := 0               # 玩家当前兵种（RRBattleField.CLASSES 序号）
+var _battle_max_hp := 100.0
+var _gadget_cd := 0.0              # 兵种道具冷却
 
 # ================= 漫游战机（车库可选，仅限自由漫游） =================
 
@@ -695,7 +701,7 @@ func _refresh_gunshop_ui() -> void:
 
 # ================= 大战场模式 =================
 
-## 进入大战场：独立荒漠地图，持枪步行参战（波次歼灭战 12 v 12）
+## 进入大战场（攻防推进）：先选阵营，再选兵种与出生点部署
 func enter_battle() -> void:
 	if state != ST.GARAGE:
 		return
@@ -710,8 +716,8 @@ func enter_battle() -> void:
 		npc.set_active(false)
 	env.set_theme("desert")
 	env.set_race_props_visible(false)
-	env.set_fog_range(260.0, 900.0)   # 战场近雾：荒漠沙尘氛围
-	env.set_ground_visible(true)      # 战场边界之外由全局面兜底地平
+	env.set_fog_range(300.0, 1000.0)   # 战场近雾：荒漠沙尘氛围
+	env.set_ground_visible(true)       # 战场边界之外由全局面兜底地平
 	fx.clear_skids()
 	state = ST.BATTLE
 	if bmap == null:
@@ -723,91 +729,114 @@ func enter_battle() -> void:
 		add_child(bf)
 		bf.setup(bmap, audio)
 		bf.player_hit.connect(_on_bf_player_hit)
-		bf.enemy_killed.connect(_on_bf_enemy_killed)
-		bf.wave_started.connect(_on_bf_wave)
+		bf.killed.connect(_on_bf_killed)
+		bf.hitmark.connect(_on_bf_hitmark)
+		bf.point_changed.connect(_on_bf_point)
+		bf.sector_captured.connect(_on_bf_sector)
 		bf.over.connect(_on_bf_over)
-		bf.plane_down.connect(_on_bf_plane_down)
 		bf.explosion_at.connect(_on_bf_explosion)
+	if bhud == null:
+		bhud = BattleHud.new()
+		hud.add_child(bhud)
+		bhud.setup(bf)
+		bhud.side_chosen.connect(_on_battle_side)
+		bhud.deploy_requested.connect(_on_battle_deploy)
 	if onfoot == null:
 		onfoot = OnFoot.new()
 		add_child(onfoot)
-		onfoot.setup(bmap, bf, audio, camera)   # bmap/bf 顶替 freeroam/npc 位
+		onfoot.setup(bmap, bf, audio, camera)
 		onfoot.set_ammo_type(ammo_type)
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): audio.play_reload())
-	# 战场内无载具：直接步行入场
+	onfoot.retarget(bmap, bf)   # 开机先进过漫游：onfoot 原本指着城市
 	on_foot = false
-	flying = false
-	_plane_was_down = false
 	onfoot.exit()
 	player.visual.visible = false
-	_in_steer = 0.0
 	_cam_init = false
 	_intro_t = 0.0
-	_battle_respawn_t = 0.0
-	player_hp = 100.0
-	bf.start()
-	_battle_enter_foot()
-	hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
-			bf.wave, bf.kills, "战机 %d/%d" % [int(bf.ally_plane["hp"]),
-			bf.PLANE_BOMBS])
+	bf.active = false
+	bf.battle_over = false
+	bhud.visible = true
+	bhud.scoreboard_on = false
+	bhud.open_deploy(true, 0.0)
+	hud.set_onfoot(false)
 	hud.set_board_hint(false)
-	hud.show_center("大 战 场", "全歼 %d 名敌军即获胜 · C 滑铲 · F 登机轰炸"
-			% (bf.ENEMY_WAVE * bf.TOTAL_WAVES), 3500)
+	hud.show_center("", "", 0)
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
-## 战场步行入场（无载具版上下车切换）；at = Vector3.ZERO 时用基地出生点
-func _battle_enter_foot(at: Vector3 = Vector3.ZERO) -> void:
+func _on_battle_side(side: String) -> void:
+	bf.start(side)
+	bhud.open_deploy(false, 0.0)
+	bhud.banner("进 攻" if side == "atk" else "防 守",
+			"依次夺下 3 个区域的 A/B 据点" if side == "atk"
+			else "守住据点，耗尽进攻方兵力", 3.0)
+
+
+## 部署：按兵种配发武器与血量，出生在所选出生点附近
+func _on_battle_deploy(cls: int, spawn_i: int) -> void:
+	var at: Vector3 = bhud.spawn_pos(spawn_i)
+	var np: Vector2 = bmap.push_out(at.x + randf_range(-5.0, 5.0),
+			at.z + randf_range(-3.0, 3.0), 0.6)
+	var p := Vector3(np.x, bmap.terrain_height(np.x, np.y), np.y)
+	var cd: Dictionary = RRBattleField.CLASSES[cls]
+	_battle_cls = cls
+	_battle_max_hp = float(cd["hp"])
+	player_hp = _battle_max_hp
+	_no_dmg_t = 0.0
+	_gadget_cd = 0.0
+	bf.player_deploy(cls, p)
+	bhud.close_deploy()
 	on_foot = true
 	camera.near = 0.02   # 步行第一人称：贴脸枪模不被近裁剪面裁掉
-	onfoot.set_gun(gun_equipped)
-	var spawn := at
-	if spawn == Vector3.ZERO:
-		spawn = BattleMap.ALLY_SPAWN \
-				+ Vector3(randf_range(-8.0, 8.0), 0, randf_range(-4.0, 4.0))
-	onfoot.enter(spawn, PI)   # 朝北（-Z，敌军方向）
+	onfoot.gun_ammo.erase(cd["gun"])   # 重新部署满弹匣
+	onfoot.set_gun(cd["gun"])
+	onfoot.enter(p, PI if bf.player_team == "atk" else 0.0)   # 面朝敌方来向
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	hud.set_onfoot(true)
 	hud.set_health(player_hp)
-	hud.set_gun_name(Guns.gun_by_id(gun_equipped)["name"])
+	hud.set_gun_name(Guns.gun_by_id(cd["gun"])["name"])
 	hud.set_scope(false)
+	bhud.banner("部署 · " + str(cd["name"]),
+			"G 使用%s · Tab 计分板 · Esc 退出" % cd["gadget_name"], 2.5)
 
 
-## 登上我方战机
-func _board_plane() -> void:
-	flying = true
-	bf.player_flying = true
-	on_foot = false
-	onfoot.exit()
-	hud.set_onfoot(false)
-	hud.set_scope(false)
-	hud.set_board_hint(false)
-	hud.show_center("起飞",
-			"W/S 油门 · A/D 或 ←/→ 转弯 · ↑ 推杆 ↓ 拉起 · 空格 投弹 · 落地减速后 F 下机",
-			4000)
-
-
-## 落地状态下机
-func _exit_plane() -> void:
-	var p: Dictionary = bf.ally_plane
-	var alt: float = p["pos"].y - bf.bmap.terrain_height(p["pos"].x, p["pos"].z)
-	if not p["landed"] or alt > 5.0:
-		hud.show_center("无法下机", "先关油门贴地减速（S 键）", 1600)
+## G 键：兵种道具（手雷 / 火箭筒 / 医疗包 / 侦察信标）
+func _battle_gadget() -> void:
+	if bf == null or not bf.player_alive or not on_foot or _gadget_cd > 0.0:
 		return
-	flying = false
-	bf.player_flying = false
-	_battle_enter_foot(Vector3(p["pos"]) + Vector3(5.0, 0, 3.0))
+	var cd: Dictionary = RRBattleField.CLASSES[_battle_cls]
+	var fwd := -camera.global_transform.basis.z
+	var eye := camera.global_position
+	match str(cd["gadget"]):
+		"grenade":
+			bf.throw_grenade(eye + fwd * 0.6, fwd, bf.player_team, -1)
+		"rpg":
+			bf.fire_rocket(eye + fwd * 0.8 + Vector3(0, -0.15, 0), fwd, bf.player_team, -1)
+			shake = minf(1.0, shake + 0.25)
+		"medkit":
+			player_hp = _battle_max_hp
+			hud.set_health(player_hp)
+			var n: int = bf.use_medkit(onfoot.pos, bf.player_team)
+			bhud.banner("", "医疗包 · 生命回满 · 治疗队友 %d 人" % n, 1.6)
+		"scan":
+			var n2: int = bf.use_scan(onfoot.pos, bf.player_team)
+			bhud.banner("", "侦察信标 · 发现 %d 名敌人（小地图红点）" % n2, 1.8)
+	_gadget_cd = float(cd["gadget_cd"])
 
 
 ## 退出战场回车库（恢复环境与界面）
 func exit_battle() -> void:
 	if bf != null:
 		bf.active = false
-		bf.player_flying = false
+		bf.player_alive = false
+		bf._clear_projectiles()
+	if bhud != null:
+		bhud.close_deploy()
+		bhud.visible = false
+		bhud.scoreboard_on = false
 	if bmap != null:
 		bmap.visible = false
-	_battle_respawn_t = 0.0
-	flying = false
 	if on_foot:
 		on_foot = false
 		onfoot.exit()
@@ -843,70 +872,89 @@ func _airliner_board(from_i: int) -> void:
 			"巡航约 1 分钟 · 落地后自动下机", 3500)
 
 
-func _on_bf_player_hit(dmg: float) -> void:
-	if not on_foot or _battle_respawn_t > 0.0:
+func _on_bf_player_hit(dmg: float, from: Vector3) -> void:
+	if not on_foot or bf == null or not bf.player_alive:
 		return
 	player_hp = maxf(0.0, player_hp - dmg)
 	_no_dmg_t = 0.0
 	hud.damage_flash()
 	hud.set_health(player_hp)
+	bhud.damage_from(from)
 	if player_hp <= 0.0:
 		_battle_downed()
 
 
+## 阵亡：播报 → 俯瞰战场 → 5 秒后可重新部署（可换兵种/出生点）
 func _battle_downed() -> void:
-	coins = maxi(0, coins - 100)
-	_save_settings()
-	_battle_respawn_t = 3.0
-	bf.player_alive = false
+	bf.report_player_death()
+	on_foot = false
 	onfoot.exit()
 	hud.set_onfoot(false)
-	hud.show_center("阵 亡", "医疗费 -100 金币 · 3 秒后基地重生", 3000)
+	hud.set_scope(false)
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if not bf.battle_over:
+		bhud.open_deploy(false, 5.0)
 
 
-func _on_bf_enemy_killed(by_player: bool) -> void:
-	if by_player:
-		coins += 50
+func _on_bf_killed(info: Dictionary) -> void:
+	bhud.add_kill(info)
+	if info.get("by_player", false):
+		coins += 75 if info.get("head", false) else 50
 		battle_kills_total += 1
 		_save_settings()
-	hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
-			bf.wave, bf.kills)
+	if info.get("player_died", false):
+		var k: String = str(info.get("killer", ""))
+		bhud.banner("阵  亡", ("被 %s 击杀" % k) if k != "" else "", 3.0)
 
 
-func _on_bf_wave(n: int) -> void:
-	hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
-			bf.wave, bf.kills)
-	if n > 1:
-		hud.show_center("敌军第 %d 波增援！" % n, "顶住进攻", 2500)
-		audio.beep(220, 0.3, 0.25)
+func _on_bf_hitmark(kill: bool, head: bool) -> void:
+	bhud.hitmark(kill, head)
+	if kill:
+		audio.beep(1250, 0.07, 0.12)
+	else:
+		audio.beep(1900 if head else 1600, 0.025, 0.07)
 
 
-func _on_bf_over(did_win: bool, _kills: int) -> void:
-	if did_win:
+func _on_bf_point(si: int, pi: int, owner: String) -> void:
+	var name := "%d%s" % [si + 1, "AB"[pi]]
+	if owner == bf.player_team:
+		bhud.banner("据点 %s 已占领" % name, "", 2.2)
+		audio.beep(880, 0.18, 0.2)
+	else:
+		bhud.banner("据点 %s 失守" % name, "", 2.2)
+		audio.beep(260, 0.25, 0.2)
+	if bhud.deploy_open():
+		bhud.refresh_spawns()
+
+
+func _on_bf_sector(si: int) -> void:
+	var sname: String = bmap.SECTORS[si]["name"]
+	if si + 1 >= bmap.SECTORS.size():
+		return   # 最后一区：交给 _on_bf_over
+	if bf.player_team == "atk":
+		bhud.banner("区域 %d · %s 已攻陷" % [si + 1, sname],
+				"兵力 +%d · 向下一区域推进" % bf.SECTOR_BONUS, 3.5)
+	else:
+		bhud.banner("区域 %d · %s 失守" % [si + 1, sname], "撤往下一道防线", 3.5)
+	audio.beep(660, 0.35, 0.25)
+	if bhud.deploy_open():
+		bhud.refresh_spawns()
+
+
+func _on_bf_over(did_atk_win: bool) -> void:
+	var won: bool = did_atk_win == (bf.player_team == "atk")
+	if won:
 		battle_wins += 1
 		coins += 1500
-		hud.show_center("胜　利", "敌军全歼 · 奖励 +1500 金币", 8000)
 		audio.beep(870, 0.4, 0.26)
 	else:
-		coins += 200
-		hud.show_center("战　败", "我方全军覆没 · 补给 +200 金币 · 按 Enter 返回", 8000)
+		coins += 300
 		audio.beep(180, 0.5, 0.25)
 	_save_settings()
-
-
-func _on_bf_plane_down(enemy: bool, by_player: bool) -> void:
-	if enemy:
-		if by_player:
-			coins += 200
-			battle_kills_total += 1
-			_save_settings()
-			hud.show_center("击落敌机！", "奖励 +200 金币", 2500)
-		else:
-			hud.show_center("敌机坠毁", "", 1500)
-	else:
-		_plane_was_down = true
-		hud.show_center("我方战机被击落",
-				"%.0f 秒后基地补充新机" % bf.ALLY_PLANE_RESPAWN, 2500)
+	bhud.close_deploy()
+	bhud.banner("胜  利" if won else "失  败",
+			("奖励 +1500 金币" if won else "参战补给 +300 金币") + " · Enter 返回车库", 30.0)
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
 func _on_bf_explosion(pos: Vector3) -> void:
@@ -1485,6 +1533,7 @@ func enter_roam() -> void:
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): pass)
 		onfoot.reload_done.connect(func(): audio.play_reload())
+	onfoot.retarget(freeroam, npc)   # 从大战场回来：改指回城市地图与交通
 	# 开局在车内（清除可能的步行残留）
 	on_foot = false
 	if onfoot != null:
@@ -2131,11 +2180,8 @@ func _process(dt_real: float) -> void:
 					else (0.7 if (v.input_brake > 0.9 and absf(v.vf) > 22.0
 					and v.surface == "road") else 0.0)))
 			fx.surface_effects(v)
-	# 战场里阴影跟随步行玩家/战机（车藏在别处）
-	if state == ST.BATTLE and bf != null and flying:
-		env.follow_shadow(bf.ally_plane["pos"])
-	else:
-		env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
+	# 战场里阴影跟随步行玩家（车藏在别处）
+	env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
 	# 昼夜 + 天气推进（所有模式共享同一片天；车库初始页算室内，
 	# 天气在背后照常演变但不渲染——雨雪粒子/灰化/浓雾不进初始画面）
 	if day_cycle != null:
@@ -2284,17 +2330,15 @@ func _handle_hotkeys() -> void:
 			pass
 		else:
 			_toggle_on_foot()
-	if state == ST.BATTLE and Input.is_action_just_pressed("rr_interact"):
-		if flying:
-			_exit_plane()
-		elif bf != null and bf.ally_plane["alive"] \
-				and bf.ally_plane["landed"] \
-				and onfoot.pos.distance_to(bf.ally_plane["pos"]) < 8.0:
-			_board_plane()
-	if state == ST.BATTLE and flying \
-			and Input.is_action_just_pressed("rr_bomb"):
-		if not bf.player_drop_bomb():
-			hud.show_center("没有炸弹了", "回基地落地补给", 1200)
+	# 大战场：Tab 计分板；部署界面 1-4 选兵种、空格部署
+	if state == ST.BATTLE and bhud != null:
+		bhud.scoreboard_on = Input.is_key_pressed(KEY_TAB)
+		if bhud.deploy_open():
+			for ci in 4:
+				if Input.is_action_just_pressed("rr_gun%d" % [ci + 1]):
+					bhud.select_cls_key(ci)
+			if Input.is_action_just_pressed("rr_handbrake"):
+				bhud.try_deploy()
 	# 货运劫案：地面靠近停机货机接取 / 飞行中靠近货舱夺货
 	if state == ST.ROAM and airport_traffic != null \
 			and Input.is_action_just_pressed("rr_interact") \
@@ -2323,7 +2367,7 @@ func _handle_hotkeys() -> void:
 				_roam_board_plane()
 		else:
 			_roam_exit_plane()
-	if on_foot and (state == ST.ROAM or state == ST.BATTLE):
+	if on_foot and state == ST.ROAM:   # 大战场武器由兵种配发，不能切商店枪
 		for gi in 5:
 			if Input.is_action_just_pressed("rr_gun%d" % [gi + 1]):
 				var avail: Array = Guns.GUNS.filter(func(g): return _gun_owned(g["id"]))
@@ -2631,71 +2675,28 @@ func _step_sim(h: float) -> void:
 		sim_time += h
 		return
 
-	# BATTLE：大战场（步行持枪/驾驶战机 + 两军 AI 士兵交战）
+	# BATTLE：大战场（攻防推进：步行持枪 + 两军 AI）
 	if s == ST.BATTLE:
 		if bf == null or bmap == null:
 			return
-		if _battle_respawn_t > 0.0:
-			# 死亡等待：战场继续打，玩家 3 秒后基地重生
-			_battle_respawn_t = _battle_respawn_t - h
-			bf.update(h)
-			if _battle_respawn_t <= 0.0:
-				player_hp = 100.0
-				bf.player_alive = true
-				flying = false
-				bf.player_flying = false
-				_battle_enter_foot()
-				hud.show_center("", "", 0)
-			sim_time += h
-			return
-		if bf.battle_over:
-			sim_time += h
-			return
-		bf.player_alive = true
-		if flying:
-			bf.update_player_plane(h)
-			var pl: Dictionary = bf.ally_plane
-			bf.player_pos = Vector3(pl["pos"])
-			# 停机坪补给：落地靠基地自动修机补弹
-			var near_base: bool = Vector2(pl["pos"].x, pl["pos"].z) \
-					.distance_to(Vector2(BattleMap.ALLY_SPAWN.x,
-					BattleMap.ALLY_SPAWN.z)) < 40.0
-			if pl["landed"] and near_base \
-					and (float(pl["hp"]) < bf.PLANE_HP
-					or int(pl["bombs"]) < bf.PLANE_BOMBS):
-				pl["hp"] = bf.PLANE_HP
-				pl["bombs"] = bf.PLANE_BOMBS
-				hud.show_center("补给完成", "战机修复 · 弹药装满", 1500)
-		else:
-			bf.player_pos = onfoot.pos
+		if on_foot and bf.player_alive and not bf.battle_over:
 			onfoot.update(h)
-			# 靠近停机坪战机 → 登机提示
-			var near_plane: bool = bf.ally_plane["alive"] \
-					and bf.ally_plane["landed"] \
-					and onfoot.pos.distance_to(bf.ally_plane["pos"]) < 8.0
-			hud.set_board_hint(near_plane, "按 F 登机")
+			bf.player_pos = onfoot.pos
 		bf.update(h)
-		_no_dmg_t += h
-		if _no_dmg_t > 6.0 and not flying:
-			player_hp = minf(100.0, player_hp + 5.0 * h)
-			hud.set_health(player_hp)
-		# 顶栏（含战机状态）
-		var plane_txt := "战机 ✖" if not bf.ally_plane["alive"] \
-				else "战机 %d" % int(bf.ally_plane["hp"])
-		if flying:
-			plane_txt = "战机 %d · 弹 %d" % [int(bf.ally_plane["hp"]),
-					int(bf.ally_plane["bombs"])]
-		hud.set_battle_top(bf.army_alive("ally"), bf.army_alive("enemy"),
-				bf.wave, bf.kills, plane_txt)
-		if not flying:
-			hud.set_ammo(onfoot.ammo, onfoot.reloading,
-					Guns.gun_by_id(gun_equipped)["name"])
+		if on_foot and bf.player_alive:
+			_no_dmg_t += h
+			# 5 秒未受击开始回血（支援兵更快）
+			if _no_dmg_t > 5.0 and player_hp < _battle_max_hp:
+				player_hp = minf(_battle_max_hp,
+						player_hp + (9.0 if _battle_cls == 2 else 5.0) * h)
+				hud.set_health(player_hp)
+			_gadget_cd = maxf(0.0, _gadget_cd - h)
+			var cd: Dictionary = RRBattleField.CLASSES[_battle_cls]
+			bhud.set_gadget(cd["gadget_name"], 1.0 - _gadget_cd / float(cd["gadget_cd"]))
+			bhud.player_yaw = onfoot.yaw
+			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(cd["gun"])["name"])
 			hud.set_scope(onfoot.scoped)
-		# 我方新机就位提示
-		if _plane_was_down and bf.ally_plane["alive"] and not flying:
-			_plane_was_down = false
-			hud.show_center("我方新战机已就位", "回基地按 F 登机", 2200)
-		if shake > 0.002:
+		if shake > 0.002 and on_foot:
 			var a3 := shake * 0.2
 			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a3
 		shake = maxf(shake * exp(-3.2 * h), 0.0)
@@ -2987,17 +2988,15 @@ func _update_camera(dt: float) -> void:
 	var spd_ratio := clampf(absf(pv.vf) / pv.top_speed, 0.0, 1.0)
 	var want_fov := 63.0
 
-	# 大战场飞行：战机后上方追尾相机
-	if state == ST.BATTLE and flying and bf != null:
-		var pl: Dictionary = bf.ally_plane
-		var pfwd := Vector3(sin(float(pl["heading"])), 0,
-				cos(float(pl["heading"])))
-		var want := Vector3(pl["pos"]) - pfwd * 17.0 + Vector3(0, 7.0, 0)
-		camera.position = camera.position.lerp(want, 1.0 - exp(-5.0 * dt))
-		camera.look_at(Vector3(pl["pos"]) + pfwd * 14.0
-				+ Vector3(0, 2.0, 0), Vector3.UP)
-		camera.fov = RRUtil.damp(camera.fov,
-				66.0 + float(pl["speed"]) * 0.14, 3.0, dt)
+	# 大战场部署/阵亡：俯瞰当前争夺区域
+	if state == ST.BATTLE and not on_foot and bmap != null and bf != null:
+		var si: int = mini(bf.sector, bmap.SECTORS.size() - 1)
+		var mid: Vector3 = (bmap.point_pos(si, 0) + bmap.point_pos(si, 1)) * 0.5
+		var back := 1.0 if bf.player_team == "atk" else -1.0
+		var want := mid + Vector3(0, 110.0, 130.0 * back)
+		camera.position = camera.position.lerp(want, 1.0 - exp(-2.5 * dt))
+		camera.look_at(mid, Vector3.UP)
+		camera.fov = RRUtil.damp(camera.fov, 60.0, 3.0, dt)
 		return
 
 	# 班机载客飞行：追逐班机

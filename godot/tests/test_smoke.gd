@@ -97,9 +97,14 @@ func _initialize() -> void:
 	print("[sm] 退赛 state=%s（期望 0）" % game.state)
 	print("[sm] === 5. 大战场 10s")
 	game.enter_battle()
+	await frames(5)
+	game._on_battle_side("atk")      # 部署界面：选进攻方
+	game._on_battle_deploy(0, 0)     # 突击兵 · 前进基地
 	await frames(20)
-	print("[sm] state=%s 敌军=%d 我方=%d" % [game.state,
-			game.bf.army_alive("enemy"), game.bf.army_alive("ally")])
+	print("[sm] state=%s 进攻方=%d 防守方=%d 兵力=%d 步行=%s" % [game.state,
+			game.bf.count_alive("atk"), game.bf.count_alive("def"), game.bf.tickets,
+			game.on_foot])
+	game._battle_gadget()            # 扔一颗手雷
 	await step_s(10.0)
 	game.exit_battle()
 	await frames(10)

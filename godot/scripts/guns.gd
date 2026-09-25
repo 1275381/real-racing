@@ -22,8 +22,19 @@ const GUNS := [
 ]
 
 
+## 大战场兵种配发枪械（不进枪械店）
+const BATTLE_GUNS := [
+	{"id": "lmg", "name": "轻机枪", "desc": "伤害 18 · 全自动 · 80 发", "price": 0,
+		"dmg": 18.0, "cd": 0.1, "mag": 80, "reload": 3.2, "pellets": 1,
+		"spread": 0.022, "scope_div": 2.0, "range": 220.0},
+]
+
+
 static func gun_by_id(id: String) -> Dictionary:
 	for g in GUNS:
+		if g["id"] == id:
+			return g
+	for g in BATTLE_GUNS:
 		if g["id"] == id:
 			return g
 	return GUNS[0]

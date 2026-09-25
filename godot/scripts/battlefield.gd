@@ -1,68 +1,73 @@
 class_name RRBattleField
 extends Node3D
-## 大战场战斗管理器：我方 AI 与敌方 AI 士兵交战（波次歼灭战）。
-## 鸭子类型顶替 onfoot 的 npc 位：raycast(from,dir,max_d) 同契约。
+## 大战场（攻防推进，参考三角洲「全面战场」）：进攻方 24 人按顺序夺取 3 个区域
+## （每区 A/B 两据点），兵力（重生票数）耗尽即失败；防守方守住即胜。
+## 士兵分突击/工程/支援/侦察四个兵种。鸭子类型顶替 onfoot 的 npc 位：
+## raycast(from,dir,max_d) 同契约；player_shot(kind,idx,dmg) 结算玩家命中。
 
-signal player_hit(dmg: float)
-signal enemy_killed(by_player: bool)
-signal wave_started(n: int)
-signal over(win: bool, kills: int)
-signal plane_down(enemy: bool, by_player: bool)
+signal player_hit(dmg: float, from: Vector3)
+signal killed(info: Dictionary)        # 击杀播报：见 _report_kill
+signal hitmark(kill: bool, head: bool) # 玩家命中反馈
+signal point_changed(si: int, pi: int, owner: String)
+signal sector_captured(si: int)
+signal over(atk_win: bool)
 signal explosion_at(pos: Vector3)
 
-const ALLY_COUNT := 12
-const ENEMY_WAVE := 12
-const TOTAL_WAVES := 2
-const SOLDIER_HP := 36.0
-const SHOT_DMG := 9.0
-const ENGAGE_DIST := 28.0     # 走位切换距离
-const FIRE_RANGE := 70.0
-const ARENA_X := 238.0        # 士兵活动钳制（略小于地图周界）
-const ARENA_Z := 188.0
-const MAG := 30
+const TEAM_SIZE := 24
+const ATK_TICKETS := 150
+const SECTOR_BONUS := 40          # 每夺下一个区域补充的进攻方兵力
+const CAPTURE_TIME := 18.0        # 一人占领所需秒数（人数优势最多 ×3）
+const RESPAWN_AI := 9.0
+const AI_TICK := 1.0 / 60.0       # 士兵 AI 定步（与物理 120Hz 解耦）
+const HEAD_MUL := 2.0
 
-const PLANE_HP := 40.0        # 战机生命（步兵轻武器/爆炸扣血）
-const PLANE_BOMBS := 4        # 载弹量（回基地补给）
-const BOMB_RADIUS := 16.0     # 炸弹杀伤半径
-const BOMB_DMG := 55.0
-const PLANE_MIN_ALT := 3.5    # 最低飞行高度（贴地钳制，不做坠机）
-const PLANE_ALT_MAX := 120.0
-const PLANE_SPEED_MIN := 28.0
-const PLANE_SPEED_MAX := 85.0
-const PLANE_TURN := 1.05      # 转弯角速度 rad/s
-const PLANE_PITCH_RATE := 0.9
-const ENEMY_PLANE_N := 2
-const PLANE_RESPAWN := 30.0   # 敌机重生秒数
-const ALLY_PLANE_RESPAWN := 25.0
+## 兵种：生命/移速/主武器数值（AI 与玩家共用一套定义；gun 为玩家枪械 id）
+const CLASSES := [
+	{"id": "assault", "name": "突击", "hp": 100.0, "speed": 7.6,
+		"dmg": [7.0, 11.0], "cd": 0.11, "burst": 4, "range": 75.0, "acc": 0.05,
+		"gun": "rifle", "gadget": "grenade", "gadget_name": "手雷", "gadget_cd": 12.0},
+	{"id": "engineer", "name": "工程", "hp": 100.0, "speed": 7.6,
+		"dmg": [6.0, 9.0], "cd": 0.08, "burst": 6, "range": 55.0, "acc": 0.06,
+		"gun": "smg", "gadget": "rpg", "gadget_name": "火箭筒", "gadget_cd": 14.0},
+	{"id": "support", "name": "支援", "hp": 115.0, "speed": 6.6,
+		"dmg": [7.0, 10.0], "cd": 0.09, "burst": 9, "range": 80.0, "acc": 0.07,
+		"gun": "lmg", "gadget": "medkit", "gadget_name": "医疗包", "gadget_cd": 20.0},
+	{"id": "recon", "name": "侦察", "hp": 90.0, "speed": 7.2,
+		"dmg": [38.0, 52.0], "cd": 1.5, "burst": 1, "range": 150.0, "acc": 0.012,
+		"gun": "sniper", "gadget": "scan", "gadget_name": "侦察信标", "gadget_cd": 25.0},
+]
+const CALLSIGNS := ["猎鹰", "山猫", "黑曜", "北风", "赤狐", "雷鸣", "夜枭", "磐石",
+		"疾风", "铁砧", "苍狼", "寒霜"]
 
-var bmap                      # BattleMap
-var audio                     # RRAudio
-var player_pos := Vector3.ZERO
-var player_alive := true
-var player_flying := false    # 玩家正在驾驶我方战机（game 侧同步）
+var bmap                          # BattleMap
+var audio                         # RRAudio
+
 var active := false
 var battle_over := false
-var win := false
-var wave := 1
-var kills := 0                # 玩家击杀数
-var _enemies_killed := 0      # 全场歼敌数（波次/胜负判定）
+var atk_win := false
+var player_team := "atk"          # 玩家阵营：atk 进攻 / def 防守
+var player_pos := Vector3.ZERO
+var player_alive := false
+var player_cls := 0
+var player_stats := {"kills": 0, "deaths": 0, "score": 0}
 
-var allies: Array = []
-var enemies: Array = []       # 含阵亡尸体（波 2 追加到 idx 12..23）
-var ally_plane := {}          # 我方战机（玩家驾驶）：{pos, heading, ...}
-var enemy_planes: Array = []  # 敌机 ×2（盘旋/扫射/投弹）
-var bombs: Array = []         # 空中落弹 {vis, pos, vel, by_player}
+var sector := 0                   # 当前争夺区域（0..2）；=3 表示进攻方已全部拿下
+var tickets := ATK_TICKETS
+var pts: Array = []               # [sector][point] -> {owner, prog(0守..1攻), atk_n, def_n}
+var soldiers: Array = []          # 两队 48 人（死亡后原地复用重生）
 
 var _t := 0.0
-var _snd_budget := 6.0        # AI 枪声限流（每秒 ≤6 次）
+var _ai_acc := 0.0
+var _cap_acc := 0.0
+var _snd_budget := 6.0
 var _tr_pool: Array = []
 var _im_pool: Array = []
 var _tr_i := 0
 var _im_i := 0
-var _ex_pool: Array = []      # 爆炸视觉池 {mi, light, t}
+var _ex_pool: Array = []
 var _ex_i := 0
-# 每队一套 MultiMesh（头/躯干/双臂/双腿/枪），人数上限 = 预留容量
-var _mm := {}                 # team -> {head, torso, arm, leg, gun}
+var _mm := {}                     # team -> MultiMesh 部件
+var projectiles: Array = []       # 手雷/火箭弹 {kind, vis, pos, vel, t, team, src}
 
 
 func setup(bmap_ref, audio_ref) -> void:
@@ -70,419 +75,185 @@ func setup(bmap_ref, audio_ref) -> void:
 	audio = audio_ref
 	_setup_fx()
 	_setup_explosions()
-	_setup_army_mm("ally", ALLY_COUNT)
-	_setup_army_mm("enemy", ENEMY_WAVE * TOTAL_WAVES)
-	# 战机模型建一次，start() 复位
-	ally_plane = _make_plane(false, Vector3(18.0, 0.0, 150.0), PI)
-	enemy_planes.clear()
-	for i in ENEMY_PLANE_N:
-		enemy_planes.append(_make_plane(true,
-				Vector3(-160.0 + 320.0 * i, 45.0, -150.0), 0.0))
+	_setup_army_mm("atk")
+	_setup_army_mm("def")
 
 
-## ================= 战机 =================
+# ================= 开局 =================
 
-func _make_plane(enemy: bool, pos: Vector3, heading: float) -> Dictionary:
-	var vis := PlaneVisual.create("enemy" if enemy else "ally")
-	vis.visible = false
-	add_child(vis)
-	return {
-		"enemy": enemy, "vis": vis,
-		"pos": pos, "heading": heading, "pitch": 0.0, "roll": 0.0,
-		"speed": 0.0, "throttle": 0.0, "hp": PLANE_HP, "bombs": PLANE_BOMBS,
-		"alive": false, "respawn_t": 0.0, "landed": true,
-		"orbit_ang": randf() * TAU, "orbit_alt": randf_range(38.0, 52.0),
-		"strafe_t": randf_range(6.0, 12.0), "burst_n": 0, "burst_t": 0.0,
-		"bomb_t": randf_range(18.0, 30.0), "strafe_tgt": Vector3.ZERO,
-	}
-
-
-func _sync_plane_vis(p: Dictionary) -> void:
-	var vis: Node3D = p["vis"]
-	vis.visible = p["alive"]
-	vis.position = p["pos"]
-	# 前向 = (sin h, 0, cos h)；rotation.x 正 = 低头，故爬升取负
-	vis.rotation = Vector3(-float(p["pitch"]), float(p["heading"]),
-			float(p["roll"]))
-	vis.set_throttle(float(p["throttle"]))
-	vis.set_gear(p["landed"])
-
-
-## 玩家战机：W/S 油门 · A/D 转弯 · ↑/↓ 俯仰（原始物理键采样）
-func update_player_plane(dt: float) -> void:
-	var p := ally_plane
-	if not p["alive"]:
-		return
-	if p["landed"]:
-		# 停机：油门拉满起飞
-		p["throttle"] = 0.0
-		if Input.is_physical_key_pressed(KEY_W):
-			p["throttle"] = 1.0
-		if p["throttle"] > 0.9:
-			p["landed"] = false
-			p["speed"] = PLANE_SPEED_MIN
-		else:
-			p["speed"] = 0.0
-			_sync_plane_vis(p)
-			return
-	else:
-		if Input.is_physical_key_pressed(KEY_W):
-			p["throttle"] = minf(1.0, float(p["throttle"]) + 0.55 * dt)
-		if Input.is_physical_key_pressed(KEY_S):
-			p["throttle"] = maxf(0.0, float(p["throttle"]) - 0.55 * dt)
-	# 转向 + 侧倾（A/D 与 ←/→ 等效）
-	var turn := 0.0
-	if Input.is_physical_key_pressed(KEY_A) \
-			or Input.is_physical_key_pressed(KEY_LEFT):
-		turn += 1.0
-	if Input.is_physical_key_pressed(KEY_D) \
-			or Input.is_physical_key_pressed(KEY_RIGHT):
-		turn -= 1.0
-	p["heading"] = float(p["heading"]) + turn * PLANE_TURN * dt
-	# 压杆方向：转向侧机翼下沉（rotation.z 正 = 左翼上抬，故取负）
-	p["roll"] = lerpf(float(p["roll"]), -turn * 0.55, 1.0 - exp(-5.0 * dt))
-	# 俯仰：↑ 推杆低头 / ↓ 拉杆爬升（摇杆惯例），无输入缓慢回平
-	var pitch_in := 0.0
-	if Input.is_physical_key_pressed(KEY_UP):
-		pitch_in -= 1.0
-	if Input.is_physical_key_pressed(KEY_DOWN):
-		pitch_in += 1.0
-	if pitch_in != 0.0:
-		p["pitch"] = clampf(float(p["pitch"]) + pitch_in * PLANE_PITCH_RATE * dt,
-				-0.55, 0.6)
-	else:
-		p["pitch"] = move_toward(float(p["pitch"]), 0.0, 0.35 * dt)
-	# 速度：油门目标（怠速滑行 16，可减速到落地判定线以下）+ 爬升掉速
-	var target_spd := 16.0 + (PLANE_SPEED_MAX - 16.0) \
-			* float(p["throttle"])
-	target_spd -= sin(float(p["pitch"])) * 14.0
-	p["speed"] = clampf(move_toward(float(p["speed"]), target_spd,
-			20.0 * dt), 12.0, PLANE_SPEED_MAX + 8.0)
-	# 位移（前向 = (sin h, 0, cos h)）
-	var fwd := Vector3(sin(float(p["heading"])), 0,
-			cos(float(p["heading"])))
-	p["pos"] = Vector3(p["pos"]) \
-			+ fwd * float(p["speed"]) * cos(float(p["pitch"])) * dt
-	p["pos"] = Vector3(p["pos"]) \
-			+ Vector3(0, sin(float(p["pitch"])), 0) * float(p["speed"]) * dt
-	# 高度钳制
-	var ground: float = bmap.terrain_height(p["pos"].x, p["pos"].z) \
-			+ PLANE_MIN_ALT
-	if p["pos"].y < ground:
-		p["pos"] = Vector3(p["pos"].x, ground, p["pos"].z)
-		p["pitch"] = maxf(float(p["pitch"]), 0.0)
-	p["pos"] = Vector3(clampf(p["pos"].x, -260.0, 260.0),
-			minf(p["pos"].y, PLANE_ALT_MAX),
-			clampf(p["pos"].z, -260.0, 260.0))
-	# 落地判定：贴地且低速
-	var alt: float = p["pos"].y - bmap.terrain_height(p["pos"].x, p["pos"].z)
-	p["landed"] = alt < PLANE_MIN_ALT + 0.6 and p["speed"] < 18.0
-	if p["landed"]:
-		p["speed"] = maxf(0.0, float(p["speed"]) - 26.0 * dt)
-	_sync_plane_vis(p)
-
-
-func player_drop_bomb() -> bool:
-	var p := ally_plane
-	if not p["alive"] or p["landed"] or int(p["bombs"]) <= 0:
-		return false
-	p["bombs"] = int(p["bombs"]) - 1
-	var fwd := Vector3(sin(float(p["heading"])), 0, cos(float(p["heading"])))
-	_drop_bomb(Vector3(p["pos"]) - Vector3(0, 1.8, 0),
-			fwd * float(p["speed"]), true)
-	return true
-
-
-func _drop_bomb(pos: Vector3, vel: Vector3, by_player: bool) -> void:
-	var vis := MeshInstance3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.16
-	mesh.bottom_radius = 0.16
-	mesh.height = 0.85
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.2, 0.2, 0.22)
-	mesh.material = mat
-	vis.mesh = mesh
-	vis.position = pos
-	add_child(vis)
-	bombs.append({"vis": vis, "pos": pos, "vel": vel,
-			"by_player": by_player})
-
-
-func _update_bombs(dt: float) -> void:
-	for i in range(bombs.size() - 1, -1, -1):
-		var b: Dictionary = bombs[i]
-		var v: Vector3 = b["vel"]
-		v.y -= 15.0 * dt
-		b["vel"] = v
-		b["pos"] = Vector3(b["pos"]) + v * dt
-		var vis: MeshInstance3D = b["vis"]
-		vis.position = b["pos"]
-		vis.look_at(b["pos"] + v.normalized(), Vector3.UP)
-		var ground: float = bmap.terrain_height(b["pos"].x, b["pos"].z) + 0.4
-		if b["pos"].y <= ground:
-			vis.queue_free()
-			_explode(Vector3(b["pos"].x, ground, b["pos"].z),
-					BOMB_RADIUS, BOMB_DMG, b["by_player"])
-			bombs.remove_at(i)
-
-
-func _explode(pos: Vector3, radius: float, dmg: float, by_player: bool) -> void:
-	# 视觉：发光球扩到半径 + 灰烟 + 点光
-	var slot: Dictionary = _ex_pool[_ex_i]
-	_ex_i = (_ex_i + 1) % _ex_pool.size()
-	slot["mi"].global_position = pos
-	slot["light"].global_position = pos + Vector3(0, 1.5, 0)
-	slot["mi"].scale = Vector3.ONE * (radius * 0.25)
-	slot["mi"].visible = true
-	slot["light"].visible = true
-	slot["t"] = 0.45
-	slot["radius"] = radius
-	# 伤害：两军士兵 + 敌机 + 步行玩家（距离内一视同仁）
-	for team_i in 2:
-		var arr: Array = enemies if team_i == 0 else allies
-		for s in arr:
-			if s["dead"]:
-				continue
-			if s["pos"].distance_to(pos) <= radius:
-				_damage_soldier(s, dmg, by_player and s["team"] == "enemy")
-	for ep in enemy_planes:
-		if ep["alive"] and Vector3(ep["pos"]).distance_to(pos) <= radius + 4.0:
-			_damage_plane(ep, dmg, by_player)
-	if player_alive and not player_flying \
-			and player_pos.distance_to(pos) <= radius:
-		player_hit.emit(dmg * 0.8)
-	explosion_at.emit(pos)
-
-
-func _damage_plane(p: Dictionary, dmg: float, by_player: bool) -> void:
-	if not p["alive"]:
-		return
-	p["hp"] = float(p["hp"]) - dmg
-	if float(p["hp"]) > 0.0:
-		return
-	p["alive"] = false
-	p["respawn_t"] = PLANE_RESPAWN if p["enemy"] else ALLY_PLANE_RESPAWN
-	_explode(Vector3(p["pos"]), 10.0, 20.0, false)
-	plane_down.emit(p["enemy"], by_player)
-
-
-## 敌机 AI：绕场盘旋 → 掠过时扫射我方 → 过顶投弹（落点带散布）
-func _update_enemy_plane(p: Dictionary, dt: float) -> void:
-	if not p["alive"]:
-		p["respawn_t"] = float(p["respawn_t"]) - dt
-		if p["respawn_t"] <= 0.0:
-			p["alive"] = true
-			p["hp"] = PLANE_HP
-			p["bombs"] = PLANE_BOMBS
-			p["speed"] = 55.0
-			p["throttle"] = 0.8
-			p["landed"] = false
-			p["pos"] = Vector3(randf_range(-160.0, 160.0), 50.0, -180.0)
-		return
-	p["orbit_ang"] = float(p["orbit_ang"]) + 0.09 * dt
-	var tgt := Vector3(cos(float(p["orbit_ang"])) * 150.0,
-			float(p["orbit_alt"]) + sin(_t * 0.4) * 6.0,
-			sin(float(p["orbit_ang"])) * 120.0)
-	# 扫射窗口：接近我方集群 → 朝集群俯冲开火
-	p["strafe_t"] = float(p["strafe_t"]) - dt
-	var cluster := _nearest_cluster(allies)
-	var d_cluster: float = (Vector2(p["pos"].x, p["pos"].z)
-			.distance_to(Vector2(cluster.x, cluster.z)))
-	if p["burst_n"] > 0:
-		p["burst_t"] = float(p["burst_t"]) - dt
-		if float(p["burst_t"]) <= 0.0:
-			p["burst_n"] = int(p["burst_n"]) - 1
-			p["burst_t"] = 0.11
-			_plane_strafe_shot(p, cluster)
-	elif p["strafe_t"] <= 0.0 and d_cluster < 130.0:
-		p["burst_n"] = 6
-		p["burst_t"] = 0.0
-		p["strafe_t"] = randf_range(7.0, 13.0)
-	# 投弹：过顶（水平距集群 <26m）且装填好
-	p["bomb_t"] = float(p["bomb_t"]) - dt
-	if p["bomb_t"] <= 0.0 and int(p["bombs"]) > 0 and d_cluster < 26.0:
-		p["bombs"] = int(p["bombs"]) - 1
-		p["bomb_t"] = randf_range(22.0, 36.0)
-		var miss := Vector3(randf_range(-14.0, 14.0), 0,
-				randf_range(-14.0, 14.0))
-		var fwd := Vector3(sin(float(p["heading"])), 0,
-				cos(float(p["heading"])))
-		_drop_bomb(Vector3(p["pos"]) - Vector3(0, 1.8, 0),
-				fwd * float(p["speed"]) * 0.8, false)
-	# 朝目标点转向/升降
-	var to_t := tgt - Vector3(p["pos"])
-	var want_h := atan2(to_t.x, to_t.z)
-	var dh := wrapf(want_h - float(p["heading"]), -PI, PI)
-	p["heading"] = float(p["heading"]) + clampf(dh, -1.0, 1.0) * PLANE_TURN * dt
-	p["roll"] = lerpf(float(p["roll"]), -clampf(dh, -1.0, 1.0) * 0.55,
-			1.0 - exp(-4.0 * dt))
-	var want_pitch := clampf((tgt.y - p["pos"].y) * 0.03, -0.4, 0.4)
-	p["pitch"] = lerpf(float(p["pitch"]), want_pitch, 1.0 - exp(-2.0 * dt))
-	p["speed"] = 55.0
-	var fwd := Vector3(sin(float(p["heading"])), 0, cos(float(p["heading"])))
-	p["pos"] = Vector3(p["pos"]) \
-			+ fwd * float(p["speed"]) * cos(float(p["pitch"])) * dt
-	p["pos"] = Vector3(p["pos"]) \
-			+ Vector3(0, sin(float(p["pitch"])), 0) * float(p["speed"]) * dt
-	var ground: float = bmap.terrain_height(p["pos"].x, p["pos"].z) + 26.0
-	p["pos"] = Vector3(p["pos"].x, maxf(p["pos"].y, ground), p["pos"].z)
-	_sync_plane_vis(p)
-
-
-func _nearest_cluster(arr: Array) -> Vector3:
-	# 我方存活士兵的质心（简单代表性目标点）
-	var acc := Vector3.ZERO
-	var n := 0
-	for s in arr:
-		if not s["dead"]:
-			acc += s["pos"]
-			n += 1
-	if n == 0:
-		return Vector3(ally_plane["pos"].x, 0, ally_plane["pos"].z)
-	return acc / float(n)
-
-
-func _plane_strafe_shot(p: Dictionary, cluster: Vector3) -> void:
-	# 朝集群内随机目标开火：士兵 60% 命中；玩家步行也在打击范围
-	var muzz := Vector3(p["pos"])
-	if player_alive and not player_flying and randf() < 0.3 \
-			and player_pos.distance_to(cluster) < 30.0:
-		_spawn_tracer(muzz, player_pos + Vector3(0, 1.2, 0))
-		if randf() < 0.5:
-			player_hit.emit(randf_range(4.0, 8.0))
-		return
-	var cands: Array = []
-	for s in allies:
-		if not s["dead"] and s["pos"].distance_to(cluster) < 30.0:
-			cands.append(s)
-	if cands.is_empty():
-		_spawn_tracer(muzz, cluster + Vector3(0, 0.5, 0))
-		return
-	var tgt: Dictionary = cands[randi() % cands.size()]
-	var aim: Vector3 = tgt["pos"] + Vector3(randf_range(-1.5, 1.5),
-			1.0, randf_range(-1.5, 1.5))
-	_spawn_tracer(muzz, aim)
-	if randf() < 0.55:
-		_damage_soldier(tgt, randf_range(5.0, 9.0), false)
-
-
-func _update_flak(dt: float) -> void:
-	# 玩家低空飞行时敌兵对空开火（概率命中，扣战机血）
-	if not player_flying or not ally_plane["alive"]:
-		return
-	if ally_plane["pos"].y - bmap.terrain_height(
-			ally_plane["pos"].x, ally_plane["pos"].z) > 46.0:
-		return
-	for s in enemies:
-		if s["dead"] or s["fire_cd"] > 0.0:
-			continue
-		var d: float = s["pos"].distance_to(ally_plane["pos"])
-		if d > 95.0:
-			continue
-		s["fire_cd"] = randf_range(1.0, 1.8)
-		_spawn_tracer(s["pos"] + Vector3(0, 1.45, 0),
-				ally_plane["pos"] + Vector3(randf_range(-2.5, 2.5),
-				randf_range(-2.0, 2.0), randf_range(-2.5, 2.5)))
-		if randf() < 0.32:
-			_damage_plane(ally_plane, randf_range(1.5, 3.0), false)
-		if _snd_budget >= 1.0 and d < 140.0:
-			_snd_budget -= 1.0
-			audio.play_police_shot(d)
-		break   # 每帧至多一名敌兵对空射击
-
-
-## 玩家子弹可命中敌机
-func _raycast_planes(from: Vector3, dir: Vector3, best: Dictionary) -> Dictionary:
-	for ep in enemy_planes:
-		if not ep["alive"]:
-			continue
-		var t: float = (Vector3(ep["pos"]) - from).dot(dir)
-		if t < 1.0 or t > best["d"]:
-			continue
-		if (Vector3(ep["pos"]) - from - dir * t).length() < 2.8:
-			best = {"type": "eplane", "i": enemy_planes.find(ep), "d": t,
-					"point": from + dir * t}
-	return best
-
-
-func start() -> void:
+func start(side: String) -> void:
 	active = true
 	battle_over = false
-	win = false
-	wave = 1
-	kills = 0
-	player_alive = true
-	player_flying = false
-	allies.clear()
-	enemies.clear()
-	for i in ALLY_COUNT:
-		allies.append(_make_soldier("ally",
-				Vector3(-66.0 + 12.0 * i, 0, 78.0 + randf_range(-4, 4))))
-	_spawn_wave(1)
-	# 战机复位：我方停机坪待命，敌机全部到场
-	for b in bombs:
-		b["vis"].queue_free()
-	bombs.clear()
-	ally_plane["pos"] = Vector3(18.0, bmap.terrain_height(18.0, 150.0) + 1.2,
-			150.0)
-	ally_plane["heading"] = PI   # 机头朝北（敌军方向）
-	ally_plane["pitch"] = 0.0
-	ally_plane["roll"] = 0.0
-	ally_plane["speed"] = 0.0
-	ally_plane["throttle"] = 0.0
-	ally_plane["hp"] = PLANE_HP
-	ally_plane["bombs"] = PLANE_BOMBS
-	ally_plane["alive"] = true
-	ally_plane["landed"] = true
-	for i in enemy_planes.size():
-		var ep: Dictionary = enemy_planes[i]
-		ep["alive"] = true
-		ep["hp"] = PLANE_HP
-		ep["bombs"] = PLANE_BOMBS
-		ep["landed"] = false
-		ep["speed"] = 55.0
-		ep["throttle"] = 0.8
-		ep["orbit_ang"] = PI * i
-		ep["pos"] = Vector3(cos(ep["orbit_ang"]) * 150.0,
-				float(ep["orbit_alt"]), sin(ep["orbit_ang"]) * 120.0 - 40.0)
-		_sync_plane_vis(ep)
-	_sync_plane_vis(ally_plane)
+	atk_win = false
+	player_team = side
+	player_alive = false
+	player_stats = {"kills": 0, "deaths": 0, "score": 0}
+	sector = 0
+	tickets = ATK_TICKETS
+	_clear_projectiles()
+	pts.clear()
+	for si in bmap.SECTORS.size():
+		var row: Array = []
+		for pi in 2:
+			row.append({"owner": "def", "prog": 0.0, "atk_n": 0, "def_n": 0})
+		pts.append(row)
+	soldiers.clear()
+	for team in ["atk", "def"]:
+		for slot in TEAM_SIZE:
+			# 玩家那一队少一个 AI（玩家顶位），保持 24 v 24
+			if team == player_team and slot == TEAM_SIZE - 1:
+				continue
+			var s := _make_soldier(team, slot)
+			_respawn(s)
+			soldiers.append(s)
+	_apply_team_colors()
+	_refresh_point_colors()
 
 
-## ================= 士兵 =================
-
-func _make_soldier(team: String, pos: Vector3) -> Dictionary:
+func _make_soldier(team: String, slot: int) -> Dictionary:
+	var cls: int = [0, 0, 0, 1, 1, 2, 2, 3][slot % 8]   # 突击多、侦察少
 	return {
-		"team": team, "pos": pos, "yaw": 0.0, "hp": SOLDIER_HP,
-		"dead": false, "posed": false,
-		"tgt_i": -1, "tgt_player": false,
-		"fire_cd": randf_range(0.5, 1.5), "burst": 0,
-		"mag": MAG, "reload_t": 0.0,
-		"los_ok": false, "los_t": randf_range(0.0, 0.4),
-		"tgt_t": randf_range(0.0, 0.5),
-		"strafe_t": 0.0, "strafe_dir": 1.0,
-		"speed": randf_range(5.5, 8.5),
-		"phase": randf() * TAU, "moving": false,
+		"team": team, "slot": slot, "cls": cls,
+		"name": "%s-%02d" % [CALLSIGNS[slot % CALLSIGNS.size()], slot + 1],
+		"pos": Vector3.ZERO, "yaw": 0.0, "hp": 100.0, "dead": true,
+		"respawn_t": 0.0, "tgt_i": -1, "tgt_player": false,
+		"fire_cd": randf_range(0.5, 1.5), "burst": 0, "mag": 30, "reload_t": 0.0,
+		"los_ok": false, "los_t": randf_range(0.0, 0.4), "tgt_t": randf_range(0.0, 0.5),
+		"strafe_t": 0.0, "strafe_dir": 1.0, "phase": randf() * TAU, "moving": false,
+		"goal": Vector3.ZERO, "goal_t": 0.0, "nade_cd": randf_range(8.0, 20.0),
+		"kills": 0, "deaths": 0, "score": 0, "spotted_t": 0.0, "last_hit_by": -1,
+		"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO, "pose_n": 0,
 	}
 
 
-func _spawn_wave(n: int) -> void:
-	wave = n
-	var z0 := -78.0 if n == 1 else -130.0
-	for i in ENEMY_WAVE:
-		enemies.append(_make_soldier("enemy",
-				Vector3(-66.0 + 12.0 * i, 0, z0 - randf_range(0, 12))))
-	wave_started.emit(n)
+# ================= 据点 / 区域 =================
+
+## 进攻方当前前进基地：第 1 区打之前在集结地，之后移到上一个区域后方
+func atk_base() -> Vector3:
+	if sector <= 0:
+		return bmap.ATK_HQ
+	var prev: Array = bmap.SECTORS[mini(sector, bmap.SECTORS.size()) - 1]["pts"]
+	var mid: Vector2 = (prev[0] + prev[1]) * 0.5
+	return Vector3(mid.x, 0, mid.y + 24.0)
 
 
-func army_alive(team: String) -> int:
-	var arr: Array = allies if team == "ally" else enemies
-	var n := 0
-	for s in arr:
-		if not s["dead"]:
-			n += 1
-	return n
+## 防守方出兵点：当前区域据点后方约 45m（原来放在下一区域后面，
+## 援兵要跑 100m+，第 2 区 40 秒就被拿下）；最后一区退守总部
+func def_base() -> Vector3:
+	if sector >= bmap.SECTORS.size() - 1:
+		return bmap.DEF_HQ
+	var cur: Array = bmap.SECTORS[sector]["pts"]
+	var mid: Vector2 = (cur[0] + cur[1]) * 0.5
+	return Vector3(mid.x, 0, mid.y - 45.0)
+
+
+## 某阵营当前可选出生点：[{label, pos}]（基地 + 本方占有且未被争夺的据点）
+func spawn_options(team: String) -> Array:
+	var out: Array = [{"label": "前进基地" if team == "atk" else "防守阵地",
+			"pos": atk_base() if team == "atk" else def_base()}]
+	# 只有进攻方能在已占据点出生（三角洲同款）：防守方若能在据点里无限刷新，
+	# 进攻方永远进不了圈
+	if team == "atk" and sector < pts.size():
+		for pi in 2:
+			var p: Dictionary = pts[sector][pi]
+			var enemy_n: int = p["def_n"] if team == "atk" else p["atk_n"]
+			if p["owner"] == team and enemy_n == 0:
+				out.append({"label": "据点 %d%s" % [sector + 1, "AB"[pi]],
+						"pos": bmap.point_pos(sector, pi)})
+	return out
+
+
+func _update_capture(dt: float) -> void:
+	if sector >= pts.size():
+		return
+	for pi in 2:
+		var p: Dictionary = pts[sector][pi]
+		var c: Vector3 = bmap.point_pos(sector, pi)
+		var an := 0
+		var dn := 0
+		for s in soldiers:
+			if s["dead"]:
+				continue
+			if Vector2(s["pos"].x - c.x, s["pos"].z - c.z).length() < bmap.POINT_R:
+				if s["team"] == "atk":
+					an += 1
+				else:
+					dn += 1
+		if player_alive and Vector2(player_pos.x - c.x, player_pos.z - c.z).length() \
+				< bmap.POINT_R:
+			if player_team == "atk":
+				an += 1
+			else:
+				dn += 1
+		p["atk_n"] = an
+		p["def_n"] = dn
+		var rate := dt / CAPTURE_TIME
+		var prog: float = p["prog"]
+		if an > dn:
+			prog += rate * minf(float(an - dn), 3.0)
+		elif dn > an:
+			prog -= rate * minf(float(dn - an), 3.0)
+		elif an == 0:
+			# 没人在圈里：进度慢慢回落到当前归属
+			prog = move_toward(prog, 1.0 if p["owner"] == "atk" else 0.0, dt / 30.0)
+		prog = clampf(prog, 0.0, 1.0)
+		p["prog"] = prog
+		var new_owner: String = p["owner"]
+		if prog >= 1.0:
+			new_owner = "atk"
+		elif prog <= 0.0:
+			new_owner = "def"
+		if new_owner != p["owner"]:
+			p["owner"] = new_owner
+			_award_capture(sector, pi, new_owner)
+			point_changed.emit(sector, pi, new_owner)
+			_refresh_point_colors()
+	if pts[sector][0]["owner"] == "atk" and pts[sector][1]["owner"] == "atk":
+		var done := sector
+		sector += 1
+		tickets += SECTOR_BONUS
+		for s in soldiers:
+			s["goal_t"] = 0.0   # 立即换目标
+		sector_captured.emit(done)
+		_refresh_point_colors()
+		if sector >= pts.size():
+			_finish(true)
+
+
+## 夺点奖励：圈内的占领方每人 +200 分
+func _award_capture(si: int, pi: int, owner: String) -> void:
+	var c: Vector3 = bmap.point_pos(si, pi)
+	for s in soldiers:
+		if not s["dead"] and s["team"] == owner \
+				and Vector2(s["pos"].x - c.x, s["pos"].z - c.z).length() < bmap.POINT_R:
+			s["score"] = int(s["score"]) + 200
+	if player_alive and player_team == owner \
+			and Vector2(player_pos.x - c.x, player_pos.z - c.z).length() < bmap.POINT_R:
+		player_stats["score"] = int(player_stats["score"]) + 200
+
+
+func _refresh_point_colors() -> void:
+	for si in pts.size():
+		for pi in 2:
+			var owner: String = pts[si][pi]["owner"]
+			var friendly: bool = owner == player_team
+			var col := Color(0.3, 0.6, 1.0) if friendly else Color(0.95, 0.3, 0.25)
+			if si < sector:
+				col = Color(0.3, 0.6, 1.0) if player_team == "atk" else Color(0.95, 0.3, 0.25)
+			elif si > sector:
+				col = Color(0.55, 0.55, 0.55)   # 未开放区域：灰
+			bmap.set_point_color(si, pi, col, si == sector)
+
+
+## 玩家当前站在哪个据点圈里（-1 = 不在）
+func player_point() -> int:
+	if not player_alive or sector >= pts.size():
+		return -1
+	for pi in 2:
+		var c: Vector3 = bmap.point_pos(sector, pi)
+		if Vector2(player_pos.x - c.x, player_pos.z - c.z).length() < bmap.POINT_R:
+			return pi
+	return -1
 
 
 # ================= 主更新 =================
@@ -492,190 +263,269 @@ func update(dt: float) -> void:
 	_snd_budget = minf(_snd_budget + dt * 6.0, 6.0)
 	_tick_fx(dt)
 	_tick_explosions(dt)
-	_update_bombs(dt)
-	for ep in enemy_planes:
-		_update_enemy_plane(ep, dt)
-	if not player_flying:
-		_sync_plane_vis(ally_plane)   # 停机/玩家未登机时同步停机坪姿态
-	_update_flak(dt)
-	if not active:
+	_update_projectiles(dt)
+	if not active or battle_over:
 		return
-	if battle_over:
-		return
-	for s in allies:
-		_update_soldier(s, dt, true)
-	for i in enemies.size():
-		_update_soldier(enemies[i], dt, false)
-	# 波次推进：本波全灭 → 下一波增援；全部歼灭 → 胜利
-	if army_alive("enemy") == 0:
-		var next_wave: int = wave + 1
-		if next_wave <= TOTAL_WAVES and enemies.size() < ENEMY_WAVE * next_wave:
-			_spawn_wave(next_wave)
-		else:
-			_finish(true)
-		return
-	# 战败：我方全灭且玩家处于死亡等待（飞行中不算失去战斗力）
-	if army_alive("ally") == 0 and not player_alive and not player_flying:
-		_finish(false)
+	_cap_acc += dt
+	if _cap_acc >= 0.1:
+		_update_capture(_cap_acc)
+		_cap_acc = 0.0
+	_ai_acc += dt
+	var steps := 0
+	while _ai_acc >= AI_TICK and steps < 3:
+		_ai_acc -= AI_TICK
+		steps += 1
+		for i in soldiers.size():
+			_update_soldier(i, AI_TICK)
+	if not battle_over and tickets <= 0 and sector < pts.size():
+		# 兵力耗尽：场上已无存活进攻方（含玩家）即判负
+		var alive := player_alive and player_team == "atk"
+		for s in soldiers:
+			if s["team"] == "atk" and not s["dead"]:
+				alive = true
+				break
+		if not alive:
+			_finish(false)
 
 
-func _finish(did_win: bool) -> void:
+func _finish(did_atk_win: bool) -> void:
 	battle_over = true
-	win = did_win
-	over.emit(win, kills)
+	atk_win = did_atk_win
+	over.emit(atk_win)
 
 
-func _update_soldier(s: Dictionary, dt: float, is_ally: bool) -> void:
+func count_alive(team: String) -> int:
+	var n := 0
+	for s in soldiers:
+		if s["team"] == team and not s["dead"]:
+			n += 1
+	if player_alive and player_team == team:
+		n += 1
+	return n
+
+
+# ================= 士兵 AI =================
+
+func _update_soldier(i: int, dt: float) -> void:
+	var s: Dictionary = soldiers[i]
+	s["spotted_t"] = maxf(0.0, float(s["spotted_t"]) - dt)
 	if s["dead"]:
+		s["respawn_t"] = float(s["respawn_t"]) - dt
+		if float(s["respawn_t"]) <= 0.0 and (s["team"] == "def" or tickets > 0):
+			if s["team"] == "atk":
+				tickets -= 1
+			_respawn(s)
+			_write_pose(s)
 		return
-	# 目标选择（错峰）：敌兵可锁定玩家
+	var cd: Dictionary = CLASSES[s["cls"]]
+	# 目标（错峰 0.5s）：最近的敌人，可含玩家
 	s["tgt_t"] = float(s["tgt_t"]) - dt
-	var tgt: Dictionary = {}
-	var foes: Array = enemies if is_ally else allies
 	if float(s["tgt_t"]) <= 0.0:
-		s["tgt_t"] = randf_range(0.5, 0.7)
-		var bd := INF
-		var best_i := -1
-		for i in foes.size():
-			var f: Dictionary = foes[i]
-			if f["dead"]:
-				continue
-			var d2: float = (Vector2(f["pos"].x, f["pos"].z)
-					- Vector2(s["pos"].x, s["pos"].z)).length_squared()
-			if d2 < bd:
-				bd = d2
-				best_i = i
-		s["tgt_i"] = best_i
-		s["tgt_player"] = false
-		if not is_ally and player_alive:
-			var pd: float = s["pos"].distance_to(player_pos)
-			if best_i < 0 or pd * pd < bd:
-				s["tgt_i"] = -1
-				s["tgt_player"] = true
-	# 目标坐标（胸口）
-	var t_pos: Vector3
-	if s["tgt_player"]:
+		s["tgt_t"] = randf_range(0.45, 0.65)
+		_pick_target(i, s, float(cd["range"]) * 1.25)
+	# 目标点（据点任务）
+	s["goal_t"] = float(s["goal_t"]) - dt
+	if float(s["goal_t"]) <= 0.0:
+		_pick_goal(s)
+	var t_pos := Vector3.ZERO
+	var has_t := false
+	if s["tgt_player"] and player_alive:
 		t_pos = player_pos + Vector3(0, 1.2, 0)
-	elif s["tgt_i"] >= 0 and not foes[s["tgt_i"]]["dead"]:
-		t_pos = foes[s["tgt_i"]]["pos"] + Vector3(0, 1.2, 0)
-	else:
-		t_pos = Vector3.ZERO
-		_stop_move(s)
-		return
-	var to_t: Vector3 = t_pos - s["pos"]
-	var dist := Vector2(to_t.x, to_t.z).length()
-	# 视线（错峰 0.4s）
-	s["los_t"] = float(s["los_t"]) - dt
-	if float(s["los_t"]) <= 0.0:
-		s["los_t"] = 0.4
-		s["los_ok"] = _los(s["pos"] + Vector3(0, 1.5, 0), t_pos)
-	# 走位：远则推进；近则侧移；无视线则压进
+		has_t = true
+	elif int(s["tgt_i"]) >= 0 and not soldiers[s["tgt_i"]]["dead"]:
+		t_pos = soldiers[s["tgt_i"]]["pos"] + Vector3(0, 1.2, 0)
+		has_t = true
+	var dist := INF
+	if has_t:
+		var to_t: Vector3 = t_pos - s["pos"]
+		dist = Vector2(to_t.x, to_t.z).length()
+		s["los_t"] = float(s["los_t"]) - dt
+		if float(s["los_t"]) <= 0.0:
+			s["los_t"] = 0.4
+			s["los_ok"] = _los(s["pos"] + Vector3(0, 1.5, 0), t_pos)
+	var engaged: bool = has_t and s["los_ok"] and dist < float(cd["range"])
+	# 走位：交火中近距侧移 / 远距缓进；否则奔向任务点
 	var move := Vector2.ZERO
-	if dist > ENGAGE_DIST or not s["los_ok"]:
-		if dist > 0.5:
-			move = Vector2(to_t.x, to_t.z) / maxf(dist, 0.01)
-	else:
-		s["strafe_t"] = float(s["strafe_t"]) - dt
-		if float(s["strafe_t"]) <= 0.0:
-			s["strafe_t"] = randf_range(2.0, 4.0)
-			s["strafe_dir"] = -float(s["strafe_dir"])
-		var fwd := Vector2(to_t.x, to_t.z) / maxf(dist, 0.01)
-		move = Vector2(-fwd.y, fwd.x) * float(s["strafe_dir"])
-	_apply_move(s, move, dt)
-	_write_pose(s)
-	# 开火
-	_try_fire(s, is_ally, t_pos, dist, dt)
+	var to_g: Vector3 = s["goal"] - s["pos"]
+	var gd := Vector2(to_g.x, to_g.z).length()
+	var gdir := Vector2(to_g.x, to_g.z) / maxf(gd, 0.01)
+	var face := gdir
+	if engaged:
+		var tdir := Vector2(t_pos.x - s["pos"].x, t_pos.z - s["pos"].z) / maxf(dist, 0.01)
+		face = tdir
+		if dist < 22.0:
+			s["strafe_t"] = float(s["strafe_t"]) - dt
+			if float(s["strafe_t"]) <= 0.0:
+				s["strafe_t"] = randf_range(1.5, 3.5)
+				s["strafe_dir"] = -float(s["strafe_dir"])
+			move = Vector2(-tdir.y, tdir.x) * float(s["strafe_dir"])
+		elif gd > 3.0 and s["team"] == "atk" and s["cls"] != 3:
+			move = gdir * 0.55   # 边打边压
+	elif gd > 2.0:
+		move = gdir
+	_apply_move(s, move, face, float(cd["speed"]), dt)
+	# 离玩家远的士兵每 3 个 tick 才写一次姿态（MultiMesh 写入是 AI 的大头开销）
+	s["pose_n"] = int(s["pose_n"]) + 1
+	if int(s["pose_n"]) >= 3 or s["pos"].distance_squared_to(player_pos) < 100.0 * 100.0:
+		s["pose_n"] = 0
+		_write_pose(s)
+	if engaged:
+		_try_fire(i, s, t_pos, dist, dt)
+		# 突击兵：中距离对着扎堆的目标扔手雷
+		s["nade_cd"] = float(s["nade_cd"]) - dt
+		if s["cls"] == 0 and float(s["nade_cd"]) <= 0.0 and dist > 12.0 and dist < 32.0:
+			s["nade_cd"] = randf_range(18.0, 30.0)
+			_ai_grenade(i, s, t_pos)
 
 
-func _stop_move(s: Dictionary) -> void:
-	s["moving"] = false
-	_write_pose(s)
-
-
-func _apply_move(s: Dictionary, move: Vector2, dt: float) -> void:
-	var vel := move * float(s["speed"])
-	# 队友间隔（廉价推挤）
-	var arr: Array = allies if s["team"] == "ally" else enemies
-	for o in arr:
-		if o == s or o["dead"]:
+func _pick_target(i: int, s: Dictionary, max_d: float) -> void:
+	var bd := max_d * max_d
+	var best := -1
+	var sp := Vector2(s["pos"].x, s["pos"].z)
+	for j in soldiers.size():
+		var f: Dictionary = soldiers[j]
+		if f["dead"] or f["team"] == s["team"]:
 			continue
-		var dv: Vector2 = Vector2(s["pos"].x - o["pos"].x,
-				s["pos"].z - o["pos"].z)
-		var d := dv.length()
-		if d > 0.01 and d < 2.5:
-			vel += dv / d * (2.5 - d) * 2.0
-	var np := Vector2(s["pos"].x, s["pos"].z) + vel * dt
-	np.x = clampf(np.x, -ARENA_X, ARENA_X)
-	np.y = clampf(np.y, -ARENA_Z, ARENA_Z)
+		var d2 := sp.distance_squared_to(Vector2(f["pos"].x, f["pos"].z))
+		if d2 < bd:
+			bd = d2
+			best = j
+	s["tgt_i"] = best
+	s["tgt_player"] = false
+	if player_alive and player_team != s["team"]:
+		var pd2 := sp.distance_squared_to(Vector2(player_pos.x, player_pos.z))
+		if pd2 < bd:
+			s["tgt_i"] = -1
+			s["tgt_player"] = true
+	s["los_t"] = 0.0   # 换目标立即测视线
+
+
+## 任务点：进攻方冲据点圈；防守方在据点周围布防，被争夺时回援圈内；侦察兵退后架枪
+func _pick_goal(s: Dictionary) -> void:
+	s["goal_t"] = randf_range(6.0, 10.0)
+	if sector >= pts.size():
+		s["goal"] = bmap.DEF_HQ
+		return
+	var pi: int = int(s["slot"]) % 2
+	var p: Dictionary = pts[sector][pi]
+	var other: Dictionary = pts[sector][1 - pi]
+	var c: Vector3 = bmap.point_pos(sector, pi)
+	if s["team"] == "atk":
+		if p["owner"] == "atk" and other["owner"] != "atk":
+			pi = 1 - pi   # 本点已拿下：支援另一个点
+			c = bmap.point_pos(sector, pi)
+		var r := randf_range(2.0, 8.0) if s["cls"] != 3 else randf_range(35.0, 55.0)
+		var ang := randf() * TAU
+		if s["cls"] == 3:
+			ang = randf_range(-0.6, 0.6)   # 侦察兵在据点南侧（进攻方来向）远处架枪
+		s["goal"] = c + Vector3(sin(ang) * r, 0, cos(ang) * r)
+	else:
+		# 本点被争夺或已失守：收进圈内夺回；否则在周围布防
+		var contested: bool = int(p["atk_n"]) > 0 or p["owner"] == "atk"
+		var r2 := randf_range(2.0, 9.0) if contested else randf_range(6.0, 18.0)
+		var ang2 := randf() * TAU
+		if s["cls"] == 3:
+			r2 = randf_range(30.0, 50.0)
+			ang2 = PI + randf_range(-0.6, 0.6)   # 据点北侧（防守方后方）
+		s["goal"] = c + Vector3(sin(ang2) * r2, 0, cos(ang2) * r2)
+	var g: Vector3 = s["goal"]
+	s["goal"] = Vector3(clampf(g.x, -236.0, 236.0), 0, clampf(g.z, -186.0, 186.0))
+
+
+func _respawn(s: Dictionary) -> void:
+	var opts := spawn_options(s["team"])
+	var o: Dictionary = opts[randi() % opts.size()]
+	var p: Vector3 = o["pos"]
+	var jitter := Vector2(randf_range(-14.0, 14.0), randf_range(-6.0, 6.0))
+	if o["label"].begins_with("据点"):
+		jitter = Vector2(randf_range(-6.0, 6.0), randf_range(-6.0, 6.0))
+	var np: Vector2 = bmap.push_out(p.x + jitter.x, p.z + jitter.y, 0.6)
 	s["pos"] = Vector3(np.x, bmap.terrain_height(np.x, np.y), np.y)
-	# OBB 推出
-	for ob in bmap.obstacles_box:
-		var dx: float = np.x - ob["c"].x
-		var dz: float = np.y - ob["c"].y
-		if dx * dx + dz * dz > 8100.0:
+	s["dead"] = false
+	s["hp"] = float(CLASSES[s["cls"]]["hp"])
+	s["mag"] = 30
+	s["reload_t"] = 0.0
+	s["tgt_i"] = -1
+	s["tgt_player"] = false
+	s["goal_t"] = 0.0
+	s["yaw"] = PI if s["team"] == "atk" else 0.0
+
+
+func _apply_move(s: Dictionary, move: Vector2, face: Vector2, speed: float, dt: float) -> void:
+	var vel := move * speed
+	# 同队间隔（只看附近几人，廉价推挤）
+	var sp := Vector2(s["pos"].x, s["pos"].z)
+	for o in soldiers:
+		if o["dead"] or o["team"] != s["team"] or o["slot"] == s["slot"]:
 			continue
-		var ca: float = cos(ob["rot"])
-		var sa: float = sin(ob["rot"])
-		var lx: float = ca * dx + sa * dz
-		var lz: float = -sa * dx + ca * dz
-		var px: float = ob["hx"] + 0.4 - absf(lx)
-		var pz: float = ob["hz"] + 0.4 - absf(lz)
-		if px > 0.0 and pz > 0.0:
-			if px < pz:
-				lx = signf(lx) * (ob["hx"] + 0.4)
-			else:
-				lz = signf(lz) * (ob["hz"] + 0.4)
-			np.x = ob["c"].x + ca * lx - sa * lz
-			np.y = ob["c"].y + sa * lx + ca * lz
-			s["pos"] = Vector3(np.x,
-					bmap.terrain_height(np.x, np.y), np.y)
-	if move.length_squared() > 0.01:
-		s["yaw"] = atan2(move.x, move.y)
-		s["moving"] = true
+		var dv: Vector2 = sp - Vector2(o["pos"].x, o["pos"].z)
+		var d := dv.length()
+		if d > 0.01 and d < 2.2:
+			vel += dv / d * (2.2 - d) * 2.5
+	# 绕行：被墙挡住时沿垂直方向横移一阵（没有寻路，房子/集装箱靠这个绕开）
+	if float(s["detour_t"]) > 0.0:
+		s["detour_t"] = float(s["detour_t"]) - dt
+		var dm: Vector2 = s["detour_dir"]
+		vel = dm * speed
+	var want_step := vel.length() * dt
+	var np := sp + vel * dt
+	np.x = clampf(np.x, -236.0, 236.0)
+	np.y = clampf(np.y, -186.0, 186.0)
+	np = bmap.push_out(np.x, np.y, 0.4)
+	# 卡墙判定：想走却只走出不到 30%，累计 0.4s 就开始绕
+	if want_step > 0.02 and np.distance_to(sp) < want_step * 0.3:
+		s["block_t"] = float(s["block_t"]) + dt
+		if float(s["block_t"]) > 0.4 and float(s["detour_t"]) <= 0.0:
+			s["block_t"] = 0.0
+			var side := 1.0 if randf() < 0.5 else -1.0
+			s["detour_dir"] = Vector2(-move.y, move.x).normalized() * side \
+					if move.length_squared() > 0.01 else Vector2(side, 0)
+			s["detour_t"] = randf_range(0.8, 1.6)
 	else:
-		s["moving"] = false
+		s["block_t"] = maxf(0.0, float(s["block_t"]) - dt)
+	s["pos"] = Vector3(np.x, bmap.terrain_height(np.x, np.y), np.y)
+	s["moving"] = move.length_squared() > 0.01
+	if face.length_squared() > 0.0001:
+		var want := atan2(face.x, face.y)
+		s["yaw"] = lerp_angle(float(s["yaw"]), want, 1.0 - exp(-10.0 * dt))
 
 
-# ================= 开火 =================
+# ================= 开火 / 弹道 =================
 
-func _try_fire(s: Dictionary, is_ally: bool, t_pos: Vector3,
-		dist: float, dt: float) -> void:
+func _try_fire(i: int, s: Dictionary, t_pos: Vector3, dist: float, dt: float) -> void:
+	var cd: Dictionary = CLASSES[s["cls"]]
 	s["fire_cd"] = float(s["fire_cd"]) - dt
 	if float(s["fire_cd"]) > 0.0:
 		return
-	if s["reload_t"] > 0.0:
+	if float(s["reload_t"]) > 0.0:
 		s["reload_t"] = float(s["reload_t"]) - dt
 		return
-	if s["mag"] <= 0:
-		s["reload_t"] = 2.0
-		s["mag"] = MAG
+	if int(s["mag"]) <= 0:
+		s["reload_t"] = 2.2
+		s["mag"] = 30
 		return
-	if not s["los_ok"] or dist > FIRE_RANGE:
-		return
-	if s["burst"] <= 0:
-		s["burst"] = 3
-	# 打出一发
+	if int(s["burst"]) <= 0:
+		s["burst"] = cd["burst"]
 	s["burst"] = int(s["burst"]) - 1
 	s["mag"] = int(s["mag"]) - 1
-	s["fire_cd"] = 0.12 if int(s["burst"]) > 0 else randf_range(0.9, 1.6)
+	s["fire_cd"] = float(cd["cd"]) if int(s["burst"]) > 0 else randf_range(0.7, 1.4)
+	if s["cls"] == 3:
+		s["fire_cd"] = randf_range(1.4, 2.4)
+	s["spotted_t"] = 2.0   # 开火暴露在敌方小地图上
 	var eye: Vector3 = s["pos"] + Vector3(0, 1.45, 0)
 	var dir := (t_pos - eye).normalized()
-	dir += Vector3(randf() - 0.5, (randf() - 0.5) * 0.5, randf() - 0.5) * 0.06
-	dir = dir.normalized()
-	_ballistic_shot(s, eye, dir, is_ally)
+	var acc: float = cd["acc"] * (1.0 + dist / 60.0)
+	dir = (dir + Vector3(randf() - 0.5, (randf() - 0.5) * 0.5, randf() - 0.5) * acc).normalized()
+	_ballistic_shot(i, s, eye, dir, float(cd["range"]) + 20.0)
 
 
-## AI 弹道：球形命中（敌我士兵 / 玩家）+ 墙体步进，最近者结算
-func _ballistic_shot(s: Dictionary, eye: Vector3, dir: Vector3,
-		is_ally: bool) -> void:
-	var max_d := FIRE_RANGE + 20.0
+func _ballistic_shot(i: int, s: Dictionary, eye: Vector3, dir: Vector3, max_d: float) -> void:
 	var best_d := max_d
-	var best_kind := ""
-	var best_i := -1
-	var foes: Array = enemies if is_ally else allies
-	for i in foes.size():
-		var f: Dictionary = foes[i]
-		if f["dead"]:
+	var best_j := -1
+	var hit_player := false
+	for j in soldiers.size():
+		var f: Dictionary = soldiers[j]
+		if f["dead"] or f["team"] == s["team"]:
 			continue
 		var c: Vector3 = f["pos"] + Vector3(0, 1.1, 0)
 		var t: float = (c - eye).dot(dir)
@@ -683,158 +533,308 @@ func _ballistic_shot(s: Dictionary, eye: Vector3, dir: Vector3,
 			continue
 		if (c - eye - dir * t).length() < 0.55:
 			best_d = t
-			best_kind = "enemy" if is_ally else "ally"
-			best_i = i
-	# 敌兵可命中玩家
-	if not is_ally and player_alive:
-		var c: Vector3 = player_pos + Vector3(0, 1.2, 0)
-		var t: float = (c - eye).dot(dir)
-		if t > 0.5 and t < best_d \
-				and (c - eye - dir * t).length() < 0.55:
-			best_d = t
-			best_kind = "player"
-	# 墙体步进
-	var t2 := 2.0
-	while t2 < best_d:
-		var p: Vector3 = eye + dir * t2
-		for ob in bmap.obstacles_box:
-			var dx: float = p.x - ob["c"].x
-			var dz: float = p.z - ob["c"].y
-			if dx * dx + dz * dz > 8100.0:
-				continue
-			if p.y > ob["top"]:
-				continue
-			var ca: float = cos(ob["rot"])
-			var sa: float = sin(ob["rot"])
-			var lx: float = ca * dx + sa * dz
-			var lz: float = -sa * dx + ca * dz
-			if absf(lx) <= ob["hx"] and absf(lz) <= ob["hz"]:
-				best_d = t2
-				best_kind = "wall"
-				t2 = best_d + 1.0
-				break
-		t2 += 3.0
-	var end := eye + dir * best_d
-	var muzzle: Vector3 = s["pos"] + Vector3(sin(s["yaw"]) * 0.5, 1.38,
-			cos(s["yaw"]) * 0.5)
+			best_j = j
+	if player_alive and player_team != s["team"]:
+		var c2: Vector3 = player_pos + Vector3(0, 1.2, 0)
+		var t2: float = (c2 - eye).dot(dir)
+		if t2 > 0.5 and t2 < best_d and (c2 - eye - dir * t2).length() < 0.55:
+			best_d = t2
+			hit_player = true
+			best_j = -1
+	var wall_d := _wall_dist(eye, dir, best_d)
+	var end := eye + dir * minf(best_d, wall_d)
+	var muzzle: Vector3 = s["pos"] + Vector3(sin(s["yaw"]) * 0.5, 1.38, cos(s["yaw"]) * 0.5)
 	_spawn_tracer(muzzle, end)
-	match best_kind:
-		"enemy", "ally":
-			_spawn_impact(end)
-			_damage_soldier(foes[best_i], randf_range(5.0, 10.0), false)
-		"player":
-			_spawn_impact(end)
-			player_hit.emit(randf_range(5.0, 10.0))
-		"wall":
-			_spawn_impact(end)
-	# 枪声限流：距玩家 <140m 才出声
+	_spawn_impact(end)
+	if wall_d >= best_d:
+		var cd: Dictionary = CLASSES[s["cls"]]
+		var dmg := randf_range(cd["dmg"][0], cd["dmg"][1])
+		if hit_player:
+			player_hit.emit(dmg, s["pos"])
+			player_last_hit_by = i
+		elif best_j >= 0:
+			_damage_soldier(best_j, dmg, i, false, CLASSES[s["cls"]]["gun"])
 	var pd: float = s["pos"].distance_to(player_pos)
-	if _snd_budget >= 1.0 and pd < 140.0:
+	if _snd_budget >= 1.0 and pd < 150.0:
 		_snd_budget -= 1.0
 		audio.play_police_shot(pd)
 
 
-func _damage_soldier(s: Dictionary, dmg: float, by_player: bool) -> void:
+var player_last_hit_by := -1      # 最近一次打中玩家的士兵（阵亡播报用）
+
+
+## 射线到第一堵墙的距离（最远 max_d，没有则 INF）
+func _wall_dist(from: Vector3, dir: Vector3, max_d: float) -> float:
+	var d: float = bmap.ray_wall(from, dir, max_d)
+	return d if d < max_d else INF
+
+
+func _los(from: Vector3, to: Vector3) -> bool:
+	var d := from.distance_to(to)
+	if d < 0.5:
+		return true
+	return _wall_dist(from, (to - from) / d, d - 0.5) == INF
+
+
+## 士兵受伤；src = 攻击者士兵序号（-1 = 玩家，-2 = 爆炸无主）
+func _damage_soldier(j: int, dmg: float, src: int, head: bool, weapon: String) -> void:
+	var s: Dictionary = soldiers[j]
 	if s["dead"]:
 		return
 	s["hp"] = float(s["hp"]) - dmg
+	s["last_hit_by"] = src
 	if float(s["hp"]) > 0.0:
 		return
 	s["dead"] = true
 	s["moving"] = false
-	if s["team"] == "enemy":
-		_enemies_killed += 1
-		enemy_killed.emit(by_player)
+	s["deaths"] = int(s["deaths"]) + 1
+	s["respawn_t"] = RESPAWN_AI
 	_write_pose(s)
+	var info := {"victim": s["name"], "victim_team": s["team"], "weapon": weapon,
+			"head": head, "by_player": src == -1, "player_died": false,
+			"victim_cls": s["cls"]}
+	if src == -1:
+		info["killer"] = "你"
+		info["killer_team"] = player_team
+		player_stats["kills"] = int(player_stats["kills"]) + 1
+		player_stats["score"] = int(player_stats["score"]) + (150 if head else 100)
+	elif src >= 0:
+		var k: Dictionary = soldiers[src]
+		info["killer"] = k["name"]
+		info["killer_team"] = k["team"]
+		k["kills"] = int(k["kills"]) + 1
+		k["score"] = int(k["score"]) + 100
+	else:
+		info["killer"] = ""
+		info["killer_team"] = ""
+	killed.emit(info)
+
+
+## 玩家阵亡（game 侧判定血量归零后调用）
+func report_player_death() -> void:
+	player_alive = false
+	player_stats["deaths"] = int(player_stats["deaths"]) + 1
+	if player_team == "atk":
+		tickets -= 1
+	var src := player_last_hit_by
+	var info := {"victim": "你", "victim_team": player_team, "weapon": "",
+			"head": false, "by_player": false, "player_died": true, "victim_cls": player_cls}
+	if src >= 0 and src < soldiers.size():
+		var k: Dictionary = soldiers[src]
+		info["killer"] = k["name"]
+		info["killer_team"] = k["team"]
+		info["weapon"] = CLASSES[k["cls"]]["gun"]
+		info["killer_cls"] = k["cls"]
+		k["kills"] = int(k["kills"]) + 1
+		k["score"] = int(k["score"]) + 100
+	else:
+		info["killer"] = ""
+		info["killer_team"] = ""
+	player_last_hit_by = -1
+	killed.emit(info)
+
+
+## 玩家部署（game 侧选好兵种与出生点后调用）
+func player_deploy(cls: int, at: Vector3) -> void:
+	player_cls = cls
+	player_alive = true
+	player_pos = at
+	player_last_hit_by = -1
 
 
 ## 玩家子弹结算（game._on_foot_shot 转发）
 func player_shot(kind: String, idx: int, dmg: float) -> void:
-	if battle_over:
+	if battle_over or idx < 0 or idx >= soldiers.size():
 		return
-	if kind == "enemy":
-		var s: Dictionary = enemies[idx]
-		var was_alive: bool = not s["dead"]
-		_damage_soldier(s, dmg, true)
-		if was_alive and s["dead"]:
-			kills += 1
-	elif kind == "eplane":
-		var ep: Dictionary = enemy_planes[idx]
-		if ep["alive"]:
-			_damage_plane(ep, dmg, true)
-	# "ally"：无友伤（子弹已被挡下）
+	if kind != "soldier" and kind != "soldier_head":
+		return
+	var s: Dictionary = soldiers[idx]
+	if s["team"] == player_team or s["dead"]:
+		return   # 无友伤（子弹已被队友挡下）
+	var head := kind == "soldier_head"
+	_damage_soldier(idx, dmg * (HEAD_MUL if head else 1.0), -1, head,
+			CLASSES[player_cls]["gun"])
+	hitmark.emit(s["dead"], head)
 
 
-## onfoot 子弹射线（同 npc.raycast 契约）
+## onfoot 子弹射线（同 npc.raycast 契约）：士兵躯干/头部 + 墙体
 func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	var best := {"type": "", "i": -1, "d": max_d, "point": from + dir * max_d}
-	for team_i in 2:
-		var arr: Array = enemies if team_i == 0 else allies
-		var kind: String = "enemy" if team_i == 0 else "ally"
-		for i in arr.size():
-			if arr[i]["dead"]:
-				continue
-			var c: Vector3 = arr[i]["pos"] + Vector3(0, 1.1, 0)
-			var t: float = (c - from).dot(dir)
-			if t < 0.5 or t > best["d"]:
-				continue
-			if (c - from - dir * t).length() < 0.55:
-				best = {"type": kind, "i": i, "d": t,
-						"point": from + dir * t}
-	best = _raycast_planes(from, dir, best)
-	# 墙体步进（含 top 高度：可越过矮掩体）
-	var t2 := 2.0
-	while t2 < best["d"]:
-		var p: Vector3 = from + dir * t2
-		for ob in bmap.obstacles_box:
-			var dx: float = p.x - ob["c"].x
-			var dz: float = p.z - ob["c"].y
-			if dx * dx + dz * dz > 8100.0:
-				continue
-			if p.y > ob["top"]:
-				continue
-			var ca: float = cos(ob["rot"])
-			var sa: float = sin(ob["rot"])
-			var lx: float = ca * dx + sa * dz
-			var lz: float = -sa * dx + ca * dz
-			if absf(lx) <= ob["hx"] and absf(lz) <= ob["hz"]:
-				best = {"type": "wall", "i": -1, "d": t2, "point": p}
-				t2 = best["d"] + 1.0
-				break
-		t2 += 3.0
+	for i in soldiers.size():
+		var s: Dictionary = soldiers[i]
+		if s["dead"]:
+			continue
+		var hc: Vector3 = s["pos"] + Vector3(0, 1.6, 0)
+		var th: float = (hc - from).dot(dir)
+		if th > 0.5 and th < best["d"] and (hc - from - dir * th).length() < 0.2:
+			best = {"type": "soldier_head", "i": i, "d": th, "point": from + dir * th}
+			continue
+		var c: Vector3 = s["pos"] + Vector3(0, 1.05, 0)
+		var t: float = (c - from).dot(dir)
+		if t > 0.5 and t < best["d"] and (c - from - dir * t).length() < 0.5:
+			best = {"type": "soldier", "i": i, "d": t, "point": from + dir * t}
+	var wd := _wall_dist(from, dir, best["d"])
+	if wd < best["d"]:
+		best = {"type": "wall", "i": -1, "d": wd, "point": from + dir * wd}
 	return best
 
 
-## 视线判定：步进测 OBB（含 top）
-func _los(from: Vector3, to: Vector3) -> bool:
-	var dir := to - from
-	var dist := dir.length()
-	if dist < 0.5:
-		return true
-	dir = dir / dist
-	var t := 2.0
-	while t < dist:
-		var p: Vector3 = from + dir * t
-		for ob in bmap.obstacles_box:
-			var dx: float = p.x - ob["c"].x
-			var dz: float = p.z - ob["c"].y
-			if dx * dx + dz * dz > 8100.0:
-				continue
-			if p.y > ob["top"]:
-				continue
-			var ca: float = cos(ob["rot"])
-			var sa: float = sin(ob["rot"])
-			var lx: float = ca * dx + sa * dz
-			var lz: float = -sa * dx + ca * dz
-			if absf(lx) <= ob["hx"] and absf(lz) <= ob["hz"]:
-				return false
-		t += 3.0
-	return true
+# ================= 道具：手雷 / 火箭弹 / 医疗包 / 侦察信标 =================
+
+func _make_proj_vis(rocket: bool) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var mat := StandardMaterial3D.new()
+	if rocket:
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.06
+		cm.bottom_radius = 0.09
+		cm.height = 0.8
+		mi.mesh = cm
+		mat.albedo_color = Color(0.3, 0.34, 0.28)
+		mat.emission_enabled = true
+		mat.emission = Color(1.0, 0.5, 0.15)
+		mat.emission_energy_multiplier = 0.6
+	else:
+		var sm := SphereMesh.new()
+		sm.radius = 0.09
+		sm.height = 0.18
+		mi.mesh = sm
+		mat.albedo_color = Color(0.22, 0.28, 0.2)
+	mi.material_override = mat
+	add_child(mi)
+	return mi
 
 
-# ================= 士兵渲染（每队 MultiMesh：头/躯干/双臂/双腿/枪） =================
+## src：-1 玩家，>=0 士兵序号
+func throw_grenade(from: Vector3, dir: Vector3, team: String, src: int) -> void:
+	projectiles.append({"kind": "grenade", "vis": _make_proj_vis(false), "pos": from,
+			"vel": dir * 19.0 + Vector3(0, 4.5, 0), "t": 2.2, "team": team, "src": src})
 
-func _setup_army_mm(team: String, count: int) -> void:
+
+func fire_rocket(from: Vector3, dir: Vector3, team: String, src: int) -> void:
+	projectiles.append({"kind": "rocket", "vis": _make_proj_vis(true), "pos": from,
+			"vel": dir * 75.0, "t": 4.0, "team": team, "src": src})
+
+
+## 医疗包：自己回满 + 周围 12m 队友 +60
+func use_medkit(at: Vector3, team: String) -> int:
+	var n := 0
+	for s in soldiers:
+		if not s["dead"] and s["team"] == team and s["pos"].distance_to(at) < 12.0:
+			s["hp"] = minf(float(CLASSES[s["cls"]]["hp"]), float(s["hp"]) + 60.0)
+			n += 1
+	return n
+
+
+## 侦察信标：70m 内敌人在小地图上暴露 10 秒
+func use_scan(at: Vector3, team: String) -> int:
+	var n := 0
+	for s in soldiers:
+		if not s["dead"] and s["team"] != team and s["pos"].distance_to(at) < 70.0:
+			s["spotted_t"] = 10.0
+			n += 1
+	return n
+
+
+func _ai_grenade(i: int, s: Dictionary, t_pos: Vector3) -> void:
+	var from: Vector3 = s["pos"] + Vector3(0, 1.5, 0)
+	var flat := Vector3(t_pos.x - from.x, 0, t_pos.z - from.z)
+	var d := flat.length()
+	# 按落点距离给水平速度（飞行约 1.1s），稍带误差
+	var dir := flat / maxf(d, 0.01)
+	projectiles.append({"kind": "grenade", "vis": _make_proj_vis(false), "pos": from,
+			"vel": dir * (d / 1.1) * randf_range(0.85, 1.1) + Vector3(0, 5.5, 0),
+			"t": 1.8, "team": s["team"], "src": i})
+
+
+func _update_projectiles(dt: float) -> void:
+	for k in range(projectiles.size() - 1, -1, -1):
+		var p: Dictionary = projectiles[k]
+		var v: Vector3 = p["vel"]
+		var pos: Vector3 = p["pos"]
+		var boom := false
+		if p["kind"] == "grenade":
+			v.y -= 15.0 * dt
+			var np := pos + v * dt
+			var gy: float = bmap.terrain_height(np.x, np.z) + 0.1
+			if np.y < gy:
+				np.y = gy
+				v = Vector3(v.x * 0.45, -v.y * 0.3, v.z * 0.45)   # 落地弹跳
+			if bmap.solid_at(np):
+				v = Vector3(-v.x * 0.4, v.y, -v.z * 0.4)
+				np = pos
+			pos = np
+			p["t"] = float(p["t"]) - dt
+			boom = float(p["t"]) <= 0.0
+		else:
+			var np2 := pos + v * dt
+			pos = np2
+			p["t"] = float(p["t"]) - dt
+			boom = float(p["t"]) <= 0.0 or np2.y < bmap.terrain_height(np2.x, np2.z) + 0.2 \
+					or bmap.solid_at(np2)
+			if not boom:
+				for s in soldiers:
+					if not s["dead"] and s["team"] != p["team"] \
+							and (s["pos"] + Vector3(0, 1.0, 0)).distance_to(np2) < 1.0:
+						boom = true
+						break
+		p["vel"] = v
+		p["pos"] = pos
+		var vis: MeshInstance3D = p["vis"]
+		vis.position = pos
+		if p["kind"] == "rocket" and v.length_squared() > 0.01:
+			vis.look_at(pos + v, Vector3.UP)
+			vis.rotate_object_local(Vector3.RIGHT, PI * 0.5)
+		if boom:
+			vis.queue_free()
+			projectiles.remove_at(k)
+			if p["kind"] == "grenade":
+				_explode(pos, 7.0, 110.0, p["team"], int(p["src"]), "手雷")
+			else:
+				_explode(pos, 4.5, 120.0, p["team"], int(p["src"]), "火箭筒")
+
+
+func _clear_projectiles() -> void:
+	for p in projectiles:
+		(p["vis"] as Node).queue_free()
+	projectiles.clear()
+
+
+## 爆炸：半径内按距离衰减伤害，不伤友军（自伤除外：玩家被自己的手雷炸到照样扣血）
+func _explode(pos: Vector3, radius: float, dmg: float, team: String, src: int,
+		weapon: String) -> void:
+	var slot: Dictionary = _ex_pool[_ex_i]
+	_ex_i = (_ex_i + 1) % _ex_pool.size()
+	slot["mi"].global_position = pos
+	slot["light"].global_position = pos + Vector3(0, 1.5, 0)
+	slot["mi"].scale = Vector3.ONE * (radius * 0.25)
+	slot["mi"].visible = true
+	slot["light"].visible = true
+	slot["t"] = 0.45
+	slot["radius"] = radius
+	for j in soldiers.size():
+		var s: Dictionary = soldiers[j]
+		if s["dead"] or s["team"] == team:
+			continue
+		var d: float = s["pos"].distance_to(pos)
+		if d <= radius:
+			var was_alive: bool = not s["dead"]
+			_damage_soldier(j, dmg * (1.0 - d / radius * 0.6), src, false, weapon)
+			if src == -1 and was_alive:
+				hitmark.emit(s["dead"], false)
+	if player_alive:
+		var pd := player_pos.distance_to(pos)
+		if pd <= radius and (team != player_team or src == -1):
+			player_hit.emit(dmg * (1.0 - pd / radius * 0.6) * 0.8, pos)
+			if src >= 0:
+				player_last_hit_by = src
+	explosion_at.emit(pos)
+
+
+# ================= 渲染：每队 MultiMesh（头盔/头/躯干/四肢/枪） =================
+
+func _setup_army_mm(team: String) -> void:
+	var count := TEAM_SIZE
 	var head_mesh := SphereMesh.new()
 	head_mesh.radius = 0.12
 	head_mesh.height = 0.24
@@ -845,56 +845,59 @@ func _setup_army_mm(team: String, count: int) -> void:
 	torso_mesh.top_radius = 0.2
 	torso_mesh.bottom_radius = 0.16
 	torso_mesh.height = 0.62
-	var ua_mesh := CylinderMesh.new()       # 上臂
+	var ua_mesh := CylinderMesh.new()
 	ua_mesh.top_radius = 0.07
 	ua_mesh.bottom_radius = 0.062
 	ua_mesh.height = 0.26
-	var fa_mesh := CylinderMesh.new()       # 前臂
+	var fa_mesh := CylinderMesh.new()
 	fa_mesh.top_radius = 0.058
 	fa_mesh.bottom_radius = 0.05
 	fa_mesh.height = 0.26
-	var th_mesh := CylinderMesh.new()       # 大腿
+	var th_mesh := CylinderMesh.new()
 	th_mesh.top_radius = 0.1
 	th_mesh.bottom_radius = 0.088
 	th_mesh.height = 0.44
-	var ca_mesh := CylinderMesh.new()       # 小腿
+	var ca_mesh := CylinderMesh.new()
 	ca_mesh.top_radius = 0.085
 	ca_mesh.bottom_radius = 0.06
 	ca_mesh.height = 0.44
 	var gun_mesh := BoxMesh.new()
 	gun_mesh.size = Vector3(0.08, 0.1, 0.72)
+	var pack_mesh := BoxMesh.new()
+	pack_mesh.size = Vector3(0.34, 0.4, 0.18)
 	_mm[team] = {
-		"head": _make_mm(head_mesh, count),
-		"helmet": _make_mm(helmet_mesh, count),
-		"torso": _make_mm(torso_mesh, count),
-		"ua": _make_mm(ua_mesh, count * 2),
-		"fa": _make_mm(fa_mesh, count * 2),
-		"th": _make_mm(th_mesh, count * 2),
-		"ca": _make_mm(ca_mesh, count * 2),
+		"head": _make_mm(head_mesh, count), "helmet": _make_mm(helmet_mesh, count),
+		"torso": _make_mm(torso_mesh, count), "pack": _make_mm(pack_mesh, count),
+		"ua": _make_mm(ua_mesh, count * 2), "fa": _make_mm(fa_mesh, count * 2),
+		"th": _make_mm(th_mesh, count * 2), "ca": _make_mm(ca_mesh, count * 2),
 		"gun": _make_mm(gun_mesh, count),
 	}
-	# 队服配色
-	var uniform: Color = Color(0.3, 0.42, 0.6) if team == "ally" \
-			else Color(0.55, 0.22, 0.18)
-	var helmet: Color = Color(0.22, 0.3, 0.44) if team == "ally" \
-			else Color(0.35, 0.15, 0.12)
-	var mm: Dictionary = _mm[team]
-	for i in count:
-		mm["torso"].multimesh.set_instance_color(i, uniform)
-		mm["head"].multimesh.set_instance_color(i, Color(0.85, 0.68, 0.55))
-		mm["helmet"].multimesh.set_instance_color(i, helmet)
-		mm["ua"].multimesh.set_instance_color(i * 2, uniform)
-		mm["ua"].multimesh.set_instance_color(i * 2 + 1, uniform)
-		mm["fa"].multimesh.set_instance_color(i * 2, Color(0.85, 0.68, 0.55))
-		mm["fa"].multimesh.set_instance_color(i * 2 + 1,
-				Color(0.85, 0.68, 0.55))
-		mm["th"].multimesh.set_instance_color(i * 2, Color(0.2, 0.22, 0.26))
-		mm["th"].multimesh.set_instance_color(i * 2 + 1,
-				Color(0.2, 0.22, 0.26))
-		mm["ca"].multimesh.set_instance_color(i * 2, Color(0.2, 0.22, 0.26))
-		mm["ca"].multimesh.set_instance_color(i * 2 + 1,
-				Color(0.2, 0.22, 0.26))
-		mm["gun"].multimesh.set_instance_color(i, Color(0.12, 0.12, 0.13))
+	# 开局前全部藏到地下（未占用的槽位也不显示）
+	for k in _mm[team]:
+		var mmi: MultiMeshInstance3D = _mm[team][k]
+		for n in mmi.multimesh.instance_count:
+			mmi.multimesh.set_instance_transform(n, Transform3D(Basis.from_scale(Vector3.ONE * 0.001),
+					Vector3(0, -50, 0)))
+
+
+## 队服按「相对玩家」上色：友军蓝、敌军红（玩家可选任一阵营）
+func _apply_team_colors() -> void:
+	for team in ["atk", "def"]:
+		var friendly: bool = team == player_team
+		var uniform := Color(0.28, 0.4, 0.58) if friendly else Color(0.55, 0.24, 0.2)
+		var helmet := Color(0.2, 0.28, 0.42) if friendly else Color(0.34, 0.16, 0.13)
+		var mm: Dictionary = _mm[team]
+		for i in TEAM_SIZE:
+			mm["torso"].multimesh.set_instance_color(i, uniform)
+			mm["pack"].multimesh.set_instance_color(i, uniform.darkened(0.35))
+			mm["head"].multimesh.set_instance_color(i, Color(0.85, 0.68, 0.55))
+			mm["helmet"].multimesh.set_instance_color(i, helmet)
+			mm["gun"].multimesh.set_instance_color(i, Color(0.12, 0.12, 0.13))
+			for k in 2:
+				mm["ua"].multimesh.set_instance_color(i * 2 + k, uniform)
+				mm["fa"].multimesh.set_instance_color(i * 2 + k, Color(0.85, 0.68, 0.55))
+				mm["th"].multimesh.set_instance_color(i * 2 + k, Color(0.2, 0.22, 0.26))
+				mm["ca"].multimesh.set_instance_color(i * 2 + k, Color(0.2, 0.22, 0.26))
 
 
 func _make_mm(mesh: Mesh, count: int) -> MultiMeshInstance3D:
@@ -914,96 +917,64 @@ func _make_mm(mesh: Mesh, count: int) -> MultiMeshInstance3D:
 
 
 func _write_pose(s: Dictionary) -> void:
-	var arr: Array = allies if s["team"] == "ally" else enemies
-	var i := arr.find(s)
-	if i < 0:
-		return
+	var i: int = s["slot"]
 	var mm: Dictionary = _mm[s["team"]]
 	var dead: bool = s["dead"]
 	var yaw: float = s["yaw"]
-	var bob: float = absf(sin(_t * 9.0 + float(s["phase"]))) * 0.04 \
-			if s["moving"] else 0.0
-	var swing := sin(_t * 9.0 + float(s["phase"])) * 0.45 if s["moving"] \
-			else 0.0
-	var root_pos: Vector3 = s["pos"] + Vector3(0, bob, 0)
-	# 阵亡：绕 X 翻倒贴地（只写一次）
+	var ph: float = _t * 9.0 + float(s["phase"])
+	var bob: float = absf(sin(ph)) * 0.04 if s["moving"] else 0.0
+	var swing := sin(ph) * 0.45 if s["moving"] else 0.0
 	var root := Transform3D(Basis.from_euler(Vector3(PI * 0.5, yaw, 0)
-			if dead else Vector3(0, yaw, 0)), root_pos)
-	mm["torso"].multimesh.set_instance_transform(i,
-			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
-	mm["head"].multimesh.set_instance_transform(i,
-			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
-	mm["helmet"].multimesh.set_instance_transform(i,
-			root * Transform3D(Basis.IDENTITY, Vector3(0, 1.65, 0)))
+			if dead else Vector3(0, yaw, 0)), s["pos"] + Vector3(0, bob, 0))
+	mm["torso"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.12, 0)))
+	mm["pack"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.15, -0.22)))
+	mm["head"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.58, 0)))
+	mm["helmet"].multimesh.set_instance_transform(i, root * Transform3D(Basis.IDENTITY, Vector3(0, 1.65, 0)))
 	if dead:
-		# 倒地：四肢摊开（上下段微错位）、枪落地
 		mm["ua"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, 1.2)),
-				Vector3(-0.3, 1.15, 0)))
+				Transform3D(Basis.from_euler(Vector3(0, 0, 1.2)), Vector3(-0.3, 1.15, 0)))
 		mm["fa"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, 1.7)),
-				Vector3(-0.48, 0.95, 0)))
+				Transform3D(Basis.from_euler(Vector3(0, 0, 1.7)), Vector3(-0.48, 0.95, 0)))
 		mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, -1.2)),
-				Vector3(0.3, 1.15, 0)))
+				Transform3D(Basis.from_euler(Vector3(0, 0, -1.2)), Vector3(0.3, 1.15, 0)))
 		mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(0, 0, -1.7)),
-				Vector3(0.48, 0.95, 0)))
+				Transform3D(Basis.from_euler(Vector3(0, 0, -1.7)), Vector3(0.48, 0.95, 0)))
 		mm["th"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(-0.3, 0, 0.2)),
-				Vector3(-0.11, 0.42, 0)))
+				Transform3D(Basis.from_euler(Vector3(-0.3, 0, 0.2)), Vector3(-0.11, 0.42, 0)))
 		mm["ca"].multimesh.set_instance_transform(i * 2, root *
-				Transform3D(Basis.from_euler(Vector3(0.5, 0, 0.2)),
-				Vector3(-0.16, 0.1, 0.1)))
+				Transform3D(Basis.from_euler(Vector3(0.5, 0, 0.2)), Vector3(-0.16, 0.1, 0.1)))
 		mm["th"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(0.2, 0, -0.2)),
-				Vector3(0.11, 0.42, 0)))
+				Transform3D(Basis.from_euler(Vector3(0.2, 0, -0.2)), Vector3(0.11, 0.42, 0)))
 		mm["ca"].multimesh.set_instance_transform(i * 2 + 1, root *
-				Transform3D(Basis.from_euler(Vector3(-0.4, 0, -0.2)),
-				Vector3(0.2, 0.12, -0.08)))
+				Transform3D(Basis.from_euler(Vector3(-0.4, 0, -0.2)), Vector3(0.2, 0.12, -0.08)))
 		mm["gun"].multimesh.set_instance_transform(i, root *
 				Transform3D(Basis.IDENTITY, Vector3(0.5, 0.1, 0.3)))
 		return
-	# 持枪双臂前伸（上臂+前臂微内收）+ 两级骨骼摆腿（膝随相位弯曲）
 	var aim := Basis.from_euler(Vector3(-1.25, 0, 0))
 	var aim_fa := Basis.from_euler(Vector3(-1.45, 0, 0))
-	mm["ua"].multimesh.set_instance_transform(i * 2, root *
-			Transform3D(aim, Vector3(-0.14, 1.32, 0.12)))
-	mm["fa"].multimesh.set_instance_transform(i * 2, root *
-			Transform3D(aim_fa, Vector3(-0.1, 1.3, 0.34)))
-	mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root *
-			Transform3D(aim, Vector3(0.14, 1.32, 0.12)))
-	mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root *
-			Transform3D(aim_fa, Vector3(0.1, 1.3, 0.34)))
-	var hip_l := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)),
-			Vector3(-0.11, 0.83, 0))
-	var hip_r := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)),
-			Vector3(0.11, 0.83, 0))
+	mm["ua"].multimesh.set_instance_transform(i * 2, root * Transform3D(aim, Vector3(-0.14, 1.32, 0.12)))
+	mm["fa"].multimesh.set_instance_transform(i * 2, root * Transform3D(aim_fa, Vector3(-0.1, 1.3, 0.34)))
+	mm["ua"].multimesh.set_instance_transform(i * 2 + 1, root * Transform3D(aim, Vector3(0.14, 1.32, 0.12)))
+	mm["fa"].multimesh.set_instance_transform(i * 2 + 1, root * Transform3D(aim_fa, Vector3(0.1, 1.3, 0.34)))
+	var hip_l := Transform3D(Basis.from_euler(Vector3(swing, 0, 0)), Vector3(-0.11, 0.83, 0))
+	var hip_r := Transform3D(Basis.from_euler(Vector3(-swing, 0, 0)), Vector3(0.11, 0.83, 0))
 	var walk_k := 1.0 if s["moving"] else 0.0
-	var knee_l := maxf(0.0, -cos(_t * 9.0 + float(s["phase"]))) * 0.8 \
-			* walk_k + 0.1
-	var knee_r := maxf(0.0, cos(_t * 9.0 + float(s["phase"]))) * 0.8 \
-			* walk_k + 0.1
-	var th_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
-	var ca_off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
-	var knee_pl := Transform3D(Basis.from_euler(Vector3(knee_l, 0, 0)),
-			Vector3(0, -0.44, 0))
-	var knee_pr := Transform3D(Basis.from_euler(Vector3(knee_r, 0, 0)),
-			Vector3(0, -0.44, 0))
-	mm["th"].multimesh.set_instance_transform(i * 2, root * hip_l * th_off)
-	mm["ca"].multimesh.set_instance_transform(i * 2,
-			root * hip_l * knee_pl * ca_off)
-	mm["th"].multimesh.set_instance_transform(i * 2 + 1,
-			root * hip_r * th_off)
-	mm["ca"].multimesh.set_instance_transform(i * 2 + 1,
-			root * hip_r * knee_pr * ca_off)
-	# 枪贴胸前（双臂之间前指）
+	var knee_l := maxf(0.0, -cos(ph)) * 0.8 * walk_k + 0.1
+	var knee_r := maxf(0.0, cos(ph)) * 0.8 * walk_k + 0.1
+	var off := Transform3D(Basis.IDENTITY, Vector3(0, -0.22, 0))
+	var knee_pl := Transform3D(Basis.from_euler(Vector3(knee_l, 0, 0)), Vector3(0, -0.44, 0))
+	var knee_pr := Transform3D(Basis.from_euler(Vector3(knee_r, 0, 0)), Vector3(0, -0.44, 0))
+	mm["th"].multimesh.set_instance_transform(i * 2, root * hip_l * off)
+	mm["ca"].multimesh.set_instance_transform(i * 2, root * hip_l * knee_pl * off)
+	mm["th"].multimesh.set_instance_transform(i * 2 + 1, root * hip_r * off)
+	mm["ca"].multimesh.set_instance_transform(i * 2 + 1, root * hip_r * knee_pr * off)
+	var glen := 1.25 if s["cls"] == 3 else (0.85 if s["cls"] == 2 else 1.0)   # 狙击枪长、机枪粗
 	mm["gun"].multimesh.set_instance_transform(i, root *
-			Transform3D(Basis.from_euler(Vector3(-1.35, 0, 0)),
+			Transform3D(Basis.from_euler(Vector3(-1.35, 0, 0)).scaled(Vector3(1, 1, glen)),
 			Vector3(0, 1.32, 0.32)))
 
 
-# ================= 曳光 / 火花对象池 =================
+# ================= 曳光 / 火花 / 爆炸对象池 =================
 
 func _setup_fx() -> void:
 	var tmat := StandardMaterial3D.new()
@@ -1014,7 +985,7 @@ func _setup_fx() -> void:
 	var tmesh := BoxMesh.new()
 	tmesh.size = Vector3(0.025, 0.025, 1.0)
 	tmesh.material = tmat
-	for i in 24:
+	for i in 40:
 		var mi := MeshInstance3D.new()
 		mi.mesh = tmesh
 		mi.visible = false
@@ -1029,7 +1000,7 @@ func _setup_fx() -> void:
 	imesh.radius = 0.05
 	imesh.height = 0.1
 	imesh.material = imat
-	for i in 16:
+	for i in 24:
 		var mi := MeshInstance3D.new()
 		mi.mesh = imesh
 		mi.visible = false
@@ -1038,26 +1009,31 @@ func _setup_fx() -> void:
 
 
 func _spawn_tracer(from: Vector3, to: Vector3) -> void:
+	# 离玩家很远的曳光不画（省节点更新）
+	if from.distance_to(player_pos) > 220.0 and to.distance_to(player_pos) > 220.0:
+		return
 	var slot: Dictionary = _tr_pool[_tr_i]
 	_tr_i = (_tr_i + 1) % _tr_pool.size()
 	var mi: MeshInstance3D = slot["mi"]
 	var mid := (from + to) * 0.5
-	mi.global_position = mid
+	if from.distance_to(to) < 0.05:
+		return
 	mi.look_at_from_position(mid, to, Vector3.UP)
 	mi.scale = Vector3(1, 1, from.distance_to(to))
 	mi.visible = true
-	slot["t"] = 0.18
+	slot["t"] = 0.14
 
 
 func _spawn_impact(p: Vector3) -> void:
+	if p.distance_to(player_pos) > 160.0:
+		return
 	var slot: Dictionary = _im_pool[_im_i]
 	_im_i = (_im_i + 1) % _im_pool.size()
 	slot["mi"].global_position = p
 	slot["mi"].visible = true
-	slot["t"] = 0.24
+	slot["t"] = 0.22
 
 
-## 爆炸视觉池：发光扩爆球 + 瞬时点光
 func _setup_explosions() -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(1.0, 0.55, 0.15)
@@ -1068,7 +1044,7 @@ func _setup_explosions() -> void:
 	mesh.radius = 1.0
 	mesh.height = 2.0
 	mesh.material = mat
-	for i in 5:
+	for i in 8:
 		var mi := MeshInstance3D.new()
 		mi.mesh = mesh
 		mi.visible = false
@@ -1076,10 +1052,10 @@ func _setup_explosions() -> void:
 		var light := OmniLight3D.new()
 		light.light_color = Color(1.0, 0.6, 0.2)
 		light.light_energy = 8.0
-		light.omni_range = 30.0
+		light.omni_range = 26.0
 		light.visible = false
 		add_child(light)
-		_ex_pool.append({"mi": mi, "light": light, "t": 0.0, "radius": 10.0})
+		_ex_pool.append({"mi": mi, "light": light, "t": 0.0, "radius": 5.0})
 
 
 func _tick_explosions(dt: float) -> void:
@@ -1088,10 +1064,9 @@ func _tick_explosions(dt: float) -> void:
 			continue
 		slot["t"] = float(slot["t"]) - dt
 		var k: float = 1.0 - clampf(float(slot["t"]) / 0.45, 0.0, 1.0)
-		var mi: MeshInstance3D = slot["mi"]
-		mi.scale = Vector3.ONE * (float(slot["radius"]) * (0.25 + 0.75 * k))
+		(slot["mi"] as MeshInstance3D).scale = Vector3.ONE * (float(slot["radius"]) * (0.25 + 0.75 * k))
 		if float(slot["t"]) <= 0.0:
-			mi.visible = false
+			slot["mi"].visible = false
 			slot["light"].visible = false
 
 
@@ -1106,3 +1081,17 @@ func _tick_fx(dt: float) -> void:
 			s["t"] = float(s["t"]) - dt
 			if float(s["t"]) <= 0.0:
 				s["mi"].visible = false
+
+
+## 计分板数据：两队按得分排序 [{name, cls, kills, deaths, score, me}]
+func scoreboard(team: String) -> Array:
+	var rows: Array = []
+	for s in soldiers:
+		if s["team"] == team:
+			rows.append({"name": s["name"], "cls": s["cls"], "kills": s["kills"],
+					"deaths": s["deaths"], "score": s["score"], "me": false})
+	if team == player_team:
+		rows.append({"name": "你", "cls": player_cls, "kills": player_stats["kills"],
+				"deaths": player_stats["deaths"], "score": player_stats["score"], "me": true})
+	rows.sort_custom(func(a, b): return int(a["score"]) > int(b["score"]))
+	return rows

@@ -1648,6 +1648,7 @@ func _build_battle_hud() -> void:
 	bar.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	bar.position.y = TOP_ROW2_Y   # 同漫游提示：让出第一行给时钟
+	bar.visible = false           # 攻防推进版目标栏由 battle_hud.gd 绘制，旧战况条停用
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 26)
 	battle_lbl_ally = Label.new()
@@ -1851,8 +1852,9 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var ammo_txt := "换弹中…" if _gun_reload > 0.0 else "%d / ∞" % _gun_ammo
 	if _gun_name != "":
 		ammo_txt = _gun_name + "  " + ammo_txt
-	cv.draw_string(ThemeDB.fallback_font, Vector2(sz.x - 130.0, sz.y - 40.0),
-			ammo_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1.0, 0.85, 0.35))
+	# 右对齐贴右边：原来固定从 sz.x-130 起画，枪名一长（「突击步枪 30 / ∞」）就出屏
+	cv.draw_string(ThemeDB.fallback_font, Vector2(sz.x - 420.0, sz.y - 40.0),
+			ammo_txt, HORIZONTAL_ALIGNMENT_RIGHT, 400.0, 20, Color(1.0, 0.85, 0.35))
 
 
 func _process_gun(dt: float) -> void:

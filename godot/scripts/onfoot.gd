@@ -46,6 +46,7 @@ var gun_ammo := {}        # gun_id → 当前弹匣余量
 var ammo_mul := 1.0       # 弹药类型伤害倍率（弹药店）
 var _ammo_color := Color(1.0, 0.8, 0.35)
 var _mag_mesh: MeshInstance3D       # 枪上弹匣（换弹时脱落/滑入）
+var _mag_show := true                # GLB 步枪自带弹匣：程序化弹匣块不显示（否则悬在枪下）
 var _falling_mag: MeshInstance3D    # 掉落中的弹匣（世界空间）
 var _falling_vel := Vector3.ZERO
 var _falling := false
@@ -190,6 +191,12 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 			add_box.call(Vector3(0.075, 0.09, 0.85), Vector3(0, 0.03, -0.15), Vector3.ZERO, wood)
 			add_box.call(Vector3(0.06, 0.07, 0.5), Vector3(0, -0.04, -0.35), Vector3.ZERO, dark)
 			add_box.call(Vector3(0.05, 0.14, 0.1), Vector3(0, -0.06, 0.18), Vector3(-6, 0, 0), wood)
+		"lmg":
+			add_box.call(Vector3(0.09, 0.12, 0.9), Vector3(0, 0.02, -0.14), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.14, 0.16, 0.16), Vector3(0, -0.1, -0.02), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.05, 0.16, 0.09), Vector3(0, -0.09, 0.16), Vector3(-5, 0, 0), dark)
+			add_box.call(Vector3(0.03, 0.2, 0.03), Vector3(-0.05, -0.12, -0.5), Vector3(0, 0, 18), steel)
+			add_box.call(Vector3(0.03, 0.2, 0.03), Vector3(0.05, -0.12, -0.5), Vector3(0, 0, -18), steel)
 		"sniper":
 			add_box.call(Vector3(0.06, 0.09, 1.0), Vector3(0, 0.03, -0.12), Vector3.ZERO, steel)
 			add_box.call(Vector3(0.08, 0.13, 0.26), Vector3(0, 0.14, -0.08), Vector3.ZERO, dark)
@@ -217,6 +224,14 @@ func setup(freeroam, npc_ref, audio_ref, camera: Camera3D) -> void:
 	# 占位用程序化手枪：每次下车 game 都会 set_gun(当前装备) 重建枪模，
 	# 这里若装步枪会在进漫游时同步加载 60MB 的 SCAR GLB（约 0.4s）再立刻丢掉
 	set_gun("pistol")
+
+## 切换所在地图与射击目标（漫游：城市 + 交通；大战场：战场地图 + 两军）。
+## 开机会先进漫游建好 onfoot，进大战场时必须改指过去——否则在战场里
+## 走的是城市碰撞/地面高度、子弹打的是城市行人，敌兵根本打不中
+func retarget(map_ref, targets_ref) -> void:
+	fm = map_ref
+	npc = targets_ref
+
 
 ## 曳光弹与命中火花的对象池
 func _setup_fx() -> void:
@@ -310,6 +325,8 @@ func mount_gun(gun: Node3D) -> void:
 	_mag_mesh.mesh = mag_mesh
 	_mag_mesh.position = Vector3(0.02, -0.14, -0.16)
 	_gun_holder.add_child(_mag_mesh)
+	_mag_show = _gun_id != "rifle"
+	_mag_mesh.visible = _mag_show
 	# 枪口火光：小发光片 + 瞬时点光
 	_flash_mesh = MeshInstance3D.new()
 	var fm_mesh := SphereMesh.new()
@@ -367,7 +384,7 @@ func update(dt: float) -> void:
 				_falling_vel = cam.global_transform.basis.z * 0.8 + Vector3(0, -0.4, 0)
 				_falling_mag.visible = true
 		elif prog >= 0.60:
-			_mag_mesh.visible = true
+			_mag_mesh.visible = _mag_show
 			_falling = false
 		if reloading <= 0.0:
 			reloading = 0.0
@@ -376,7 +393,7 @@ func update(dt: float) -> void:
 	else:
 		_reload_off = Vector3.ZERO
 		_reload_rot = Vector3.ZERO
-		_mag_mesh.visible = true
+		_mag_mesh.visible = _mag_show
 		_falling = false
 	# 移动（C 滑铲：沿启动时朝向急冲，平方衰减；铲行中不接受转向输入）
 	slide_cd = maxf(0.0, slide_cd - dt)
