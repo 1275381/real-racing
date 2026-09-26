@@ -320,6 +320,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_G and state == ST.BATTLE:
 		_battle_gadget()
+	# Z 键：趴下/起身（步行，大战场与漫游通用）
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_Z and on_foot \
+			and state in [ST.ROAM, ST.BATTLE]:
+		onfoot.toggle_prone()
+		hud.set_scope(onfoot.scoped, onfoot.get_gun_id())
 	# T 键：大战场循环切换已购弹药类型（标准/强力/穿甲/燃烧）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_T and state == ST.BATTLE \
@@ -2403,7 +2409,7 @@ func _handle_hotkeys() -> void:
 	if Input.is_action_just_pressed("rr_scope") and on_foot \
 			and (state == ST.ROAM or state == ST.BATTLE):
 		onfoot.toggle_scope()
-		hud.set_scope(onfoot.scoped)
+		hud.set_scope(onfoot.scoped, onfoot.get_gun_id())
 	if Input.is_action_just_pressed("rr_mute"):
 		audio.ensure()
 		audio.set_muted(not audio.muted)
@@ -2651,7 +2657,7 @@ func _step_sim(h: float) -> void:
 				player_hp = minf(100.0, player_hp + 5.0 * h)
 			hud.set_health(player_hp)
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(gun_equipped)["name"])
-			hud.set_scope(onfoot.scoped)
+			hud.set_scope(onfoot.scoped, onfoot.get_gun_id())
 			# 地标交互提示（摩天轮 / 电视塔观景电梯）
 			var lm_hint := ""
 			var shaft_d: float = Vector2(onfoot.pos.x - 90,
@@ -2817,7 +2823,7 @@ func _step_sim(h: float) -> void:
 			bhud.set_gadget(cd["gadget_name"], 1.0 - _gadget_cd / float(cd["gadget_cd"]))
 			bhud.player_yaw = onfoot.yaw
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(cd["gun"])["name"])
-			hud.set_scope(onfoot.scoped)
+			hud.set_scope(onfoot.scoped, onfoot.get_gun_id())
 		if shake > 0.002 and on_foot:
 			var a3 := shake * 0.2
 			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a3

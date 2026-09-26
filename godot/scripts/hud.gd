@@ -73,6 +73,7 @@ var wanted_progress := 0.0
 var _wanted_blink_t := 0.0
 var gun_overlay: Control       # 步行 HUD：准星/三倍镜遮罩/血条/弹药
 var _gun_scope := false
+var _scope_gun := "rifle"   # 当前持枪（决定镜面风格）
 var _gun_hp := 100.0
 var _gun_armor := 0.0
 var _armor_row := {}   # 枪械店防弹衣行 {btn, note}
@@ -1573,7 +1574,7 @@ func _build_roam_hud() -> void:
 	_roam_hint = hint
 
 	var keys := Label.new()
-	keys.text = "F 上/下车 · 左键 开枪 · 右键 开/关镜 · C 滑铲/切镜头 · Esc 回车库 · R 复位 · N 静音"
+	keys.text = "F 上/下车 · 左键 开枪 · 右键 开/关镜 · C 滑铲 · Z 趴下 · Esc 回车库 · R 复位 · N 静音"
 	keys.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	keys.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	keys.position = Vector2(18, -20)
@@ -1850,12 +1851,7 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var cx := sz.x * 0.5
 	var cy := sz.y * 0.5
 	if _gun_scope:
-		# 三倍镜：只有黑色镜框边圈 + 十字线 + 红点，视野不再压暗
-		var r := minf(sz.x, sz.y) * 0.42
-		cv.draw_arc(Vector2(cx, cy), r, 0, TAU, 64, Color(0.05, 0.05, 0.06), 10.0)
-		cv.draw_line(Vector2(cx - r, cy), Vector2(cx + r, cy), Color(0.08, 0.09, 0.1, 0.85), 2.0)
-		cv.draw_line(Vector2(cx, cy - r), Vector2(cx, cy + r), Color(0.08, 0.09, 0.1, 0.85), 2.0)
-		cv.draw_circle(Vector2(cx, cy), 2.5, Color(0.9, 0.15, 0.1))
+		_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), _scope_gun)
 	else:
 		# 腰射准星：四段短线 + 中点
 		cv.draw_circle(Vector2(cx, cy), 2.0, Color(1, 1, 1, 0.9))
@@ -1891,6 +1887,85 @@ func _draw_gun_overlay(cv: Control) -> void:
 			ammo_txt, HORIZONTAL_ALIGNMENT_RIGHT, 400.0, 20, Color(1.0, 0.85, 0.35))
 
 
+## 分枪瞄准镜风格：每把枪的镜面不同（全息/红点/珠式/狙击密位/战地机瞄）
+func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
+		gun_id: String) -> void:
+	var r := m * 0.42
+	match gun_id:
+		"sniper":
+			# 6× 狙击镜：暗角渐晕（连续黑环+柔边）+ 密位刻度 + 测距标
+			var bw := r * 0.36
+			cv.draw_arc(Vector2(cx, cy), r + bw * 0.5, 0, TAU, 72,
+					Color(0.02, 0.02, 0.03, 1.0), bw)
+			for g in 3:
+				var gw := r * 0.05
+				cv.draw_arc(Vector2(cx, cy), r - gw * 0.5 - gw * float(g), 0,
+						TAU, 72, Color(0.02, 0.02, 0.03, 0.30 - 0.09 * float(g)),
+						gw)
+			cv.draw_arc(Vector2(cx, cy), r, 0, TAU, 64, Color(0.35, 0.36, 0.4), 5.0)
+			cv.draw_line(Vector2(cx - r, cy), Vector2(cx + r, cy),
+					Color(0.1, 0.1, 0.12, 0.9), 1.6)
+			cv.draw_line(Vector2(cx, cy - r), Vector2(cx, cy + r),
+					Color(0.1, 0.1, 0.12, 0.9), 1.6)
+			for k in [-3, -2, -1, 1, 2, 3]:
+				var off := r * 0.11 * float(k)
+				cv.draw_line(Vector2(cx + off, cy - 7), Vector2(cx + off, cy + 7),
+						Color(0.1, 0.1, 0.12, 0.85), 1.4)
+				cv.draw_line(Vector2(cx - 7, cy + off), Vector2(cx + 7, cy + off),
+						Color(0.1, 0.1, 0.12, 0.85), 1.4)
+			cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.95, 0.2, 0.12))
+			cv.draw_string(ThemeDB.fallback_font, Vector2(cx + r * 0.42, cy + r * 0.5),
+					"6x", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.5, 0.55, 0.5, 0.9))
+		"rifle":
+			# 全息镜：内方框 + 中心绿点 + 角标
+			var hr := r * 0.55
+			cv.draw_arc(Vector2(cx, cy), r + r * 0.15, 0, TAU, 64,
+					Color(0.03, 0.03, 0.04, 0.9), r * 0.3)
+			cv.draw_rect(Rect2(cx - hr, cy - hr, hr * 2, hr * 2),
+					Color(0.85, 1.0, 0.85, 0.55), false, 2.0)
+			cv.draw_line(Vector2(cx - hr * 0.35, cy), Vector2(cx - hr, cy),
+					Color(0.85, 1.0, 0.85, 0.4), 2.0)
+			cv.draw_line(Vector2(cx + hr * 0.35, cy), Vector2(cx + hr, cy),
+					Color(0.85, 1.0, 0.85, 0.4), 2.0)
+			cv.draw_line(Vector2(cx, cy - hr * 0.35), Vector2(cx, cy - hr),
+					Color(0.85, 1.0, 0.85, 0.4), 2.0)
+			cv.draw_circle(Vector2(cx, cy), 4.0, Color(0.4, 1.0, 0.45))
+			cv.draw_circle(Vector2(cx, cy), 1.8, Color(0.95, 1.0, 0.95))
+		"smg":
+			# 红点镜：单圈 + 大红点
+			cv.draw_arc(Vector2(cx, cy), r * 0.6 + r * 0.12, 0, TAU, 48,
+					Color(0.05, 0.05, 0.06, 0.9), r * 0.24)
+			cv.draw_arc(Vector2(cx, cy), r * 0.6, 0, TAU, 48,
+					Color(0.75, 0.78, 0.8), 2.0)
+			cv.draw_circle(Vector2(cx, cy), 5.0, Color(1.0, 0.25, 0.15, 0.95))
+			cv.draw_circle(Vector2(cx, cy), 2.2, Color(1.0, 0.85, 0.8))
+		"shotgun":
+			# 珠式准星：简圈 + 大珠心（喷子不需要精细）
+			cv.draw_arc(Vector2(cx, cy), r * 0.4, 0, TAU, 40,
+					Color(0.08, 0.08, 0.1, 0.85), r * 0.16)
+			cv.draw_circle(Vector2(cx, cy), 6.5, Color(1.0, 0.62, 0.1, 0.95))
+		"lmg":
+			# 战地机瞄：宽圈 + 三角尖标 + 横短杠
+			cv.draw_arc(Vector2(cx, cy), r * 0.40 + r * 0.11, 0, TAU, 48,
+					Color(0.04, 0.04, 0.05, 0.92), r * 0.22)
+			var tri := r * 0.12
+			cv.draw_colored_polygon(PackedVector2Array([
+					Vector2(cx, cy - tri * 0.4), Vector2(cx - tri * 0.5, cy + tri * 0.5),
+					Vector2(cx + tri * 0.5, cy + tri * 0.5)]),
+					Color(1.0, 0.75, 0.15, 0.95))
+			cv.draw_line(Vector2(cx - r * 0.40, cy + r * 0.24),
+					Vector2(cx - r * 0.22, cy + r * 0.24), Color(1.0, 0.75, 0.15, 0.7), 2.0)
+			cv.draw_line(Vector2(cx + r * 0.22, cy + r * 0.24),
+					Vector2(cx + r * 0.40, cy + r * 0.24), Color(1.0, 0.75, 0.15, 0.7), 2.0)
+		_:
+			# 手枪机瞄：两竖一横
+			cv.draw_line(Vector2(cx - r * 0.5, cy - r * 0.34),
+					Vector2(cx - r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
+			cv.draw_line(Vector2(cx + r * 0.5, cy - r * 0.34),
+					Vector2(cx + r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
+			cv.draw_circle(Vector2(cx, cy), 2.5, Color(1.0, 0.3, 0.2))
+
+
 func _process_gun(dt: float) -> void:
 	if _gun_reload > 0.0:
 		_gun_reload = maxf(0.0, _gun_reload - dt)
@@ -1904,8 +1979,10 @@ func set_onfoot(on: bool) -> void:
 		_gun_scope = false
 
 
-func set_scope(on: bool) -> void:
+func set_scope(on: bool, gun_id := "") -> void:
 	_gun_scope = on
+	if gun_id != "":
+		_scope_gun = gun_id
 	gun_overlay.queue_redraw()
 
 

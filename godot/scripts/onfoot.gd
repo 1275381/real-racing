@@ -20,6 +20,7 @@ const SLIDE_TIME := 0.7
 const SLIDE_CD := 1.2        # 滑铲冷却（含铲行时间）
 const EYE_H := 1.58
 const EYE_H_SLIDE := 0.92
+const EYE_H_PRONE := 0.42   # 趴下眼高
 
 var fm
 var npc                   # NpcTraffic（射线目标）
@@ -38,6 +39,7 @@ var move_speed := 0.0
 var slide_t := 0.0       # 剩余滑铲时间（>0 = 铲行中）
 var fire_block := false  # 门旁屏蔽开枪（左键留给开门）
 var slide_cd := 0.0      # 滑铲冷却
+var prone := false       # Z 趴下（低速爬行 + 开镜散布再减半）
 var slide_dir := Vector3.ZERO
 var _eye_h := EYE_H
 var _last_idx = null
@@ -116,6 +118,29 @@ func try_slide() -> void:
 
 
 ## 装备指定枪械：换枪模 + 换数值 + 换弹匣（切枪自动满弹）
+## Z 趴下：眼高压到 0.42、移速 35%、开镜散布再减半（卧姿最稳）；
+## 再按 Z 起身。滑铲中不可趴。
+func toggle_prone() -> void:
+	if slide_t > 0.0:
+		return
+	prone = not prone
+
+
+## 当前散布倍率：腰射 1.0 / 开镜 0.1 / 趴下开镜 0.05
+func spread_mul() -> float:
+	var m := 1.0
+	if scoped:
+		m = 0.1
+	if prone:
+		m *= 0.5
+	return m
+
+
+## 当前持枪 id（HUD 分枪瞄准镜风格用）
+func get_gun_id() -> String:
+	return _gun_id
+
+
 func set_gun(gun_id: String) -> void:
 	_gun_id = gun_id
 	_g = Guns.gun_by_id(gun_id)
@@ -176,7 +201,7 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	steel.emission = Color(0.4, 0.44, 0.5)
 	steel.emission_energy_multiplier = 0.55
 	var add_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
-			mat: Material) -> void:
+			mat: Material) -> MeshInstance3D:
 		var bm := BoxMesh.new()
 		bm.size = size
 		bm.material = mat
@@ -185,28 +210,73 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 		mi.position = pos
 		mi.rotation_degrees = rot_deg
 		root.add_child(mi)
+		return mi
+	var _cyl := func(rz: Vector3, pos: Vector3, rot_deg: Vector3,
+			mat: Material) -> MeshInstance3D:
+		var cm := CylinderMesh.new()
+		cm.top_radius = rz.x
+		cm.bottom_radius = rz.y
+		cm.height = rz.z
+		cm.radial_segments = 10
+		cm.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = cm
+		mi.position = pos
+		mi.rotation_degrees = rot_deg
+		root.add_child(mi)
+		return mi
 	match gun_id:
 		"pistol":
-			add_box.call(Vector3(0.06, 0.1, 0.3), Vector3(0, 0.04, -0.04), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.05, 0.15, 0.08), Vector3(0, -0.08, 0.06), Vector3(3, 0, 0), dark)
+			# 半自动手枪：滑套 + 枪管口 + 击锤 + 双手握把
+			add_box.call(Vector3(0.055, 0.075, 0.30), Vector3(0, 0.045, -0.06), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.03, 0.03, 0.05), Vector3(0, 0.055, -0.21), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.11, 0.07), Vector3(0, -0.05, 0.05), Vector3(8, 0, 0), dark)
+			add_box.call(Vector3(0.03, 0.03, 0.04), Vector3(0, 0.09, 0.07), Vector3(-14, 0, 0), steel)
 		"smg":
-			add_box.call(Vector3(0.07, 0.11, 0.44), Vector3(0, 0, -0.05), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.05, 0.22, 0.06), Vector3(0, -0.13, 0.04), Vector3(0, 0, 0), dark)
-			add_box.call(Vector3(0.05, 0.07, 0.2), Vector3(0, 0.03, -0.32), Vector3.ZERO, steel)
+			# 微冲：短机匣 + 消音器 + 侧折托 + 下垂弹匣 + 顶部导轨
+			add_box.call(Vector3(0.07, 0.10, 0.40), Vector3(0, 0, -0.05), Vector3.ZERO, dark)
+			_cyl.call(Vector3(0.022, 0.022, 0.22), Vector3(0, 0.012, -0.34), Vector3(90, 0, 0), steel)
+			add_box.call(Vector3(0.045, 0.03, 0.16), Vector3(0, 0.068, -0.05), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.045, 0.17, 0.05), Vector3(0, -0.12, 0.0), Vector3(6, 0, 0), dark)
+			add_box.call(Vector3(0.05, 0.06, 0.18), Vector3(0, -0.02, 0.16), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.02, 0.05, 0.05), Vector3(0, -0.07, -0.16), Vector3.ZERO, steel)
 		"shotgun":
-			add_box.call(Vector3(0.075, 0.09, 0.85), Vector3(0, 0.03, -0.15), Vector3.ZERO, wood)
-			add_box.call(Vector3(0.06, 0.07, 0.5), Vector3(0, -0.04, -0.35), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.05, 0.14, 0.1), Vector3(0, -0.06, 0.18), Vector3(-6, 0, 0), wood)
+			# 泵动霰弹：木托 + 双管感 + 泵动前托 + 弹管
+			add_box.call(Vector3(0.07, 0.09, 0.80), Vector3(0, 0.025, -0.16), Vector3.ZERO, wood)
+			_cyl.call(Vector3(0.028, 0.028, 0.52), Vector3(0, 0.055, -0.36), Vector3(90, 0, 0), steel)
+			_cyl.call(Vector3(0.022, 0.022, 0.42), Vector3(0, -0.005, -0.34), Vector3(90, 0, 0), dark)
+			add_box.call(Vector3(0.06, 0.06, 0.14), Vector3(0, -0.02, -0.36), Vector3.ZERO, wood)
+			add_box.call(Vector3(0.055, 0.15, 0.10), Vector3(0, -0.07, 0.14), Vector3(-8, 0, 0), wood)
 		"lmg":
-			add_box.call(Vector3(0.09, 0.12, 0.9), Vector3(0, 0.02, -0.14), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.14, 0.16, 0.16), Vector3(0, -0.1, -0.02), Vector3.ZERO, steel)
-			add_box.call(Vector3(0.05, 0.16, 0.09), Vector3(0, -0.09, 0.16), Vector3(-5, 0, 0), dark)
-			add_box.call(Vector3(0.03, 0.2, 0.03), Vector3(-0.05, -0.12, -0.5), Vector3(0, 0, 18), steel)
-			add_box.call(Vector3(0.03, 0.2, 0.03), Vector3(0.05, -0.12, -0.5), Vector3(0, 0, -18), steel)
+			# 轻机枪：机匣 + 粗枪管 + 侧挂大弹鼓 + 提把 + 正向张开两脚架
+			add_box.call(Vector3(0.085, 0.12, 0.72), Vector3(0, 0.02, -0.10), Vector3.ZERO, dark)
+			_cyl.call(Vector3(0.03, 0.03, 0.46), Vector3(0, 0.028, -0.62), Vector3(90, 0, 0), steel)
+			_cyl.call(Vector3(0.042, 0.034, 0.07), Vector3(0, 0.028, -0.86), Vector3(90, 0, 0), dark)
+			# 大弹鼓：轴平行枪管，挂在机匣下方偏左（第一人称视界内可见）
+			_cyl.call(Vector3(0.105, 0.105, 0.09), Vector3(-0.07, -0.13, -0.12), Vector3(90, 0, 0), steel)
+			_cyl.call(Vector3(0.045, 0.045, 0.10), Vector3(-0.07, -0.13, -0.12), Vector3(90, 0, 0), dark)
+			# 两脚架：从枪管下方向前下方张开（绕 X 前倾，不再左右横张）
+			add_box.call(Vector3(0.022, 0.24, 0.022), Vector3(-0.035, -0.13, -0.76), Vector3(14, 0, 7), steel)
+			add_box.call(Vector3(0.022, 0.24, 0.022), Vector3(0.035, -0.13, -0.76), Vector3(14, 0, -7), steel)
+			# 提把 + 枪托 + 扳机护圈
+			add_box.call(Vector3(0.024, 0.05, 0.14), Vector3(0, 0.10, -0.05), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.055, 0.11, 0.22), Vector3(0, -0.03, 0.22), Vector3(-4, 0, 0), dark)
+			add_box.call(Vector3(0.04, 0.07, 0.05), Vector3(0, -0.075, 0.06), Vector3.ZERO, steel)
 		"sniper":
-			add_box.call(Vector3(0.06, 0.09, 1.0), Vector3(0, 0.03, -0.12), Vector3.ZERO, steel)
-			add_box.call(Vector3(0.08, 0.13, 0.26), Vector3(0, 0.14, -0.08), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.05, 0.17, 0.09), Vector3(0, -0.09, 0.15), Vector3(-5, 0, 0), dark)
+			# 栓动狙击：长枪管 + 大瞄准镜（物镜/目镜双径）+ 枪机拉柄 + 两脚架
+			add_box.call(Vector3(0.055, 0.085, 0.72), Vector3(0, 0.03, -0.14), Vector3.ZERO, steel)
+			_cyl.call(Vector3(0.022, 0.022, 0.50), Vector3(0, 0.038, -0.72), Vector3(90, 0, 0), dark)
+			# 瞄准镜：大物镜 + 目镜 + 镜身
+			_cyl.call(Vector3(0.035, 0.035, 0.20), Vector3(0, 0.105, -0.30), Vector3(90, 0, 0), dark)
+			_cyl.call(Vector3(0.045, 0.045, 0.05), Vector3(0, 0.105, -0.40), Vector3(90, 0, 0), steel)
+			_cyl.call(Vector3(0.028, 0.028, 0.10), Vector3(0, 0.105, -0.20), Vector3(90, 0, 0), steel)
+			add_box.call(Vector3(0.02, 0.045, 0.02), Vector3(0, 0.07, -0.24), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.02, 0.045, 0.02), Vector3(0, 0.07, -0.36), Vector3.ZERO, steel)
+			# 枪机拉柄 + 托弹部 + 枪托 + 腮托
+			add_box.call(Vector3(0.05, 0.14, 0.09), Vector3(0, -0.055, 0.10), Vector3(-4, 0, 0), steel)
+			add_box.call(Vector3(0.016, 0.016, 0.10), Vector3(0.05, 0.045, 0.04), Vector3(0, 0, -24), steel)
+			add_box.call(Vector3(0.05, 0.10, 0.34), Vector3(0, -0.045, 0.30), Vector3(-3, 0, 0), wood)
+			add_box.call(Vector3(0.045, 0.05, 0.12), Vector3(0, 0.015, 0.40), Vector3.ZERO, wood)
 	return root
 
 
@@ -394,8 +464,9 @@ func update(dt: float) -> void:
 		pos += slide_dir * spd * dt
 		move_speed = spd
 	elif mf != 0.0 or ms != 0.0:
-		var run := Input.is_physical_key_pressed(KEY_SHIFT)
-		move_speed = (RUN if run else WALK) * clampf(Vector2(mf, ms).length(), 0.0, 1.0)
+		var run := Input.is_physical_key_pressed(KEY_SHIFT) and not prone
+		move_speed = ((WALK * 0.35) if prone else (RUN if run else WALK)) \
+				* clampf(Vector2(mf, ms).length(), 0.0, 1.0)
 		var fwd := Vector3(sin(yaw), 0, cos(yaw))
 		# 屏幕右 = 前向 × 上 = (-cos, 0, sin)。原来写成 (cos, 0, -sin) 是屏幕左，
 		# A/D 左右平移一直是反的
@@ -450,7 +521,8 @@ func update(dt: float) -> void:
 		else:
 			_start_reload()
 	# 相机：第一人称 + 走路轻微点头 + 滑铲压低视线 + 开镜 FOV
-	var eye_target := EYE_H_SLIDE if slide_t > 0.0 else EYE_H
+	var eye_target := EYE_H_SLIDE if slide_t > 0.0 \
+			else (EYE_H_PRONE if prone else EYE_H)
 	_eye_h = lerpf(_eye_h, eye_target, 1.0 - exp(-14.0 * dt))
 	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
 	cam.position = pos + Vector3(0, _eye_h + bob, 0)
@@ -464,7 +536,9 @@ func update(dt: float) -> void:
 	# 腰射回到持枪位
 	_ads = move_toward(_ads, 1.0 if scoped else 0.0, dt * 5.0)
 	_gun_holder.visible = true
-	_gun_holder.position = GUN_HIP_POS.lerp(GUN_ADS_POS, _ads)
+	var prone_drop := -0.12 if prone else 0.0
+	_gun_holder.position = GUN_HIP_POS.lerp(GUN_ADS_POS, _ads) \
+			+ Vector3(0, prone_drop, 0)
 	_gun_holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3(1.5, 2.0, 0), _ads)
 	# 枪口火光衰减
 	if _flash_t > 0.0:
@@ -493,8 +567,8 @@ func _shoot() -> void:
 	# 射线（每条弹丸独立判定）
 	var from: Vector3 = cam.global_position
 	var base_dir: Vector3 = -cam.global_transform.basis.z
-	# 开镜 = 精准射击：散布压到腰射的一成（腰射保持原手感）
-	var spread: float = _g.get("spread", 0.0) * (0.1 if scoped else 1.0)
+	# 开镜 = 精准射击（0.1×）；趴下卧姿再减半（0.05×）——最稳射击姿态
+	var spread: float = _g.get("spread", 0.0) * spread_mul()
 	var pellets: int = _g.get("pellets", 1)
 	var range: float = _g.get("range", 250.0)
 	var dmg: float = _g.get("dmg", 20.0) * ammo_mul
