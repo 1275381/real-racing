@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c632m4w7yfkwa"
-path="res://.godot/imported/bunker_burlap_tex.png-4363f59928382326e97d375ee705e443.ctex"
+path.s3tc="res://.godot/imported/bunker_burlap_tex.png-4363f59928382326e97d375ee705e443.s3tc.ctex"
+path.etc2="res://.godot/imported/bunker_burlap_tex.png-4363f59928382326e97d375ee705e443.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "14cf6915e8281ea12e8596b740281599"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/battle/props/bunker_burlap_tex.png"
-dest_files=["res://.godot/imported/bunker_burlap_tex.png-4363f59928382326e97d375ee705e443.ctex"]
+dest_files=["res://.godot/imported/bunker_burlap_tex.png-4363f59928382326e97d375ee705e443.s3tc.ctex", "res://.godot/imported/bunker_burlap_tex.png-4363f59928382326e97d375ee705e443.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
