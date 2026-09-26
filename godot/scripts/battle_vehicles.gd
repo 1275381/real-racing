@@ -125,7 +125,12 @@ func update(dt: float) -> void:
 		if k == player_v:
 			_player_drive(k, v, dt)
 		elif v["type"] == "heli":
-			_ai_heli(k, v, dt)
+			# 己方直升机预留给玩家：玩家步行（未驾驶任何载具）时 AI 不控制，
+			# 直升机停基地等玩家登机；玩家开了地面车后 AI 才可代开
+			if v["team"] == bf.player_team and player_v < 0:
+				v["speed"] = 0.0
+			else:
+				_ai_heli(k, v, dt)
 		else:
 			_ai_ground(k, v, dt)
 		if v["type"] != "heli":
