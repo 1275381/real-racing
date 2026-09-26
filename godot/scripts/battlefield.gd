@@ -23,16 +23,16 @@ const HEAD_MUL := 2.0
 
 ## 兵种：生命/移速/主武器数值（AI 与玩家共用一套定义；gun 为玩家枪械 id）
 const CLASSES := [
-	{"id": "assault", "name": "突击", "hp": 100.0, "speed": 7.6,
+	{"id": "assault", "name": "突击", "hp": 70.0, "speed": 7.6,
 		"dmg": [7.0, 11.0], "cd": 0.11, "burst": 4, "range": 75.0, "acc": 0.05,
 		"gun": "rifle", "gadget": "grenade", "gadget_name": "手雷", "gadget_cd": 12.0},
-	{"id": "engineer", "name": "工程", "hp": 100.0, "speed": 7.6,
+	{"id": "engineer", "name": "工程", "hp": 70.0, "speed": 7.6,
 		"dmg": [6.0, 9.0], "cd": 0.08, "burst": 6, "range": 55.0, "acc": 0.06,
 		"gun": "smg", "gadget": "rpg", "gadget_name": "火箭筒", "gadget_cd": 14.0},
-	{"id": "support", "name": "支援", "hp": 115.0, "speed": 6.6,
+	{"id": "support", "name": "支援", "hp": 80.0, "speed": 6.6,
 		"dmg": [7.0, 10.0], "cd": 0.09, "burst": 9, "range": 80.0, "acc": 0.07,
 		"gun": "lmg", "gadget": "medkit", "gadget_name": "医疗包", "gadget_cd": 20.0},
-	{"id": "recon", "name": "侦察", "hp": 90.0, "speed": 7.2,
+	{"id": "recon", "name": "侦察", "hp": 65.0, "speed": 7.2,
 		"dmg": [38.0, 52.0], "cd": 1.5, "burst": 1, "range": 150.0, "acc": 0.012,
 		"gun": "sniper", "gadget": "scan", "gadget_name": "侦察信标", "gadget_cd": 25.0},
 ]

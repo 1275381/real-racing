@@ -493,7 +493,8 @@ func _shoot() -> void:
 	# 射线（每条弹丸独立判定）
 	var from: Vector3 = cam.global_position
 	var base_dir: Vector3 = -cam.global_transform.basis.z
-	var spread: float = _g.get("spread", 0.0)
+	# 开镜 = 精准射击：散布压到腰射的一成（腰射保持原手感）
+	var spread: float = _g.get("spread", 0.0) * (0.1 if scoped else 1.0)
 	var pellets: int = _g.get("pellets", 1)
 	var range: float = _g.get("range", 250.0)
 	var dmg: float = _g.get("dmg", 20.0) * ammo_mul
