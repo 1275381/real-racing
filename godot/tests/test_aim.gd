@@ -50,16 +50,19 @@ func _initialize() -> void:
 	var hit_conn := func(kind: String, idx: int, point: Vector3, dmg: float):
 		pass
 	onfoot.shoot_hit.connect(func(kind, idx, point, dmg): hits += 1)
+	var tpos: Vector3 = bf.soldiers[target]["pos"]
 	for i in 12:
 		if bf.soldiers[target]["dead"]:
 			break
-		# 每帧追踪瞄准（模拟玩家跟枪）
-		var tc: Vector3 = bf.soldiers[target]["pos"] + Vector3(0, 1.05, 0)
+		# 目标冻结在 50m 处（排除 AI 跑动干扰），瞄准命中球实际中心
+		bf.soldiers[target]["pos"] = tpos
+		var tc: Vector3 = tpos + Vector3(0, 1.05 * 1.3, 0)
 		var e2: Vector3 = onfoot.pos + Vector3(0, 1.62, 0)
 		var d2: Vector3 = (tc - e2).normalized()
 		onfoot.yaw = atan2(d2.x, d2.z)
 		onfoot.pitch = asin(clampf(d2.y, -1.0, 1.0))
 		await frames(1)
+		# 直接验证 raycast 判定（打印前 2 发）
 		onfoot.fire_cd = 0.0
 		onfoot._shoot()
 		shots += 1

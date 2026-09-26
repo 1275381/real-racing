@@ -267,7 +267,7 @@ func player_counts() -> bool:
 	if not player_alive:
 		return false
 	var pv: Dictionary = veh.player_vehicle()
-	return pv.is_empty() or pv["type"] != "heli"
+	return pv.is_empty() or (pv["type"] != "heli" and pv["type"] != "jet")
 
 
 ## 玩家当前站在哪个据点圈里（-1 = 不在）
@@ -786,12 +786,12 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 		var s: Dictionary = soldiers[i]
 		if s["dead"]:
 			continue
-		var hc: Vector3 = s["pos"] + Vector3(0, 1.65, 0)   # 模型头盔中心
+		var hc: Vector3 = s["pos"] + Vector3(0, 1.65 * 1.3, 0)   # 头盔中心（随模型放大）
 		var th: float = (hc - from).dot(dir)
 		if th > 0.5 and th < best["d"] and (hc - from - dir * th).length() < 0.2:
 			best = {"type": "soldier_head", "i": i, "d": th, "point": from + dir * th}
 			continue
-		var c: Vector3 = s["pos"] + Vector3(0, 1.05, 0)
+		var c: Vector3 = s["pos"] + Vector3(0, 1.05 * 1.3, 0)   # 胸口（随模型放大）
 		var t: float = (c - from).dot(dir)
 		if t > 0.5 and t < best["d"] and (c - from - dir * t).length() < 0.5:
 			best = {"type": "soldier", "i": i, "d": t, "point": from + dir * t}
@@ -1020,6 +1020,8 @@ func _setup_army(team: String) -> void:
 			node = scene.instantiate()
 			ap = node.find_children("*", "AnimationPlayer", true, false)[0]
 			mi = node.find_children("*", "MeshInstance3D", true, false)[0]
+			# 士兵放大 1.3 倍（原 1.77m 太小，远距离看不清敌我轮廓）
+			node.scale = Vector3.ONE * 1.3
 		else:
 			node = Node3D.new()
 			mi = MeshInstance3D.new()
@@ -1042,7 +1044,7 @@ func _setup_army(team: String) -> void:
 		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		tag.no_depth_test = true
 		tag.fixed_size = true
-		tag.position = Vector3(0, 2.15, 0)
+		tag.position = Vector3(0, 2.15 * 1.3, 0)   # 随士兵放大同步抬高
 		tag.visible = false
 		node.add_child(tag)
 		arr.append({"node": node, "ap": ap, "mesh": mi, "tag": tag, "anim": ""})

@@ -842,8 +842,10 @@ func _battle_toggle_vehicle() -> void:
 	camera.near = 0.3
 	var td: Dictionary = vm.type_def(vm.vehicles[k])
 	var sec: Dictionary = td["sec"]
-	var ctl := "W/S 前后 · A/D 转向 · 空格升 / Shift 降" if vm.vehicles[k]["type"] == "heli" \
-			else "W/S 前后 · A/D 转向"
+	var vt: String = vm.vehicles[k]["type"]
+	var ctl := ("W/S 前后 · A/D 转向 · 空格升 / Shift 降" if vt == "heli"
+			else "W/S 前后 · A/D 转向 · 空格升 / Shift 降（松 W 缓滑）" if vt == "jet"
+			else "W/S 前后 · A/D 转向")
 	bhud.banner(str(td["name"]), "%s · 鼠标瞄准 · 左键%s%s · F 下车" % [ctl,
 			td["main"]["name"], ("" if sec.is_empty() else " · 右键" + str(sec["name"]))], 3.5)
 

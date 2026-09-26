@@ -278,7 +278,7 @@ func _draw_minimap(sz: Vector2, font: Font) -> void:
 		var vp := _w2m(v["pos"], org)
 		var vc := FRIEND if v["team"] == bf.player_team else ENEMY
 		draw_rect(Rect2(vp - Vector2(5, 5), Vector2(10, 10)), vc)
-		draw_string(font, vp + Vector2(-5, 4), {"tank": "坦", "ifv": "车", "heli": "机"}[v["type"]],
+		draw_string(font, vp + Vector2(-5, 4), {"tank": "坦", "ifv": "车", "heli": "机", "jet": "机"}[v["type"]],
 				HORIZONTAL_ALIGNMENT_CENTER, 10, 8, Color.WHITE)
 	for s in bf.soldiers:
 		if s["dead"]:

@@ -30,8 +30,14 @@ const TYPES := {
 			"spread": 0.025},
 		"sec": {"kind": "rockets", "name": "火箭巢", "cd": 7.0, "n": 4, "dmg": 110.0,
 			"vdmg": 130.0, "r": 5.0, "speed": 95.0, "range": 160.0}},
+	"jet": {"name": "喷气战机", "hp": 420.0, "speed": 62.0, "rev": 62.0, "turn": 1.5,
+		"tur_rate": 3.0, "radius": 4.5, "height": 1.6, "armor": 0.3, "eye": 0.0,
+		"main": {"kind": "mg", "name": "航炮", "cd": 0.09, "dmg": [9.0, 13.0],
+			"range": 170.0, "spread": 0.02},
+		"sec": {"kind": "rockets", "name": "火箭巢", "cd": 8.0, "n": 4, "dmg": 95.0,
+			"vdmg": 120.0, "r": 5.0, "speed": 95.0, "range": 170.0}},
 }
-const ORDER := ["tank", "ifv", "heli"]
+const ORDER := ["tank", "ifv", "heli", "jet"]
 
 var bf                          # RRBattleField
 var vehicles: Array = []
@@ -88,6 +94,8 @@ func _spawn_pos(v: Dictionary) -> Vector3:
 		off = Vector3(20.0, 0, 6.0 * back)
 	elif v["type"] == "heli":
 		off = Vector3(0.0, 0, 22.0 * back)
+	elif v["type"] == "jet":
+		off = Vector3(0.0, 0, 36.0 * back)
 	var p: Vector3 = base + off
 	var np: Vector2 = bf.bmap.push_out(p.x, p.z, float(type_def(v)["radius"]))
 	return Vector3(np.x, bf.bmap.terrain_height(np.x, np.y), np.y)
@@ -124,16 +132,16 @@ func update(dt: float) -> void:
 		v["sec_cd"] = maxf(0.0, float(v["sec_cd"]) - dt)
 		if k == player_v:
 			_player_drive(k, v, dt)
-		elif v["type"] == "heli":
-			# 己方直升机预留给玩家：玩家步行（未驾驶任何载具）时 AI 不控制，
-			# 直升机停基地等玩家登机；玩家开了地面车后 AI 才可代开
+		elif v["type"] == "heli" or v["type"] == "jet":
+			# 己方飞行器预留给玩家：玩家步行（未驾驶任何载具）时 AI 不控制，
+			# 停基地等玩家按 F 登机；玩家开了地面车后 AI 才可代开
 			if v["team"] == bf.player_team and player_v < 0:
 				v["speed"] = 0.0
 			else:
 				_ai_heli(k, v, dt)
 		else:
 			_ai_ground(k, v, dt)
-		if v["type"] != "heli":
+		if v["type"] != "heli" and v["type"] != "jet":
 			_ground_physics(k, v, dt)
 		_sync_vis(v)
 
@@ -382,8 +390,9 @@ func nearest_enterable(at: Vector3, team: String) -> int:
 			continue
 		var d := Vector2(v["pos"].x - at.x, v["pos"].z - at.z).length() \
 				- float(type_def(v)["radius"])
-		if v["type"] == "heli" and v["pos"].y - bf.bmap.terrain_height(v["pos"].x, v["pos"].z) > 6.0:
-			continue   # 飞在天上的直升机上不去
+		if (v["type"] == "heli" or v["type"] == "jet") \
+				and v["pos"].y - bf.bmap.terrain_height(v["pos"].x, v["pos"].z) > 6.0:
+			continue   # 飞在天上的直升机/战机上不去
 		if d < bd:
 			bd = d
 			best = k
@@ -396,7 +405,8 @@ func player_enter(k: int) -> void:
 	aim_yaw = v["yaw"]
 	aim_pitch = 0.05
 	v["speed"] = 0.0 if v["type"] != "heli" else v["speed"]
-	if v["type"] == "heli" and v["pos"].y < bf.bmap.terrain_height(v["pos"].x, v["pos"].z) + 1.0:
+	if (v["type"] == "heli" or v["type"] == "jet") \
+			and v["pos"].y < bf.bmap.terrain_height(v["pos"].x, v["pos"].z) + 1.0:
 		v["pos"] = v["pos"] + Vector3(0, 1.0, 0)
 
 
@@ -406,7 +416,7 @@ func player_exit() -> Vector3:
 		return Vector3.INF
 	var v: Dictionary = vehicles[player_v]
 	var g: float = bf.bmap.terrain_height(v["pos"].x, v["pos"].z)
-	if v["type"] == "heli" and v["pos"].y - g > 4.0:
+	if (v["type"] == "heli" or v["type"] == "jet") and v["pos"].y - g > 4.0:
 		return Vector3.INF
 	var side := Vector3(cos(v["yaw"]), 0, -sin(v["yaw"]))
 	var ex: Vector3 = v["pos"] + side * (float(type_def(v)["radius"]) + 1.5)
@@ -436,7 +446,7 @@ func _player_drive(k: int, v: Dictionary, dt: float) -> void:
 	v["yaw"] = float(v["yaw"]) + turn * float(td["turn"]) * dt
 	var want := float(td["speed"]) * thr if thr >= 0.0 else float(td["rev"]) * thr
 	v["speed"] = move_toward(float(v["speed"]), want, (9.0 if v["type"] != "heli" else 12.0) * dt)
-	if v["type"] == "heli":
+	if v["type"] == "heli" or v["type"] == "jet":
 		var p: Vector3 = v["pos"]
 		var up := 0.0
 		if Input.is_physical_key_pressed(KEY_SPACE):
@@ -447,7 +457,11 @@ func _player_drive(k: int, v: Dictionary, dt: float) -> void:
 		p += Vector3(sin(v["yaw"]), 0, cos(v["yaw"])) * float(v["speed"]) * dt
 		p.y += float(v["vy"]) * dt
 		var g: float = bf.bmap.terrain_height(p.x, p.z)
-		p.y = clampf(p.y, g + 0.6, g + 95.0)
+		# 战机不悬停：松键保持当前速度滑行（60% 油门下限），升限更高
+		if v["type"] == "jet" and thr == 0.0 and float(v["speed"]) > 18.0:
+			v["speed"] = move_toward(float(v["speed"]), 18.0, 3.0 * dt)
+		p.y = clampf(p.y, g + (0.6 if v["type"] == "heli" else 1.4),
+				g + (95.0 if v["type"] == "heli" else 140.0))
 		p.x = clampf(p.x, -240.0, 240.0)
 		p.z = clampf(p.z, -190.0, 190.0)
 		v["pos"] = p
@@ -455,7 +469,7 @@ func _player_drive(k: int, v: Dictionary, dt: float) -> void:
 	var eye: Vector3 = v["pos"] + Vector3(0, float(td["eye"]), 0)
 	var to := aim_point - eye
 	var want_yaw := atan2(to.x, to.z)
-	if v["type"] == "heli":
+	if v["type"] == "heli" or v["type"] == "jet":
 		v["tur_yaw"] = want_yaw
 	else:
 		var dy := wrapf(want_yaw - float(v["tur_yaw"]), -PI, PI)
@@ -732,6 +746,32 @@ func _build_vis(type: String, friendly: bool) -> Dictionary:
 			tur.position = Vector3(0, -0.9, 2.8)
 			root.add_child(tur)
 			_box(tur, Vector3(0.3, 0.3, 0.6), Vector3(0, 0, 0.3), dark)
+		"jet":
+			# 菱面融合机身 + 座舱
+			_box(root, Vector3(1.5, 0.85, 7.2), Vector3(0, 0, 0.4), body)
+			_box(root, Vector3(0.95, 0.65, 1.8), Vector3(0, 0.55, 3.1), dark)
+			_box(root, Vector3(0.5, 0.4, 0.9), Vector3(0, 0.72, 3.6),
+					Color(0.25, 0.4, 0.55) if friendly else Color(0.55, 0.3, 0.2), true)
+			# 后掠切尖三角翼 + 双垂尾
+			for sx in [-1.0, 1.0]:
+				var wing := _box(root, Vector3(3.4, 0.14, 2.8),
+						Vector3(sx * 2.0, -0.05, -1.2), body)
+				wing.rotation.z = sx * 0.12
+				var fin := _box(root, Vector3(0.12, 1.5, 1.4),
+						Vector3(sx * 0.62, 0.85, -3.2), body)
+				fin.rotation.x = -sx * 0.3
+			# 平尾 + 双发喷管 + 机身挂弹
+			for sx in [-0.75, 0.75]:
+				_box(root, Vector3(1.5, 0.1, 1.2), Vector3(sx, 0.05, -3.6), body)
+				_cyl(root, 0.32, 0.8, Vector3(sx * 0.55, -0.05, -3.9),
+						Vector3(PI * 0.5, 0, 0), Color(0.1, 0.1, 0.11))
+			for sx in [-1.1, 1.1]:
+				_box(root, Vector3(0.24, 0.24, 1.7), Vector3(sx, -0.35, 0.3), dark)
+			_box(root, Vector3(0.3, 0.2, 0.3), Vector3(0, 0.65, -1.2), tag, true)
+			# 机炮枪口参考（tur 复用为机炮指向）
+			tur.position = Vector3(0, 0.0, 3.4)
+			root.add_child(tur)
+			_box(tur, Vector3(0.16, 0.16, 0.5), Vector3.ZERO, dark)
 	return {"root": root, "tur": tur, "barrel": barrel, "rotor": rotor, "trotor": trotor}
 
 
@@ -739,11 +779,18 @@ func _sync_vis(v: Dictionary) -> void:
 	var vis: Dictionary = v["vis"]
 	var root: Node3D = vis["root"]
 	root.position = v["pos"]
-	if v["type"] == "heli":
-		var tilt := clampf(float(v["speed"]) / 40.0, -0.3, 0.35)
-		root.rotation = Vector3(tilt, float(v["yaw"]), 0.0)
-		(vis["rotor"] as Node3D).rotation.y = _t * 22.0
-		(vis["trotor"] as Node3D).rotation.x = _t * 30.0
+	if v["type"] == "heli" or v["type"] == "jet":
+		if v["type"] == "heli":
+			var tilt := clampf(float(v["speed"]) / 40.0, -0.3, 0.35)
+			root.rotation = Vector3(tilt, float(v["yaw"]), 0.0)
+			(vis["rotor"] as Node3D).rotation.y = _t * 22.0
+			(vis["trotor"] as Node3D).rotation.x = _t * 30.0
+		else:
+			# 战机：速度快压机头，转弯压杆内侧倾
+			var dyaw := wrapf(float(v["tur_yaw"]) - float(v["yaw"]), -PI, PI)
+			root.rotation = Vector3(clampf(float(v["speed"]) * 0.004, 0.0, 0.18)
+					+ float(v["vy"]) * -0.02, float(v["yaw"]),
+					clampf(-dyaw * 0.8, -0.5, 0.5))
 		(vis["tur"] as Node3D).rotation = Vector3(-float(v["tur_pitch"]),
 				wrapf(float(v["tur_yaw"]) - float(v["yaw"]), -PI, PI), 0)
 	else:
