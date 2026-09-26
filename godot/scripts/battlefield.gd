@@ -79,6 +79,7 @@ var _bodies := {}                 # team -> [{node, ap, anim}]（每个槽位一
 var _team_mats := {}              # team -> {Uniform, Gear} 按阵营染色的材质
 var projectiles: Array = []       # 手雷/火箭/炮弹 {kind, vis, pos, vel, t, team, src, dmg, vdmg, r, weapon}
 var veh                           # 载具（battle_vehicles.gd）
+var missing: Array = []           # 加载失败的模型 [{path, why}]
 
 
 func setup(bmap_ref, audio_ref) -> void:
@@ -1006,7 +1007,10 @@ func explode_raw(pos: Vector3, radius: float, dmg: float, vdmg: float, team: Str
 func _setup_army(team: String) -> void:
 	var scene: PackedScene = load(SOLDIER_PATH) if ResourceLoader.exists(SOLDIER_PATH) else null
 	if scene == null:
-		push_warning("[大战场] 士兵模型加载失败：%s（模型走 Git LFS：git lfs pull 后在编辑器里重新导入），暂用胶囊人代替" % SOLDIER_PATH)
+		var why: String = BattleMap.asset_diagnosis(SOLDIER_PATH)
+		if missing.is_empty():
+			missing.append({"path": SOLDIER_PATH, "why": why})
+		push_warning("[大战场] 士兵模型加载失败：%s —— %s（暂用胶囊人代替）" % [SOLDIER_PATH, why])
 	var arr: Array = []
 	for i in TEAM_SIZE:
 		var node: Node3D

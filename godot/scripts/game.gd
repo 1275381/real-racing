@@ -770,6 +770,11 @@ func enter_battle() -> void:
 	hud.set_onfoot(false)
 	hud.set_board_hint(false)
 	hud.show_center("", "", 0)
+	# 模型没加载上（常见于另一台电脑没拉 LFS / 没导入）：上屏说清原因，不用去翻输出面板
+	var miss: Array = bf.missing + bmap.missing
+	bhud.set_warning("" if miss.is_empty() else "有 %d 个大战场模型没加载上，暂用简易替身（例：%s）" % [
+			miss.size(), String(miss[0]["path"]).get_file()],
+			"" if miss.is_empty() else String(miss[0]["why"]))
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 

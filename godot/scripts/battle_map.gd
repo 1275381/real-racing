@@ -33,6 +33,7 @@ const PROP_DIMS := {
 	"tent": Vector3(6.0, 2.6, 4.0), "dead_tree": Vector3(0.34, 4.2, 0.34),
 }
 var _prop_scenes := {}          # 名字 → PackedScene（加载失败存 null，只警告一次）
+var missing: Array = []         # 加载失败的模型 [{path, why}]（进场时上屏提示）
 ## 可按实例染色的材质（贴图是灰阶/浅色，乘底色）
 const TINTABLE := ["Paint", "Plaster", "Concrete", "TankPaint"]
 
@@ -62,6 +63,33 @@ func _init() -> void:
 	_build_craters(rng)
 	_build_dead_trees(rng)
 	_build_perimeter()
+
+
+## 模型加载失败的原因诊断（给另一台电脑上的人看得懂的一句话）：
+## LFS 指针没下真文件 / 没导入 / 导入了但这个 Godot 版本加载不了
+static func asset_diagnosis(path: String) -> String:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return "文件不存在：先在这台电脑的项目目录 git pull"
+	var head := f.get_buffer(40).get_string_from_ascii()
+	f.close()
+	if head.begins_with("version https://git-lfs"):
+		return "只有 Git LFS 指针、没下载到真模型：在项目目录运行 git lfs install 和 git lfs pull"
+	if not head.begins_with("glTF"):
+		return "模型文件已损坏：删掉后重新 git lfs pull"
+	var imp := FileAccess.open(path + ".import", FileAccess.READ)
+	if imp == null:
+		return "缺少 .import 文件：git pull 不完整"
+	var dest := ""
+	for line in imp.get_as_text().split("\n"):
+		if line.begins_with("path=") or line.begins_with("path."):
+			dest = line.get_slice("\"", 1)
+			break
+	imp.close()
+	if dest == "" or not FileAccess.file_exists(dest):
+		return "还没导入：用 Godot 编辑器打开项目，等右下角导入进度走完再运行"
+	return "已导入但加载失败（这台 Godot %s，模型按 4.7 导出）：在编辑器文件系统里右键 assets/battle → 重新导入" \
+			% Engine.get_version_info()["string"]
 
 
 ## 解析地形高度（与视觉网格同函数，O(1)）
@@ -326,7 +354,9 @@ func _prop(name: String, x: float, z: float, rot_y: float, scl := Vector3.ONE,
 		var path: String = PROP_DIR + name + ".glb"
 		_prop_scenes[name] = load(path) if ResourceLoader.exists(path) else null
 		if _prop_scenes[name] == null:
-			push_warning("[大战场] 道具模型加载失败：%s（模型走 Git LFS：git lfs pull 后在编辑器里重新导入），暂用盒子代替" % path)
+			var why := asset_diagnosis(path)
+			missing.append({"path": path, "why": why})
+			push_warning("[大战场] 道具模型加载失败：%s —— %s（暂用盒子代替）" % [path, why])
 	var ps: PackedScene = _prop_scenes[name]
 	if ps == null:
 		var dims: Vector3 = PROP_DIMS[name]

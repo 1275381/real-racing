@@ -26,6 +26,8 @@ var _banner := ""
 var _banner_sub := ""
 var _banner_t := 0.0
 var _gadget_txt := ""
+var _warn := ""                  # 模型缺失提示（常驻底部，部署界面也显示）
+var _warn_sub := ""
 var _gadget_ready := 1.0         # 0..1 冷却进度
 
 # ---- 部署界面 ----
@@ -130,7 +132,21 @@ static func _weapon_name(id: String) -> String:
 
 # ================= 绘制 =================
 
+func set_warning(text: String, sub: String) -> void:
+	_warn = text
+	_warn_sub = sub
+	queue_redraw()
+
+
 func _draw() -> void:
+	if _warn != "":
+		var font0 := get_theme_default_font()
+		var y0 := size.y - 150.0
+		draw_rect(Rect2(size.x * 0.5 - 430, y0 - 22, 860, 54), Color(0.25, 0.1, 0.02, 0.85))
+		draw_string(font0, Vector2(0, y0), _warn, HORIZONTAL_ALIGNMENT_CENTER, size.x, 16,
+				Color(1.0, 0.75, 0.3))
+		draw_string(font0, Vector2(0, y0 + 22), _warn_sub, HORIZONTAL_ALIGNMENT_CENTER, size.x, 15,
+				Color(1, 1, 1, 0.9))
 	if bf == null or not bf.active:
 		return
 	var sz := size
