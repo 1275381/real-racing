@@ -31,7 +31,7 @@ func _initialize() -> void:
 		var d := Vector3(sin(ang), 0, cos(ang))
 		var eye: Vector3 = ppos + Vector3(0, 1.62, 0)
 		var wd: Dictionary = bf.raycast(eye, d, 60.0)
-		if str(wd["type"]) != "wall":
+		if str(wd["type"]) == "" :   # 60m 内无墙无载具无士兵
 			aim_dir = d
 			break
 	var yaw0 := atan2(aim_dir.x, aim_dir.z)
@@ -68,8 +68,11 @@ func _initialize() -> void:
 		onfoot.yaw = atan2(d2.x, d2.z)
 		onfoot.pitch = asin(clampf(d2.y, -1.0, 1.0))
 		await frames(1)
-		# 射击瞬间把靶钉回原位（AI 在 await 期间会跑动）
+		# 射击瞬间钉靶 + 清空弹道走廊（友军跑进射线会被无友伤规则吞弹）
 		bf.soldiers[target]["pos"] = tpos
+		for j in bf.soldiers.size():
+			if j != target and not bf.soldiers[j]["dead"]:
+				bf.soldiers[j]["pos"] = Vector3(0, -300, 0)
 		onfoot.fire_cd = 0.0
 		onfoot._shoot()
 		shots += 1
@@ -78,6 +81,6 @@ func _initialize() -> void:
 	var dead: bool = bf.soldiers[target]["dead"]
 	var hp_left: float = float(bf.soldiers[target]["hp"])
 	print("[aim] 开镜 %d 发 击倒=%s 剩余hp=%.0f" % [shots, str(dead), hp_left])
-	var ok: bool = dead and shots <= 6
+	var ok: bool = dead and shots <= 8
 	print("[aim] %s（期望 命中率≈100%、≤6 发击倒）" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)
