@@ -19,27 +19,20 @@ const SECTORS := [
 
 ## Blender 生成的场景道具（tools/blender/make_battle_props.py）。碰撞仍按原盒子登记，
 ## 模型只负责外观：尺寸与盒子对齐（原点在底面中心、正面朝 +Z）
-const PROPS := {
-	"house": preload("res://assets/battle/props/house.glb"),
-	"barn": preload("res://assets/battle/props/barn.glb"),
-	"bunker": preload("res://assets/battle/props/bunker.glb"),
-	"warehouse": preload("res://assets/battle/props/warehouse.glb"),
-	"sandbags": preload("res://assets/battle/props/sandbags.glb"),
-	"container": preload("res://assets/battle/props/container.glb"),
-	"fuel_tank": preload("res://assets/battle/props/fuel_tank.glb"),
-	"barrier": preload("res://assets/battle/props/barrier.glb"),
-	"crate": preload("res://assets/battle/props/crate.glb"),
-	"barrel": preload("res://assets/battle/props/barrel.glb"),
-	"wreck": preload("res://assets/battle/props/wreck.glb"),
-	"rocks": preload("res://assets/battle/props/rocks.glb"),
-	"tent": preload("res://assets/battle/props/tent.glb"),
-	"dead_tree": preload("res://assets/battle/props/dead_tree.glb"),
-}
-## 模型原始尺寸（宽 x / 高 y / 深 z），按房屋占地缩放用
-const HOUSE_DIMS := {
+## 运行时按路径 load（不用 preload：模型走 Git LFS，没拉到真文件时 preload 会让脚本
+## 编译失败、整个游戏起不来；load 失败的道具退化成同尺寸贴图盒子）
+const PROP_DIR := "res://assets/battle/props/"
+## 每个道具的原始外形尺寸（宽 x / 高 y / 深 z）：替身盒子与房屋缩放都用它
+const PROP_DIMS := {
 	"house": Vector3(7.0, 3.1, 6.0), "barn": Vector3(12.0, 4.8, 8.0),
 	"bunker": Vector3(14.0, 3.2, 9.0), "warehouse": Vector3(22.0, 6.5, 12.0),
+	"sandbags": Vector3(2.5, 1.6, 0.75), "container": Vector3(2.44, 2.59, 6.06),
+	"fuel_tank": Vector3(10.0, 7.8, 10.0), "barrier": Vector3(4.2, 1.25, 0.5),
+	"crate": Vector3(1.0, 1.0, 1.0), "barrel": Vector3(0.6, 0.9, 0.6),
+	"wreck": Vector3(2.0, 1.5, 4.4), "rocks": Vector3(13.4, 2.8, 2.8),
+	"tent": Vector3(6.0, 2.6, 4.0), "dead_tree": Vector3(0.34, 4.2, 0.34),
 }
+var _prop_scenes := {}          # 名字 → PackedScene（加载失败存 null，只警告一次）
 ## 可按实例染色的材质（贴图是灰阶/浅色，乘底色）
 const TINTABLE := ["Paint", "Plaster", "Concrete", "TankPaint"]
 
@@ -303,6 +296,16 @@ func _add_vis_box(size: Vector3, pos: Vector3, rot_y: float,
 		color: Color, rough := 0.95) -> void:
 	var mesh := BoxMesh.new()
 	mesh.size = size
+	mesh.material = _box_mat(color, rough)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = Vector3(pos.x,
+			terrain_height(pos.x, pos.z) + pos.y + size.y * 0.5, pos.z)
+	mi.rotation.y = rot_y
+	add_child(mi)
+
+
+func _box_mat(color: Color, rough: float) -> StandardMaterial3D:
 	var key := "%s|%.2f" % [color.to_html(), rough]
 	if not _box_mats.has(key):
 		var mat := StandardMaterial3D.new()
@@ -313,19 +316,31 @@ func _add_vis_box(size: Vector3, pos: Vector3, rot_y: float,
 		mat.uv1_scale = Vector3(0.25, 0.25, 0.25)
 		mat.roughness = rough
 		_box_mats[key] = mat
-	mesh.material = _box_mats[key]
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.position = Vector3(pos.x,
-			terrain_height(pos.x, pos.z) + pos.y + size.y * 0.5, pos.z)
-	mi.rotation.y = rot_y
-	add_child(mi)
+	return _box_mats[key]
 
 
 ## 摆一个 Blender 道具：贴地（+y_off）、绕 Y 旋转、缩放；tint 乘到可染色材质上
 func _prop(name: String, x: float, z: float, rot_y: float, scl := Vector3.ONE,
 		tint := Color.WHITE, y_off := 0.0) -> Node3D:
-	var n: Node3D = PROPS[name].instantiate()
+	if not _prop_scenes.has(name):
+		var path: String = PROP_DIR + name + ".glb"
+		_prop_scenes[name] = load(path) if ResourceLoader.exists(path) else null
+		if _prop_scenes[name] == null:
+			push_warning("[大战场] 道具模型加载失败：%s（模型走 Git LFS：git lfs pull 后在编辑器里重新导入），暂用盒子代替" % path)
+	var ps: PackedScene = _prop_scenes[name]
+	if ps == null:
+		var dims: Vector3 = PROP_DIMS[name]
+		var fb := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = dims
+		bm.material = _box_mat(Color(0.62, 0.55, 0.45) * tint, 0.95)
+		fb.mesh = bm
+		fb.position = Vector3(x, terrain_height(x, z) + y_off + dims.y * 0.5 * scl.y, z)
+		fb.rotation.y = rot_y
+		fb.scale = scl
+		add_child(fb)
+		return fb
+	var n: Node3D = ps.instantiate()
 	n.position = Vector3(x, terrain_height(x, z) + y_off, z)
 	n.rotation.y = rot_y
 	n.scale = scl
@@ -408,7 +423,7 @@ func _add_house(c: Vector2, w: float, d: float, h: float, rot: float, tint: Colo
 				_col(Vector3(seg, h, t) if along_x else Vector3(t, h, seg), Vector3(sc.x, 0, sc.y), rot)
 		else:
 			_col(Vector3(ln, h, t) if along_x else Vector3(t, h, ln), Vector3(wc.x, 0, wc.y), rot)
-	var dim: Vector3 = HOUSE_DIMS[model]
+	var dim: Vector3 = PROP_DIMS[model]
 	if door_axis == 0:
 		_prop(model, c.x, c.y, rot, Vector3(w / dim.x, h / dim.y, d / dim.z), tint)
 	else:

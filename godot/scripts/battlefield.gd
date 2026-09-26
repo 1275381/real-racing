@@ -39,7 +39,9 @@ const CLASSES := [
 const BattleVehicles := preload("res://scripts/battle_vehicles.gd")
 const TracerPool := preload("res://scripts/tracer_pool.gd")
 ## Blender 生成的士兵（tools/blender/make_soldier.py）：带骨骼与 idle/walk/run/aim/death 动画
-const SOLDIER_SCENE := preload("res://assets/battle/soldier.glb")
+## 运行时 load 而不是 preload：模型走 Git LFS，另一台电脑若没拉到真文件（只有指针），
+## preload 会让本脚本编译失败，连带 game.gd 整个游戏起不来；load 失败则退化成胶囊人
+const SOLDIER_PATH := "res://assets/battle/soldier.glb"
 const MUZZLE_LOCAL := Vector3(-0.12, 1.5, 0.95)   # 抵肩瞄准时枪口（模型局部，面朝 +Z）
 ## 两队呼号分开（同名会让击杀播报分不清是哪边的人）
 const CALLSIGNS := {
@@ -1002,13 +1004,29 @@ func explode_raw(pos: Vector3, radius: float, dmg: float, vdmg: float, team: Str
 
 ## 每队 TEAM_SIZE 个槽位各实例化一个士兵（死亡后原地复用重生）
 func _setup_army(team: String) -> void:
+	var scene: PackedScene = load(SOLDIER_PATH) if ResourceLoader.exists(SOLDIER_PATH) else null
+	if scene == null:
+		push_warning("[大战场] 士兵模型加载失败：%s（模型走 Git LFS：git lfs pull 后在编辑器里重新导入），暂用胶囊人代替" % SOLDIER_PATH)
 	var arr: Array = []
 	for i in TEAM_SIZE:
-		var node: Node3D = SOLDIER_SCENE.instantiate()
+		var node: Node3D
+		var ap: AnimationPlayer = null
+		var mi: MeshInstance3D
+		if scene != null:
+			node = scene.instantiate()
+			ap = node.find_children("*", "AnimationPlayer", true, false)[0]
+			mi = node.find_children("*", "MeshInstance3D", true, false)[0]
+		else:
+			node = Node3D.new()
+			mi = MeshInstance3D.new()
+			var cap := CapsuleMesh.new()
+			cap.radius = 0.28
+			cap.height = 1.75
+			mi.mesh = cap
+			mi.position = Vector3(0, 0.875, 0)
+			node.add_child(mi)
 		node.visible = false
 		add_child(node)
-		var ap: AnimationPlayer = node.find_children("*", "AnimationPlayer", true, false)[0]
-		var mi: MeshInstance3D = node.find_children("*", "MeshInstance3D", true, false)[0]
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		# 友军头顶蓝色小标（三角洲同款：一眼分清敌我，别误伤）
 		var tag := Label3D.new()
@@ -1035,6 +1053,14 @@ func _apply_team_colors() -> void:
 		var uni_col := Color(0.48, 0.56, 0.66) if friendly else Color(0.7, 0.5, 0.4)
 		var gear_col := Color(0.4, 0.44, 0.4) if friendly else Color(0.48, 0.41, 0.33)
 		var arr: Array = _bodies[team]
+		if arr[0]["ap"] == null:   # 胶囊人替身：整体上色
+			var fb := StandardMaterial3D.new()
+			fb.albedo_color = uni_col
+			for b in arr:
+				(b["mesh"] as MeshInstance3D).material_override = fb
+				(b["tag"] as Label3D).visible = friendly
+				(b["node"] as Node3D).visible = false
+			continue
 		var src: Mesh = (arr[0]["mesh"] as MeshInstance3D).mesh
 		var mats := {}
 		for si in src.get_surface_count():
@@ -1066,7 +1092,9 @@ func _write_pose(s: Dictionary) -> void:
 	elif s["engaged"]:
 		want = "aim"
 	var ap: AnimationPlayer = b["ap"]
-	if want != b["anim"]:
+	if ap == null:   # 胶囊人替身：阵亡放倒
+		node.rotation.x = PI * 0.5 if s["dead"] else 0.0
+	elif want != b["anim"]:
 		b["anim"] = want
 		ap.play(want, 0.18)
 		if want == "run":
