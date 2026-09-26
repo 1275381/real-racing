@@ -22,47 +22,54 @@ func _initialize() -> void:
 	await frames(20)
 	var onfoot = game.onfoot
 	var bf = game.bf
-	# 找一个活敌兵放到玩家前方 50m（平地），其余清空干扰
+	# 找一个活敌兵放到 50m 外无掩体遮挡的方向（战场掩体密集，
+	# 固定方向会间歇被墙挡弹），其余清空干扰
 	var ppos: Vector3 = onfoot.pos
 	var target := -1
+	var aim_dir := Vector3.FORWARD
+	for ang in [0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.4, -2.4, PI]:
+		var d := Vector3(sin(ang), 0, cos(ang))
+		var eye: Vector3 = ppos + Vector3(0, 1.62, 0)
+		var wd: Dictionary = bf.raycast(eye, d, 60.0)
+		if str(wd["type"]) != "wall":
+			aim_dir = d
+			break
+	var yaw0 := atan2(aim_dir.x, aim_dir.z)
 	for i in bf.soldiers.size():
 		var s: Dictionary = bf.soldiers[i]
 		if s["dead"] or s["team"] == bf.player_team:
 			continue
 		if target < 0:
 			target = i
-			s["pos"] = ppos + Vector3(sin(onfoot.yaw), 0, cos(onfoot.yaw)) * 50.0
+			s["pos"] = ppos + aim_dir * 50.0
 			s["hp"] = float(bf.CLASSES[s["cls"]]["hp"])
 		else:
 			s["dead"] = true   # 屏蔽其它士兵干扰
-	print("[aim] 目标兵 hp=%.0f 距离≈50m" % float(bf.soldiers[target]["hp"]))
-	# 开镜 + 眼位对准目标胸口
+	onfoot.yaw = yaw0
+	print("[aim] 目标兵 hp=%.0f 距离≈50m 方向=%.2f" % [
+			float(bf.soldiers[target]["hp"]), yaw0])
+	# 开镜，眼位先对准目标（之后每发微调）
 	onfoot.scoped = true
-	var target_c: Vector3 = bf.soldiers[target]["pos"] + Vector3(0, 1.05, 0)
+	var target_c: Vector3 = bf.soldiers[target]["pos"] + Vector3(0, 1.05 * 1.5, 0)
 	var eye: Vector3 = onfoot.pos + Vector3(0, 1.62, 0)
 	var dir: Vector3 = (target_c - eye).normalized()
 	onfoot.yaw = atan2(dir.x, dir.z)
 	onfoot.pitch = asin(clampf(dir.y, -1.0, 1.0))
 	await frames(10)   # 相机/开镜过渡
-	# 开镜连射直到击倒（最多 12 发）
-	var shots := 0
-	var hits := 0
-	var hit_conn := func(kind: String, idx: int, point: Vector3, dmg: float):
-		pass
-	onfoot.shoot_hit.connect(func(kind, idx, point, dmg): hits += 1)
 	var tpos: Vector3 = bf.soldiers[target]["pos"]
+	var shots := 0
 	for i in 12:
 		if bf.soldiers[target]["dead"]:
 			break
-		# 目标冻结在 50m 处（排除 AI 跑动干扰），瞄准命中球实际中心
-		bf.soldiers[target]["pos"] = tpos
-		var tc: Vector3 = tpos + Vector3(0, 1.05 * 1.3, 0)
+		# 每发重新瞄准命中球中心（冻结位），交给 onfoot.update 刷相机
+		var tc: Vector3 = tpos + Vector3(0, 1.05 * 1.5, 0)
 		var e2: Vector3 = onfoot.pos + Vector3(0, 1.62, 0)
 		var d2: Vector3 = (tc - e2).normalized()
 		onfoot.yaw = atan2(d2.x, d2.z)
 		onfoot.pitch = asin(clampf(d2.y, -1.0, 1.0))
 		await frames(1)
-		# 直接验证 raycast 判定（打印前 2 发）
+		# 射击瞬间把靶钉回原位（AI 在 await 期间会跑动）
+		bf.soldiers[target]["pos"] = tpos
 		onfoot.fire_cd = 0.0
 		onfoot._shoot()
 		shots += 1
@@ -70,8 +77,7 @@ func _initialize() -> void:
 	await frames(5)
 	var dead: bool = bf.soldiers[target]["dead"]
 	var hp_left: float = float(bf.soldiers[target]["hp"])
-	print("[aim] 开镜 %d 发 命中 %d 击倒=%s 剩余hp=%.0f" % [shots, hits,
-			str(dead), hp_left])
-	var ok := dead and shots <= 6
+	print("[aim] 开镜 %d 发 击倒=%s 剩余hp=%.0f" % [shots, str(dead), hp_left])
+	var ok: bool = dead and shots <= 6
 	print("[aim] %s（期望 命中率≈100%、≤6 发击倒）" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)

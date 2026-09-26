@@ -320,6 +320,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_G and state == ST.BATTLE:
 		_battle_gadget()
+	# T 键：大战场循环切换已购弹药类型（标准/强力/穿甲/燃烧）
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_T and state == ST.BATTLE \
+			and on_foot:
+		_battle_cycle_ammo()
 	# L 键：车灯模式 自动 → 常开 → 关闭 循环（仅驾车）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_L \
@@ -472,6 +477,7 @@ func _load_settings() -> void:
 		guns_owned = cf.get_value("guns", "owned", ["pistol"])
 		gun_equipped = cf.get_value("guns", "equipped", "pistol")
 		ammo_type = cf.get_value("guns", "ammo_type", "standard")
+		armor_stock = int(cf.get_value("guns", "armor_stock", 0))
 		battle_kills_total = cf.get_value("battle", "kills", 0)
 		battle_wins = cf.get_value("battle", "wins", 0)
 		plane_mode = cf.get_value("settings", "plane", false)
@@ -494,6 +500,7 @@ func _save_settings() -> void:
 	cf.set_value("guns", "owned", guns_owned)
 	cf.set_value("guns", "equipped", gun_equipped)
 	cf.set_value("guns", "ammo_type", ammo_type)
+	cf.set_value("guns", "armor_stock", armor_stock)
 	cf.set_value("battle", "kills", battle_kills_total)
 	cf.set_value("battle", "wins", battle_wins)
 	cf.set_value("settings", "plane", plane_mode)
@@ -516,6 +523,8 @@ var on_foot := false               # 是否处于步行状态
 var guns_owned: Array = ["pistol"] # 已购枪械（全局，数字键 1~N 直选）
 var gun_equipped := "pistol"       # 当前手持枪械
 var ammo_type := "standard"        # 弹药类型（弹药店购买/切换）
+var armor_stock := 0               # 防弹衣库存（件）：部署时消耗 1 件 = 50 点护甲
+var player_armor := 0.0            # 当前护甲值（战场内）
 var gunshop_open := false          # 枪械店界面开着
 var gunshop_from_roam := false
 var player_hp := 100.0             # 步行状态血量（警车/直升机开枪扣血）
@@ -702,7 +711,7 @@ func close_gunshop() -> void:
 
 
 func _refresh_gunshop_ui() -> void:
-	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type)
+	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type, armor_stock)
 
 
 # ================= 大战场模式 =================
@@ -807,11 +816,20 @@ func _on_battle_deploy(cls: int, spawn_i: int) -> void:
 	onfoot.enter(p, PI if bf.player_team == "atk" else 0.0)   # 面朝敌方来向
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	hud.set_onfoot(true)
+	player_armor = 0.0
+	var armor_note := ""
+	if armor_stock > 0:
+		armor_stock -= 1
+		player_armor = 50.0
+		_save_settings()
+		armor_note = " · 已穿防弹衣(50)"
 	hud.set_health(player_hp)
+	hud.set_armor(player_armor)
 	hud.set_gun_name(Guns.gun_by_id(cd["gun"])["name"])
 	hud.set_scope(false)
 	bhud.banner("部署 · " + str(cd["name"]),
-			"G 使用%s · Tab 计分板 · Esc 退出" % cd["gadget_name"], 2.5)
+			"G 使用%s · T 切弹药 · Tab 计分板 · Esc 退出%s" % [cd["gadget_name"],
+			armor_note], 2.5)
 
 
 ## F 键：上/下就近的本方载具（坦克 / 步战车 / 直升机）
@@ -932,13 +950,39 @@ func _airliner_board(from_i: int) -> void:
 			"巡航约 1 分钟 · 落地后自动下机", 3500)
 
 
+## 大战场 T 键：在已购弹药类型间循环切换（即时生效，播报当前类型）
+func _battle_cycle_ammo() -> void:
+	var owned: Array = Guns.AMMO.filter(
+			func(a): return guns_owned.has(a["id"]))
+	if owned.size() <= 1:
+		hud.show_center("没有可切换的弹药", "弹药店购买强力弹/穿甲弹/燃烧弹", 1800)
+		return
+	var idx := 0
+	for i in owned.size():
+		if owned[i]["id"] == ammo_type:
+			idx = (i + 1) % owned.size()
+			break
+	var a: Dictionary = owned[idx]
+	ammo_type = a["id"]
+	if onfoot != null:
+		onfoot.set_ammo_type(ammo_type)
+	_save_settings()
+	hud.show_center("弹药 · " + str(a["name"]), str(a["desc"]) + " · T 继续切换", 1600)
+
+
 func _on_bf_player_hit(dmg: float, from: Vector3) -> void:
 	if not on_foot or bf == null or not bf.player_alive:
 		return
+	# 护甲先扛：每点护甲吸收 1 点伤害，打穿后溢出部分进血条
+	if player_armor > 0.0:
+		var absorbed: float = minf(player_armor, dmg)
+		player_armor -= absorbed
+		dmg -= absorbed
 	player_hp = maxf(0.0, player_hp - dmg)
 	_no_dmg_t = 0.0
 	hud.damage_flash()
 	hud.set_health(player_hp)
+	hud.set_armor(player_armor)
 	bhud.damage_from(from)
 	if player_hp <= 0.0:
 		_battle_downed()
@@ -1036,6 +1080,18 @@ func _on_gun_equip(gun_id: String) -> void:
 	_refresh_gunshop_ui()
 
 
+## 购买防弹衣（枪械店）：200 金币/件进库存，大战场部署时自动消耗
+func _on_armor_buy() -> void:
+	if coins < 200:
+		hud.show_center("金币不足", "防弹衣 200 金币 · 还差 %d" % (200 - coins), 1500)
+		return
+	coins -= 200
+	armor_stock += 1
+	_save_settings()
+	_refresh_gunshop_ui()
+	hud.show_center("防弹衣 +1", "库存 %d 件 · 大战场部署时自动穿戴" % armor_stock, 1800)
+
+
 ## 购买/使用弹药类型
 func _on_ammo_equip(ammo_id: String) -> void:
 	var a: Dictionary = Guns.ammo_by_id(ammo_id)
@@ -1095,6 +1151,7 @@ func _wire_menu() -> void:
 	hud.btn_gunshop.pressed.connect(open_gunshop)
 	hud.gun_equip.connect(_on_gun_equip)
 	hud.ammo_equip.connect(_on_ammo_equip)
+	hud.armor_buy.connect(_on_armor_buy)
 	hud.gunshop_back.connect(close_gunshop)
 
 

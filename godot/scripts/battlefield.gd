@@ -42,6 +42,7 @@ const TracerPool := preload("res://scripts/tracer_pool.gd")
 ## 运行时 load 而不是 preload：模型走 Git LFS，另一台电脑若没拉到真文件（只有指针），
 ## preload 会让本脚本编译失败，连带 game.gd 整个游戏起不来；load 失败则退化成胶囊人
 const SOLDIER_PATH := "res://assets/battle/soldier.glb"
+const SOLDIER_SCALE := 1.5   # 士兵模型/命中球/头顶标统一放大倍率
 const MUZZLE_LOCAL := Vector3(-0.12, 1.5, 0.95)   # 抵肩瞄准时枪口（模型局部，面朝 +Z）
 ## 两队呼号分开（同名会让击杀播报分不清是哪边的人）
 const CALLSIGNS := {
@@ -786,12 +787,12 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 		var s: Dictionary = soldiers[i]
 		if s["dead"]:
 			continue
-		var hc: Vector3 = s["pos"] + Vector3(0, 1.65 * 1.3, 0)   # 头盔中心（随模型放大）
+		var hc: Vector3 = s["pos"] + Vector3(0, 1.65 * SOLDIER_SCALE, 0)   # 头盔中心（随模型放大）
 		var th: float = (hc - from).dot(dir)
 		if th > 0.5 and th < best["d"] and (hc - from - dir * th).length() < 0.2:
 			best = {"type": "soldier_head", "i": i, "d": th, "point": from + dir * th}
 			continue
-		var c: Vector3 = s["pos"] + Vector3(0, 1.05 * 1.3, 0)   # 胸口（随模型放大）
+		var c: Vector3 = s["pos"] + Vector3(0, 1.05 * SOLDIER_SCALE, 0)   # 胸口（随模型放大）
 		var t: float = (c - from).dot(dir)
 		if t > 0.5 and t < best["d"] and (c - from - dir * t).length() < 0.5:
 			best = {"type": "soldier", "i": i, "d": t, "point": from + dir * t}
@@ -1020,8 +1021,8 @@ func _setup_army(team: String) -> void:
 			node = scene.instantiate()
 			ap = node.find_children("*", "AnimationPlayer", true, false)[0]
 			mi = node.find_children("*", "MeshInstance3D", true, false)[0]
-			# 士兵放大 1.3 倍（原 1.77m 太小，远距离看不清敌我轮廓）
-			node.scale = Vector3.ONE * 1.3
+			# 士兵放大 1.5 倍（原 1.77m 太小，远距离看不清敌我轮廓）
+			node.scale = Vector3.ONE * SOLDIER_SCALE
 		else:
 			node = Node3D.new()
 			mi = MeshInstance3D.new()
@@ -1044,7 +1045,7 @@ func _setup_army(team: String) -> void:
 		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		tag.no_depth_test = true
 		tag.fixed_size = true
-		tag.position = Vector3(0, 2.15 * 1.3, 0)   # 随士兵放大同步抬高
+		tag.position = Vector3(0, 2.15 * SOLDIER_SCALE, 0)   # 随士兵放大同步抬高
 		tag.visible = false
 		node.add_child(tag)
 		arr.append({"node": node, "ap": ap, "mesh": mi, "tag": tag, "anim": ""})

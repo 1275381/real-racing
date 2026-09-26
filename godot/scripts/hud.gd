@@ -54,6 +54,7 @@ signal shop_back
 signal gun_equip(gun_id: String)
 signal gunshop_back
 signal ammo_equip(ammo_id: String)
+signal armor_buy
 var gunshop_rows := {}      # gun_id -> Button
 var _ammo_rows := {}        # ammo_id -> Button
 var _gunshop_coins: Label
@@ -73,6 +74,8 @@ var _wanted_blink_t := 0.0
 var gun_overlay: Control       # 步行 HUD：准星/三倍镜遮罩/血条/弹药
 var _gun_scope := false
 var _gun_hp := 100.0
+var _gun_armor := 0.0
+var _armor_row := {}   # 枪械店防弹衣行 {btn, note}
 var _gun_ammo := 30
 var _gun_reload := 0.0
 var _gun_name := ""
@@ -1406,6 +1409,22 @@ func _build_gunshop() -> void:
 		arow.add_child(ab)
 		_ammo_rows[aid] = {"btn": ab, "note": alab}
 
+	# 防弹衣：购买进库存，大战场部署时自动穿上（1 件 = 50 点护甲）
+	var arow2 := HBoxContainer.new()
+	box.add_child(arow2)
+	var alab2 := Label.new()
+	alab2.text = "防弹衣 · 大战场部署自动穿戴（1 件 = 50 点护甲）"
+	alab2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	alab2.add_theme_font_size_override("font_size", 14)
+	alab2.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+	arow2.add_child(alab2)
+	var ab2 := Button.new()
+	ab2.custom_minimum_size = Vector2(110, 30)
+	ab2.add_theme_font_size_override("font_size", 14)
+	ab2.pressed.connect(func(): armor_buy.emit())
+	arow2.add_child(ab2)
+	_armor_row = {"btn": ab2, "note": alab2}
+
 	var back := Button.new()
 	back.text = "返 回 车 库"
 	back.custom_minimum_size = Vector2(0, 42)
@@ -1416,7 +1435,7 @@ func _build_gunshop() -> void:
 
 ## 刷新枪械店各行状态（枪械 + 弹药）
 func refresh_gunshop(coins: int, owned: Array, equipped: String,
-		ammo_type: String) -> void:
+		ammo_type: String, armor_stock := 0) -> void:
 	_gunshop_coins.text = "金币：%d" % coins
 	for g in Guns.GUNS:
 		var gid: String = g["id"]
@@ -1452,6 +1471,11 @@ func refresh_gunshop(coins: int, owned: Array, equipped: String,
 			b.disabled = coins < Guns.ammo_by_id(aid)["price"]
 		info["note"].add_theme_color_override("font_color",
 				Color(0.55, 1.0, 0.55) if is_eq2 else Color(0.8, 0.84, 0.9))
+	if not _armor_row.is_empty():
+		var ab3: Button = _armor_row["btn"]
+		_armor_row["note"].text = "防弹衣 · 库存 %d 件 · 大战场部署自动穿戴（1 件 = 50 护甲）" % armor_stock
+		ab3.text = "%d 金币" % 200
+		ab3.disabled = coins < 200
 
 
 ## 车辆数据界面：马力/极速/牵引/抓地/制动（基础 → 当前，配件加成标注）
@@ -1848,6 +1872,16 @@ func _draw_gun_overlay(cv: Control) -> void:
 	cv.draw_rect(Rect2(bx, by, bw * ratio, bh), col)
 	cv.draw_string(ThemeDB.fallback_font, Vector2(bx, by - 6), "生命",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.92, 0.95))
+	# 护甲条（血条上方一条蓝灰短条，有甲才画）
+	if _gun_armor > 0.0:
+		var ab_y := by - 20.0
+		cv.draw_rect(Rect2(bx - 2, ab_y - 2, bw * 0.6 + 4, bh - 4 + 4),
+				Color(0, 0, 0, 0.55))
+		cv.draw_rect(Rect2(bx, ab_y, bw * 0.6 * clampf(_gun_armor / 50.0, 0.0, 1.0),
+				bh - 4), Color(0.5, 0.72, 0.95))
+		cv.draw_string(ThemeDB.fallback_font, Vector2(bx + bw * 0.6 + 8, ab_y + 10),
+				"护甲 %d" % int(_gun_armor), HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+				Color(0.6, 0.78, 0.98))
 	# 弹药（右下）
 	var ammo_txt := "换弹中…" if _gun_reload > 0.0 else "%d / ∞" % _gun_ammo
 	if _gun_name != "":
@@ -1877,6 +1911,12 @@ func set_scope(on: bool) -> void:
 
 func set_health(hp: float) -> void:
 	_gun_hp = hp
+	gun_overlay.queue_redraw()
+
+
+## 步行 HUD 护甲条（0 隐藏）
+func set_armor(v: float) -> void:
+	_gun_armor = v
 	gun_overlay.queue_redraw()
 
 
