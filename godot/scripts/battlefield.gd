@@ -15,6 +15,7 @@ signal explosion_at(pos: Vector3)
 
 const TEAM_SIZE := 24
 const ATK_TICKETS := 150
+const DEF_TICKETS := 150          # 防守方兵力：击杀守军即消耗，耗尽进攻方直接胜
 const SECTOR_BONUS := 40          # 每夺下一个区域补充的进攻方兵力
 const CAPTURE_TIME := 18.0        # 一人占领所需秒数（人数优势最多 ×3）
 const RESPAWN_AI := 9.0
@@ -23,17 +24,18 @@ const HEAD_MUL := 2.0
 
 ## 兵种：生命/移速/主武器数值（AI 与玩家共用一套定义；gun 为玩家枪械 id）
 const CLASSES := [
+	# AI 强度：dmg/acc/burst 间隔同时压低（玩家输出不变 → 相对变强）
 	{"id": "assault", "name": "突击", "hp": 70.0, "speed": 7.6,
-		"dmg": [7.0, 11.0], "cd": 0.11, "burst": 4, "range": 75.0, "acc": 0.05,
+		"dmg": [5.0, 8.0], "cd": 0.11, "burst": 4, "range": 75.0, "acc": 0.095,
 		"gun": "rifle", "gadget": "grenade", "gadget_name": "手雷", "gadget_cd": 12.0},
 	{"id": "engineer", "name": "工程", "hp": 70.0, "speed": 7.6,
-		"dmg": [6.0, 9.0], "cd": 0.08, "burst": 6, "range": 55.0, "acc": 0.06,
+		"dmg": [4.0, 7.0], "cd": 0.08, "burst": 6, "range": 55.0, "acc": 0.105,
 		"gun": "smg", "gadget": "rpg", "gadget_name": "火箭筒", "gadget_cd": 14.0},
 	{"id": "support", "name": "支援", "hp": 80.0, "speed": 6.6,
-		"dmg": [7.0, 10.0], "cd": 0.09, "burst": 9, "range": 80.0, "acc": 0.07,
+		"dmg": [5.0, 7.0], "cd": 0.09, "burst": 9, "range": 80.0, "acc": 0.115,
 		"gun": "lmg", "gadget": "medkit", "gadget_name": "医疗包", "gadget_cd": 20.0},
 	{"id": "recon", "name": "侦察", "hp": 65.0, "speed": 7.2,
-		"dmg": [38.0, 52.0], "cd": 1.5, "burst": 1, "range": 150.0, "acc": 0.012,
+		"dmg": [28.0, 40.0], "cd": 2.0, "burst": 1, "range": 150.0, "acc": 0.028,
 		"gun": "sniper", "gadget": "scan", "gadget_name": "侦察信标", "gadget_cd": 25.0},
 ]
 const BattleVehicles := preload("res://scripts/battle_vehicles.gd")
@@ -64,6 +66,7 @@ var player_stats := {"kills": 0, "deaths": 0, "score": 0}
 
 var sector := 0                   # 当前争夺区域（0..2）；=3 表示进攻方已全部拿下
 var tickets := ATK_TICKETS
+var def_tickets := DEF_TICKETS
 var pts: Array = []               # [sector][point] -> {owner, prog(0守..1攻), atk_n, def_n}
 var soldiers: Array = []          # 两队 48 人（死亡后原地复用重生）
 
@@ -106,6 +109,7 @@ func start(side: String) -> void:
 	player_stats = {"kills": 0, "deaths": 0, "score": 0}
 	sector = 0
 	tickets = ATK_TICKETS
+	def_tickets = DEF_TICKETS
 	_clear_projectiles()
 	pts.clear()
 	for si in bmap.SECTORS.size():
@@ -304,6 +308,10 @@ func update(dt: float) -> void:
 		steps += 1
 		for i in soldiers.size():
 			_update_soldier(i, AI_TICK)
+	if not battle_over and player_team == "atk" and def_tickets <= 0 \
+		 and sector < pts.size():
+		# 守方兵力耗尽：防守方再无增援，进攻方直接胜
+		_finish(true)
 	if not battle_over and tickets <= 0 and sector < pts.size():
 		# 兵力耗尽：场上已无存活进攻方（含玩家）即判负
 		var alive := player_alive and player_team == "atk"
@@ -338,7 +346,9 @@ func _update_soldier(i: int, dt: float) -> void:
 	s["spotted_t"] = maxf(0.0, float(s["spotted_t"]) - dt)
 	if s["dead"]:
 		s["respawn_t"] = float(s["respawn_t"]) - dt
-		if float(s["respawn_t"]) <= 0.0 and (s["team"] == "def" or tickets > 0):
+		var can_respawn: bool = (s["team"] == "atk" and tickets > 0) \
+				or (s["team"] == "def" and def_tickets > 0)
+		if float(s["respawn_t"]) <= 0.0 and can_respawn:
 			if s["team"] == "atk":
 				tickets -= 1
 			_respawn(s)
@@ -348,7 +358,7 @@ func _update_soldier(i: int, dt: float) -> void:
 	# 目标（错峰 0.5s）：最近的敌人，可含玩家
 	s["tgt_t"] = float(s["tgt_t"]) - dt
 	if float(s["tgt_t"]) <= 0.0:
-		s["tgt_t"] = randf_range(0.45, 0.65)
+		s["tgt_t"] = randf_range(0.7, 1.0)
 		_pick_target(i, s, float(cd["range"]) * 1.25)
 	# 目标点（据点任务）
 	s["goal_t"] = float(s["goal_t"]) - dt
@@ -587,9 +597,9 @@ func _try_fire(i: int, s: Dictionary, t_pos: Vector3, dist: float, dt: float) ->
 		s["burst"] = cd["burst"]
 	s["burst"] = int(s["burst"]) - 1
 	s["mag"] = int(s["mag"]) - 1
-	s["fire_cd"] = float(cd["cd"]) if int(s["burst"]) > 0 else randf_range(0.7, 1.4)
+	s["fire_cd"] = float(cd["cd"]) if int(s["burst"]) > 0 else randf_range(1.1, 2.2)
 	if s["cls"] == 3:
-		s["fire_cd"] = randf_range(1.4, 2.4)
+		s["fire_cd"] = randf_range(2.0, 3.2)
 	s["spotted_t"] = 2.0   # 开火暴露在敌方小地图上
 	var eye: Vector3 = s["pos"] + Vector3(0, 1.55, 0)
 	var dir := (t_pos - eye).normalized()
@@ -684,6 +694,8 @@ func _damage_soldier(j: int, dmg: float, src: int, head: bool, weapon: String) -
 	s["moving"] = false
 	s["deaths"] = int(s["deaths"]) + 1
 	s["respawn_t"] = RESPAWN_AI
+	if s["team"] == "def":
+		def_tickets -= 1   # 击杀守军立即消耗防守方兵力（HUD 数字立减）
 	_write_pose(s)
 	var info := {"victim": s["name"], "victim_team": s["team"], "weapon": weapon,
 			"head": head, "by_player": src == -1, "player_died": false,

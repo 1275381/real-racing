@@ -196,8 +196,8 @@ func _draw_objectives(sz: Vector2, font: Font) -> void:
 	draw_string(font, Vector2(cx - 240, y + 44), str(maxi(bf.tickets, 0)),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 26, atk_col)
 	draw_string(font, Vector2(cx + 140, y + 14), "防守方", HORIZONTAL_ALIGNMENT_RIGHT, 100, 13, def_col)
-	draw_string(font, Vector2(cx + 140, y + 44), "%d 人" % bf.count_alive("def"),
-			HORIZONTAL_ALIGNMENT_RIGHT, 100, 20, def_col)
+	draw_string(font, Vector2(cx + 140, y + 44), str(maxi(bf.def_tickets, 0)),
+			HORIZONTAL_ALIGNMENT_RIGHT, 100, 26, def_col)
 	# A / B 据点方块（填充 = 进攻方占领进度）
 	if bf.sector < bf.pts.size():
 		for pi in 2:
