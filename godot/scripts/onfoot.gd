@@ -138,6 +138,9 @@ func set_gun(gun_id: String) -> void:
 func _build_gun_visual(gun_id: String) -> Node3D:
 	if gun_id == "rifle":
 		var glb: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
+		# SCAR 模型枪头朝本地 +Z，挂在相机（-Z 朝屏幕内）下会指向自己——
+		# 转 180° 让枪口对准屏幕前方
+		glb.rotation.y = PI
 		for mi in glb.find_children("*", "MeshInstance3D", true, false):
 			var m := mi as MeshInstance3D
 			for s in m.mesh.get_surface_count():
