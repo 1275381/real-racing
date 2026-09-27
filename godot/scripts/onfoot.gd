@@ -42,6 +42,7 @@ var slide_cd := 0.0      # 滑铲冷却
 var prone := false       # Z 趴下（低速爬行 + 开镜散布再减半）
 var scope_lv := 0        # 滚轮倍镜档：0=1.5× 1=5×
 var input_block := false  # 巡飞弹操控中：本体移动输入屏蔽
+var scope_provider       # game 注入：返回当前枪瞄具 Dictionary（无 = 机瞄）
 var slide_dir := Vector3.ZERO
 var _eye_h := EYE_H
 var _last_idx = null
@@ -626,7 +627,14 @@ func cycle_scope_zoom(dir: int) -> void:
 	scope_lv = wrapi(scope_lv + dir, 0, 2)
 
 
-## 当前开镜倍率（枪械自带 scope_div 与滚轮档位取大者）
+## 当前开镜倍率：装了瞄具用瞄具 zoom（滚轮 5× 档切到 5.0，热成像保持 4×）；
+## 未装瞄具 = 机瞄无放大（1.0）
 func current_zoom() -> float:
-	var gz := 1.5 if scope_lv == 0 else 5.0
-	return maxf(gz, _g.get("scope_div", 1.0) if scoped else 1.0)
+	if not scoped:
+		return 1.0
+	var sc: Dictionary = scope_provider.call() if scope_provider != null else {}
+	if sc.is_empty():
+		return 1.0
+	if scope_lv >= 1 and str(sc.get("id", "")) != "thermal":
+		return 5.0
+	return float(sc.get("zoom", 1.0))

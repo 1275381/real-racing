@@ -58,3 +58,26 @@ static func ammo_by_id(id: String) -> Dictionary:
 		if a["id"] == id:
 			return a
 	return AMMO[0]
+
+
+# 瞄具：安装到枪上（每枪一槽），未装 = 机瞄。zoom 为开镜倍率；
+# kind 决定镜面风格（iron/holo/reddot/optic/sniper/thermal）
+const SCOPES := [
+	{"id": "holo", "name": "全息镜", "desc": "1.5× · 全息方框绿点 · 视野宽", "price": 900,
+		"zoom": 1.5, "kind": "holo"},
+	{"id": "reddot", "name": "红点镜", "desc": "1.5× · 单圈红点 · 快速获取", "price": 700,
+		"zoom": 1.5, "kind": "reddot"},
+	{"id": "optic35", "name": "3.5× 光学镜", "desc": "3.5× · 密位十字 · 中距离精确", "price": 1800,
+		"zoom": 3.5, "kind": "optic"},
+	{"id": "scope5", "name": "5× 密位镜", "desc": "5× · 暗角密位 · 远距离", "price": 2800,
+		"zoom": 5.0, "kind": "sniper"},
+	{"id": "thermal", "name": "热成像镜", "desc": "4× · 敌人热点高亮 · 夜战神器", "price": 5200,
+		"zoom": 4.0, "kind": "thermal"},
+]
+
+
+static func scope_by_id(id: String) -> Dictionary:
+	for s in SCOPES:
+		if s["id"] == id:
+			return s
+	return {}

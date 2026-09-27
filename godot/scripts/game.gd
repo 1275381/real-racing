@@ -334,7 +334,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			and event.physical_keycode == KEY_Z and on_foot \
 			and state in [ST.ROAM, ST.BATTLE]:
 		onfoot.toggle_prone()
-		hud.set_scope(onfoot.scoped, onfoot.get_gun_id(), onfoot.scope_lv)
+		hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
+
 	# T 键：大战场循环切换已购弹药类型（标准/强力/穿甲/燃烧）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_T and state == ST.BATTLE \
@@ -493,6 +494,8 @@ func _load_settings() -> void:
 		gun_equipped = cf.get_value("guns", "equipped", "pistol")
 		ammo_type = cf.get_value("guns", "ammo_type", "standard")
 		armor_stock = int(cf.get_value("guns", "armor_stock", 0))
+		scopes_owned = cf.get_value("guns", "scopes_owned", [])
+		scope_fit = cf.get_value("guns", "scope_fit", {})
 		battle_kills_total = cf.get_value("battle", "kills", 0)
 		battle_wins = cf.get_value("battle", "wins", 0)
 		plane_mode = cf.get_value("settings", "plane", false)
@@ -516,6 +519,8 @@ func _save_settings() -> void:
 	cf.set_value("guns", "equipped", gun_equipped)
 	cf.set_value("guns", "ammo_type", ammo_type)
 	cf.set_value("guns", "armor_stock", armor_stock)
+	cf.set_value("guns", "scopes_owned", scopes_owned)
+	cf.set_value("guns", "scope_fit", scope_fit)
 	cf.set_value("battle", "kills", battle_kills_total)
 	cf.set_value("battle", "wins", battle_wins)
 	cf.set_value("settings", "plane", plane_mode)
@@ -539,6 +544,8 @@ var guns_owned: Array = ["pistol"] # 已购枪械（全局，数字键 1~N 直�
 var gun_equipped := "pistol"       # 当前手持枪械
 var ammo_type := "standard"        # 弹药类型（弹药店购买/切换）
 var armor_stock := 0               # 防弹衣库存（件）：部署时消耗 1 件 = 50 点护甲
+var scopes_owned: Array = []       # 已购瞄具 id
+var scope_fit := {}                # gun_id → 瞄具 id（每枪一槽；无 = 机瞄）
 var player_armor := 0.0            # 当前护甲值（战场内）
 var gunshop_open := false          # 枪械店界面开着
 var gunshop_from_roam := false
@@ -726,7 +733,8 @@ func close_gunshop() -> void:
 
 
 func _refresh_gunshop_ui() -> void:
-	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type, armor_stock)
+	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type, armor_stock,
+			scopes_owned, scope_fit)
 
 
 # ================= 大战场模式 =================
@@ -1102,6 +1110,72 @@ func _on_gun_equip(gun_id: String) -> void:
 	_refresh_gunshop_ui()
 
 
+## 热成像镜：采集视野内敌人（士兵/警察/行人）世界坐标，HUD 画热点
+func _thermal_points() -> Array:
+	var out: Array = []
+	var eye: Vector3 = camera.global_position
+	var eye_f: Vector3 = -camera.global_transform.basis.z
+	if state == ST.BATTLE and bf != null:
+		for s in bf.soldiers:
+			if s["dead"] or s["team"] == bf.player_team:
+				continue
+			var c: Vector3 = s["pos"] + Vector3(0, 1.2, 0)
+			if c.distance_to(eye) > 80.0:
+				continue
+			var to: Vector3 = (c - eye).normalized()
+			if to.dot(eye_f) < 0.0:
+				continue   # 热成像广角探测：半平面即可
+			out.append(c)
+	elif state == ST.ROAM and npc != null:
+		for u in npc.police:
+			if u.get("hp", 0.0) <= 0.0:
+				continue
+			var c2: Vector3 = Vector3(u["pos"]) + Vector3(0, 1.2, 0)
+			if c2.distance_to(eye) <= 80.0 					and (c2 - eye).normalized().dot(eye_f) >= 0.3:
+				out.append(c2)
+	return out
+func _current_scope_kind() -> String:
+	return str(player_scope().get("kind", "iron"))
+
+
+## 瞄具购买/安装：未拥有→购买并自动安装；已拥有→该枪安装/卸下切换
+func _on_scope_pick(scope_id: String, gun_id: String) -> void:
+	var s: Dictionary = Guns.scope_by_id(scope_id)
+	if s.is_empty():
+		return
+	if not scopes_owned.has(scope_id):
+		if coins < int(s["price"]):
+			hud.show_center("金币不足", "%s %d 金币 · 还差 %d" % [s["name"],
+					s["price"], s["price"] - coins], 1600)
+			return
+		coins -= int(s["price"])
+		scopes_owned.append(scope_id)
+		scope_fit[gun_id] = scope_id
+		_save_settings()
+		_refresh_gunshop_ui()
+		hud.show_center("%s 已安装" % s["name"],
+				"%s · %s" % [Guns.gun_by_id(gun_id)["name"], s["desc"]], 2000)
+		return
+	# 已拥有：同枪同镜 = 卸下回机瞄；否则换装到该枪
+	if str(scope_fit.get(gun_id, "")) == scope_id:
+		scope_fit.erase(gun_id)
+		_save_settings()
+		_refresh_gunshop_ui()
+		hud.show_center("已卸下 " + str(s["name"]), "恢复机瞄", 1400)
+	else:
+		scope_fit[gun_id] = scope_id
+		_save_settings()
+		_refresh_gunshop_ui()
+		hud.show_center("%s → %s" % [s["name"], Guns.gun_by_id(gun_id)["name"]],
+				str(s["desc"]), 1600)
+
+
+## 当前枪的瞄具（无 = 机瞄）
+func player_scope() -> Dictionary:
+	var f = scope_fit.get(gun_equipped, "")
+	return Guns.scope_by_id(str(f)) if f != "" else {}
+
+
 ## 购买防弹衣（枪械店）：200 金币/件进库存，大战场部署时自动消耗
 func _on_armor_buy() -> void:
 	if coins < 200:
@@ -1174,6 +1248,7 @@ func _wire_menu() -> void:
 	hud.gun_equip.connect(_on_gun_equip)
 	hud.ammo_equip.connect(_on_ammo_equip)
 	hud.armor_buy.connect(_on_armor_buy)
+	hud.scope_pick.connect(_on_scope_pick)
 	hud.gunshop_back.connect(close_gunshop)
 
 
@@ -1668,6 +1743,7 @@ func enter_roam() -> void:
 		onfoot = OnFoot.new()
 		add_child(onfoot)
 		onfoot.setup(freeroam, npc, audio, camera)
+		onfoot.scope_provider = player_scope
 		onfoot.set_ammo_type(ammo_type)
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): pass)
@@ -2427,7 +2503,7 @@ func _handle_hotkeys() -> void:
 	if Input.is_action_just_pressed("rr_scope") and on_foot \
 			and (state == ST.ROAM or state == ST.BATTLE):
 		onfoot.toggle_scope()
-		hud.set_scope(onfoot.scoped, onfoot.get_gun_id(), onfoot.scope_lv)
+		hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
 	if Input.is_action_just_pressed("rr_mute"):
 		audio.ensure()
 		audio.set_muted(not audio.muted)
@@ -2675,7 +2751,7 @@ func _step_sim(h: float) -> void:
 				player_hp = minf(100.0, player_hp + 5.0 * h)
 			hud.set_health(player_hp)
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(gun_equipped)["name"])
-			hud.set_scope(onfoot.scoped, onfoot.get_gun_id(), onfoot.scope_lv)
+			hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
 			# 地标交互提示（摩天轮 / 电视塔观景电梯）
 			var lm_hint := ""
 			var shaft_d: float = Vector2(onfoot.pos.x - 90,
@@ -2842,6 +2918,18 @@ func _step_sim(h: float) -> void:
 		bf.update(h)
 		if on_foot:
 			onfoot.input_block = not bf.player_drone.is_empty()   # 爆炸帧立即恢复
+		# 热成像：开镜且装热成像镜时，把视野内敌人投影成屏幕归一化坐标下发
+		if on_foot and onfoot.scoped and _current_scope_kind() == "thermal":
+			hud.thermal_on = true
+			var pts: Array = []
+			var vp := get_viewport()
+			var vs := vp.get_visible_rect().size
+			for wp in _thermal_points():
+				var sp: Vector2 = vp.get_camera_3d().unproject_position(wp)
+				pts.append([sp.x / vs.x, sp.y / vs.y])
+			hud.set_thermal_points(pts)
+		elif hud.thermal_on:
+			hud.set_thermal(false)
 		if on_foot and bf.player_alive:
 			_no_dmg_t += h
 			# 5 秒未受击开始回血（支援兵更快）
@@ -2854,7 +2942,7 @@ func _step_sim(h: float) -> void:
 			bhud.set_gadget(cd["gadget_name"], 1.0 - _gadget_cd / float(cd["gadget_cd"]))
 			bhud.player_yaw = onfoot.yaw
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(cd["gun"])["name"])
-			hud.set_scope(onfoot.scoped, onfoot.get_gun_id(), onfoot.scope_lv)
+			hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
 		if shake > 0.002 and on_foot:
 			var a3 := shake * 0.2
 			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a3

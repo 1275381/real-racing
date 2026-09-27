@@ -55,6 +55,7 @@ signal gun_equip(gun_id: String)
 signal gunshop_back
 signal ammo_equip(ammo_id: String)
 signal armor_buy
+signal scope_pick(scope_id: String, gun_id: String)
 var gunshop_rows := {}      # gun_id -> Button
 var _ammo_rows := {}        # ammo_id -> Button
 var _gunshop_coins: Label
@@ -73,11 +74,16 @@ var wanted_progress := 0.0
 var _wanted_blink_t := 0.0
 var gun_overlay: Control       # 步行 HUD：准星/三倍镜遮罩/血条/弹药
 var _gun_scope := false
-var _scope_gun := "rifle"   # 当前持枪（决定镜面风格）
-var _scope_zoom := 0        # 0=1.5× 分枪风格镜 1=5× 狙击密位镜
+var _scope_gun := "rifle"   # 当前持枪（机瞄风格用）
+var _scope_zoom := 0        # 0=瞄具原生倍率 1=滚轮 5× 档
+var _scope_kind := "iron"   # 镜面风格 kind（iron=机瞄）
+var thermal_on := false     # 热成像热点开关
+var _thermal_pts: Array = []   # 热点世界坐标（game 每帧下发）
 var _gun_hp := 100.0
 var _gun_armor := 0.0
 var _armor_row := {}   # 枪械店防弹衣行 {btn, note}
+var _scope_rows := {}  # 枪械店瞄具行 {scope_id: {btn, note}}
+var gunshop_gun := "pistol"   # 枪械店当前装备枪（refresh 时同步，瞄具安装目标）
 var _gun_ammo := 30
 var _gun_reload := 0.0
 var _gun_name := ""
@@ -1411,6 +1417,30 @@ func _build_gunshop() -> void:
 		arow.add_child(ab)
 		_ammo_rows[aid] = {"btn": ab, "note": alab}
 
+	# 瞄具区块：安装到当前装备的枪上；未装 = 机瞄
+	var scap := Label.new()
+	scap.text = "── 瞄具（安装到当前装备的枪）──"
+	scap.add_theme_font_size_override("font_size", 15)
+	scap.add_theme_color_override("font_color", Color(0.65, 0.85, 1.0))
+	box.add_child(scap)
+	_scope_rows.clear()
+	for s in Guns.SCOPES:
+		var sid: String = s["id"]
+		var srow := HBoxContainer.new()
+		box.add_child(srow)
+		var slab := Label.new()
+		slab.text = "%s · %s" % [s["name"], s["desc"]]
+		slab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slab.add_theme_font_size_override("font_size", 14)
+		slab.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+		srow.add_child(slab)
+		var sbtn := Button.new()
+		sbtn.custom_minimum_size = Vector2(110, 30)
+		sbtn.add_theme_font_size_override("font_size", 14)
+		sbtn.pressed.connect(func(): scope_pick.emit(sid, gunshop_gun))
+		srow.add_child(sbtn)
+		_scope_rows[sid] = {"btn": sbtn, "note": slab}
+
 	# 防弹衣：购买进库存，大战场部署时自动穿上（1 件 = 50 点护甲）
 	var arow2 := HBoxContainer.new()
 	box.add_child(arow2)
@@ -1437,7 +1467,8 @@ func _build_gunshop() -> void:
 
 ## 刷新枪械店各行状态（枪械 + 弹药）
 func refresh_gunshop(coins: int, owned: Array, equipped: String,
-		ammo_type: String, armor_stock := 0) -> void:
+		ammo_type: String, armor_stock := 0, scopes_owned: Array = [],
+		scope_fit := {}) -> void:
 	_gunshop_coins.text = "金币：%d" % coins
 	for g in Guns.GUNS:
 		var gid: String = g["id"]
@@ -1478,6 +1509,27 @@ func refresh_gunshop(coins: int, owned: Array, equipped: String,
 		_armor_row["note"].text = "防弹衣 · 库存 %d 件 · 大战场部署自动穿戴（1 件 = 50 护甲）" % armor_stock
 		ab3.text = "%d 金币" % 200
 		ab3.disabled = coins < 200
+	gunshop_gun = equipped
+	var cur_fit: String = str(scope_fit.get(equipped, ""))
+	for s in Guns.SCOPES:
+		var sid2: String = s["id"]
+		var info2: Dictionary = _scope_rows.get(sid2, {})
+		if info2.is_empty():
+			continue
+		var b2: Button = info2["btn"]
+		var is_fit: bool = cur_fit == sid2
+		var is_own: bool = scopes_owned.has(sid2)
+		if is_fit:
+			b2.text = "已安装"
+			b2.disabled = false   # 再点 = 卸下
+		elif is_own:
+			b2.text = "安 装"
+			b2.disabled = false
+		else:
+			b2.text = "%d 金币" % int(s["price"])
+			b2.disabled = coins < int(s["price"])
+		info2["note"].add_theme_color_override("font_color",
+				Color(0.55, 1.0, 0.55) if is_fit else Color(0.8, 0.84, 0.9))
 
 
 ## 车辆数据界面：马力/极速/牵引/抓地/制动（基础 → 当前，配件加成标注）
@@ -1852,11 +1904,11 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var cx := sz.x * 0.5
 	var cy := sz.y * 0.5
 	if _gun_scope:
-		# 5× 档：全部枪统一高倍密位镜；1.5× 档：分枪风格镜
-		if _scope_zoom >= 1:
-			_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), "sniper")
-		else:
-			_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), _scope_gun)
+		# 滚轮 5× 档：统一高倍密位镜；否则按装备瞄具 kind（iron=机瞄）
+		var kind := "sniper" if _scope_zoom >= 1 else _scope_kind
+		_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), kind)
+		if _scope_kind == "thermal" and not _thermal_pts.is_empty():
+			_draw_thermal(cv)
 	else:
 		# 腰射准星：四段短线 + 中点
 		cv.draw_circle(Vector2(cx, cy), 2.0, Color(1, 1, 1, 0.9))
@@ -1897,6 +1949,32 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 		gun_id: String) -> void:
 	var r := m * 0.42
 	match gun_id:
+		"iron":
+			# 机瞄：两竖线 + 中心红点
+			cv.draw_line(Vector2(cx - r * 0.5, cy - r * 0.34),
+					Vector2(cx - r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
+			cv.draw_line(Vector2(cx + r * 0.5, cy - r * 0.34),
+					Vector2(cx + r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
+			cv.draw_circle(Vector2(cx, cy), 2.5, Color(1.0, 0.3, 0.2))
+		"thermal":
+			# 热成像：绿色调镜 + 十字 + 温标条
+			var tbw := r * 0.3
+			cv.draw_arc(Vector2(cx, cy), r + tbw * 0.5, 0, TAU, 72,
+					Color(0.01, 0.02, 0.01, 1.0), tbw)
+			cv.draw_arc(Vector2(cx, cy), r * 0.98, 0, TAU, 72,
+					Color(0.2, 0.9, 0.4, 0.5), 3.0)
+			cv.draw_line(Vector2(cx - r, cy), Vector2(cx + r, cy),
+					Color(0.3, 1.0, 0.5, 0.8), 1.6)
+			cv.draw_line(Vector2(cx, cy - r), Vector2(cx, cy + r),
+					Color(0.3, 1.0, 0.5, 0.8), 1.6)
+			cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.5, 1.0, 0.6))
+			for g in 4:
+				var ty := cy + r * 0.5 - g * r * 0.33
+				cv.draw_line(Vector2(cx + r * 0.86, ty), Vector2(cx + r * 0.96, ty),
+						Color(0.3, 1.0, 0.5, 0.6 - 0.1 * g), 2.0)
+			cv.draw_string(ThemeDB.fallback_font,
+					Vector2(cx + r * 0.45, cy + r * 0.45), "FLIR 4x",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.4, 0.9, 0.5, 0.9))
 		"sniper":
 			# 6× 狙击镜：暗角渐晕（连续黑环+柔边）+ 密位刻度 + 测距标
 			var bw := r * 0.36
@@ -1936,13 +2014,14 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 					Color(0.85, 1.0, 0.85, 0.4), 2.0)
 			cv.draw_circle(Vector2(cx, cy), 4.0, Color(0.4, 1.0, 0.45))
 			cv.draw_circle(Vector2(cx, cy), 1.8, Color(0.95, 1.0, 0.95))
-		"smg":
-			# 机瞄：两竖线 + 中心点（微冲不装镜）
-			cv.draw_line(Vector2(cx - r * 0.5, cy - r * 0.34),
-					Vector2(cx - r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
-			cv.draw_line(Vector2(cx + r * 0.5, cy - r * 0.34),
-					Vector2(cx + r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
-			cv.draw_circle(Vector2(cx, cy), 2.5, Color(1.0, 0.3, 0.2))
+		"reddot":
+			# 红点镜：单圈 + 大红点
+			cv.draw_arc(Vector2(cx, cy), r * 0.6 + r * 0.12, 0, TAU, 48,
+					Color(0.05, 0.05, 0.06, 0.9), r * 0.24)
+			cv.draw_arc(Vector2(cx, cy), r * 0.6, 0, TAU, 48,
+					Color(0.75, 0.78, 0.8), 2.0)
+			cv.draw_circle(Vector2(cx, cy), 5.0, Color(1.0, 0.25, 0.15, 0.95))
+			cv.draw_circle(Vector2(cx, cy), 2.2, Color(1.0, 0.85, 0.8))
 		"shotgun":
 			# 珠式准星：简圈 + 大珠心（喷子不需要精细）
 			cv.draw_arc(Vector2(cx, cy), r * 0.4, 0, TAU, 40,
@@ -1994,11 +2073,45 @@ func set_onfoot(on: bool) -> void:
 
 
 func set_scope(on: bool, gun_id := "", zoom_lv := 0) -> void:
+	set_scope_style(on, _scope_kind if gun_id == "" else "iron", zoom_lv)
+	_scope_gun = gun_id if gun_id != "" else _scope_gun
+
+
+## 开镜：on + 镜面 kind（iron/holo/reddot/optic/sniper/thermal）+ 滚轮档
+func set_scope_style(on: bool, kind: String, zoom_lv := 0) -> void:
 	_gun_scope = on
-	if gun_id != "":
-		_scope_gun = gun_id
+	_scope_kind = kind
 	_scope_zoom = zoom_lv
 	gun_overlay.queue_redraw()
+
+
+## 热成像热点开关（game 判定当前装的是热成像镜）
+func set_thermal(on: bool) -> void:
+	thermal_on = on
+	if not on:
+		_thermal_pts = []
+
+
+## 热点（已由 game 投影成屏幕归一化坐标 0..1）每帧下发
+func set_thermal_points(pts: Array) -> void:
+	if not pts.is_empty() or not thermal_on:
+		_thermal_pts = pts   # 空帧保留旧热点（敌兵短暂被挡不闪烁）
+	if thermal_on:
+		gun_overlay.queue_redraw()
+
+
+## 热点绘制：白热核心 + 橙色光晕（热成像人形温度特征）
+func _draw_thermal(cv: Control) -> void:
+	var sz: Vector2 = cv.size
+	for p in _thermal_pts:
+		var sp: Vector2 = Vector2(float(p[0]) * sz.x, float(p[1]) * sz.y)
+		# 只有落在镜面圆内的才画
+		var r := minf(sz.x, sz.y) * 0.42
+		if sp.distance_to(sz * 0.5) > r * 0.96:
+			continue
+		cv.draw_circle(sp, 6.0, Color(1.0, 0.55, 0.1, 0.25))
+		cv.draw_circle(sp, 3.2, Color(1.0, 0.8, 0.3, 0.7))
+		cv.draw_circle(sp, 1.5, Color(1.0, 1.0, 0.95, 0.98))
 
 
 func set_health(hp: float) -> void:
