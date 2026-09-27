@@ -2621,7 +2621,9 @@ func add_door(center: Vector3, heading: float, width: float, height: float,
 		mesh.material = mat
 		panel.mesh = mesh
 		if kind == "slide":
-			panel.position = Vector3(0, height * 0.5, 0)
+			# 滑门：铰链轴即门轨方向，面板沿轴铺开（竖直、与墙同面）
+			panel.position = Vector3(rv.x * leaf_w * 0.5, height * 0.5, rv.z * leaf_w * 0.5)
+			panel.rotation = Basis(Vector3.UP, heading).get_euler()
 		else:
 			panel.position = Vector3(rv.x * leaf_w * 0.5,
 					height * 0.5, rv.z * leaf_w * 0.5)
