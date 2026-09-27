@@ -704,9 +704,14 @@ func _damage_soldier(j: int, dmg: float, src: int, head: bool, weapon: String) -
 	if s["team"] == "def":
 		def_tickets -= 1   # 击杀守军立即消耗防守方兵力（HUD 数字立减）
 	_write_pose(s)
+	# 击杀距离：击杀者（玩家/士兵/载具）到受害者的水平距离
+	var kpos: Vector3 = player_pos if src == -1 \
+			else (soldiers[src]["pos"] if src >= 0 and src < soldiers.size()
+			else Vector3(s["pos"]))
+	var dist: float = Vector2(kpos.x - s["pos"].x, kpos.z - s["pos"].z).length()
 	var info := {"victim": s["name"], "victim_team": s["team"], "weapon": weapon,
 			"head": head, "by_player": src == -1, "player_died": false,
-			"victim_cls": s["cls"]}
+			"victim_cls": s["cls"], "dist": dist}
 	_credit_kill(info, src, 150 if head else 100)
 	killed.emit(info)
 

@@ -301,8 +301,14 @@ func _draw_feed(sz: Vector2, font: Font) -> void:
 	var y := 14.0 + MAP_H + 24.0
 	for f in _feed:
 		var a := clampf(float(f["t"]) / 0.6, 0.0, 1.0)
-		var parts := [[str(f["killer"]), f["kcol"]], ["  " + str(f["weapon"]) + "  ",
-				Color(0.85, 0.85, 0.85)], [str(f["victim"]), f["vcol"]]]
+		# 击杀距离：30m 内近距 / 以远远距（载具/爆炸杀伤无距离字段则不显示）
+		var dist_txt := ""
+		if f.has("dist"):
+			var dm: float = float(f["dist"])
+			dist_txt = "  %s %.0fm  " % ["近距离" if dm < 30.0 else "远距离", dm]
+		var parts := [[str(f["killer"]), f["kcol"]],
+				[dist_txt + str(f["weapon"]) + "  ", Color(0.85, 0.85, 0.85)],
+				[str(f["victim"]), f["vcol"]]]
 		if str(f["killer"]) == "":
 			parts = [["阵亡  ", Color(0.85, 0.85, 0.85)], [str(f["victim"]), f["vcol"]]]
 		var total := 0.0

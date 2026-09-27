@@ -93,9 +93,11 @@ func _spawn_pos(v: Dictionary) -> Vector3:
 	if v["type"] == "ifv":
 		off = Vector3(20.0, 0, 6.0 * back)
 	elif v["type"] == "heli":
-		off = Vector3(0.0, 0, 22.0 * back)
+		# 左翼侧：部署点一出来就能看到
+		off = Vector3(-24.0, 0, 10.0 * back)
 	elif v["type"] == "jet":
-		off = Vector3(0.0, 0, 36.0 * back)
+		# 右翼侧
+		off = Vector3(24.0, 0, 18.0 * back)
 	var p: Vector3 = base + off
 	var np: Vector2 = bf.bmap.push_out(p.x, p.z, float(type_def(v)["radius"]))
 	return Vector3(np.x, bf.bmap.terrain_height(np.x, np.y), np.y)

@@ -41,6 +41,9 @@ var fire_block := false  # 门旁屏蔽开枪（左键留给开门）
 var slide_cd := 0.0      # 滑铲冷却
 var prone := false       # Z 趴下（低速爬行 + 开镜散布再减半）
 var scope_lv := 0        # 滚轮倍镜档：0=1.5× 1=5×
+var recoil_pitch := 0.0  # 连发累计后坐力（rad，向上顶）
+var recoil_yaw := 0.0    # 后坐力水平漂移（rad）
+var recoil_cool := 0.0   # 停火计时（>0.25s 开始缓慢回落）
 var input_block := false  # 巡飞弹操控中：本体移动输入屏蔽
 var scope_provider       # game 注入：返回当前枪瞄具 Dictionary（无 = 机瞄）
 var slide_dir := Vector3.ZERO
@@ -127,6 +130,17 @@ func toggle_prone() -> void:
 	if slide_t > 0.0:
 		return
 	prone = not prone
+
+
+## 每发后坐力（度）：[基础上抬, 连发累增系数, 水平漂移幅度]
+const RECOIL := {
+	"pistol": [0.55, 0.35, 0.20],
+	"smg": [0.32, 0.16, 0.22],
+	"rifle": [0.42, 0.24, 0.26],
+	"shotgun": [2.2, 0.0, 0.8],
+	"sniper": [3.2, 0.0, 0.5],
+	"lmg": [0.50, 0.20, 0.34],
+}
 
 
 ## 当前散布倍率：腰射 1.0 / 开镜 0.1 / 趴下开镜 0.05
@@ -535,7 +549,13 @@ func update(dt: float) -> void:
 	_eye_h = lerpf(_eye_h, eye_target, 1.0 - exp(-14.0 * dt))
 	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
 	cam.position = pos + Vector3(0, _eye_h + bob, 0)
-	cam.rotation = Vector3(pitch, yaw + PI, 0)   # Godot 相机前向 = -(sin,cos)，需加 PI 对齐位移约定
+	# 后坐力叠加到视角：pitch 顶起由玩家压枪收回；停火 0.25s 后每秒回落 40%
+	recoil_cool += dt
+	if recoil_cool > 0.25 and recoil_pitch > 0.0:
+		recoil_pitch = maxf(0.0, recoil_pitch - deg_to_rad(28.0) * dt)
+		recoil_yaw = move_toward(recoil_yaw, 0.0, deg_to_rad(10.0) * dt)
+	recoil_pitch = minf(recoil_pitch, deg_to_rad(14.0))   # 上限防打天花板
+	cam.rotation = Vector3(pitch + recoil_pitch, yaw + recoil_yaw + PI, 0)
 	var scope_div: float = current_zoom() if scoped else 1.0
 	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
 	if slide_t > 0.0 and not scoped:
@@ -592,6 +612,12 @@ func _shoot() -> void:
 		_tracers.spawn(muzzle_world(), end, hit["type"] != "")
 		if hit["type"] != "":
 			shoot_hit.emit(hit["type"], hit["i"], end, dmg)
+	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折；需要向下压枪
+	var rc: Array = RECOIL.get(_gun_id, [0.4, 0.2, 0.25])
+	var mul: float = 0.6 if scoped else 1.0
+	recoil_pitch += deg_to_rad(rc[0] + rc[1] * recoil_pitch * 57.3 * 0.5) * mul
+	recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * mul
+	recoil_cool = 0.0
 	audio.play_shot()
 
 
