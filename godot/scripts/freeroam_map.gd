@@ -376,6 +376,7 @@ func _step_buildings() -> void:
 
 func _step_finish() -> void:
 	_make_garage()
+	_make_villa()
 	_make_parts_shop()
 	_make_gunshop()
 	_build_minimap()
@@ -831,6 +832,22 @@ func get_spawn() -> Dictionary:
 
 
 ## 复位到最近道路中心
+## 路肩走廊内是否有「明显高于当前路面」的垫区（别墅室内地板等）：
+## 有则 pad 覆写 surf/height，防止 24m 路肩走廊盖住室内地板
+func _pad_rises_above(x: float, z: float, vy: float) -> bool:
+	for pad in road_pads:
+		var pdx: float = x - (pad["c"] as Vector2).x
+		var pdz: float = z - (pad["c"] as Vector2).y
+		var pla: float = pdx * float(pad["fx"]) + pdz * float(pad["fz"])
+		var pll: float = pdx * float(pad["fz"]) - pdz * float(pad["fx"])
+		if absf(pla) > float(pad["hf"]) or absf(pll) > float(pad["hl"]):
+			continue
+		if float(pad["y"]) - float(_scratch["height"]) > 0.05:
+			if vy <= -1.0e8 or absf(vy - float(pad["y"])) < 3.0:
+				return true
+	return false
+
+
 func query_rescue(x: float, z: float) -> Dictionary:
 	vehicle_y = 0.0   # 复位优先回到地面层
 	var q := query(x, z, null)
@@ -1057,7 +1074,8 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 	_scratch["surf"] = "grass" if al > road.half_w + 16.0 \
 			else ("curb" if al > road.half_w else "road")
 	# 铺装区覆写（机场坪面/远城街道/地下车库地坪）：草地按道路计
-	if _scratch["surf"] == "grass":
+	if _scratch["surf"] == "grass" or (_scratch["surf"] == "curb"
+			and _pad_rises_above(x, z, vy)):
 		for pad in road_pads:
 			var pdx: float = x - (pad["c"] as Vector2).x
 			var pdz: float = z - (pad["c"] as Vector2).y
@@ -3431,6 +3449,10 @@ func _gen_buildings() -> Array:
 	var buildable := func(cx: float, cz: float, hw: float, hd: float) -> bool:
 		if absf(cx) < 150.0 and absf(cz) < 150.0:
 			return false                       # 中心广场留空
+		# 湖畔别墅地块（出生车库南侧）：楼与别墅互不压
+		if cx + hw > 194.0 and cx - hw < 224.0 \
+				and cz + hd > -506.0 and cz - hd < -478.0:
+			return false
 		for lz in LM_ZONES:
 			if Vector2(cx, cz).distance_to(lz["c"]) \
 					< float(lz["r"]) + maxf(hw, hd):
@@ -3864,6 +3886,19 @@ func _place_buildings() -> void:
 	if base.is_empty():
 		push_warning("[map] 取不到烘焙底板，回退到现跑生成器")
 		base = _gen_buildings()
+	# 湖畔别墅地块（出生车库南侧）内的底板楼剔除——烘焙数据不经过
+	# 生成器的 buildable，别墅是后加的，必须在这里手工避让
+	var villa_free := []
+	for b in base:
+		var bx: float = float(b.get("x", 0.0))
+		var bz: float = float(b.get("z", 0.0))
+		var bw: float = float(b.get("w", 0.0)) * 0.5
+		var bd: float = float(b.get("d", b.get("dep", 0.0))) * 0.5
+		if bx + bw > 192.0 and bx - bw < 226.0 \
+				and bz + bd > -508.0 and bz - bd < -476.0:
+			continue
+		villa_free.append(b)
+	base = villa_free
 	var res: Dictionary = CityData.apply_patches(base, _city)
 	orphans = res["orphans"]
 	if not orphans.is_empty():
@@ -3984,6 +4019,9 @@ func _make_street_shops() -> void:
 					cur += w + rng.range(2.0, 5.0)
 					# 中央广场 / 地标场地 / 出生车库周边不留店
 					if absf(cx) < 150.0 and absf(cz) < 150.0:
+						continue
+					# 湖畔别墅地块（车库南侧）不让街铺压进来
+					if cx > 190.0 and cx < 224.0 and cz > -506.0 and cz < -478.0:
 						continue
 					var skip := false
 					for lz in LM_ZONES:
@@ -4251,6 +4289,119 @@ func _commit_shop_mm(xfs: Array[Transform3D], cols: Array, mesh: Mesh,
 ## 卷帘门车库：出生点建筑，西门洞（8m 宽 × 4.6m 高）正对 x=180 街。
 ## 墙体碰撞按门洞分块（障碍碰撞是 2D 推出，门楣/屋顶不给碰撞）；
 ## 卷帘门贴图 + 升起动画，门体碰撞随门落下/升起挂摘。
+## 湖畔别墅：出生车库南侧的家——可下车进门闲逛（客厅/开放厨房/餐厅）。
+## 西墙自动滑门（靠近自开），落地玻璃窗，家具全部入 OBB 碰撞。
+func _make_villa() -> void:
+	var root := Node3D.new()
+	root.name = "Villa"
+	add_child(root)
+	var vx := 207.0
+	var vz := -492.0
+	var ground := 0.1
+	var wall := _lm_mat(Color(0.9, 0.87, 0.8))
+	var dark := _lm_mat(Color(0.22, 0.23, 0.26))
+	var warm_glass := _lm_mat(Color(1.0, 0.9, 0.7), Color(1.0, 0.85, 0.55), 0.8)
+	# 地板垫区（室内可行走高度）
+	road_pads.append({"c": Vector2(vx, vz), "fx": 1.0, "fz": 0.0,
+			"hf": 11.0, "hl": 8.0, "y": 0.13})
+	_lm_box(root, Vector3(vx, 0.06, vz), Vector3(22, 0.12, 16),
+			_lm_mat(Color(0.82, 0.76, 0.66)))
+	# 门廊台阶（西门口）
+	_lm_box(root, Vector3(vx - 12.2, 0.04, vz - 2.0), Vector3(3.2, 0.1, 5.0),
+			_lm_mat(Color(0.7, 0.66, 0.58)))
+	# 外墙（厚 0.3 高 3.4），西墙留 4m 自动门洞
+	var wh := 3.4
+	for w in [
+			[Vector3(vx - 11.0, wh * 0.5, vz - 8.15), Vector3(0.3, wh, 7.7)],
+			[Vector3(vx - 11.0, wh * 0.5, vz + 4.15), Vector3(0.3, wh, 7.7)],
+			[Vector3(vx + 11.0, wh * 0.5, vz), Vector3(0.3, wh, 16.0)],
+			[Vector3(vx, wh * 0.5, vz - 8.0), Vector3(22.0, wh, 0.3)],
+			[Vector3(vx, wh * 0.5, vz + 8.0), Vector3(22.0, wh, 0.3)]]:
+		_lm_box(root, w[0], w[1], wall)
+		obstacles_box.append({"c": Vector2(w[0].x, w[0].z),
+				"hx": w[1].x * 0.5, "hz": w[1].z * 0.5, "rot": 0.0})
+	# 门楣
+	_lm_box(root, Vector3(vx - 11.0, wh - 0.35, vz - 2.0),
+			Vector3(0.3, 0.7, 4.0), wall)
+	# 屋顶 + 女儿墙
+	_lm_box(root, Vector3(vx, 3.55, vz), Vector3(22.6, 0.3, 16.6),
+			_lm_mat(Color(0.55, 0.5, 0.44)))
+	for pw in [[Vector3(vx, 3.95, vz - 8.3), Vector3(22.6, 0.7, 0.3)],
+			[Vector3(vx, 3.95, vz + 8.3), Vector3(22.6, 0.7, 0.3)],
+			[Vector3(vx - 11.3, 3.95, vz), Vector3(0.3, 0.7, 16.6)],
+			[Vector3(vx + 11.3, 3.95, vz), Vector3(0.3, 0.7, 16.6)]]:
+		_lm_box(root, pw[0], pw[1], wall)
+	# 落地玻璃窗（南墙 4 块 / 北墙 2 块，暖光常亮）
+	for gx in [-7.0, -2.4, 2.4, 7.0]:
+		_lm_box(root, Vector3(vx + gx, 1.7, vz + 8.0), Vector3(3.6, 2.6, 0.12),
+				warm_glass)
+	for gx in [-5.0, 5.0]:
+		_lm_box(root, Vector3(vx + gx, 1.7, vz - 8.0), Vector3(4.2, 2.6, 0.12),
+				warm_glass)
+	# 西门自动滑门（双开玻璃）
+	var gm := StandardMaterial3D.new()
+	gm.albedo_color = Color(0.75, 0.85, 0.9, 0.5)
+	gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gm.roughness = 0.1
+	add_door(Vector3(vx - 11.0, ground, vz - 2.0), PI * 0.5, 4.0, 2.7,
+			"slide", 2, gm)
+	# 门牌
+	var plate := Label3D.new()
+	plate.text = "湖畔别墅"
+	plate.font_size = 200
+	plate.modulate = Color(0.35, 0.5, 0.75)
+	plate.outline_size = 30
+	plate.position = Vector3(vx - 11.4, 2.9, vz + 2.6)
+	plate.rotation.y = -PI * 0.5
+	root.add_child(plate)
+
+	# ---- 客厅（西半）：沙发组 + 茶几 + 电视墙 + 地毯 ----
+	var y := ground
+	_fx_rug(root, vx - 6.0, vz - 1.0, y, 6.5, 4.6, Color(0.45, 0.38, 0.3))
+	_fx_bench(root, vx - 8.3, vz - 1.0, y, PI * 0.5, 3.4,
+			Color(0.35, 0.4, 0.5))   # 三人沙发朝东
+	obstacles_box.append({"c": Vector2(vx - 8.3, vz - 1.0), "hx": 0.5,
+			"hz": 1.7, "rot": 0.0, "top": y + 0.9})
+	_lm_box(root, Vector3(vx - 5.6, y + 0.28, vz - 1.0),
+			Vector3(0.7, 0.1, 1.3), _lm_mat(Color(0.5, 0.36, 0.24)))   # 茶几
+	obstacles_box.append({"c": Vector2(vx - 5.6, vz - 1.0), "hx": 0.35,
+			"hz": 0.65, "rot": 0.0, "top": y + 0.35})
+	# 电视墙（南墙）+ 电视屏（发光）
+	_lm_box(root, Vector3(vx - 5.6, y + 1.1, vz + 7.6), Vector3(3.4, 2.2, 0.16),
+			dark)
+	_lm_box(root, Vector3(vx - 5.6, y + 1.15, vz + 7.4), Vector3(2.9, 1.6, 0.06),
+			_lm_mat(Color(0.4, 0.6, 0.8), Color(0.3, 0.55, 0.9), 1.2))
+	# ---- 开放厨房（东北角）：吧台 + 橱柜 + 冰箱 ----
+	_fx_counter(root, vx + 5.5, vz - 5.6, y, PI, 5.2, 0.9, 0.95,
+			Color(0.75, 0.78, 0.8), Color(0.85, 0.86, 0.88), false)
+	obstacles_box.append({"c": Vector2(vx + 5.5, vz - 5.6), "hx": 2.6,
+			"hz": 0.5, "rot": 0.0, "top": y + 1.0})
+	_lm_box(root, Vector3(vx + 8.9, y + 0.95, vz - 5.6), Vector3(0.9, 1.9, 0.9),
+			_lm_mat(Color(0.82, 0.84, 0.86)))   # 冰箱
+	obstacles_box.append({"c": Vector2(vx + 8.9, vz - 5.6), "hx": 0.45,
+			"hz": 0.45, "rot": 0.0, "top": y + 1.9})
+	# ---- 餐厅（东南角）：长桌 + 双凳 ----
+	_lm_box(root, Vector3(vx + 6.0, y + 0.42, vz + 3.5), Vector3(1.4, 0.09, 2.6),
+			_lm_mat(Color(0.55, 0.4, 0.26)))
+	obstacles_box.append({"c": Vector2(vx + 6.0, vz + 3.5), "hx": 0.7,
+			"hz": 1.3, "rot": 0.0, "top": y + 0.5})
+	for dz in [-0.8, 0.8]:
+		_fx_bench(root, vx + 7.4, vz + 3.5 + dz, y, 0.0, 1.6,
+				Color(0.4, 0.3, 0.22))
+		obstacles_box.append({"c": Vector2(vx + 7.4, vz + 3.5 + dz), "hx": 0.3,
+				"hz": 0.5, "rot": 0.0, "top": y + 0.5})
+	# ---- 书架（北墙）+ 绿植 + 吊灯 ----
+	_fx_shelf(root, vx - 1.0, vz - 7.7, y, 0.0, 3.6, 0.5, 2.2, 3,
+			[Color(0.7, 0.4, 0.3), Color(0.3, 0.5, 0.7), Color(0.4, 0.6, 0.4)],
+			909, true)
+	_fx_plant(root, vx - 10.0, vz - 6.8, y, 1.1)
+	_fx_plant(root, vx + 10.0, vz + 6.8, y, 1.0)
+	for lx in [-6.0, 0.0, 6.0]:
+		_lm_box(root, Vector3(vx + lx, 3.2, vz), Vector3(1.6, 0.06, 0.5),
+				_lm_mat(Color(1.0, 0.95, 0.8), Color(1.0, 0.92, 0.7), 1.4))
+	print("[map] 湖畔别墅建成（客厅/厨房/餐厅/自动门）")
+
+
 func _make_garage() -> void:
 	# 出生车库 = RRGarage 展厅（见 garage.gd，已挪到世界出生位）。
 	# 这里只建：卷帘门板 + 门体碰撞 + 展厅四周墙体 OBB + 展台垫区。
