@@ -901,6 +901,13 @@ func _battle_gadget() -> void:
 		"rpg":
 			bf.fire_rocket(eye + fwd * 0.8 + Vector3(0, -0.15, 0), fwd, bf.player_team, -1)
 			shake = minf(1.0, shake + 0.25)
+		"drone":
+			# 巡飞弹：操控中再按 G = 立即自爆；否则发射进入操控
+			if not bf.player_drone.is_empty():
+				bf._end_drone(true)
+				return   # 自爆不进 CD
+			bf.launch_drone(eye + fwd * 1.2, fwd, bf.player_team)
+			bhud.banner("巡飞弹 · 操控中", "W/S 油门 · A/D 转向 · ↑/↓ 俯仰 · G 自爆", 3.0)
 		"medkit":
 			player_hp = _battle_max_hp
 			hud.set_health(player_hp)
@@ -1992,6 +1999,8 @@ func _on_foot_shot(kind: String, idx: int, point: Vector3, dmg: float = 20.0) ->
 	if OS.get_environment("RR_DBG_SHOT") != "":
 		print("[shotdbg] 命中 kind=%s idx=%d dmg=%.0f" % [kind, idx, dmg])
 	if state == ST.BATTLE and bf != null:
+		if not bf.player_drone.is_empty():
+			return   # 操控巡飞弹时左键不开枪
 		bf.player_shot(kind, idx, dmg)
 		return
 	if kind == "ped":
@@ -2814,12 +2823,25 @@ func _step_sim(h: float) -> void:
 	if s == ST.BATTLE:
 		if bf == null or bmap == null:
 			return
+		if on_foot:
+			onfoot.input_block = not bf.player_drone.is_empty()   # 操控巡飞弹时本体站定
 		if on_foot and bf.player_alive and not bf.battle_over:
 			onfoot.update(h)
 			bf.player_pos = onfoot.pos
+		# bf.update 可能在本帧内引爆巡飞弹（字典清空），使用前必须重查
+		if on_foot and not bf.player_drone.is_empty():
+			# 相机切弹体后上方追尾位，看向弹体前方
+			var dp: Vector3 = bf.player_drone["pos"]
+			var dyaw: float = float(bf.player_drone["yaw"])
+			var cp: Vector3 = dp - Vector3(sin(dyaw), 0, cos(dyaw)) * 5.5 \
+					+ Vector3(0, 2.2, 0)
+			camera.global_transform = Transform3D(
+					Basis.looking_at(dp - cp), cp)
 		elif bf.veh.player_v >= 0:
 			bf.player_pos = bf.veh.vehicles[bf.veh.player_v]["pos"]
 		bf.update(h)
+		if on_foot:
+			onfoot.input_block = not bf.player_drone.is_empty()   # 爆炸帧立即恢复
 		if on_foot and bf.player_alive:
 			_no_dmg_t += h
 			# 5 秒未受击开始回血（支援兵更快）

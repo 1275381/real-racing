@@ -30,7 +30,7 @@ const CLASSES := [
 		"gun": "rifle", "gadget": "grenade", "gadget_name": "手雷", "gadget_cd": 12.0},
 	{"id": "engineer", "name": "工程", "hp": 70.0, "speed": 7.6,
 		"dmg": [4.0, 7.0], "cd": 0.08, "burst": 6, "range": 55.0, "acc": 0.105,
-		"gun": "smg", "gadget": "rpg", "gadget_name": "火箭筒", "gadget_cd": 14.0},
+		"gun": "smg", "gadget": "drone", "gadget_name": "巡飞弹", "gadget_cd": 14.0},
 	{"id": "support", "name": "支援", "hp": 80.0, "speed": 6.6,
 		"dmg": [5.0, 7.0], "cd": 0.09, "burst": 9, "range": 80.0, "acc": 0.115,
 		"gun": "lmg", "gadget": "medkit", "gadget_name": "医疗包", "gadget_cd": 20.0},
@@ -67,6 +67,7 @@ var player_stats := {"kills": 0, "deaths": 0, "score": 0}
 var sector := 0                   # 当前争夺区域（0..2）；=3 表示进攻方已全部拿下
 var tickets := ATK_TICKETS
 var def_tickets := DEF_TICKETS
+var player_drone := {}   # 玩家操控巡飞弹 {active,pos,yaw,pitch,speed,t,vis,team}
 var pts: Array = []               # [sector][point] -> {owner, prog(0守..1攻), atk_n, def_n}
 var soldiers: Array = []          # 两队 48 人（死亡后原地复用重生）
 
@@ -111,6 +112,10 @@ func start(side: String) -> void:
 	tickets = ATK_TICKETS
 	def_tickets = DEF_TICKETS
 	_clear_projectiles()
+	if not player_drone.is_empty():
+		if player_drone.get("vis", null) != null:
+			(player_drone["vis"] as Node3D).queue_free()
+		player_drone = {}
 	pts.clear()
 	for si in bmap.SECTORS.size():
 		var row: Array = []
@@ -297,6 +302,8 @@ func update(dt: float) -> void:
 	if not active or battle_over:
 		return
 	veh.update(dt)
+	if not player_drone.is_empty() and player_alive:
+		_update_drone(dt)
 	_cap_acc += dt
 	if _cap_acc >= 0.1:
 		_update_capture(_cap_acc)
@@ -851,6 +858,157 @@ func throw_grenade(from: Vector3, dir: Vector3, team: String, src: int) -> void:
 
 func fire_rocket(from: Vector3, dir: Vector3, team: String, src: int) -> void:
 	spawn_projectile("rocket", from, dir * 75.0, team, src, 120.0, 260.0, 4.5, "火箭筒", -1)
+
+
+# ================= 玩家巡飞弹（工程兵 G 键）：飞机规则操控，撞击自爆 =================
+
+const DRONE_SPEED_MIN := 12.0
+const DRONE_SPEED_MAX := 42.0
+const DRONE_TURN := 1.6        # 偏航角速度 rad/s
+const DRONE_PITCH_RATE := 1.1
+const DRONE_LIFE := 9.0        # 操控上限（超时自爆）
+const DRONE_DMG := 110.0
+const DRONE_VDMG := 200.0
+const DRONE_RADIUS := 5.5
+
+## 发射：从玩家眼前起飞，玩家进入操控（本体站定）
+func launch_drone(from: Vector3, dir: Vector3, team: String) -> void:
+	player_drone = {"active": true, "pos": from, "yaw": atan2(dir.x, dir.z),
+			"pitch": asin(clampf(dir.y, -1.0, 1.0)), "speed": 24.0,
+			"t": DRONE_LIFE, "vis": _make_drone_vis(), "team": team}
+	player_drone["vis"].position = from
+
+
+func _make_drone_vis() -> Node3D:
+	var root := Node3D.new()
+	var body := CylinderMesh.new()
+	body.top_radius = 0.09
+	body.bottom_radius = 0.05
+	body.height = 0.85
+	body.radial_segments = 8
+	var bm := StandardMaterial3D.new()
+	bm.albedo_color = Color(0.22, 0.24, 0.2)
+	bm.emission_enabled = true
+	bm.emission = Color(0.2, 0.5, 0.25)
+	bm.emission_energy_multiplier = 0.6
+	body.material = bm
+	var b := MeshInstance3D.new()
+	b.mesh = body
+	b.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(b)
+	# 十字翼 + 头部传感球 + 尾焰
+	var wm := StandardMaterial3D.new()
+	wm.albedo_color = Color(0.16, 0.18, 0.15)
+	for ax in [0.0, 90.0]:
+		var wing := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(1.15, 0.02, 0.22)
+		box.material = wm
+		wing.mesh = box
+		wing.rotation_degrees = Vector3(0, ax, 0)
+		wing.position = Vector3(0, 0, -0.1)
+		root.add_child(wing)
+	var eye := MeshInstance3D.new()
+	var em := StandardMaterial3D.new()
+	em.albedo_color = Color(0.1, 0.6, 0.9)
+	em.emission_enabled = true
+	em.emission = Color(0.2, 0.8, 1.0)
+	em.emission_energy_multiplier = 1.6
+	var sm := SphereMesh.new()
+	sm.radius = 0.07
+	sm.height = 0.14
+	sm.material = em
+	eye.mesh = sm
+	eye.position = Vector3(0, 0, -0.48)
+	root.add_child(eye)
+	var fl := MeshInstance3D.new()
+	var fm2 := StandardMaterial3D.new()
+	fm2.albedo_color = Color(1.0, 0.6, 0.2)
+	fm2.emission_enabled = true
+	fm2.emission = Color(1.0, 0.55, 0.15)
+	fm2.emission_energy_multiplier = 2.5
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.03
+	cm.bottom_radius = 0.07
+	cm.height = 0.22
+	cm.material = fm2
+	fl.mesh = cm
+	fl.rotation_degrees = Vector3(90, 0, 0)
+	fl.position = Vector3(0, 0, 0.5)
+	root.add_child(fl)
+	add_child(root)
+	return root
+
+
+## 每帧：读输入按飞机规则推进 + 撞击判定（墙/载具/士兵/玩家/地面/超时）
+func _update_drone(dt: float) -> void:
+	var d: Dictionary = player_drone
+	var fwd := Vector3(sin(float(d["yaw"])) * cos(float(d["pitch"])), sin(float(d["pitch"])),
+			cos(float(d["yaw"])) * cos(float(d["pitch"])))
+	# 油门
+	var thr := 0.0
+	if Input.is_physical_key_pressed(KEY_W):
+		thr += 1.0
+	if Input.is_physical_key_pressed(KEY_S):
+		thr -= 1.0
+	d["speed"] = clampf(float(d["speed"]) + thr * 14.0 * dt, DRONE_SPEED_MIN, DRONE_SPEED_MAX)
+	# 转向 / 俯仰（飞机规则：A/D 偏航、↑推杆低头 ↓拉杆爬升）
+	var turn := 0.0
+	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
+		turn += 1.0
+	if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
+		turn -= 1.0
+	d["yaw"] = wrapf(float(d["yaw"]) + turn * DRONE_TURN * dt, -PI, PI)
+	var pit := 0.0
+	if Input.is_physical_key_pressed(KEY_UP):
+		pit -= 1.0
+	if Input.is_physical_key_pressed(KEY_DOWN):
+		pit += 1.0
+	d["pitch"] = clampf(float(d["pitch"]) + pit * DRONE_PITCH_RATE * dt, -1.2, 1.2)
+	var np: Vector3 = Vector3(d["pos"]) + fwd * float(d["speed"]) * dt
+	np.x = clampf(np.x, -240.0, 240.0)
+	np.z = clampf(np.z, -190.0, 190.0)
+	d["t"] = float(d["t"]) - dt
+	var boom := float(d["t"]) <= 0.0
+	var pos: Vector3 = Vector3(d["pos"])
+	var seg := np - pos
+	var sl := seg.length()
+	if sl > 0.001:
+		var wd: float = bmap.ray_wall(pos, seg / sl, sl)
+		if wd < INF:
+			np = pos + seg / sl * wd
+			boom = true
+	if not boom and np.y < bmap.terrain_height(np.x, np.z) + 0.3:
+		np.y = bmap.terrain_height(np.x, np.z) + 0.3
+		boom = true
+	if not boom and veh.hit_test(np, str(d["team"]), -1) >= 0:
+		boom = true
+	if not boom:
+		for s in soldiers:
+			if not s["dead"] and s["team"] != d["team"] \
+					and (s["pos"] + Vector3(0, 1.0, 0)).distance_to(np) < 1.4:
+				boom = true
+				break
+	# 视觉
+	var vis: Node3D = d["vis"]
+	vis.position = np
+	vis.look_at(np + fwd, Vector3.UP)
+	d["pos"] = np
+	if boom:
+		_end_drone(true)
+
+
+## 结束：boom=撞击/超时爆炸，否则安静回收（换弹/退场）
+func _end_drone(boom: bool) -> void:
+	var d: Dictionary = player_drone
+	if d.is_empty():
+		return
+	if d.get("vis", null) != null:
+		(d["vis"] as Node3D).queue_free()
+	if boom:
+		explode_raw(Vector3(d["pos"]), DRONE_RADIUS, DRONE_DMG, DRONE_VDMG,
+				str(d["team"]), -1, "巡飞弹")
+	player_drone = {}
 
 
 ## 通用投射物：grenade 抛物线 + 引信；rocket / rockets / shell / cannon 直飞触发。

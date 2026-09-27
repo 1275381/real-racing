@@ -41,6 +41,7 @@ var fire_block := false  # 门旁屏蔽开枪（左键留给开门）
 var slide_cd := 0.0      # 滑铲冷却
 var prone := false       # Z 趴下（低速爬行 + 开镜散布再减半）
 var scope_lv := 0        # 滚轮倍镜档：0=1.5× 1=5×
+var input_block := false  # 巡飞弹操控中：本体移动输入屏蔽
 var slide_dir := Vector3.ZERO
 var _eye_h := EYE_H
 var _last_idx = null
@@ -452,7 +453,11 @@ func update(dt: float) -> void:
 	slide_cd = maxf(0.0, slide_cd - dt)
 	var mf := 0.0
 	var ms := 0.0
-	if Input.is_physical_key_pressed(KEY_W):
+	if input_block:
+		move_speed = 0.0
+		mf = 0
+		ms = 0
+	elif Input.is_physical_key_pressed(KEY_W):
 		mf += 1.0
 	if Input.is_physical_key_pressed(KEY_S):
 		mf -= 1.0
