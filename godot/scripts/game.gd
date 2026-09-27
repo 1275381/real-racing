@@ -1131,8 +1131,17 @@ func _thermal_points() -> Array:
 			if u.get("hp", 0.0) <= 0.0:
 				continue
 			var c2: Vector3 = Vector3(u["pos"]) + Vector3(0, 1.2, 0)
-			if c2.distance_to(eye) <= 80.0 					and (c2 - eye).normalized().dot(eye_f) >= 0.3:
+			if c2.distance_to(eye) <= 80.0 \
+					and (c2 - eye).normalized().dot(eye_f) >= 0.0:
 				out.append(c2)
+		# 平民行人也算「人」：热成像一视同仁
+		for pd in npc.peds:
+			if pd.get("dead", false):
+				continue
+			var c3: Vector3 = Vector3(pd["pos"]) + Vector3(0, 1.2, 0)
+			if c3.distance_to(eye) <= 80.0 \
+					and (c3 - eye).normalized().dot(eye_f) >= 0.0:
+				out.append(c3)
 	return out
 func _current_scope_kind() -> String:
 	return str(player_scope().get("kind", "iron"))
@@ -1172,8 +1181,14 @@ func _on_scope_pick(scope_id: String, gun_id: String) -> void:
 
 ## 当前枪的瞄具（无 = 机瞄）
 func player_scope() -> Dictionary:
-	var f = scope_fit.get(gun_equipped, "")
-	return Guns.scope_by_id(str(f)) if f != "" else {}
+	var f = str(scope_fit.get(gun_equipped, ""))
+	# 大战场：兵种枪自己的瞄具优先；没装则继承玩家装备枪带来的瞄具
+	if state == ST.BATTLE and _battle_cls >= 0:
+		var bg: String = str(RRBattleField.CLASSES[_battle_cls]["gun"])
+		var bf_fit := str(scope_fit.get(bg, ""))
+		if bf_fit != "":
+			return Guns.scope_by_id(bf_fit)
+	return Guns.scope_by_id(f) if f != "" else {}
 
 
 ## 购买防弹衣（枪械店）：200 金币/件进库存，大战场部署时自动消耗
@@ -2746,6 +2761,18 @@ func _step_sim(h: float) -> void:
 			npc.player_vel = Vector3(sin(onfoot.yaw), 0, cos(onfoot.yaw)) * onfoot.move_speed
 			npc.player_speed = onfoot.move_speed
 			npc.player_on_foot = true
+			# 热成像：漫游步行开镜同样每帧采集（警察 + 行人热点）
+			if onfoot.scoped and _current_scope_kind() == "thermal":
+				hud.thermal_on = true
+				var pts_r: Array = []
+				var vp_r := get_viewport()
+				var vs_r := vp_r.get_visible_rect().size
+				for wp_r in _thermal_points():
+					var sp_r: Vector2 = vp_r.get_camera_3d().unproject_position(wp_r)
+					pts_r.append([sp_r.x / vs_r.x, sp_r.y / vs_r.y])
+				hud.set_thermal_points(pts_r)
+			elif hud.thermal_on:
+				hud.set_thermal(false)
 			_no_dmg_t += h
 			if _no_dmg_t > 6.0:
 				player_hp = minf(100.0, player_hp + 5.0 * h)
