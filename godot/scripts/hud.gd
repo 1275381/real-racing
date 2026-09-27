@@ -1937,31 +1937,40 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 			cv.draw_circle(Vector2(cx, cy), 4.0, Color(0.4, 1.0, 0.45))
 			cv.draw_circle(Vector2(cx, cy), 1.8, Color(0.95, 1.0, 0.95))
 		"smg":
-			# 红点镜：单圈 + 大红点
-			cv.draw_arc(Vector2(cx, cy), r * 0.6 + r * 0.12, 0, TAU, 48,
-					Color(0.05, 0.05, 0.06, 0.9), r * 0.24)
-			cv.draw_arc(Vector2(cx, cy), r * 0.6, 0, TAU, 48,
-					Color(0.75, 0.78, 0.8), 2.0)
-			cv.draw_circle(Vector2(cx, cy), 5.0, Color(1.0, 0.25, 0.15, 0.95))
-			cv.draw_circle(Vector2(cx, cy), 2.2, Color(1.0, 0.85, 0.8))
+			# 机瞄：两竖线 + 中心点（微冲不装镜）
+			cv.draw_line(Vector2(cx - r * 0.5, cy - r * 0.34),
+					Vector2(cx - r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
+			cv.draw_line(Vector2(cx + r * 0.5, cy - r * 0.34),
+					Vector2(cx + r * 0.5, cy + r * 0.34), Color(0.9, 0.9, 0.95, 0.9), 3.0)
+			cv.draw_circle(Vector2(cx, cy), 2.5, Color(1.0, 0.3, 0.2))
 		"shotgun":
 			# 珠式准星：简圈 + 大珠心（喷子不需要精细）
 			cv.draw_arc(Vector2(cx, cy), r * 0.4, 0, TAU, 40,
 					Color(0.08, 0.08, 0.1, 0.85), r * 0.16)
 			cv.draw_circle(Vector2(cx, cy), 6.5, Color(1.0, 0.62, 0.1, 0.95))
 		"lmg":
-			# 战地机瞄：宽圈 + 三角尖标 + 横短杠
-			cv.draw_arc(Vector2(cx, cy), r * 0.24 + r * 0.07, 0, TAU, 48,
-					Color(0.04, 0.04, 0.05, 0.92), r * 0.10)
-			var tri := r * 0.06
-			cv.draw_colored_polygon(PackedVector2Array([
-					Vector2(cx, cy - tri * 0.4), Vector2(cx - tri * 0.5, cy + tri * 0.5),
-					Vector2(cx + tri * 0.5, cy + tri * 0.5)]),
-					Color(1.0, 0.75, 0.15, 0.95))
-			cv.draw_line(Vector2(cx - r * 0.24, cy + r * 0.14),
-					Vector2(cx - r * 0.13, cy + r * 0.14), Color(1.0, 0.75, 0.15, 0.7), 2.0)
-			cv.draw_line(Vector2(cx + r * 0.13, cy + r * 0.14),
-					Vector2(cx + r * 0.24, cy + r * 0.14), Color(1.0, 0.75, 0.15, 0.7), 2.0)
+			# 1.5× 光学镜：窄暗角圆环 + 细十字 + 1.5x 标注（机枪专属低倍镜）
+			var lbw := r * 0.14
+			cv.draw_arc(Vector2(cx, cy), r * 0.62 + lbw * 0.5, 0, TAU, 64,
+					Color(0.02, 0.02, 0.03, 0.97), lbw)
+			for g in 2:
+				var gw := r * 0.03
+				cv.draw_arc(Vector2(cx, cy), r * 0.62 - gw * 0.5 - gw * float(g),
+						0, TAU, 64, Color(0.02, 0.02, 0.03, 0.26 - 0.08 * float(g)), gw)
+			cv.draw_line(Vector2(cx - r * 0.62, cy), Vector2(cx + r * 0.62, cy),
+					Color(0.1, 0.1, 0.12, 0.85), 1.6)
+			cv.draw_line(Vector2(cx, cy - r * 0.62), Vector2(cx, cy + r * 0.62),
+					Color(0.1, 0.1, 0.12, 0.85), 1.6)
+			for k in [-2, -1, 1, 2]:
+				var off := r * 0.14 * float(k)
+				cv.draw_line(Vector2(cx + off, cy - 6), Vector2(cx + off, cy + 6),
+						Color(0.1, 0.1, 0.12, 0.8), 1.4)
+				cv.draw_line(Vector2(cx - 6, cy + off), Vector2(cx + 6, cy + off),
+						Color(0.1, 0.1, 0.12, 0.8), 1.4)
+			cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.95, 0.2, 0.12))
+			cv.draw_string(ThemeDB.fallback_font,
+					Vector2(cx + r * 0.48, cy + r * 0.48), "1.5x",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.5, 0.55, 0.5, 0.9))
 		_:
 			# 手枪机瞄：两竖一横
 			cv.draw_line(Vector2(cx - r * 0.5, cy - r * 0.34),
