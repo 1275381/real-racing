@@ -2008,6 +2008,28 @@ func _landmark_interact() -> bool:
 		hud.show_center("已下摩天轮", "", 1200)
 		return true
 	var p := onfoot.pos
+	# 湖畔别墅电梯：井内 F = 上一层（三层循环），轿厢到位即乘
+	var villa_d: float = Vector2(p.x - FreeroamMap.VILLA_ELEV.x,
+			p.z - FreeroamMap.VILLA_ELEV.y).length()
+	if freeroam != null and villa_d < 3.2 and p.y < 10.0:
+		freeroam.set_active_elevator("villa")
+		var cur := 0
+		for li in FreeroamMap.VILLA_LV.size():
+			if absf(p.y - float(FreeroamMap.VILLA_LV[li])) < 1.8:
+				cur = li
+				break
+		var nxt := (cur + 1) % FreeroamMap.VILLA_LV.size()
+		var target: float = float(FreeroamMap.VILLA_LV[nxt])
+		if absf(freeroam.elevator_y() - p.y) < 1.8:
+			elev_ride = true
+			_elev_y = freeroam.elevator_y()
+			_elev_target = target
+			hud.set_board_hint(false)
+			hud.show_center("电梯 %dF → %dF" % [cur + 1, nxt + 1],
+					"G 下一层 · 到达后自动开门", 1600)
+		else:
+			hud.show_center("电梯呼叫中", "轿厢正在赶来 · 请稍候", 1400)
+		return true
 	# 电视塔电梯：井道内按 F（轿厢到位才能乘，未到位自动呼叫）
 	var shaft_d: float = Vector2(p.x - 90, p.z - 102).length()
 	if p.y < 50.0 and shaft_d < 3.4:
@@ -2733,16 +2755,19 @@ func _step_sim(h: float) -> void:
 		elif on_foot:
 			# 步行：第一人称移动/射击，车辆冻结在原地
 			if elev_ride and freeroam != null:
-				# 电视塔电梯：轿厢载人在井道内运行
+				# 电梯：轿厢载人（塔 / 别墅共用状态机，坐标走活跃井）
+				var dir_mul := 1.0
+				if freeroam.active_elev == "villa" and _elev_target < _elev_y:
+					dir_mul = -1.0   # 别墅下行（目标低于当前）
 				_elev_y = move_toward(_elev_y, _elev_target, 26.0 * h)
 				freeroam.set_elevator_y(_elev_y)
-				onfoot.pos = Vector3(90, _elev_y + 0.05, 102)
-				if _elev_y >= _elev_target:
+				var rp: Vector3 = freeroam.elevator_ride_pos()
+				onfoot.pos = Vector3(rp.x, _elev_y + 0.05, rp.z)
+				var arrived: bool = absf(_elev_y - _elev_target) < 0.01
+				if arrived:
 					elev_ride = false
-					onfoot.enter(Vector3(90, _elev_target, 103.6)
-							if _elev_target > 100.0
-							else Vector3(90, _elev_target, 106.0),
-							onfoot.yaw)
+					var ep: Vector3 = freeroam.elevator_exit_pos(_elev_target)
+					onfoot.enter(ep, onfoot.yaw)
 			elif wheel_ride and freeroam != null:
 				# 摩天轮观景：人物贴吊舱座位，鼠标视角照常（不走路）
 				onfoot.pos = freeroam.gondola_seat(_wheel_gi)
