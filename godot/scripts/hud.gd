@@ -74,6 +74,7 @@ var _wanted_blink_t := 0.0
 var gun_overlay: Control       # 步行 HUD：准星/三倍镜遮罩/血条/弹药
 var _gun_scope := false
 var _scope_gun := "rifle"   # 当前持枪（决定镜面风格）
+var _scope_zoom := 0        # 0=1.5× 分枪风格镜 1=5× 狙击密位镜
 var _gun_hp := 100.0
 var _gun_armor := 0.0
 var _armor_row := {}   # 枪械店防弹衣行 {btn, note}
@@ -1851,7 +1852,11 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var cx := sz.x * 0.5
 	var cy := sz.y * 0.5
 	if _gun_scope:
-		_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), _scope_gun)
+		# 5× 档：全部枪统一高倍密位镜；1.5× 档：分枪风格镜
+		if _scope_zoom >= 1:
+			_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), "sniper")
+		else:
+			_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), _scope_gun)
 	else:
 		# 腰射准星：四段短线 + 中点
 		cv.draw_circle(Vector2(cx, cy), 2.0, Color(1, 1, 1, 0.9))
@@ -1915,7 +1920,7 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 						Color(0.1, 0.1, 0.12, 0.85), 1.4)
 			cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.95, 0.2, 0.12))
 			cv.draw_string(ThemeDB.fallback_font, Vector2(cx + r * 0.42, cy + r * 0.5),
-					"6x", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.5, 0.55, 0.5, 0.9))
+					"5x", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.5, 0.55, 0.5, 0.9))
 		"rifle":
 			# 全息镜：内方框 + 中心绿点 + 角标
 			var hr := r * 0.55
@@ -1946,17 +1951,17 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 			cv.draw_circle(Vector2(cx, cy), 6.5, Color(1.0, 0.62, 0.1, 0.95))
 		"lmg":
 			# 战地机瞄：宽圈 + 三角尖标 + 横短杠
-			cv.draw_arc(Vector2(cx, cy), r * 0.40 + r * 0.11, 0, TAU, 48,
-					Color(0.04, 0.04, 0.05, 0.92), r * 0.22)
-			var tri := r * 0.12
+			cv.draw_arc(Vector2(cx, cy), r * 0.24 + r * 0.07, 0, TAU, 48,
+					Color(0.04, 0.04, 0.05, 0.92), r * 0.10)
+			var tri := r * 0.06
 			cv.draw_colored_polygon(PackedVector2Array([
 					Vector2(cx, cy - tri * 0.4), Vector2(cx - tri * 0.5, cy + tri * 0.5),
 					Vector2(cx + tri * 0.5, cy + tri * 0.5)]),
 					Color(1.0, 0.75, 0.15, 0.95))
-			cv.draw_line(Vector2(cx - r * 0.40, cy + r * 0.24),
-					Vector2(cx - r * 0.22, cy + r * 0.24), Color(1.0, 0.75, 0.15, 0.7), 2.0)
-			cv.draw_line(Vector2(cx + r * 0.22, cy + r * 0.24),
-					Vector2(cx + r * 0.40, cy + r * 0.24), Color(1.0, 0.75, 0.15, 0.7), 2.0)
+			cv.draw_line(Vector2(cx - r * 0.24, cy + r * 0.14),
+					Vector2(cx - r * 0.13, cy + r * 0.14), Color(1.0, 0.75, 0.15, 0.7), 2.0)
+			cv.draw_line(Vector2(cx + r * 0.13, cy + r * 0.14),
+					Vector2(cx + r * 0.24, cy + r * 0.14), Color(1.0, 0.75, 0.15, 0.7), 2.0)
 		_:
 			# 手枪机瞄：两竖一横
 			cv.draw_line(Vector2(cx - r * 0.5, cy - r * 0.34),
@@ -1979,10 +1984,11 @@ func set_onfoot(on: bool) -> void:
 		_gun_scope = false
 
 
-func set_scope(on: bool, gun_id := "") -> void:
+func set_scope(on: bool, gun_id := "", zoom_lv := 0) -> void:
 	_gun_scope = on
 	if gun_id != "":
 		_scope_gun = gun_id
+	_scope_zoom = zoom_lv
 	gun_overlay.queue_redraw()
 
 

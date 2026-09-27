@@ -40,6 +40,7 @@ var slide_t := 0.0       # 剩余滑铲时间（>0 = 铲行中）
 var fire_block := false  # 门旁屏蔽开枪（左键留给开门）
 var slide_cd := 0.0      # 滑铲冷却
 var prone := false       # Z 趴下（低速爬行 + 开镜散布再减半）
+var scope_lv := 0        # 滚轮倍镜档：0=1.5× 1=5×
 var slide_dir := Vector3.ZERO
 var _eye_h := EYE_H
 var _last_idx = null
@@ -255,9 +256,11 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 			# 大弹鼓：轴平行枪管，挂在机匣下方偏左（第一人称视界内可见）
 			_cyl.call(Vector3(0.105, 0.105, 0.09), Vector3(-0.07, -0.13, -0.12), Vector3(90, 0, 0), steel)
 			_cyl.call(Vector3(0.045, 0.045, 0.10), Vector3(-0.07, -0.13, -0.12), Vector3(90, 0, 0), dark)
-			# 两脚架：从枪管下方向前下方张开（绕 X 前倾，不再左右横张）
-			add_box.call(Vector3(0.022, 0.24, 0.022), Vector3(-0.035, -0.13, -0.76), Vector3(14, 0, 7), steel)
-			add_box.call(Vector3(0.022, 0.24, 0.022), Vector3(0.035, -0.13, -0.76), Vector3(14, 0, -7), steel)
+			# 两脚架：八字形——安装点收拢在枪管正下，两腿向下并向两侧
+			# 外张（rot Z ±14°）+ 微前倾（rot X 5°），顶尖分叉处加横梁
+			add_box.call(Vector3(0.02, 0.26, 0.02), Vector3(-0.055, -0.14, -0.74), Vector3(5, 0, 14), steel)
+			add_box.call(Vector3(0.02, 0.26, 0.02), Vector3(0.055, -0.14, -0.74), Vector3(5, 0, -14), steel)
+			add_box.call(Vector3(0.05, 0.016, 0.016), Vector3(0, -0.24, -0.72), Vector3.ZERO, steel)
 			# 提把 + 枪托 + 扳机护圈
 			add_box.call(Vector3(0.024, 0.05, 0.14), Vector3(0, 0.10, -0.05), Vector3.ZERO, steel)
 			add_box.call(Vector3(0.055, 0.11, 0.22), Vector3(0, -0.03, 0.22), Vector3(-4, 0, 0), dark)
@@ -527,7 +530,7 @@ func update(dt: float) -> void:
 	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
 	cam.position = pos + Vector3(0, _eye_h + bob, 0)
 	cam.rotation = Vector3(pitch, yaw + PI, 0)   # Godot 相机前向 = -(sin,cos)，需加 PI 对齐位移约定
-	var scope_div: float = _g.get("scope_div", 1.0) if scoped else 1.0
+	var scope_div: float = current_zoom() if scoped else 1.0
 	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
 	if slide_t > 0.0 and not scoped:
 		target_fov += 10.0   # 滑铲速度感
@@ -611,3 +614,14 @@ func set_ammo_type(ammo_id: String) -> void:
 ## 三倍镜开关（M 键）
 func toggle_scope() -> void:
 	scoped = not scoped
+
+
+## 滚轮切倍镜：0=1.5×（分枪风格镜）1=5×（狙击密位镜），开镜中即时生效
+func cycle_scope_zoom(dir: int) -> void:
+	scope_lv = wrapi(scope_lv + dir, 0, 2)
+
+
+## 当前开镜倍率（枪械自带 scope_div 与滚轮档位取大者）
+func current_zoom() -> float:
+	var gz := 1.5 if scope_lv == 0 else 5.0
+	return maxf(gz, _g.get("scope_div", 1.0) if scoped else 1.0)
