@@ -3890,14 +3890,15 @@ func _place_buildings() -> void:
 		base = _gen_buildings()
 	# 湖畔别墅地块（出生车库南侧）内的底板楼剔除——烘焙数据不经过
 	# 生成器的 buildable，别墅是后加的，必须在这里手工避让
+	# 底板字段是 w/dep（半宽在生成端才除 2），矩形覆盖整块别墅+门口引道
 	var villa_free := []
 	for b in base:
 		var bx: float = float(b.get("x", 0.0))
 		var bz: float = float(b.get("z", 0.0))
 		var bw: float = float(b.get("w", 0.0)) * 0.5
-		var bd: float = float(b.get("d", b.get("dep", 0.0))) * 0.5
-		if bx + bw > 192.0 and bx - bw < 226.0 \
-				and bz + bd > -508.0 and bz - bd < -476.0:
+		var bd: float = float(b.get("dep", 0.0)) * 0.5
+		if bx + bw > 190.0 and bx - bw < 228.0 \
+				and bz + bd > -504.0 and bz - bd < -474.0:
 			continue
 		villa_free.append(b)
 	base = villa_free
@@ -4365,17 +4366,15 @@ func _make_villa() -> void:
 	plate.position = Vector3(vx - 11.4, 2.9, vz + 2.6)
 	plate.rotation.y = -PI * 0.5
 	root.add_child(plate)
-	# 一层室内（原样保留）
+	# 一层室内：沙发靠北墙（远离西门动线——原位置正对门口 2.7m，进门即卡）
 	var y1: float = lv[0]
-	_fx_rug(root, vx - 6.0, vz - 1.0, y1, 6.5, 4.6, Color(0.45, 0.38, 0.3))
-	_fx_bench(root, vx - 8.3, vz - 1.0, y1, PI * 0.5, 3.4,
-			Color(0.35, 0.4, 0.5))
-	obstacles_box.append({"c": Vector2(vx - 8.3, vz - 1.0), "hx": 0.5,
-			"hz": 1.7, "rot": 0.0, "top": y1 + 0.9})
-	_lm_box(root, Vector3(vx - 5.6, y1 + 0.28, vz - 1.0),
-			Vector3(0.7, 0.1, 1.3), _lm_mat(Color(0.5, 0.36, 0.24)))
-	obstacles_box.append({"c": Vector2(vx - 5.6, vz - 1.0), "hx": 0.35,
-			"hz": 0.65, "rot": 0.0, "top": y1 + 0.35})
+	_fx_rug(root, vx - 4.0, vz - 2.5, y1, 6.0, 4.2, Color(0.45, 0.38, 0.3))
+	_fx_bench(root, vx - 4.0, vz - 4.6, y1, 0.0, 3.4,
+			Color(0.35, 0.4, 0.5))   # 靠北墙朝南（电视在南墙）
+	_lm_box(root, Vector3(vx - 4.0, y1 + 0.28, vz - 1.6),
+			Vector3(1.3, 0.1, 0.7), _lm_mat(Color(0.5, 0.36, 0.24)))
+	obstacles_box.append({"c": Vector2(vx - 4.0, vz - 1.6), "hx": 0.65,
+			"hz": 0.35, "rot": 0.0, "top": y1 + 0.35})
 	_lm_box(root, Vector3(vx - 5.6, y1 + 1.1, vz + 7.6), Vector3(3.4, 2.2, 0.16),
 			dark)
 	_lm_box(root, Vector3(vx - 5.6, y1 + 1.15, vz + 7.4), Vector3(2.9, 1.6, 0.06),
@@ -4473,8 +4472,9 @@ func _make_villa() -> void:
 			[Vector3(208.0, by + 2.9, -497.5), Vector3(5.8, 0.3, 27.0)],
 			[Vector3(208.0, by + 1.4, -511.2), Vector3(5.8, 2.8, 0.3)]]:
 		_lm_box(root, tw[0], tw[1], _lm_mat(Color(0.35, 0.36, 0.4)))
+		# 隧道墙带 top/bot：地面行走不受地下墙阻挡
 		obstacles_box.append({"c": Vector2(tw[0].x, tw[0].z), "hx": tw[1].x * 0.5,
-				"hz": tw[1].z * 0.5, "rot": 0.0})
+				"hz": tw[1].z * 0.5, "rot": 0.0, "top": by + 2.9, "bot": by})
 	# 地下军械室（别墅正下方 20×14）
 	road_pads.append({"c": Vector2(vx, vz), "fx": 1.0, "fz": 0.0,
 			"hf": 10.0, "hl": 7.0, "y": by})
@@ -4485,7 +4485,7 @@ func _make_villa() -> void:
 			[Vector3(vx, by + 2.9, vz), Vector3(20.4, 0.3, 14.4)]]:
 		_lm_box(root, w2[0], w2[1], _lm_mat(Color(0.38, 0.39, 0.44)))
 		obstacles_box.append({"c": Vector2(w2[0].x, w2[0].z), "hx": w2[1].x * 0.5,
-				"hz": w2[1].z * 0.5, "rot": 0.0})
+				"hz": w2[1].z * 0.5, "rot": 0.0, "top": by + 2.9, "bot": by})
 	# 隧道口（军械室北墙开 3m 门洞——北墙分两段）
 	# （上面整段北墙 + 隧道顶相接，玩家沿隧道进室）
 	# 武器架 ×3（军械室南墙）：架体 + 展示枪（程序化枪形）+ 灯带
