@@ -27,8 +27,11 @@ func build() -> void:
 			Vector3(0, -0.23, 0), floor_mat)
 	floor_mi.name = "Floor"
 	# 四面墙 + 天花板（天花板投阴影，挡住外部阳光）
+	# 北墙留 3m 门洞（local x +2.5..+5.5）通地下军械室楼梯间
 	for w in [
-		[Vector3(0, 3, -ROOM_HALF), Vector3(ROOM_HALF * 2.0, 6, 0.5)],
+		[Vector3(-6.25, 3, -ROOM_HALF), Vector3(13.5, 6, 0.5)],
+		[Vector3(7.75, 3, -ROOM_HALF), Vector3(10.5, 6, 0.5)],
+		[Vector3(4.0, 5.25, -ROOM_HALF), Vector3(3.0, 1.5, 0.5)],
 		[Vector3(0, 3, ROOM_HALF), Vector3(ROOM_HALF * 2.0, 6, 0.5)],
 		[Vector3(-ROOM_HALF, 3, -ROOM_HALF + 4.5), Vector3(0.5, 6, 9.0)],
 		[Vector3(-ROOM_HALF, 3, ROOM_HALF - 4.5), Vector3(0.5, 6, 9.0)],

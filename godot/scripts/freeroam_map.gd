@@ -4463,6 +4463,31 @@ func _make_villa() -> void:
 	for st in 6:
 		_lm_box(root, Vector3(202.5 + st * 1.0, lv[0] - 0.25 - st * 0.55,
 				-509.5), Vector3(0.95, 0.6, 3.0), _lm_mat(Color(0.45, 0.47, 0.5)))
+	# ---- 楼梯间入口结构：顶棚 + 两侧墙 + 警示条 + 发光指示牌 ----
+	var sh := _lm_mat(Color(0.5, 0.52, 0.56))
+	_lm_box(root, Vector3(204.5, 2.4, -509.5), Vector3(7.0, 0.3, 4.2), sh)
+	for szw in [-1.9, 1.9]:
+		_lm_box(root, Vector3(204.5, 1.2, -509.5 + szw), Vector3(7.0, 2.4, 0.18),
+				_lm_mat(Color(0.3, 0.32, 0.36)))
+	_lm_box(root, Vector3(201.4, 1.2, -509.5), Vector3(0.18, 2.4, 4.2),
+			_lm_mat(Color(0.3, 0.32, 0.36)))
+	# 警示条（黄黑相间贴两侧墙沿）
+	for hz_i in 6:
+		_lm_box(root, Vector3(201.3 + hz_i * 1.0, 0.28, -507.62),
+				Vector3(0.5, 0.12, 0.06),
+				_lm_mat(Color(0.95, 0.75, 0.1) if hz_i % 2 == 0
+				else Color(0.1, 0.1, 0.1)))
+	# 发光指示牌（车库内侧可见）
+	var sgn := Label3D.new()
+	sgn.text = "地下军械室 ↓"
+	sgn.font_size = 260
+	sgn.modulate = Color(0.4, 0.9, 1.0)
+	sgn.outline_size = 34
+	sgn.position = Vector3(204.5, 2.0, -507.3)
+	root.add_child(sgn)
+	var sgn_l := _lm_box(root, Vector3(204.5, 1.55, -507.35),
+			Vector3(2.6, 0.5, 0.08),
+			_lm_mat(Color(0.3, 0.7, 0.9), Color(0.3, 0.75, 1.0), 1.5))
 	# 隧道（车库 → 别墅地下室，沿 -Z）
 	road_pads.append({"c": Vector2(208.0, -497.5), "fx": 1.0, "fz": 0.0,
 			"hf": 1.8, "hl": 13.5, "y": by})
@@ -4547,8 +4572,11 @@ func _make_garage() -> void:
 			"rot": 0.0}
 	obstacles_box.append(_door_piece)
 	# 展厅四周墙体碰撞（与 RRGarage 墙体对齐：半宽 13m，西门洞 8m）
-	obstacles_box.append({"c": Vector2(cx, cz - 13.0), "hx": 13.0, "hz": 0.3,
-			"rot": 0.0})
+	# 北墙分两段留 3m 门洞（local x +2.5..+5.5）→ 地下军械室楼梯间
+	obstacles_box.append({"c": Vector2(cx - 6.25, cz - 13.0), "hx": 6.75,
+			"hz": 0.3, "rot": 0.0})
+	obstacles_box.append({"c": Vector2(cx + 7.75, cz - 13.0), "hx": 5.25,
+			"hz": 0.3, "rot": 0.0})
 	obstacles_box.append({"c": Vector2(cx, cz + 13.0), "hx": 13.0, "hz": 0.3,
 			"rot": 0.0})
 	obstacles_box.append({"c": Vector2(cx + 13.0, cz), "hx": 0.3, "hz": 13.0,
