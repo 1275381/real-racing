@@ -1154,8 +1154,7 @@ func _current_scope_kind() -> String:
 	var gid := gun_equipped
 	if state == ST.BATTLE and _battle_cls >= 0:
 		gid = str(RRBattleField.CLASSES[_battle_cls]["gun"])
-	var f = str(scope_fit.get(gid, ""))
-	return str(Guns.scope_by_id(f).get("kind", "iron"))
+	return str(player_scope_for(gid).get("kind", "iron"))
 
 
 ## 购买/切换前握把：未购→扣费；已购→直接切换（全局随身生效）
@@ -1212,10 +1211,11 @@ func _on_scope_pick(scope_id: String, gun_id: String) -> void:
 ## 当前枪的瞄具（无 = 机瞄）
 func player_scope_for(gun_id: String) -> Dictionary:
 	# 按枪查询已装瞄具；大战场里兵种枪未装时继承玩家装备枪的瞄具
+	#（商店里装在哪把枪上都行，部署后自动带进战场）
 	var f = str(scope_fit.get(gun_id, ""))
-	if f == "" and state == ST.BATTLE and _battle_cls >= 0:
-		var bg: String = str(RRBattleField.CLASSES[_battle_cls]["gun"])
-		f = str(scope_fit.get(bg, ""))
+	if f == "" and state == ST.BATTLE and _battle_cls >= 0 \
+			and gun_id != gun_equipped:
+		f = str(scope_fit.get(gun_equipped, ""))
 	return Guns.scope_by_id(f) if f != "" else {}
 
 
