@@ -185,6 +185,94 @@ func set_gun(gun_id: String) -> void:
 
 
 ## 程序化低多边形枪模（rifle 用 SCAR GLB，其余按种类拼装）
+## 枪顶瞄具模型：按已装备瞄具风格装镜（iron=机瞄准星片）
+## parent=枪根节点，top_y=机匣顶面高度，mid_z=机匣中部，front_z=枪口方向
+func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
+		front_z: float) -> void:
+	var mk := func(c: Color, glow := 0.0) -> StandardMaterial3D:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.no_depth_test = true
+		m.render_priority = 10
+		if glow > 0.0:
+			m.emission_enabled = true
+			m.emission = c
+			m.emission_energy_multiplier = glow
+		return m
+	var dk: StandardMaterial3D = mk.call(Color(0.13, 0.14, 0.16))
+	var st: StandardMaterial3D = mk.call(Color(0.36, 0.39, 0.44))
+	var gm: StandardMaterial3D = mk.call(Color(0.15, 0.55, 0.75), 1.4)
+	var amber: StandardMaterial3D = mk.call(Color(1.0, 0.62, 0.1), 1.2)
+	var box := func(sz: Vector3, pos: Vector3, m: StandardMaterial3D) -> void:
+		var bm := BoxMesh.new()
+		bm.size = sz
+		bm.material = m
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.position = pos
+		parent.add_child(mi)
+	var cyl := func(r: float, h: float, pos: Vector3,
+			m: StandardMaterial3D) -> void:
+		var cm := CylinderMesh.new()
+		cm.top_radius = r
+		cm.bottom_radius = r
+		cm.height = h
+		cm.radial_segments = 10
+		cm.material = m
+		var mi := MeshInstance3D.new()
+		mi.mesh = cm
+		mi.rotation_degrees = Vector3(90, 0, 0)
+		mi.position = pos
+		parent.add_child(mi)
+	match kind:
+		"holo":
+			# 全息镜：方框视窗 + 底座
+			box.call(Vector3(0.07, 0.014, 0.014), Vector3(0, top_y + 0.07,
+					mid_z - 0.04), dk)
+			box.call(Vector3(0.012, 0.06, 0.012), Vector3(-0.034,
+					top_y + 0.04, mid_z - 0.04), dk)
+			box.call(Vector3(0.012, 0.06, 0.012), Vector3(0.034, top_y + 0.04,
+					mid_z - 0.04), dk)
+			box.call(Vector3(0.05, 0.018, 0.05), Vector3(0, top_y + 0.02,
+					mid_z - 0.04), dk)
+		"reddot":
+			# 红点镜：短圆筒 + 底座
+			cyl.call(0.024, 0.07, Vector3(0, top_y + 0.05, mid_z - 0.06), dk)
+			box.call(Vector3(0.045, 0.03, 0.07), Vector3(0, top_y + 0.02,
+					mid_z - 0.04), dk)
+		"optic":
+			# 3.5× 光学镜：镜身 + 大物镜 + 双固定座
+			cyl.call(0.03, 0.15, Vector3(0, top_y + 0.06, mid_z - 0.12), dk)
+			cyl.call(0.038, 0.03, Vector3(0, top_y + 0.06, mid_z - 0.21), st)
+			box.call(Vector3(0.02, 0.045, 0.03), Vector3(0, top_y + 0.025,
+					mid_z - 0.1), dk)
+			box.call(Vector3(0.02, 0.045, 0.03), Vector3(0, top_y + 0.025,
+					mid_z - 0.17), dk)
+		"sniper":
+			# 5× 密位镜：长镜身 + 大物镜 + 目镜 + 双固定座
+			cyl.call(0.037, 0.2, Vector3(0, top_y + 0.065, mid_z - 0.12), dk)
+			cyl.call(0.048, 0.035, Vector3(0, top_y + 0.065, mid_z - 0.23), st)
+			cyl.call(0.028, 0.06, Vector3(0, top_y + 0.065, mid_z), st)
+			box.call(Vector3(0.02, 0.05, 0.03), Vector3(0, top_y + 0.025,
+					mid_z - 0.08), dk)
+			box.call(Vector3(0.02, 0.05, 0.03), Vector3(0, top_y + 0.025,
+					mid_z - 0.18), dk)
+		"thermal":
+			# 热成像镜：方形镜体 + 前端传感窗（发光）+ 侧向按键组
+			box.call(Vector3(0.075, 0.095, 0.2), Vector3(0, top_y + 0.07,
+					mid_z - 0.08), dk)
+			box.call(Vector3(0.058, 0.05, 0.018), Vector3(0, top_y + 0.07,
+					mid_z - 0.19), gm)
+			box.call(Vector3(0.03, 0.05, 0.04), Vector3(0.048, top_y + 0.05,
+					mid_z), dk)
+		_:
+			# 机瞄：前准星片 + 后照门
+			box.call(Vector3(0.012, 0.05, 0.012), Vector3(0, top_y + 0.025,
+					front_z), dk)
+			box.call(Vector3(0.05, 0.022, 0.022), Vector3(0, top_y + 0.03,
+					mid_z + 0.08), dk)
+
+
 func _build_gun_visual(gun_id: String) -> Node3D:
 	if gun_id == "rifle":
 		var glb: Node3D = load("res://assets/cars/gun_rifle.glb").instantiate()
@@ -200,6 +288,10 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 					dup.no_depth_test = true
 					dup.render_priority = 10
 					m.set_surface_override_material(s, dup)
+		# 枪顶瞄具模型（GLB 局部空间：+Z 枪头方向，机瞄片/装上的瞄具）
+		var sc_r: Dictionary = scope_provider.call(gun_id) \
+				if scope_provider != null else {}
+		_scope_visual(glb, str(sc_r.get("kind", "iron")), 0.085, 0.1, -0.5)
 		return glb
 	var root := Node3D.new()
 	# 视模型材质一律关深度测试：下车点贴着车时枪模不会被车身吞掉
@@ -304,6 +396,26 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 			add_box.call(Vector3(0.016, 0.016, 0.10), Vector3(0.05, 0.045, 0.04), Vector3(0, 0, -24), steel)
 			add_box.call(Vector3(0.05, 0.10, 0.34), Vector3(0, -0.045, 0.30), Vector3(-3, 0, 0), wood)
 			add_box.call(Vector3(0.045, 0.05, 0.12), Vector3(0, 0.015, 0.40), Vector3.ZERO, wood)
+	# 枪顶瞄具模型：按已装备瞄具（iron=机瞄片；狙击枪自带密位镜，
+	# 仅装热成像时在镜后加挂热成像单元）
+	var sc: Dictionary = scope_provider.call(gun_id) \
+			if scope_provider != null else {}
+	var s_kind: String = str(sc.get("kind", "iron"))
+	if gun_id == "sniper":
+		if s_kind == "thermal":
+			_scope_visual(root, "thermal", 0.12, 0.05, -0.3)
+	elif gun_id == "rifle":
+		pass
+	else:
+		var my: float = 0.085
+		var mz: float = -0.1
+		var fz: float = -0.5
+		match gun_id:
+			"pistol": my = 0.10; mz = -0.04; fz = -0.2
+			"smg": my = 0.075; mz = -0.05; fz = -0.2
+			"shotgun": my = 0.095; mz = -0.16; fz = -0.38
+			"lmg": my = 0.135; mz = -0.1; fz = -0.55
+		_scope_visual(root, s_kind, my, mz, fz)
 	return root
 
 
@@ -666,7 +778,8 @@ func cycle_scope_zoom(dir: int) -> void:
 func current_zoom() -> float:
 	if not scoped:
 		return 1.0
-	var sc: Dictionary = scope_provider.call() if scope_provider != null else {}
+	var sc: Dictionary = scope_provider.call(_gun_id) \
+			if scope_provider != null else {}
 	if sc.is_empty():
 		return 1.0
 	if scope_lv >= 1 and str(sc.get("id", "")) != "thermal":

@@ -1151,7 +1151,11 @@ func _thermal_points() -> Array:
 				out.append(c3)
 	return out
 func _current_scope_kind() -> String:
-	return str(player_scope().get("kind", "iron"))
+	var gid := gun_equipped
+	if state == ST.BATTLE and _battle_cls >= 0:
+		gid = str(RRBattleField.CLASSES[_battle_cls]["gun"])
+	var f = str(scope_fit.get(gid, ""))
+	return str(Guns.scope_by_id(f).get("kind", "iron"))
 
 
 ## 购买/切换前握把：未购→扣费；已购→直接切换（全局随身生效）
@@ -1206,14 +1210,12 @@ func _on_scope_pick(scope_id: String, gun_id: String) -> void:
 
 
 ## 当前枪的瞄具（无 = 机瞄）
-func player_scope() -> Dictionary:
-	var f = str(scope_fit.get(gun_equipped, ""))
-	# 大战场：兵种枪自己的瞄具优先；没装则继承玩家装备枪带来的瞄具
-	if state == ST.BATTLE and _battle_cls >= 0:
+func player_scope_for(gun_id: String) -> Dictionary:
+	# 按枪查询已装瞄具；大战场里兵种枪未装时继承玩家装备枪的瞄具
+	var f = str(scope_fit.get(gun_id, ""))
+	if f == "" and state == ST.BATTLE and _battle_cls >= 0:
 		var bg: String = str(RRBattleField.CLASSES[_battle_cls]["gun"])
-		var bf_fit := str(scope_fit.get(bg, ""))
-		if bf_fit != "":
-			return Guns.scope_by_id(bf_fit)
+		f = str(scope_fit.get(bg, ""))
 	return Guns.scope_by_id(f) if f != "" else {}
 
 
@@ -1785,7 +1787,7 @@ func enter_roam() -> void:
 		onfoot = OnFoot.new()
 		add_child(onfoot)
 		onfoot.setup(freeroam, npc, audio, camera)
-		onfoot.scope_provider = player_scope
+		onfoot.scope_provider = player_scope_for
 		onfoot.set_ammo_type(ammo_type)
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): pass)
