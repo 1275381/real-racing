@@ -46,6 +46,7 @@ var recoil_yaw := 0.0    # 后坐力水平漂移（rad）
 var recoil_cool := 0.0   # 停火计时（>0.25s 开始缓慢回落）
 var grip_recoil_mul := 1.0   # 前握把后坐力倍率
 var grip_ads_mul := 1.0      # 前握把开镜速度倍率
+var grip_id := "none"        # 当前握把 id（决定枪管下握把模型造型）
 var input_block := false  # 巡飞弹操控中：本体移动输入屏蔽
 var scope_provider       # game 注入：返回当前枪瞄具 Dictionary（无 = 机瞄）
 var slide_dir := Vector3.ZERO
@@ -155,10 +156,13 @@ func spread_mul() -> float:
 	return m
 
 
-## 装备前握把（枪械店购买后调用）
-func set_grip(recoil_mul: float, ads_mul: float) -> void:
+## 装备前握把（枪械店购买后调用）：数值倍率 + 枪下模型造型一并下发
+func set_grip(gid: String, recoil_mul: float, ads_mul: float) -> void:
+	grip_id = gid
 	grip_recoil_mul = recoil_mul
 	grip_ads_mul = ads_mul
+	if _gun_holder != null and _gun_id != "":
+		set_gun(_gun_id)   # 重建枪模以挂上/摘下握把模型
 
 
 ## 当前持枪 id（HUD 分枪瞄准镜风格用）
@@ -185,6 +189,48 @@ func set_gun(gun_id: String) -> void:
 
 
 ## 程序化低多边形枪模（rifle 用 SCAR GLB，其余按种类拼装）
+## 前握把模型：装在枪管下方（直角/垂直两种造型），购买后所有枪可见
+func _grip_visual(parent: Node3D, grip_id: String, bottom_y: float,
+		mid_z: float, front_z: float) -> void:
+	if grip_id == "none":
+		return
+	var mk := func(c: Color) -> StandardMaterial3D:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.no_depth_test = true
+		m.render_priority = 10
+		m.roughness = 0.6
+		return m
+	var dk: StandardMaterial3D = mk.call(Color(0.17, 0.18, 0.2))
+	var rubber: StandardMaterial3D = mk.call(Color(0.12, 0.13, 0.15))
+	var box := func(sz: Vector3, pos: Vector3, m: StandardMaterial3D,
+			rot := Vector3.ZERO) -> void:
+		var bm := BoxMesh.new()
+		bm.size = sz
+		bm.material = m
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.position = pos
+		mi.rotation_degrees = rot
+		parent.add_child(mi)
+	# 固定环（护木下的安装座）
+	box.call(Vector3(0.085, 0.05, 0.07), Vector3(0, bottom_y - 0.02, mid_z),
+			dk)
+	if grip_id == "angle":
+		# 直角前握把：前倾斜柱 + 底部横挡（止动前指）
+		box.call(Vector3(0.055, 0.17, 0.075), Vector3(0, bottom_y - 0.12,
+				mid_z + 0.02), rubber, Vector3(-18, 0, 0))
+		box.call(Vector3(0.06, 0.035, 0.1), Vector3(0, bottom_y - 0.21,
+				mid_z - 0.02), rubber)
+	else:
+		# 垂直前握把：竖直握柱 + 防滑纹路
+		box.call(Vector3(0.05, 0.2, 0.06), Vector3(0, bottom_y - 0.14,
+				mid_z), rubber)
+		for g in 3:
+			box.call(Vector3(0.054, 0.02, 0.062), Vector3(0, bottom_y - 0.1
+					- g * 0.055, mid_z), dk)
+
+
 ## 枪顶瞄具模型：按已装备瞄具风格装镜（iron=机瞄准星片）
 ## parent=枪根节点，top_y=机匣顶面高度，mid_z=机匣中部，front_z=枪口方向
 func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
@@ -292,6 +338,8 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 		var sc_r: Dictionary = scope_provider.call(gun_id) \
 				if scope_provider != null else {}
 		_scope_visual(glb, str(sc_r.get("kind", "iron")), 0.085, 0.1, -0.5)
+		# 前握把模型（GLB 局部空间枪管下方）
+		_grip_visual(glb, grip_id, 0.02, 0.1, -0.55)
 		return glb
 	var root := Node3D.new()
 	# 视模型材质一律关深度测试：下车点贴着车时枪模不会被车身吞掉
@@ -404,6 +452,8 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	if gun_id == "sniper":
 		if s_kind == "thermal":
 			_scope_visual(root, "thermal", 0.12, 0.05, -0.3)
+		if grip_id != "none":
+			_grip_visual(root, grip_id, -0.06, -0.25, -0.5)
 	elif gun_id == "rifle":
 		pass
 	else:
@@ -416,6 +466,15 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 			"shotgun": my = 0.095; mz = -0.16; fz = -0.38
 			"lmg": my = 0.135; mz = -0.1; fz = -0.55
 		_scope_visual(root, s_kind, my, mz, fz)
+	# 前握把模型（枪管下方）：手枪不装（太短），其余按枪挂不同位置
+	if grip_id != "none":
+		match gun_id:
+			"smg":
+				_grip_visual(root, grip_id, -0.02, -0.18, -0.3)
+			"shotgun":
+				_grip_visual(root, grip_id, -0.05, -0.3, -0.5)
+			"lmg":
+				_grip_visual(root, grip_id, 0.0, -0.28, -0.45)
 	return root
 
 
