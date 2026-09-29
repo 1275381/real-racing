@@ -496,6 +496,7 @@ func _load_settings() -> void:
 		armor_stock = int(cf.get_value("guns", "armor_stock", 0))
 		scopes_owned = cf.get_value("guns", "scopes_owned", [])
 		scope_fit = cf.get_value("guns", "scope_fit", {})
+		grip_id = cf.get_value("guns", "grip_id", "none")
 		battle_kills_total = cf.get_value("battle", "kills", 0)
 		battle_wins = cf.get_value("battle", "wins", 0)
 		plane_mode = cf.get_value("settings", "plane", false)
@@ -521,6 +522,7 @@ func _save_settings() -> void:
 	cf.set_value("guns", "armor_stock", armor_stock)
 	cf.set_value("guns", "scopes_owned", scopes_owned)
 	cf.set_value("guns", "scope_fit", scope_fit)
+	cf.set_value("guns", "grip_id", grip_id)
 	cf.set_value("battle", "kills", battle_kills_total)
 	cf.set_value("battle", "wins", battle_wins)
 	cf.set_value("settings", "plane", plane_mode)
@@ -546,6 +548,7 @@ var ammo_type := "standard"        # 弹药类型（弹药店购买/切换）
 var armor_stock := 0               # 防弹衣库存（件）：部署时消耗 1 件 = 50 点护甲
 var scopes_owned: Array = []       # 已购瞄具 id
 var scope_fit := {}                # gun_id → 瞄具 id（每枪一槽；无 = 机瞄）
+var grip_id := "none"              # 前握把（枪械店购买，全局随身生效）
 var player_armor := 0.0            # 当前护甲值（战场内）
 var gunshop_open := false          # 枪械店界面开着
 var gunshop_from_roam := false
@@ -713,6 +716,8 @@ func equip_gun(gun_id: String) -> void:
 	_save_settings()
 	if onfoot != null:
 		onfoot.set_gun(gun_id)
+		var g: Dictionary = Guns.grip_by_id(grip_id)
+		onfoot.set_grip(float(g["recoil_mul"]), float(g["ads_mul"]))
 
 
 func open_gunshop() -> void:
@@ -734,7 +739,7 @@ func close_gunshop() -> void:
 
 func _refresh_gunshop_ui() -> void:
 	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type, armor_stock,
-			scopes_owned, scope_fit)
+			scopes_owned, scope_fit, grip_id)
 
 
 # ================= 大战场模式 =================
@@ -996,6 +1001,8 @@ func _battle_cycle_ammo() -> void:
 	ammo_type = a["id"]
 	if onfoot != null:
 		onfoot.set_ammo_type(ammo_type)
+		var gg: Dictionary = Guns.grip_by_id(grip_id)
+		onfoot.set_grip(float(gg["recoil_mul"]), float(gg["ads_mul"]))
 	_save_settings()
 	hud.show_center("弹药 · " + str(a["name"]), str(a["desc"]) + " · T 继续切换", 1600)
 
@@ -1147,6 +1154,25 @@ func _current_scope_kind() -> String:
 	return str(player_scope().get("kind", "iron"))
 
 
+## 购买/切换前握把：未购→扣费；已购→直接切换（全局随身生效）
+func _on_grip_pick(grip_id_new: String) -> void:
+	var g: Dictionary = Guns.grip_by_id(grip_id_new)
+	if g.is_empty() or grip_id == grip_id_new:
+		return
+	if grip_id == "none":
+		if coins < int(g["price"]):
+			hud.show_center("金币不足", "%s %d 金币 · 还差 %d" % [g["name"],
+					g["price"], g["price"] - coins], 1600)
+			return
+		coins -= int(g["price"])
+	grip_id = grip_id_new
+	_save_settings()
+	if onfoot != null:
+		onfoot.set_grip(float(g["recoil_mul"]), float(g["ads_mul"]))
+	_refresh_gunshop_ui()
+	hud.show_center("前握把 · " + str(g["name"]), str(g["desc"]), 1800)
+
+
 ## 瞄具购买/安装：未拥有→购买并自动安装；已拥有→该枪安装/卸下切换
 func _on_scope_pick(scope_id: String, gun_id: String) -> void:
 	var s: Dictionary = Guns.scope_by_id(scope_id)
@@ -1264,6 +1290,7 @@ func _wire_menu() -> void:
 	hud.ammo_equip.connect(_on_ammo_equip)
 	hud.armor_buy.connect(_on_armor_buy)
 	hud.scope_pick.connect(_on_scope_pick)
+	hud.grip_pick.connect(_on_grip_pick)
 	hud.gunshop_back.connect(close_gunshop)
 
 

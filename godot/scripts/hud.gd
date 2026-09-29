@@ -56,6 +56,7 @@ signal gunshop_back
 signal ammo_equip(ammo_id: String)
 signal armor_buy
 signal scope_pick(scope_id: String, gun_id: String)
+signal grip_pick(grip_id: String)
 var gunshop_rows := {}      # gun_id -> Button
 var _ammo_rows := {}        # ammo_id -> Button
 var _gunshop_coins: Label
@@ -83,6 +84,7 @@ var _gun_hp := 100.0
 var _gun_armor := 0.0
 var _armor_row := {}   # 枪械店防弹衣行 {btn, note}
 var _scope_rows := {}  # 枪械店瞄具行 {scope_id: {btn, note}}
+var _grip_rows := {}   # 枪械店握把行 {grip_id: {btn, note}}
 var gunshop_gun := "pistol"   # 枪械店当前装备枪（refresh 时同步，瞄具安装目标）
 var _gun_ammo := 30
 var _gun_reload := 0.0
@@ -1441,6 +1443,32 @@ func _build_gunshop() -> void:
 		srow.add_child(sbtn)
 		_scope_rows[sid] = {"btn": sbtn, "note": slab}
 
+	# 前握把区块：购买/切换，全局随身生效
+	var gcap := Label.new()
+	gcap.text = "── 前握把（全部枪械生效）──"
+	gcap.add_theme_font_size_override("font_size", 15)
+	gcap.add_theme_color_override("font_color", Color(0.65, 0.85, 1.0))
+	box.add_child(gcap)
+	_grip_rows.clear()
+	for g in Guns.GRIPS:
+		if g["id"] == "none":
+			continue
+		var gid: String = g["id"]
+		var grow := HBoxContainer.new()
+		box.add_child(grow)
+		var glab := Label.new()
+		glab.text = "%s · %s" % [g["name"], g["desc"]]
+		glab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		glab.add_theme_font_size_override("font_size", 14)
+		glab.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+		grow.add_child(glab)
+		var gbtn := Button.new()
+		gbtn.custom_minimum_size = Vector2(110, 30)
+		gbtn.add_theme_font_size_override("font_size", 14)
+		gbtn.pressed.connect(func(): grip_pick.emit(gid))
+		grow.add_child(gbtn)
+		_grip_rows[gid] = {"btn": gbtn, "note": glab}
+
 	# 防弹衣：购买进库存，大战场部署时自动穿上（1 件 = 50 点护甲）
 	var arow2 := HBoxContainer.new()
 	box.add_child(arow2)
@@ -1466,9 +1494,13 @@ func _build_gunshop() -> void:
 
 
 ## 刷新枪械店各行状态（枪械 + 弹药）
+func grip_id_none_owner(coins: int, gi: Dictionary) -> bool:
+	return true   # 首次购买需付费；之后切换免费（由 game 侧 grip_id 判定）
+
+
 func refresh_gunshop(coins: int, owned: Array, equipped: String,
 		ammo_type: String, armor_stock := 0, scopes_owned: Array = [],
-		scope_fit := {}) -> void:
+		scope_fit := {}, grip_id := "none") -> void:
 	_gunshop_coins.text = "金币：%d" % coins
 	for g in Guns.GUNS:
 		var gid: String = g["id"]
@@ -1510,6 +1542,22 @@ func refresh_gunshop(coins: int, owned: Array, equipped: String,
 		ab3.text = "%d 金币" % 200
 		ab3.disabled = coins < 200
 	gunshop_gun = equipped
+	var cur_grip: String = str(grip_id)
+	for gid in _grip_rows:
+		var gi: Dictionary = Guns.grip_by_id(gid)
+		var gb: Button = _grip_rows[gid]["btn"]
+		var in_use: bool = cur_grip == gid
+		if in_use:
+			gb.text = "使用中"
+			gb.disabled = true
+		elif grip_id_none_owner(coins, gi):
+			gb.text = "%d 金币" % int(gi["price"])
+			gb.disabled = coins < int(gi["price"])
+		else:
+			gb.text = "使 用"
+			gb.disabled = false
+		_grip_rows[gid]["note"].add_theme_color_override("font_color",
+				Color(0.55, 1.0, 0.55) if in_use else Color(0.8, 0.84, 0.9))
 	var cur_fit: String = str(scope_fit.get(equipped, ""))
 	for s in Guns.SCOPES:
 		var sid2: String = s["id"]

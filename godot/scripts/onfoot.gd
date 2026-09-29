@@ -44,6 +44,8 @@ var scope_lv := 0        # 滚轮倍镜档：0=1.5× 1=5×
 var recoil_pitch := 0.0  # 连发累计后坐力（rad，向上顶）
 var recoil_yaw := 0.0    # 后坐力水平漂移（rad）
 var recoil_cool := 0.0   # 停火计时（>0.25s 开始缓慢回落）
+var grip_recoil_mul := 1.0   # 前握把后坐力倍率
+var grip_ads_mul := 1.0      # 前握把开镜速度倍率
 var input_block := false  # 巡飞弹操控中：本体移动输入屏蔽
 var scope_provider       # game 注入：返回当前枪瞄具 Dictionary（无 = 机瞄）
 var slide_dir := Vector3.ZERO
@@ -151,6 +153,12 @@ func spread_mul() -> float:
 	if prone:
 		m *= 0.5
 	return m
+
+
+## 装备前握把（枪械店购买后调用）
+func set_grip(recoil_mul: float, ads_mul: float) -> void:
+	grip_recoil_mul = recoil_mul
+	grip_ads_mul = ads_mul
 
 
 ## 当前持枪 id（HUD 分枪瞄准镜风格用）
@@ -563,7 +571,7 @@ func update(dt: float) -> void:
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
 	# 开镜 = 枪模收到屏幕中心瞄准位（不再整体隐藏，镜内可见枪身）；
 	# 腰射回到持枪位
-	_ads = move_toward(_ads, 1.0 if scoped else 0.0, dt * 5.0)
+	_ads = move_toward(_ads, 1.0 if scoped else 0.0, dt * 5.0 * grip_ads_mul)
 	_gun_holder.visible = true
 	var prone_drop := -0.12 if prone else 0.0
 	_gun_holder.position = GUN_HIP_POS.lerp(GUN_ADS_POS, _ads) \
@@ -612,9 +620,9 @@ func _shoot() -> void:
 		_tracers.spawn(muzzle_world(), end, hit["type"] != "")
 		if hit["type"] != "":
 			shoot_hit.emit(hit["type"], hit["i"], end, dmg)
-	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折；需要向下压枪
+	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折；前握把再降；需要向下压枪
 	var rc: Array = RECOIL.get(_gun_id, [0.4, 0.2, 0.25])
-	var mul: float = 0.6 if scoped else 1.0
+	var mul: float = (0.6 if scoped else 1.0) * grip_recoil_mul
 	recoil_pitch += deg_to_rad(rc[0] + rc[1] * recoil_pitch * 57.3 * 0.5) * mul
 	recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * mul
 	recoil_cool = 0.0

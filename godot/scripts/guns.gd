@@ -76,6 +76,24 @@ const SCOPES := [
 ]
 
 
+# 前握把：购买后随身生效（所有枪械），降低后坐力 + 加快开镜速度
+const GRIPS := [
+	{"id": "none", "name": "无握把", "desc": "原始手感", "price": 0,
+		"recoil_mul": 1.0, "ads_mul": 1.0},
+	{"id": "angle", "name": "直角前握把", "desc": "后坐力 -25% · 开镜速度 +40%", "price": 900,
+		"recoil_mul": 0.75, "ads_mul": 1.4},
+	{"id": "vertical", "name": "垂直前握把", "desc": "后坐力 -45% · 开镜速度 +25% · 更稳", "price": 1500,
+		"recoil_mul": 0.55, "ads_mul": 1.25},
+]
+
+
+static func grip_by_id(id: String) -> Dictionary:
+	for g in GRIPS:
+		if g["id"] == id:
+			return g
+	return GRIPS[0]
+
+
 static func scope_by_id(id: String) -> Dictionary:
 	for s in SCOPES:
 		if s["id"] == id:
