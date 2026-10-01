@@ -137,12 +137,12 @@ func toggle_prone() -> void:
 
 ## 每发后坐力（度）：[基础上抬, 连发累增系数, 水平漂移幅度]
 const RECOIL := {
-	"pistol": [0.55, 0.35, 0.20],
-	"smg": [0.32, 0.16, 0.22],
-	"rifle": [0.42, 0.24, 0.26],
-	"shotgun": [2.2, 0.0, 0.8],
-	"sniper": [3.2, 0.0, 0.5],
-	"lmg": [0.50, 0.20, 0.34],
+	"pistol": [0.22, 0.14, 0.08],
+	"smg": [0.13, 0.06, 0.09],
+	"rifle": [0.17, 0.09, 0.10],
+	"shotgun": [0.9, 0.0, 0.32],
+	"sniper": [1.3, 0.0, 0.2],
+	"lmg": [0.20, 0.08, 0.14],
 }
 
 
@@ -731,9 +731,9 @@ func update(dt: float) -> void:
 	# 后坐力叠加到视角：pitch 顶起由玩家压枪收回；停火 0.25s 后每秒回落 40%
 	recoil_cool += dt
 	if recoil_cool > 0.25 and recoil_pitch > 0.0:
-		recoil_pitch = maxf(0.0, recoil_pitch - deg_to_rad(28.0) * dt)
+		recoil_pitch = maxf(0.0, recoil_pitch - deg_to_rad(45.0) * dt)
 		recoil_yaw = move_toward(recoil_yaw, 0.0, deg_to_rad(10.0) * dt)
-	recoil_pitch = minf(recoil_pitch, deg_to_rad(14.0))   # 上限防打天花板
+	recoil_pitch = minf(recoil_pitch, deg_to_rad(6.0))   # 上限防打天花板
 	cam.rotation = Vector3(pitch + recoil_pitch, yaw + recoil_yaw + PI, 0)
 	var scope_div: float = current_zoom() if scoped else 1.0
 	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
