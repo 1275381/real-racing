@@ -84,6 +84,8 @@ const GRIPS := [
 		"recoil_mul": 0.75, "ads_mul": 1.4},
 	{"id": "vertical", "name": "垂直前握把", "desc": "后坐力 -45% · 开镜速度 +25% · 更稳", "price": 1500,
 		"recoil_mul": 0.55, "ads_mul": 1.25},
+	{"id": "resonant", "name": "共振握把", "desc": "后坐力归零 · 开镜速度 +50% · 顶级配件", "price": 4800,
+		"recoil_mul": 0.0, "ads_mul": 1.5},
 ]
 
 

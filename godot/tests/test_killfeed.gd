@@ -52,7 +52,7 @@ func _initialize() -> void:
 	for i in 5:
 		onfoot._shoot()
 		onfoot.fire_cd = 0.0
-	print("[rc] 5发后 recoil_pitch=%.4f rad（期望 >0.02）cam 上顶生效" % onfoot.recoil_pitch)
+	print("[rc] 5发后 recoil_pitch=%.4f rad（期望 >0.01，后坐力减半后）cam 上顶生效" % onfoot.recoil_pitch)
 	# 停火 1s 回落
 	for i in 60:
 		game._now_s += 1.0 / 60.0

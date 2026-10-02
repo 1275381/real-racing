@@ -952,10 +952,12 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 			if over > 0.0:
 				dist += over * 10.0
 		var vyy: float = vy if vy > -1.0e8 else vehicle_y
-		# 高度层过滤：与查询高度差 >3.5m 的路不作为本层候选——
-		# 否则地表单位（警车/NPC）追击经过地下车库/高架正上方时，
-		# 会被异层路网吸附高度，表现为直接坠入车库或跳上高架
-		if absf(road.pts[bi].y - vyy) > 3.5:
+		# 高度层过滤：与查询高度差 >3.0m 的路不作为本层候选（与铺装区
+		# pad 的 3.0m 判层阈值一致——曾经是 3.5，而地下军械室 -3.2 与
+		# 湖畔路 0.03 层差 3.23 落在缝隙里，路网高度覆写把地下步行者
+		# 拽回地表）。否则地表单位（警车/NPC）追击经过地下车库/高架
+		# 正上方时，会被异层路网吸附高度，坠入车库或跳上高架
+		if absf(road.pts[bi].y - vyy) > 3.0:
 			continue
 		var cost := dist + absf(road.pts[bi].y - vyy) * 6.0   # 高度迟滞
 		if r == hint_road:
@@ -4324,8 +4326,9 @@ func _make_villa() -> void:
 			[Vector3(vx, wall_h * 0.5, vz - 8.0), Vector3(22.0, wall_h, 0.3)],
 			[Vector3(vx, wall_h * 0.5, vz + 8.0), Vector3(22.0, wall_h, 0.3)]]:
 		_lm_box(root, w[0], w[1], wall)
+		# bot=0：地下军械室/隧道在墙基下方通行，地表行人照常被挡
 		obstacles_box.append({"c": Vector2(w[0].x, w[0].z),
-				"hx": w[1].x * 0.5, "hz": w[1].z * 0.5, "rot": 0.0})
+				"hx": w[1].x * 0.5, "hz": w[1].z * 0.5, "rot": 0.0, "bot": 0.0})
 	_lm_box(root, Vector3(vx - 11.0, 2.9, vz - 2.0), Vector3(0.3, 1.0, 4.0),
 			wall)   # 门楣
 	# 屋顶 + 女儿墙（三层之上）
@@ -4374,7 +4377,7 @@ func _make_villa() -> void:
 	_lm_box(root, Vector3(vx - 4.0, y1 + 0.28, vz - 1.6),
 			Vector3(1.3, 0.1, 0.7), _lm_mat(Color(0.5, 0.36, 0.24)))
 	obstacles_box.append({"c": Vector2(vx - 4.0, vz - 1.6), "hx": 0.65,
-			"hz": 0.35, "rot": 0.0, "top": y1 + 0.35})
+			"hz": 0.35, "rot": 0.0, "top": y1 + 0.35, "bot": y1})
 	_lm_box(root, Vector3(vx - 5.6, y1 + 1.1, vz + 7.6), Vector3(3.4, 2.2, 0.16),
 			dark)
 	_lm_box(root, Vector3(vx - 5.6, y1 + 1.15, vz + 7.4), Vector3(2.9, 1.6, 0.06),
@@ -4382,15 +4385,15 @@ func _make_villa() -> void:
 	_fx_counter(root, vx + 5.5, vz - 5.6, y1, PI, 5.2, 0.9, 0.95,
 			Color(0.75, 0.78, 0.8), Color(0.85, 0.86, 0.88), false)
 	obstacles_box.append({"c": Vector2(vx + 5.5, vz - 5.6), "hx": 2.6,
-			"hz": 0.5, "rot": 0.0, "top": y1 + 1.0})
+			"hz": 0.5, "rot": 0.0, "top": y1 + 1.0, "bot": y1})
 	_lm_box(root, Vector3(vx + 8.9, y1 + 0.95, vz - 5.6), Vector3(0.9, 1.9, 0.9),
 			_lm_mat(Color(0.82, 0.84, 0.86)))
 	obstacles_box.append({"c": Vector2(vx + 8.9, vz - 5.6), "hx": 0.45,
-			"hz": 0.45, "rot": 0.0, "top": y1 + 1.9})
+			"hz": 0.45, "rot": 0.0, "top": y1 + 1.9, "bot": y1})
 	_lm_box(root, Vector3(vx + 6.0, y1 + 0.42, vz + 3.5), Vector3(1.4, 0.09, 2.6),
 			_lm_mat(Color(0.55, 0.4, 0.26)))
 	obstacles_box.append({"c": Vector2(vx + 6.0, vz + 3.5), "hx": 0.7,
-			"hz": 1.3, "rot": 0.0, "top": y1 + 0.5})
+			"hz": 1.3, "rot": 0.0, "top": y1 + 0.5, "bot": y1})
 	_fx_shelf(root, vx - 1.0, vz - 7.7, y1, 0.0, 3.6, 0.5, 2.2, 3,
 			[Color(0.7, 0.4, 0.3), Color(0.3, 0.5, 0.7), Color(0.4, 0.6, 0.4)],
 			909, true)
@@ -4406,17 +4409,17 @@ func _make_villa() -> void:
 	_fx_bench(root, vx - 6.0, vz + 4.5, y2, PI, 4.2,
 			Color(0.55, 0.42, 0.48))   # 双人床（床头朝南墙）
 	obstacles_box.append({"c": Vector2(vx - 6.0, vz + 4.5), "hx": 2.1,
-			"hz": 1.1, "rot": 0.0, "top": y2 + 0.6})
+			"hz": 1.1, "rot": 0.0, "top": y2 + 0.6, "bot": y2})
 	_lm_box(root, Vector3(vx - 6.0, y2 + 0.62, vz + 6.9),
 			Vector3(3.6, 0.5, 0.9), _lm_mat(Color(0.6, 0.48, 0.52)))   # 床头板
 	_lm_box(root, Vector3(vx + 2.0, y2 + 0.95, vz + 7.4),
 			Vector3(3.4, 1.9, 0.7), _lm_mat(Color(0.5, 0.44, 0.38)))   # 衣柜
 	obstacles_box.append({"c": Vector2(vx + 2.0, vz + 7.4), "hx": 1.7,
-			"hz": 0.35, "rot": 0.0, "top": y2 + 1.9})
+			"hz": 0.35, "rot": 0.0, "top": y2 + 1.9, "bot": y2})
 	_lm_box(root, Vector3(vx + 7.5, y2 + 0.42, vz + 6.6),
 			Vector3(1.8, 0.09, 1.0), _lm_mat(Color(0.55, 0.42, 0.3)))   # 梳妆台
 	obstacles_box.append({"c": Vector2(vx + 7.5, vz + 6.6), "hx": 0.9,
-			"hz": 0.5, "rot": 0.0, "top": y2 + 0.5})
+			"hz": 0.5, "rot": 0.0, "top": y2 + 0.5, "bot": y2})
 	_fx_rug(root, vx - 5.0, vz - 2.0, y2, 4.5, 3.2, Color(0.5, 0.42, 0.35))
 	# ---- 三层（书房/观景）：书桌 + 书架 + 望远镜 ----
 	var y3: float = lv[2]
@@ -4427,7 +4430,7 @@ func _make_villa() -> void:
 	_lm_box(root, Vector3(vx, y3 + 0.42, vz - 7.0), Vector3(3.0, 0.09, 1.1),
 			_lm_mat(Color(0.5, 0.38, 0.26)))   # 大书桌
 	obstacles_box.append({"c": Vector2(vx, vz - 7.0), "hx": 1.5, "hz": 0.55,
-			"rot": 0.0, "top": y3 + 0.5})
+			"rot": 0.0, "top": y3 + 0.5, "bot": y3})
 	_fx_shelf(root, vx - 8.0, vz - 7.7, y3, 0.0, 4.2, 0.5, 2.4, 4,
 			[Color(0.6, 0.45, 0.3), Color(0.35, 0.5, 0.65),
 			Color(0.5, 0.6, 0.4), Color(0.65, 0.4, 0.35)], 919, true)
@@ -4456,63 +4459,86 @@ func _make_villa() -> void:
 
 	# ---- 地下军械室 + 车库地下通道（楼梯下行 y 0.13 → -3.2）----
 	var by := -3.2
-	# 斜坡 pad（车库东侧沿 +X 下降 6m，终点对齐隧道口）
-	road_pads.append({"c": Vector2(205.0, -509.5), "fx": 1.0, "fz": 0.0,
-			"hf": 3.0, "hl": 1.5, "y": lv[0], "y2": by})
+	# 斜坡 pad（车库东南角沿 +X 下降 6m；南缘 -510.8 让开隧道封口墙 z=-511.2，
+	# 北缘 -507.0 盖住楼梯间入口，避免跨 pad 空档时高度吸附回地表）
+	road_pads.append({"c": Vector2(205.0, -508.9), "fx": 1.0, "fz": 0.0,
+			"hf": 3.0, "hl": 1.9, "y": lv[0], "y2": by})
 	# 台阶视觉（6 级）
 	for st in 6:
 		_lm_box(root, Vector3(202.5 + st * 1.0, lv[0] - 0.25 - st * 0.55,
 				-509.5), Vector3(0.95, 0.6, 3.0), _lm_mat(Color(0.45, 0.47, 0.5)))
-	# ---- 楼梯间入口结构：顶棚 + 两侧墙 + 警示条 + 发光指示牌 ----
+	# ---- 楼梯间小屋（罩住地板洞）：顶棚 + 南墙（让出隧道口 x 205.5..208）
+	# + 北墙（留入口 x 201..204）+ 西封墙 + 东侧全高挡墙（防展厅坠入坡道底）----
 	var sh := _lm_mat(Color(0.5, 0.52, 0.56))
 	_lm_box(root, Vector3(204.5, 2.4, -509.5), Vector3(7.0, 0.3, 4.2), sh)
-	for szw in [-1.9, 1.9]:
-		_lm_box(root, Vector3(204.5, 1.2, -509.5 + szw), Vector3(7.0, 2.4, 0.18),
-				_lm_mat(Color(0.3, 0.32, 0.36)))
-	_lm_box(root, Vector3(201.4, 1.2, -509.5), Vector3(0.18, 2.4, 4.2),
-			_lm_mat(Color(0.3, 0.32, 0.36)))
-	# 警示条（黄黑相间贴两侧墙沿）
+	for kw in [[Vector3(203.25, 1.2, -507.6), Vector3(4.5, 2.4, 0.18)],
+			[Vector3(206.0, 1.2, -511.4), Vector3(4.0, 2.4, 0.18)],
+			[Vector3(201.4, 1.2, -509.5), Vector3(0.18, 2.4, 4.2)],
+			[Vector3(208.15, -0.3, -509.5), Vector3(0.3, 5.8, 3.8)]]:
+		_lm_box(root, kw[0], kw[1], _lm_mat(Color(0.3, 0.32, 0.36)))
+		obstacles_box.append({"c": Vector2(kw[0].x, kw[0].z),
+				"hx": kw[1].x * 0.5, "hz": kw[1].z * 0.5, "rot": 0.0,
+				"top": kw[0].y + kw[1].y * 0.5})
+	# 警示条（黄黑相间贴小屋北墙沿，正对展厅入口）
 	for hz_i in 6:
-		_lm_box(root, Vector3(201.3 + hz_i * 1.0, 0.28, -507.62),
-				Vector3(0.5, 0.12, 0.06),
+		_lm_box(root, Vector3(204.2 + hz_i * 0.55, 0.28, -511.52),
+				Vector3(0.4, 0.12, 0.06),
 				_lm_mat(Color(0.95, 0.75, 0.1) if hz_i % 2 == 0
 				else Color(0.1, 0.1, 0.1)))
-	# 发光指示牌（车库内侧可见）
+	# 发光指示牌（贴小屋北墙，面向展厅）
 	var sgn := Label3D.new()
 	sgn.text = "地下军械室 ↓"
 	sgn.font_size = 260
 	sgn.modulate = Color(0.4, 0.9, 1.0)
 	sgn.outline_size = 34
-	sgn.position = Vector3(204.5, 2.0, -507.3)
+	sgn.position = Vector3(202.9, 2.0, -511.65)
+	sgn.rotation.y = PI
 	root.add_child(sgn)
-	var sgn_l := _lm_box(root, Vector3(204.5, 1.55, -507.35),
+	var sgn_l := _lm_box(root, Vector3(202.9, 1.55, -511.55),
 			Vector3(2.6, 0.5, 0.08),
 			_lm_mat(Color(0.3, 0.7, 0.9), Color(0.3, 0.75, 1.0), 1.5))
-	# 隧道（车库 → 别墅地下室，沿 -Z）
+	# 隧道（楼梯间 → 别墅地下室，沿 +Z）
 	road_pads.append({"c": Vector2(208.0, -497.5), "fx": 1.0, "fz": 0.0,
-			"hf": 1.8, "hl": 13.5, "y": by})
-	# 隧道墙/顶
-	for tw in [[Vector3(205.4, by + 1.4, -497.5), Vector3(0.3, 2.8, 27.0)],
-			[Vector3(210.6, by + 1.4, -497.5), Vector3(0.3, 2.8, 27.0)],
-			[Vector3(208.0, by + 2.9, -497.5), Vector3(5.8, 0.3, 27.0)],
-			[Vector3(208.0, by + 1.4, -511.2), Vector3(5.8, 2.8, 0.3)]]:
+			"hf": 2.6, "hl": 14.5, "y": by})
+	# 隧道墙/顶（止于军械室北墙 z≈-499：室内不隔断，三排武器架全可达；
+	# 西墙南端 -507.5 让开楼梯坡道带；封口墙 z=-511.2 挡隧道北端）
+	# （第 3 位 = 是否入碰撞：楼梯口小封墙仅视觉，不挡路）
+	for tw in [[Vector3(205.4, by + 1.4, -503.3), Vector3(0.3, 2.8, 8.4), true],
+			[Vector3(210.6, by + 1.4, -505.15), Vector3(0.3, 2.8, 12.1), true],
+			[Vector3(208.0, by + 2.9, -503.3), Vector3(5.8, 0.3, 8.4), false],
+			[Vector3(206.8, by + 1.4, -509.05), Vector3(2.6, 2.8, 0.3), false],
+			[Vector3(208.0, by + 1.4, -511.2), Vector3(5.8, 2.8, 0.3), true]]:
 		_lm_box(root, tw[0], tw[1], _lm_mat(Color(0.35, 0.36, 0.4)))
 		# 隧道墙带 top/bot：地面行走不受地下墙阻挡
-		obstacles_box.append({"c": Vector2(tw[0].x, tw[0].z), "hx": tw[1].x * 0.5,
-				"hz": tw[1].z * 0.5, "rot": 0.0, "top": by + 2.9, "bot": by})
+		if bool(tw[2]):
+			obstacles_box.append({"c": Vector2(tw[0].x, tw[0].z),
+					"hx": tw[1].x * 0.5, "hz": tw[1].z * 0.5, "rot": 0.0,
+					"top": by + 2.9, "bot": by})
 	# 地下军械室（别墅正下方 20×14）
 	road_pads.append({"c": Vector2(vx, vz), "fx": 1.0, "fz": 0.0,
 			"hf": 10.0, "hl": 7.0, "y": by})
-	for w2 in [[Vector3(vx - 10.0, by + 1.4, vz), Vector3(0.3, 2.8, 14.0)],
-			[Vector3(vx + 10.0, by + 1.4, vz), Vector3(0.3, 2.8, 14.0)],
-			[Vector3(vx, by + 1.4, vz - 7.0), Vector3(20.0, 2.8, 0.3)],
-			[Vector3(vx, by + 1.4, vz + 7.0), Vector3(20.0, 2.8, 0.3)],
-			[Vector3(vx, by + 2.9, vz), Vector3(20.4, 0.3, 14.4)]]:
+	# 北墙留隧道口（对齐隧道内净空 x 205.7..210.3）：西段 + 东段 + 门楣
+	# （门楣条目末位 true：碰撞只挡上部 by+2.0 以上，脚下通行）
+		# 末位整数码：0=整墙入碰撞 1=门楣（只挡上部）2=纯视觉
+	for w2 in [[Vector3(vx - 10.0, by + 1.4, vz), Vector3(0.3, 2.8, 14.0), 0],
+			[Vector3(vx + 10.0, by + 1.4, vz), Vector3(0.3, 2.8, 14.0), 0],
+			[Vector3(vx - 5.65, by + 1.4, vz - 7.0), Vector3(8.7, 2.8, 0.3), 0],
+			[Vector3(vx + 6.65, by + 1.4, vz - 7.0), Vector3(6.7, 2.8, 0.3), 0],
+			[Vector3(vx + 1.0, by + 2.4, vz - 7.0), Vector3(4.6, 0.8, 0.3), 1],
+			[Vector3(vx, by + 1.4, vz + 7.0), Vector3(20.0, 2.8, 0.3), 0],
+			[Vector3(vx, by + 2.9, vz), Vector3(20.4, 0.3, 14.4), 2]]:
 		_lm_box(root, w2[0], w2[1], _lm_mat(Color(0.38, 0.39, 0.44)))
-		obstacles_box.append({"c": Vector2(w2[0].x, w2[0].z), "hx": w2[1].x * 0.5,
-				"hz": w2[1].z * 0.5, "rot": 0.0, "top": by + 2.9, "bot": by})
-	# 隧道口（军械室北墙开 3m 门洞——北墙分两段）
-	# （上面整段北墙 + 隧道顶相接，玩家沿隧道进室）
+		if w2[2] == 2:
+			continue   # 天花板纯视觉：室内本就在其投影内不产生推力，
+						# 注册反而会在门口把隧道里的玩家推回
+		if w2[2] == 1:
+			obstacles_box.append({"c": Vector2(w2[0].x, w2[0].z),
+					"hx": w2[1].x * 0.5, "hz": w2[1].z * 0.5, "rot": 0.0,
+					"top": by + 2.9, "bot": by + 2.0})
+		else:
+			obstacles_box.append({"c": Vector2(w2[0].x, w2[0].z),
+					"hx": w2[1].x * 0.5, "hz": w2[1].z * 0.5, "rot": 0.0,
+					"top": by + 2.9, "bot": by})
 	# 武器架 ×3（军械室南墙）：架体 + 展示枪（程序化枪形）+ 灯带
 	for wi in 3:
 		var wx: float = vx - 6.0 + wi * 6.0
@@ -4572,13 +4598,12 @@ func _make_garage() -> void:
 			"rot": 0.0}
 	obstacles_box.append(_door_piece)
 	# 展厅四周墙体碰撞（与 RRGarage 墙体对齐：半宽 13m，西门洞 8m）
-	# 北墙分两段留 3m 门洞（local x +2.5..+5.5）→ 地下军械室楼梯间
-	obstacles_box.append({"c": Vector2(cx - 6.25, cz - 13.0), "hx": 6.75,
-			"hz": 0.3, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx + 7.75, cz - 13.0), "hx": 5.25,
-			"hz": 0.3, "rot": 0.0})
-	obstacles_box.append({"c": Vector2(cx, cz + 13.0), "hx": 13.0, "hz": 0.3,
+	obstacles_box.append({"c": Vector2(cx, cz - 13.0), "hx": 13.0, "hz": 0.3,
 			"rot": 0.0})
+	# 南墙整段封死：地下军械室楼梯间开在展厅东南角地板洞（RRGarage 地板开洞）。
+	# bot=0：地下隧道（y≈-3.2）从墙基下方穿过，地表行人/车辆照常被挡
+	obstacles_box.append({"c": Vector2(cx, cz + 13.0), "hx": 13.0, "hz": 0.3,
+			"rot": 0.0, "bot": 0.0})
 	obstacles_box.append({"c": Vector2(cx + 13.0, cz), "hx": 0.3, "hz": 13.0,
 			"rot": 0.0})
 	obstacles_box.append({"c": Vector2(cx - 13.0, cz - GAR_DOOR_HW - 2.25),
@@ -5531,7 +5556,7 @@ func _fx_shelf(parent: Node3D, cx: float, cz: float, y: float, rot: float,
 					rng.randf_range(0.26, maxf(d - 0.22, 0.2))), _lm_mat(pc))
 	if solid:
 		obstacles_box.append({"c": Vector2(cx, cz), "hx": w * 0.5,
-				"hz": d * 0.5, "rot": rot, "top": y + h})
+				"hz": d * 0.5, "rot": rot, "top": y + h, "bot": y})
 
 
 func _fx_counter(parent: Node3D, cx: float, cz: float, y: float, rot: float,
@@ -5555,7 +5580,7 @@ func _fx_counter(parent: Node3D, cx: float, cz: float, y: float, rot: float,
 		_lm_box(root, Vector3(-w * 0.22, h + 0.14, 0.05),
 				Vector3(0.36, 0.16, 0.3), _lm_mat(Color(0.25, 0.27, 0.3)))
 	obstacles_box.append({"c": Vector2(cx, cz), "hx": w * 0.5,
-			"hz": d * 0.5 + 0.1, "rot": rot, "top": y + h + 0.1})
+			"hz": d * 0.5 + 0.1, "rot": rot, "top": y + h + 0.1, "bot": y})
 
 
 ## 深钢色快捷取用（避免每处重复建材质）
@@ -5605,7 +5630,7 @@ func _fx_bench(parent: Node3D, cx: float, cz: float, y: float, rot: float,
 		_lm_box(root, Vector3(sx * (w * 0.5 - 0.12), 0.21, 0),
 				Vector3(0.08, 0.42, 0.5), frame)
 	obstacles_box.append({"c": Vector2(cx, cz), "hx": w * 0.5, "hz": 0.4,
-			"rot": rot, "top": y + 1.0})
+			"rot": rot, "top": y + 1.0, "bot": y})
 
 
 func _fx_rug(parent: Node3D, cx: float, cz: float, y: float, w: float,

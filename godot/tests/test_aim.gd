@@ -82,5 +82,5 @@ func _initialize() -> void:
 	var hp_left: float = float(bf.soldiers[target]["hp"])
 	print("[aim] 开镜 %d 发 击倒=%s 剩余hp=%.0f" % [shots, str(dead), hp_left])
 	var ok: bool = dead and shots <= 8
-	print("[aim] %s（期望 命中率≈100%、≤6 发击倒）" % ("PASS" if ok else "FAIL"))
+	print("[aim] %s（期望 命中率≈100%%、≤6 发击倒）" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)

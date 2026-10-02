@@ -23,15 +23,17 @@ func build() -> void:
 
 	# 地板：顶面抬到 +0.02——城市区域地面在城区正好 y=0，与地板顶面共面，
 	# 展厅地面会一块深一块浅地闪（z-fighting）。只动视觉，车/人高度仍按路网查询
-	var floor_mi := _box(Vector3(ROOM_HALF * 2.0, 0.5, ROOM_HALF * 2.0),
-			Vector3(0, -0.23, 0), floor_mat)
-	floor_mi.name = "Floor"
+	# 地板四块拼铺：东南角留楼梯间洞（local x +3.25..+9.75，z +8.75..+12.25）
+	for fp in [[Vector3(-4.875, -0.23, 0), Vector3(16.25, 0.5, 26.0)],
+			[Vector3(11.375, -0.23, 0), Vector3(3.25, 0.5, 26.0)],
+			[Vector3(6.5, -0.23, -2.125), Vector3(6.5, 0.5, 21.75)],
+			[Vector3(6.5, -0.23, 12.625), Vector3(6.5, 0.5, 0.75)]]:
+		var floor_mi := _box(fp[1], fp[0], floor_mat)
+		floor_mi.name = "Floor"
 	# 四面墙 + 天花板（天花板投阴影，挡住外部阳光）
-	# 北墙留 3m 门洞（local x +2.5..+5.5）通地下军械室楼梯间
+	# 南北墙均封死：地下军械室楼梯间开在展厅东南角的地板洞（见地板开洞）
 	for w in [
-		[Vector3(-6.25, 3, -ROOM_HALF), Vector3(13.5, 6, 0.5)],
-		[Vector3(7.75, 3, -ROOM_HALF), Vector3(10.5, 6, 0.5)],
-		[Vector3(4.0, 5.25, -ROOM_HALF), Vector3(3.0, 1.5, 0.5)],
+		[Vector3(0, 3, -ROOM_HALF), Vector3(ROOM_HALF * 2.0, 6, 0.5)],
 		[Vector3(0, 3, ROOM_HALF), Vector3(ROOM_HALF * 2.0, 6, 0.5)],
 		[Vector3(-ROOM_HALF, 3, -ROOM_HALF + 4.5), Vector3(0.5, 6, 9.0)],
 		[Vector3(-ROOM_HALF, 3, ROOM_HALF - 4.5), Vector3(0.5, 6, 9.0)],

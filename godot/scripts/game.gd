@@ -716,8 +716,8 @@ func equip_gun(gun_id: String) -> void:
 	_save_settings()
 	if onfoot != null:
 		onfoot.set_gun(gun_id)
-		var g: Dictionary = Guns.grip_by_id(grip_id)
-		onfoot.set_grip(float(g["recoil_mul"]), float(g["ads_mul"]))
+		var gg: Dictionary = Guns.grip_by_id(grip_id)
+		onfoot.set_grip(grip_id, float(gg["recoil_mul"]), float(gg["ads_mul"]))
 
 
 func open_gunshop() -> void:
@@ -1002,7 +1002,7 @@ func _battle_cycle_ammo() -> void:
 	if onfoot != null:
 		onfoot.set_ammo_type(ammo_type)
 		var gg: Dictionary = Guns.grip_by_id(grip_id)
-		onfoot.set_grip(float(gg["recoil_mul"]), float(gg["ads_mul"]))
+		onfoot.set_grip(grip_id, float(gg["recoil_mul"]), float(gg["ads_mul"]))
 	_save_settings()
 	hud.show_center("弹药 · " + str(a["name"]), str(a["desc"]) + " · T 继续切换", 1600)
 
@@ -1171,7 +1171,7 @@ func _on_grip_pick(grip_id_new: String) -> void:
 	grip_id = grip_id_new
 	_save_settings()
 	if onfoot != null:
-		onfoot.set_grip(float(g["recoil_mul"]), float(g["ads_mul"]))
+		onfoot.set_grip(grip_id, float(g["recoil_mul"]), float(g["ads_mul"]))
 	_refresh_gunshop_ui()
 	hud.show_center("前握把 · " + str(g["name"]), str(g["desc"]), 1800)
 

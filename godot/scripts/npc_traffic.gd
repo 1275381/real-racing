@@ -873,7 +873,11 @@ func tilt_sway(t: float, phase: float) -> float:
 func _update_police(dt: float) -> void:
 	var min_d := INF
 	_update_heli(dt)
-	for ui in police.size():
+	# 快照遍历：循环内 car_hit/撞人信号可能触发 trigger_wanted/escalate
+	# 连锁清空 police（clear），边遍历边改会越界（police[ui] Out of bounds）
+	for ui in range(police.size()):
+		if ui >= police.size():
+			break
 		var u: Dictionary = police[ui]
 		var pos: Vector3 = u["pos"]
 		var to_p := player_pos - pos
