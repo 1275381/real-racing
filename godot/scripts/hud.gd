@@ -774,6 +774,10 @@ class MinimapWidget:
 		_pts = track.pts
 		_has_track = true
 		_tex = null
+		# 城市地标 / 导航路线 / 目的地是漫游底图坐标，赛道模式下一并清掉
+		markers = []
+		_route = PackedVector2Array()
+		_dest = Vector2(-9e9, -9e9)
 		_transformed = PackedVector2Array()   # 触发重算
 		queue_redraw()
 
@@ -843,6 +847,12 @@ class MinimapWidget:
 	func _draw() -> void:
 		if _tex != null:
 			draw_texture_rect(_tex, Rect2(Vector2.ZERO, size), false)
+		elif _has_track:
+			# 赛道模式没有底图：垫一块半透明暗底，浅色赛道线不再直接压在天空上
+			var bg := StyleBoxFlat.new()
+			bg.bg_color = Color(0.03, 0.05, 0.09, 0.45)
+			bg.set_corner_radius_all(8)
+			draw_style_box(bg, Rect2(Vector2.ZERO, size))
 		if _route.size() > 1:
 			var rp := PackedVector2Array()
 			for p in _route:
@@ -1165,6 +1175,10 @@ func _build_garage() -> void:
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", Color(0.55, 0.6, 0.66))
 	box.add_child(hint)
+	# 标题 + 分隔线固定，其余可滚动；高度封顶到底部车型条之上
+	#（原来 13 个按钮直排，720/810 高的窗口里顶部标题出屏、
+	# 「地图编译器/城市编辑器」被车型条盖住点不到）
+	_scrollify(box, 2, 0, 360.0)
 
 	# ---- 底部：车型展示条 ----
 	var car_bar := PanelContainer.new()
@@ -1499,16 +1513,43 @@ func _build_gunshop() -> void:
 	back.add_theme_font_size_override("font_size", 18)
 	back.pressed.connect(func(): gunshop_back.emit())
 	box.add_child(back)
+	# 标题/金币与返回键固定，中间商品列表可滚动（原来整列超出屏幕上下沿，
+	# 标题、金币数、防弹衣行和返回键都在屏外）
+	_scrollify(box, 2, 1, 190.0)
+
+
+## 把 VBox 中间一段子节点收进滚动区：前 top_keep 个、后 bottom_keep 个保持固定。
+## 滚动区高度 = min(内容高, 窗口高 - reserve)，窗口缩放时跟着重算
+func _scrollify(box: VBoxContainer, top_keep: int, bottom_keep: int,
+		reserve: float) -> void:
+	var kids: Array = box.get_children()
+	var mid: Array = kids.slice(top_keep, kids.size() - bottom_keep)
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.follow_focus = true
+	var inner := VBoxContainer.new()
+	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner.add_theme_constant_override("separation",
+			box.get_theme_constant("separation"))
+	sc.add_child(inner)
+	for k in mid:
+		box.remove_child(k)
+		inner.add_child(k)
+	box.add_child(sc)
+	box.move_child(sc, top_keep)
+	var fit := func() -> void:
+		var vh: float = _root.get_viewport_rect().size.y
+		sc.custom_minimum_size.y = minf(inner.get_combined_minimum_size().y,
+				maxf(160.0, vh - reserve))
+	_root.resized.connect(fit)
+	inner.minimum_size_changed.connect(fit)
+	fit.call_deferred()
 
 
 ## 刷新枪械店各行状态（枪械 + 弹药）
-func grip_id_none_owner(coins: int, gi: Dictionary) -> bool:
-	return true   # 首次购买需付费；之后切换免费（由 game 侧 grip_id 判定）
-
-
 func refresh_gunshop(coins: int, owned: Array, equipped: String,
 		ammo_type: String, armor_stock := 0, scopes_owned: Array = [],
-		scope_fit := {}, grip_id := "none") -> void:
+		scope_fit := {}, grip_id := "none", grips_owned: Array = []) -> void:
 	_gunshop_coins.text = "金币：%d" % coins
 	for g in Guns.GUNS:
 		var gid: String = g["id"]
@@ -1558,12 +1599,12 @@ func refresh_gunshop(coins: int, owned: Array, equipped: String,
 		if in_use:
 			gb.text = "使用中"
 			gb.disabled = true
-		elif grip_id_none_owner(coins, gi):
-			gb.text = "%d 金币" % int(gi["price"])
-			gb.disabled = coins < int(gi["price"])
-		else:
+		elif gid == "none" or grips_owned.has(gid):
 			gb.text = "使 用"
 			gb.disabled = false
+		else:
+			gb.text = "%d 金币" % int(gi["price"])
+			gb.disabled = coins < int(gi["price"])
 		_grip_rows[gid]["note"].add_theme_color_override("font_color",
 				Color(0.55, 1.0, 0.55) if in_use else Color(0.8, 0.84, 0.9))
 	var cur_fit: String = str(scope_fit.get(equipped, ""))

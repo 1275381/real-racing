@@ -495,6 +495,10 @@ func _load_settings() -> void:
 		scopes_owned = cf.get_value("guns", "scopes_owned", [])
 		scope_fit = cf.get_value("guns", "scope_fit", {})
 		grip_id = cf.get_value("guns", "grip_id", "none")
+		grips_owned = cf.get_value("guns", "grips_owned", [])
+		# 旧存档没有已购记录：当前装着的那个视为已购（玩家确实付过钱）
+		if grip_id != "none" and not grips_owned.has(grip_id):
+			grips_owned.append(grip_id)
 		battle_kills_total = cf.get_value("battle", "kills", 0)
 		battle_wins = cf.get_value("battle", "wins", 0)
 		plane_mode = cf.get_value("settings", "plane", false)
@@ -521,6 +525,7 @@ func _save_settings() -> void:
 	cf.set_value("guns", "scopes_owned", scopes_owned)
 	cf.set_value("guns", "scope_fit", scope_fit)
 	cf.set_value("guns", "grip_id", grip_id)
+	cf.set_value("guns", "grips_owned", grips_owned)
 	cf.set_value("battle", "kills", battle_kills_total)
 	cf.set_value("battle", "wins", battle_wins)
 	cf.set_value("settings", "plane", plane_mode)
@@ -547,6 +552,7 @@ var armor_stock := 0               # 防弹衣库存（件）：部署时消耗 
 var scopes_owned: Array = []       # 已购瞄具 id
 var scope_fit := {}                # gun_id → 瞄具 id（每枪一槽；无 = 机瞄）
 var grip_id := "none"              # 前握把（枪械店购买，全局随身生效）
+var grips_owned: Array = []         # 已购前握把 id（买过的随时免费切换）
 var player_armor := 0.0            # 当前护甲值（战场内）
 var gunshop_open := false          # 枪械店界面开着
 var gunshop_from_roam := false
@@ -737,7 +743,7 @@ func close_gunshop() -> void:
 
 func _refresh_gunshop_ui() -> void:
 	hud.refresh_gunshop(coins, guns_owned, gun_equipped, ammo_type, armor_stock,
-			scopes_owned, scope_fit, grip_id)
+			scopes_owned, scope_fit, grip_id, grips_owned)
 
 
 # ================= 大战场模式 =================
@@ -1173,16 +1179,19 @@ func _current_scope_kind() -> String:
 
 
 ## 购买/切换前握把：未购→扣费；已购→直接切换（全局随身生效）
+## 原来只看「当前是不是无握把」：买个 900 的直角握把后，4800 的共振握把
+## 也能免费换上；换回无握把再换回去又要重新付钱。改为按已购列表判定
 func _on_grip_pick(grip_id_new: String) -> void:
 	var g: Dictionary = Guns.grip_by_id(grip_id_new)
 	if g.is_empty() or grip_id == grip_id_new:
 		return
-	if grip_id == "none":
+	if grip_id_new != "none" and not grips_owned.has(grip_id_new):
 		if coins < int(g["price"]):
 			hud.show_center("金币不足", "%s %d 金币 · 还差 %d" % [g["name"],
 					g["price"], g["price"] - coins], 1600)
 			return
 		coins -= int(g["price"])
+		grips_owned.append(grip_id_new)
 	grip_id = grip_id_new
 	_save_settings()
 	if onfoot != null:
@@ -2296,6 +2305,9 @@ func start_race() -> void:
 		freeroam.visible = false
 	env.set_race_props_visible(true)
 	env.set_theme(TrackData.get_tracks()[track_idx]["theme"])   # 漫游可能改过主题
+	# 小地图切回赛道：开机直达漫游会把它换成城市底图 + 店/枪/货/赛地标，
+	# 原来只在换赛道时重设，同一条赛道开赛小地图仍是城市
+	hud.init_minimap(track)
 	player.veh.on_lap_complete = Callable(self, "_on_lap_for_car").bind(0)
 	sim_time = 0.0
 	player_finish_time = null

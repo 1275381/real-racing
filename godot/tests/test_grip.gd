@@ -31,11 +31,22 @@ func _initialize() -> void:
 	print("[gp] 购后 grip=%s mul=%.2f/%.2f coins=%d（期望 vertical/0.55/1.25/500）" % [
 			game.grip_id, game.onfoot.grip_recoil_mul,
 			game.onfoot.grip_ads_mul, game.coins])
-	# 切换直角（已购免费）
+	# 没买过的直角握把不能白换（原来买任一握把后所有握把都免费）
 	game._on_grip_pick("angle")
-	print("[gp] 切换 grip=%s mul=%.2f/%.2f coins=%d（期望 angle/0.75/1.4/500）" % [
+	print("[gp] 钱不够换未购直角 grip=%s coins=%d（期望 vertical/500）" % [
+			game.grip_id, game.coins])
+	var ok_buy: bool = game.grip_id == "vertical" and game.coins == 500
+	# 买直角（900）
+	game.coins = 1000
+	game._on_grip_pick("angle")
+	# 换回已购的垂直握把：免费
+	game._on_grip_pick("vertical")
+	game._on_grip_pick("angle")
+	print("[gp] 切换 grip=%s mul=%.2f/%.2f coins=%d（期望 angle/0.75/1.4/100）" % [
 			game.grip_id, game.onfoot.grip_recoil_mul,
 			game.onfoot.grip_ads_mul, game.coins])
+	ok_buy = ok_buy and game.coins == 100 and game.grips_owned.has("angle") \
+			and game.grips_owned.has("vertical")
 	# 握把模型：垂直握把时 SMG 枪模应比无握把多 4 个子节点（安装座+柱+2纹）
 	print("[gp] --- 握把模型验证 ---")
 	game.onfoot.grip_id = "none"
@@ -48,7 +59,10 @@ func _initialize() -> void:
 	var grip_n: int = game.onfoot._gun_holder.get_child(0).get_child_count()
 	print("[gp] grip_id 状态=%s" % game.onfoot.grip_id)
 	print("[gp] SMG 枪模子节点 无握把=%d 垂直握把=%d（期望差 ≥4）" % [base_n, grip_n])
-	# 开镜速度实测：数帧数（scoped=true 才有过渡目标 1.0）
+	# 开镜速度实测：数帧数（scoped=true 才有过渡目标 1.0；须在步行状态，
+	# 否则 update 直接返回、永远数到 200 帧上限）
+	game._toggle_on_foot()
+	await frames0(3)
 	game.onfoot.scoped = true
 	game.onfoot._ads = 0.0
 	var ads_frames := 0
@@ -59,6 +73,6 @@ func _initialize() -> void:
 	var ok: bool = game.grip_id == "angle" \
 			and absf(game.onfoot.grip_recoil_mul - 0.75) < 0.01 \
 			and absf(game.onfoot.grip_ads_mul - 1.4) < 0.01 \
-			and game.coins == 500 and grip_n - base_n >= 4
+			and ok_buy and grip_n - base_n >= 4 and ads_frames < 15
 	print("[gp] %s" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)
