@@ -1099,17 +1099,23 @@ func _on_bf_sector(si: int) -> void:
 
 func _on_bf_over(did_atk_win: bool) -> void:
 	var won: bool = did_atk_win == (bf.player_team == "atk")
+	# 结算奖励按个人得分（击杀/爆头/夺点）：原来固定胜 1500 / 负 300，
+	# 而人机对打守方约 5 分钟自己就赢——选防守挂机即可白拿 1500
+	var score: int = int(bf.player_stats["score"])
+	var reward := 0
+	if score > 0:
+		reward = (500 + mini(1000, score)) if won else mini(300, score / 2)
+	coins += reward
 	if won:
 		battle_wins += 1
-		coins += 1500
 		audio.beep(870, 0.4, 0.26)
 	else:
-		coins += 300
 		audio.beep(180, 0.5, 0.25)
 	_save_settings()
 	bhud.close_deploy()
-	bhud.banner("胜  利" if won else "失  败",
-			("奖励 +1500 金币" if won else "参战补给 +300 金币") + " · Enter 返回车库", 30.0)
+	var note := ("未参与战斗（得分 0）· 无结算奖励" if score <= 0
+			else "得分 %d · 结算 +%d 金币" % [score, reward])
+	bhud.banner("胜  利" if won else "失  败", note + " · Enter 返回车库", 30.0)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
