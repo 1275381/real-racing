@@ -4313,8 +4313,12 @@ func _make_villa() -> void:
 	# ---- 一层（保留原客厅/厨房/餐厅布局，地板与外墙重建为三层壳）----
 	road_pads.append({"c": Vector2(vx, vz), "fx": 1.0, "fz": 0.0,
 			"hf": 11.0, "hl": 8.0, "y": lv[0]})
-	_lm_box(root, Vector3(vx, lv[0] - 0.06, vz), Vector3(22, 0.12, 16),
-			floor_mat)
+	# 一层地板四块拼铺：中部留地下军械室楼梯口（x 206.5..210.5 / z -493..-490）
+	for fp in [[Vector3(vx - 5.75, lv[0] - 0.06, vz), Vector3(10.5, 0.12, 16)],
+			[Vector3(vx + 7.25, lv[0] - 0.06, vz), Vector3(7.5, 0.12, 16)],
+			[Vector3(vx + 1.5, lv[0] - 0.06, vz - 4.75), Vector3(4, 0.12, 6.5)],
+			[Vector3(vx + 1.5, lv[0] - 0.06, vz + 4.75), Vector3(4, 0.12, 5.5)]]:
+		_lm_box(root, fp[0], fp[1], floor_mat)
 	_lm_box(root, Vector3(vx - 12.2, 0.04, vz - 2.0), Vector3(3.2, 0.1, 5.0),
 			_lm_mat(Color(0.7, 0.66, 0.58)))   # 门廊台阶
 	# 外墙三层贯通（厚 0.3、总高 10.2），西墙一层留门洞
@@ -4439,6 +4443,49 @@ func _make_villa() -> void:
 		_lm_box(root, Vector3(vx + lx, y3 + 2.6, vz),
 				Vector3(1.6, 0.06, 0.5),
 				_lm_mat(Color(1.0, 0.95, 0.8), Color(1.0, 0.92, 0.7), 1.4))
+	# ---- 一层楼梯口：地下军械室直达梯（车库楼梯间同款开口）----
+	# 斜坡 pad（沿 +X 下行 4m，y 0.13 → -3.2）
+	road_pads.append({"c": Vector2(vx + 1.5, vz + 0.5), "fx": 1.0, "fz": 0.0,
+			"hf": 2.0, "hl": 2.0, "y": lv[0], "y2": -3.2})
+	for st in 6:
+		_lm_box(root, Vector3(vx - 0.25 + st * 0.65, lv[0] - 0.25 - st * 0.55,
+				vz + 0.5), Vector3(0.6, 0.6, 2.8),
+				_lm_mat(Color(0.45, 0.47, 0.5)))
+	# 护栏（北/南/东侧，西侧为入口；bot=楼层高，地下层可从下方通行）
+	for rl in [[Vector3(vx + 1.5, lv[0] + 0.25, vz - 1.6),
+			Vector3(4.4, 0.5, 0.12)],
+			[Vector3(vx + 1.5, lv[0] + 0.25, vz + 2.6),
+			Vector3(4.4, 0.5, 0.12)],
+			[Vector3(vx + 3.6, lv[0] + 0.25, vz + 0.5),
+			Vector3(0.12, 0.5, 4.4)]]:
+		_lm_box(root, rl[0], rl[1], _lm_mat(Color(0.3, 0.32, 0.36)))
+		obstacles_box.append({"c": Vector2(rl[0].x, rl[0].z),
+				"hx": rl[1].x * 0.5, "hz": rl[1].z * 0.5, "rot": 0.0,
+				"top": lv[0] + 0.55, "bot": lv[0]})
+	# 楼梯基座围墙（军械室层 y -3.2..-0.6，top=-0.6：下行玩家在上方通过，
+	# 地下玩家被挡在 pad 抓取区外，防止横穿时被楼梯 pad 半途拽起）
+	for pw in [[Vector3(vx + 1.5, -1.9, vz + 1.85), Vector3(4.0, 2.6, 0.3)],
+			[Vector3(vx + 1.5, -1.9, vz - 0.85), Vector3(4.0, 2.6, 0.3)],
+			[Vector3(vx - 0.35, -1.9, vz + 0.5), Vector3(0.3, 2.6, 2.4)]]:
+		_lm_box(root, pw[0], pw[1], _lm_mat(Color(0.35, 0.36, 0.4)))
+		obstacles_box.append({"c": Vector2(pw[0].x, pw[0].z),
+				"hx": pw[1].x * 0.5, "hz": pw[1].z * 0.5, "rot": 0.0,
+				"top": -0.6})
+	# 出入口指示牌（面向西边客厅）+ 楼梯口灯带
+	var sgn2 := Label3D.new()
+	sgn2.text = "地下军械室 ↓"
+	sgn2.font_size = 200
+	sgn2.modulate = Color(0.4, 0.9, 1.0)
+	sgn2.outline_size = 30
+	sgn2.position = Vector3(vx - 1.1, lv[0] + 1.8, vz + 0.5)
+	sgn2.rotation.y = -PI * 0.5
+	root.add_child(sgn2)
+	_lm_box(root, Vector3(vx - 1.0, lv[0] + 1.45, vz + 0.5),
+			Vector3(0.08, 0.5, 2.6),
+			_lm_mat(Color(0.3, 0.7, 0.9), Color(0.3, 0.75, 1.0), 1.5))
+	_lm_box(root, Vector3(vx - 1.8, lv[0] + 0.03, vz + 0.5),
+			Vector3(0.12, 0.06, 2.6),
+			_lm_mat(Color(1.0, 0.92, 0.7), Color(1.0, 0.9, 0.6), 1.3))
 	# 电梯井 + 轿厢（东北角，贯通三层）
 	road_pads.append({"c": VILLA_ELEV, "fx": 1.0, "fz": 0.0,
 			"hf": 1.3, "hl": 1.3, "y": lv[0]})
@@ -4526,7 +4573,11 @@ func _make_villa() -> void:
 			[Vector3(vx + 6.65, by + 1.4, vz - 7.0), Vector3(6.7, 2.8, 0.3), 0],
 			[Vector3(vx + 1.0, by + 2.4, vz - 7.0), Vector3(4.6, 0.8, 0.3), 1],
 			[Vector3(vx, by + 1.4, vz + 7.0), Vector3(20.0, 2.8, 0.3), 0],
-			[Vector3(vx, by + 2.9, vz), Vector3(20.4, 0.3, 14.4), 2]]:
+			# 天花板四块拼铺：楼梯口（x 206.5..210.5 / z -493..-490）留洞
+			[Vector3(vx - 5.35, by + 2.9, vz), Vector3(9.7, 0.3, 14.4), 2],
+			[Vector3(vx + 6.85, by + 2.9, vz), Vector3(6.7, 0.3, 14.4), 2],
+			[Vector3(vx + 1.5, by + 2.9, vz - 4.35), Vector3(4.0, 0.3, 5.7), 2],
+			[Vector3(vx + 1.5, by + 2.9, vz + 4.85), Vector3(4.0, 0.3, 4.7), 2]]:
 		_lm_box(root, w2[0], w2[1], _lm_mat(Color(0.38, 0.39, 0.44)))
 		if w2[2] == 2:
 			continue   # 天花板纯视觉：室内本就在其投影内不产生推力，
@@ -4561,13 +4612,8 @@ func _make_villa() -> void:
 		_lm_box(root, Vector3(vx + 8.6, by + 0.32 + (ci % 2) * 0.62,
 				vz + 3.0 + float(ci / 2) * 1.2), Vector3(1.1, 0.6, 0.7),
 				_lm_mat(Color(0.45, 0.4, 0.28)))
-	# 地下室楼梯上别墅一层（西南角沿 +X 上行）
-	road_pads.append({"c": Vector2(vx - 7.0, vz + 4.0), "fx": 1.0, "fz": 0.0,
-			"hf": 4.0, "hl": 1.5, "y": by, "y2": lv[0]})
-	for st in 8:
-		_lm_box(root, Vector3(vx - 10.5 + st * 1.0, by + 0.35 + st * 0.42,
-				vz + 4.0), Vector3(0.95, 0.5, 3.0),
-				_lm_mat(Color(0.45, 0.47, 0.5)))
+	# （旧西南角地下楼梯已删：顶端被一层地板盖死看不见、底端扎进西墙，
+	#   地下入口改由一层中厅楼梯口下行，见前文"一层楼梯口"）
 	# 地下室灯带
 	for lx in [-6.0, 0.0, 6.0]:
 		_lm_box(root, Vector3(vx + lx, by + 2.6, vz), Vector3(1.8, 0.06, 0.5),
