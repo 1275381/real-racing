@@ -17,6 +17,8 @@
 | test_smoke.gd | 全模式冒烟：漫游 / 步行 / 比赛 / 大战场 / 战机 / 班机（关注 stderr 无 SCRIPT ERROR） |
 | test_e2e_custom.gd | 编辑器自定义赛道端到端 |
 | test_map_compiler.gd | 地图编译器单测 |
+| test_scope.gd | 瞄具购买/安装/换装（一镜一枪）/ 可调倍率 / 狙击枪自带镜 |
+| test_battle_rules.gd | 大战场规则：守方兵力池攻守对称 / 防弹衣退还 / 退场血量与血条复位 |
 
 注意：
 - `query()` 返回共享字典引用，多次查询须 `.duplicate()` 快照后再比较。

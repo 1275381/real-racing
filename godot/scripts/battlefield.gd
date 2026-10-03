@@ -315,9 +315,9 @@ func update(dt: float) -> void:
 		steps += 1
 		for i in soldiers.size():
 			_update_soldier(i, AI_TICK)
-	if not battle_over and player_team == "atk" and def_tickets <= 0 \
-		 and sector < pts.size():
-		# 守方兵力耗尽：防守方再无增援，进攻方直接胜
+	if not battle_over and def_tickets <= 0 and sector < pts.size():
+		# 守方兵力耗尽：防守方再无增援，进攻方直接胜（玩家攻/守都一样——
+		# 原来只在玩家进攻时判，玩家守时票数清零后守军不再复活，比赛却永不结束）
 		_finish(true)
 	if not battle_over and tickets <= 0 and sector < pts.size():
 		# 兵力耗尽：场上已无存活进攻方（含玩家）即判负
@@ -757,8 +757,11 @@ func vehicle_destroyed(k: int, src: int, weapon: String) -> void:
 func report_player_death() -> void:
 	player_alive = false
 	player_stats["deaths"] = int(player_stats["deaths"]) + 1
+	# 玩家阵亡和本队士兵一样消耗本方兵力（原来守方玩家死了不扣，等于无限命）
 	if player_team == "atk":
 		tickets -= 1
+	else:
+		def_tickets -= 1
 	var src := player_last_hit_by
 	var info := {"victim": "你", "victim_team": player_team, "weapon": "",
 			"head": false, "by_player": false, "player_died": true, "victim_cls": player_cls}

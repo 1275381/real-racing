@@ -1,24 +1,27 @@
 class_name Guns
 ## 枪械店目录：5 种枪械数值/价格。
 ## stats 约定：dmg 单发伤害 / cd 开火间隔 / mag 弹匣 / reload 换弹秒数 /
-## pellets 弹丸数（霰弹）/ spread 散布弧度 / scope_div 开镜倍数 / range 射程
+## pellets 弹丸数（霰弹）/ spread 散布弧度 / range 射程 /
+## builtin_scope 枪自带的瞄具（没另装瞄具时用它；没有该字段 = 机瞄）
 
 const GUNS := [
 	{"id": "pistol", "name": "侦察手枪", "desc": "伤害 25 · 半自动 · 12 发", "price": 0,
 		"dmg": 25.0, "cd": 0.25, "mag": 12, "reload": 1.2, "pellets": 1,
-		"spread": 0.0, "scope_div": 1.0, "range": 180.0},
+		"spread": 0.012, "range": 120.0},
 	{"id": "smg", "name": "冲锋枪", "desc": "伤害 15 · 全自动 · 35 发", "price": 800,
 		"dmg": 15.0, "cd": 0.08, "mag": 35, "reload": 1.6, "pellets": 1,
-		"spread": 0.02, "scope_div": 1.0, "range": 150.0},
+		"spread": 0.02, "range": 150.0},
 	{"id": "rifle", "name": "突击步枪", "desc": "伤害 20 · 全自动 · 30 发", "price": 1500,
 		"dmg": 20.0, "cd": 0.13, "mag": 30, "reload": 1.5, "pellets": 1,
-		"spread": 0.015, "scope_div": 3.0, "range": 250.0},
+		"spread": 0.015, "range": 250.0},
 	{"id": "shotgun", "name": "霰弹枪", "desc": "伤害 12×6 散射 · 近战毁灭性", "price": 2000,
 		"dmg": 12.0, "cd": 0.8, "mag": 6, "reload": 2.2, "pellets": 6,
-		"spread": 0.055, "scope_div": 1.0, "range": 60.0},
-	{"id": "sniper", "name": "狙击步枪", "desc": "伤害 100 · 高倍镜 6× · 5 发", "price": 3000,
+		"spread": 0.055, "range": 60.0},
+	{"id": "sniper", "name": "狙击步枪", "desc": "伤害 100 · 自带 6× 密位镜 · 5 发", "price": 3000,
 		"dmg": 100.0, "cd": 1.2, "mag": 5, "reload": 2.4, "pellets": 1,
-		"spread": 0.0, "scope_div": 6.0, "range": 400.0},
+		"spread": 0.0, "range": 400.0,
+		"builtin_scope": {"id": "builtin_sniper", "name": "原厂 6× 镜", "zoom": 6.0,
+			"kind": "sniper"}},
 ]
 
 
@@ -26,7 +29,7 @@ const GUNS := [
 const BATTLE_GUNS := [
 	{"id": "lmg", "name": "轻机枪", "desc": "伤害 18 · 全自动 · 80 发", "price": 0,
 		"dmg": 18.0, "cd": 0.1, "mag": 80, "reload": 3.2, "pellets": 1,
-		"spread": 0.022, "scope_div": 2.0, "range": 220.0},
+		"spread": 0.022, "range": 220.0},
 ]
 
 
@@ -60,7 +63,8 @@ static func ammo_by_id(id: String) -> Dictionary:
 	return AMMO[0]
 
 
-# 瞄具：安装到枪上（每枪一槽），未装 = 机瞄。zoom 为开镜倍率；
+# 瞄具：安装到枪上（每枪一槽，一个瞄具同一时间只装在一把枪上），未装 = 机瞄。
+# zoom 为开镜倍率；zooms 为可调倍率档（滚轮切换，没有 = 固定倍率）；
 # kind 决定镜面风格（iron/holo/reddot/optic/sniper/thermal）
 const SCOPES := [
 	{"id": "holo", "name": "全息镜", "desc": "1.5× · 全息方框绿点 · 视野宽", "price": 900,
@@ -69,8 +73,8 @@ const SCOPES := [
 		"zoom": 1.5, "kind": "reddot"},
 	{"id": "optic35", "name": "3.5× 光学镜", "desc": "3.5× · 密位十字 · 中距离精确", "price": 1800,
 		"zoom": 3.5, "kind": "optic"},
-	{"id": "scope5", "name": "5× 密位镜", "desc": "5× · 暗角密位 · 远距离", "price": 2800,
-		"zoom": 5.0, "kind": "sniper"},
+	{"id": "scope5", "name": "5× 密位镜", "desc": "5×/8× 滚轮可调 · 暗角密位 · 远距离", "price": 2800,
+		"zoom": 5.0, "zooms": [5.0, 8.0], "kind": "sniper"},
 	{"id": "thermal", "name": "热成像镜", "desc": "4× · 敌人热点高亮 · 夜战神器", "price": 5200,
 		"zoom": 4.0, "kind": "thermal"},
 ]
@@ -94,6 +98,13 @@ static func grip_by_id(id: String) -> Dictionary:
 		if g["id"] == id:
 			return g
 	return GRIPS[0]
+
+
+## 瞄具的倍率档（固定倍率的瞄具只有一档）
+static func scope_zooms(sc: Dictionary) -> Array:
+	if sc.is_empty():
+		return [1.0]
+	return sc.get("zooms", [float(sc.get("zoom", 1.0))])
 
 
 static func scope_by_id(id: String) -> Dictionary:

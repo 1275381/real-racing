@@ -690,7 +690,7 @@ func _refresh_status() -> void:
 
 ## 把当前记录与底板逐字段比对，只写出差集
 func _collect_doc() -> Dictionary:
-	var base: Array = CityData.base_buildings()
+	var base: Array = map.base_buildings()   # 与地图同一底板（已剔后加地块）
 	var bmap := {}
 	for b in base:
 		bmap[b["id"]] = b

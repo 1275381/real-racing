@@ -356,7 +356,7 @@ func _draw_gadget(sz: Vector2, font: Font) -> void:
 	if _gadget_txt == "":
 		return
 	var x := sz.x - 250.0
-	var y := sz.y - 78.0
+	var y := sz.y - 100.0   # 让开右下角弹药数（原 -78 正好压在「突击步枪 30/∞」上）
 	var ready := _gadget_ready >= 1.0
 	draw_rect(Rect2(x, y, 230, 22), Color(0, 0, 0, 0.5))
 	draw_rect(Rect2(x, y, 230 * _gadget_ready, 22),
@@ -571,10 +571,11 @@ func refresh_spawns() -> void:
 func _update_deploy_btn() -> void:
 	if _deploy_btn == null:
 		return
-	var no_tickets: bool = bf != null and bf.player_team == "atk" and bf.tickets <= 0
+	var no_tickets: bool = bf != null and (bf.tickets if bf.player_team == "atk"
+			else bf.def_tickets) <= 0
 	_deploy_btn.disabled = respawn_wait > 0.0 or no_tickets
 	if no_tickets:
-		_deploy_hint.text = "进攻方兵力已耗尽"
+		_deploy_hint.text = ("进攻方" if bf.player_team == "atk" else "防守方") + "兵力已耗尽"
 	elif respawn_wait > 0.0:
 		_deploy_hint.text = "%.0f 秒后可部署" % ceilf(respawn_wait)
 	else:

@@ -41,16 +41,42 @@ func _initialize() -> void:
 	await frames(20)
 	print("[sp] 滚轮后 zoom=%.1f（热成像保持 4.0）" % game.onfoot.current_zoom())
 	game.onfoot.cycle_scope_zoom(-1)
-	# 卸下 → 机瞄 zoom=1.0×scope_div
+	var ok := true
+	ok = ok and absf(game.onfoot.current_zoom() - 4.0) < 0.01
+	# 卸下 → 机瞄 zoom=1.0
 	game._on_scope_pick("thermal", game.gun_equipped)
 	print("[sp] 卸下后 kind=%s（期望 iron）" % game._current_scope_kind())
-	# 装 5× 密位镜 → 滚轮切 5× 生效
+	ok = ok and game._current_scope_kind() == "iron"
+	# 红点镜固定 1.5×：滚轮不能把它滚成 5×
+	game._on_scope_pick("reddot", game.gun_equipped)
+	game.onfoot.scope_lv = 0
+	var moved: bool = game.onfoot.cycle_scope_zoom(1)
+	await frames(5)
+	print("[sp] 红点滚轮 moved=%s zoom=%.1f（期望 false/1.5）" % [moved,
+			game.onfoot.current_zoom()])
+	ok = ok and not moved and absf(game.onfoot.current_zoom() - 1.5) < 0.01
+	# 同一个红点换装到冲锋枪：步枪上的那个被拆下（一镜一枪）
+	game._on_scope_pick("reddot", "smg")
+	print("[sp] 换装后 fit=%s（期望只在 smg 上）" % str(game.scope_fit))
+	ok = ok and str(game.scope_fit.get("smg", "")) == "reddot" \
+			and not game.scope_fit.has(game.gun_equipped)
+	# 狙击步枪没另装瞄具 = 自带 6× 密位镜（不是机瞄）
+	var sn: Dictionary = game.player_scope_for("sniper")
+	print("[sp] 狙击枪自带 kind=%s zoom=%.1f（期望 sniper/6.0）" % [
+			str(sn.get("kind", "")), float(sn.get("zoom", 0.0))])
+	ok = ok and str(sn.get("kind", "")) == "sniper" \
+			and absf(float(sn.get("zoom", 0.0)) - 6.0) < 0.01
+	# 装 5× 密位镜 → 原生 5×，滚轮切 8×
 	game._on_scope_pick("scope5", game.gun_equipped)
+	game.onfoot.scope_lv = 0
+	await frames(5)
+	var z0: float = game.onfoot.current_zoom()
 	game.onfoot.cycle_scope_zoom(1)
 	await frames(20)
-	print("[sp] 5×镜滚轮 zoom=%.1f fov=%.0f（期望 5.0/≈13）" % [
-			game.onfoot.current_zoom(), game.onfoot.cam.fov])
-	var ok: bool = game._current_scope_kind() == "sniper" \
-			and absf(game.onfoot.current_zoom() - 5.0) < 0.01
+	print("[sp] 5×镜 原生=%.1f 滚轮=%.1f fov=%.0f（期望 5.0/8.0）" % [
+			z0, game.onfoot.current_zoom(), game.onfoot.cam.fov])
+	ok = ok and game._current_scope_kind() == "sniper" \
+			and absf(z0 - 5.0) < 0.01 \
+			and absf(game.onfoot.current_zoom() - 8.0) < 0.01
 	print("[sp] %s" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)

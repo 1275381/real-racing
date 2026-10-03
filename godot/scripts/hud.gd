@@ -8,6 +8,10 @@ const TOP_ROW2_Y := 42.0
 const TOP_ROW3_Y := 80.0
 const ROAM_HINT := "自由漫游"
 const ROAM_HINT_GARAGE := "自由漫游 · 出生卷帘门车库 · 踩油门顶门驶出"
+# 漫游底部按键提示：驾车 / 步行各一套（原来一条混写，驾车时也提示开枪/趴下，
+# 而且太长，压到底部中央的转速表上）
+const ROAM_KEYS_DRIVE := "F 下车 · C 镜头 · L 车灯 · R 复位 · Esc 回车库 · N 静音"
+const ROAM_KEYS_FOOT := "F 上车 · 左键 开枪 · 右键 开/关镜 · R 换弹 · C 滑铲 · Z 趴下 · Esc 回车库 · N 静音"
 
 var team_colors: Array = []
 
@@ -76,11 +80,13 @@ var _wanted_blink_t := 0.0
 var gun_overlay: Control       # 步行 HUD：准星/三倍镜遮罩/血条/弹药
 var _gun_scope := false
 var _scope_gun := "rifle"   # 当前持枪（机瞄风格用）
-var _scope_zoom := 0        # 0=瞄具原生倍率 1=滚轮 5× 档
+var _scope_zoom := 0        # 滚轮倍率档（瞄具 zooms 下标）
+var _scope_mag := 1.0       # 当前实际倍率（镜面上的倍率标注）
 var _scope_kind := "iron"   # 镜面风格 kind（iron=机瞄）
 var thermal_on := false     # 热成像热点开关
 var _thermal_pts: Array = []   # 热点世界坐标（game 每帧下发）
 var _gun_hp := 100.0
+var _gun_hp_max := 100.0   # 血条满格值（大战场按兵种 65~80，漫游 100）
 var _gun_armor := 0.0
 var _armor_row := {}   # 枪械店防弹衣行 {btn, note}
 var _scope_rows := {}  # 枪械店瞄具行 {scope_id: {btn, note}}
@@ -95,6 +101,8 @@ var _dmg_rect: ColorRect
 var _root: Control
 var _screens := {}          # name -> Control
 var _tach: TachWidget
+var _roam_keys: Label
+var _on_foot := false
 var _minimap: MinimapWidget
 var _plane_panel: PlanePanelWidget
 var _plane_panel_on := false   # 战机仪表盘开关（漫游战机模式）
@@ -220,7 +228,7 @@ func show_only(name: String) -> void:
 	for k in _screens:
 		_screens[k].visible = k == name
 	var show_flight := name == "hud" or name == "roam"
-	_tach.visible = show_flight and not _plane_panel_on
+	_tach.visible = show_flight and not _plane_panel_on and not _on_foot
 	_minimap.visible = show_flight
 	_plane_panel.visible = _plane_panel_on and name == "roam"
 
@@ -709,7 +717,7 @@ func set_plane_panel(on: bool) -> void:
 	# 立即按当前屏状态应用可见性（show_only 只在切屏时刷）
 	var roam_visible: bool = _screens.has("roam") and _screens["roam"].visible
 	_plane_panel.visible = on and roam_visible
-	_tach.visible = roam_visible and not on   # 与转速表互斥
+	_tach.visible = roam_visible and not on and not _on_foot   # 与转速表互斥
 
 
 ## 时钟：时刻 + 相位 + 天气
@@ -1675,7 +1683,8 @@ func _build_roam_hud() -> void:
 	_roam_hint = hint
 
 	var keys := Label.new()
-	keys.text = "F 上/下车 · 左键 开枪 · 右键 开/关镜 · C 滑铲 · Z 趴下 · Esc 回车库 · R 复位 · N 静音"
+	keys.text = ROAM_KEYS_DRIVE
+	_roam_keys = keys
 	keys.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	keys.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	keys.position = Vector2(18, -20)
@@ -1952,9 +1961,8 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var cx := sz.x * 0.5
 	var cy := sz.y * 0.5
 	if _gun_scope:
-		# 滚轮 5× 档：统一高倍密位镜；否则按装备瞄具 kind（iron=机瞄）
-		var kind := "sniper" if _scope_zoom >= 1 else _scope_kind
-		_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), kind)
+		# 镜面按装备瞄具 kind（iron=机瞄）；滚轮只改倍率不换镜面
+		_draw_scope_style(cv, cx, cy, minf(sz.x, sz.y), _scope_kind)
 		if _scope_kind == "thermal" and not _thermal_pts.is_empty():
 			_draw_thermal(cv)
 	else:
@@ -1968,11 +1976,12 @@ func _draw_gun_overlay(cv: Control) -> void:
 	var bx := 20.0
 	var by := sz.y - 34.0
 	cv.draw_rect(Rect2(bx - 2, by - 2, bw + 4, bh + 4), Color(0, 0, 0, 0.55))
-	var ratio := clampf(_gun_hp / 100.0, 0.0, 1.0)
+	var ratio := clampf(_gun_hp / maxf(_gun_hp_max, 1.0), 0.0, 1.0)
 	var col := Color(0.35, 0.9, 0.3) if ratio > 0.35 else Color(0.95, 0.25, 0.2)
 	cv.draw_rect(Rect2(bx, by, bw * ratio, bh), col)
-	cv.draw_string(ThemeDB.fallback_font, Vector2(bx, by - 6), "生命",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.92, 0.95))
+	cv.draw_string(ThemeDB.fallback_font, Vector2(bx, by - 6),
+			"生命 %d" % ceili(_gun_hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+			Color(0.9, 0.92, 0.95))
 	# 护甲条（血条上方一条蓝灰短条，有甲才画）
 	if _gun_armor > 0.0:
 		var ab_y := by - 20.0
@@ -1988,6 +1997,9 @@ func _draw_gun_overlay(cv: Control) -> void:
 	if _gun_name != "":
 		ammo_txt = _gun_name + "  " + ammo_txt
 	# 右对齐贴右边：原来固定从 sz.x-130 起画，枪名一长（「突击步枪 30 / ∞」）就出屏
+	# 描边：枪托是黑色，正好压在字后面，无描边时黄字几乎看不清
+	cv.draw_string_outline(ThemeDB.fallback_font, Vector2(sz.x - 420.0, sz.y - 40.0),
+			ammo_txt, HORIZONTAL_ALIGNMENT_RIGHT, 400.0, 20, 6, Color(0, 0, 0, 0.75))
 	cv.draw_string(ThemeDB.fallback_font, Vector2(sz.x - 420.0, sz.y - 40.0),
 			ammo_txt, HORIZONTAL_ALIGNMENT_RIGHT, 400.0, 20, Color(1.0, 0.85, 0.35))
 
@@ -2021,7 +2033,7 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 				cv.draw_line(Vector2(cx + r * 0.86, ty), Vector2(cx + r * 0.96, ty),
 						Color(0.3, 1.0, 0.5, 0.6 - 0.1 * g), 2.0)
 			cv.draw_string(ThemeDB.fallback_font,
-					Vector2(cx + r * 0.45, cy + r * 0.45), "FLIR 4x",
+					Vector2(cx + r * 0.45, cy + r * 0.45), "FLIR " + _mag_txt(),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.4, 0.9, 0.5, 0.9))
 		"sniper":
 			# 6× 狙击镜：暗角渐晕（连续黑环+柔边）+ 密位刻度 + 测距标
@@ -2046,9 +2058,9 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 						Color(0.1, 0.1, 0.12, 0.85), 1.4)
 			cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.95, 0.2, 0.12))
 			cv.draw_string(ThemeDB.fallback_font, Vector2(cx + r * 0.42, cy + r * 0.5),
-					"5x", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.5, 0.55, 0.5, 0.9))
-		"rifle":
-			# 全息镜：内方框 + 中心绿点 + 角标
+					_mag_txt(), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.5, 0.55, 0.5, 0.9))
+		"rifle", "holo":
+			# 全息镜：内方框 + 中心绿点 + 角标（商店全息镜 kind=holo）
 			var hr := r * 0.55
 			cv.draw_arc(Vector2(cx, cy), r + r * 0.15, 0, TAU, 64,
 					Color(0.03, 0.03, 0.04, 0.9), r * 0.3)
@@ -2075,8 +2087,8 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 			cv.draw_arc(Vector2(cx, cy), r * 0.4, 0, TAU, 40,
 					Color(0.08, 0.08, 0.1, 0.85), r * 0.16)
 			cv.draw_circle(Vector2(cx, cy), 6.5, Color(1.0, 0.62, 0.1, 0.95))
-		"lmg":
-			# 1.5× 光学镜：窄暗角圆环 + 细十字 + 1.5x 标注（机枪专属低倍镜）
+		"lmg", "optic":
+			# 光学镜：窄暗角圆环 + 细十字 + 倍率标注（商店 3.5× 光学镜 kind=optic）
 			var lbw := r * 0.14
 			cv.draw_arc(Vector2(cx, cy), r * 0.62 + lbw * 0.5, 0, TAU, 64,
 					Color(0.02, 0.02, 0.03, 0.97), lbw)
@@ -2096,7 +2108,7 @@ func _draw_scope_style(cv: Control, cx: float, cy: float, m: float,
 						Color(0.1, 0.1, 0.12, 0.8), 1.4)
 			cv.draw_circle(Vector2(cx, cy), 2.0, Color(0.95, 0.2, 0.12))
 			cv.draw_string(ThemeDB.fallback_font,
-					Vector2(cx + r * 0.48, cy + r * 0.48), "1.5x",
+					Vector2(cx + r * 0.48, cy + r * 0.48), _mag_txt(),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.5, 0.55, 0.5, 0.9))
 		_:
 			# 手枪机瞄：两竖一横
@@ -2115,9 +2127,17 @@ func _process_gun(dt: float) -> void:
 
 
 func set_onfoot(on: bool) -> void:
+	_on_foot = on
 	gun_overlay.visible = on
 	if not on:
 		_gun_scope = false
+	# 步行不显示驾驶仪表（档位 / 车速 / 行驶计时）：原来下车后仍挂着
+	# 「1 档 0 km/h」，还挡在枪模和底部提示上
+	var drive_screen: bool = (_screens.has("roam") and _screens["roam"].visible) \
+			or (_screens.has("hud") and _screens["hud"].visible)
+	_tach.visible = drive_screen and not on and not _plane_panel_on
+	if _roam_keys != null:
+		_roam_keys.text = ROAM_KEYS_FOOT if on else ROAM_KEYS_DRIVE
 
 
 func set_scope(on: bool, gun_id := "", zoom_lv := 0) -> void:
@@ -2126,11 +2146,18 @@ func set_scope(on: bool, gun_id := "", zoom_lv := 0) -> void:
 
 
 ## 开镜：on + 镜面 kind（iron/holo/reddot/optic/sniper/thermal）+ 滚轮档
-func set_scope_style(on: bool, kind: String, zoom_lv := 0) -> void:
+func set_scope_style(on: bool, kind: String, zoom_lv := 0, mag := 0.0) -> void:
 	_gun_scope = on
 	_scope_kind = kind
 	_scope_zoom = zoom_lv
+	if mag > 0.0:
+		_scope_mag = mag
 	gun_overlay.queue_redraw()
+
+
+## 倍率标注：1.5 → "1.5x"，5 → "5x"
+func _mag_txt() -> String:
+	return ("%.1f" % _scope_mag).trim_suffix(".0") + "x"
 
 
 ## 热成像热点开关（game 判定当前装的是热成像镜）
@@ -2164,6 +2191,12 @@ func _draw_thermal(cv: Control) -> void:
 
 func set_health(hp: float) -> void:
 	_gun_hp = hp
+	gun_overlay.queue_redraw()
+
+
+## 血条满格值：大战场兵种血量 65~80，原来一律按 100 画，满血只有七成条
+func set_max_health(m: float) -> void:
+	_gun_hp_max = m
 	gun_overlay.queue_redraw()
 
 

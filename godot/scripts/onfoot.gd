@@ -40,7 +40,7 @@ var slide_t := 0.0       # 剩余滑铲时间（>0 = 铲行中）
 var fire_block := false  # 门旁屏蔽开枪（左键留给开门）
 var slide_cd := 0.0      # 滑铲冷却
 var prone := false       # Z 趴下（低速爬行 + 开镜散布再减半）
-var scope_lv := 0        # 滚轮倍镜档：0=1.5× 1=5×
+var scope_lv := 0        # 滚轮倍镜档：瞄具 zooms 的下标（固定倍率瞄具恒为 0）
 var recoil_pitch := 0.0  # 连发累计后坐力（rad，向上顶）
 var recoil_yaw := 0.0    # 后坐力水平漂移（rad）
 var recoil_cool := 0.0   # 停火计时（>0.25s 开始缓慢回落）
@@ -69,8 +69,11 @@ var _base_fov := 63.0
 var _gun_holder: Node3D
 var _ads := 0.0                      # 开镜过渡 0=腰射 1=瞄准位
 const GUN_HIP_POS := Vector3(0.26, -0.22, -0.55)
-const GUN_ADS_POS := Vector3(0.09, -0.075, -0.45)
+const GUN_ADS_Z := -0.45
 const GUN_HIP_ROT := Vector3(2.5, 4.0, 3.0)
+const GUN_SCALE := 0.62
+var _sight_top := 0.085   # 枪模顶面高度（枪本地，含瞄具）：开镜时对齐到准星正下方
+var _sight_cx := 0.0      # 枪模中线 x（枪本地）
 var _flash: OmniLight3D
 var _flash_mesh: MeshInstance3D
 var _flash_t := 0.0
@@ -173,6 +176,7 @@ func get_gun_id() -> String:
 func set_gun(gun_id: String) -> void:
 	_gun_id = gun_id
 	_g = Guns.gun_by_id(gun_id)
+	scope_lv = 0   # 换枪回到瞄具原生倍率
 	reloading = 0.0
 	_falling = false
 	if _falling_mag != null:
@@ -552,6 +556,26 @@ func _tick_fx(dt: float) -> void:
 				s["mi"].visible = false
 
 
+## 子网格在 gun 本地空间的合并包围盒（不依赖是否已入场景树）
+func _local_aabb(gun: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for mi in gun.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		if m.mesh == null:
+			continue
+		var t := Transform3D()
+		var p: Node = m
+		while p != gun and p != null:
+			if p is Node3D:
+				t = (p as Node3D).transform * t
+			p = p.get_parent()
+		var a: AABB = t * m.get_aabb()
+		out = a if first else out.merge(a)
+		first = false
+	return out
+
+
 func mount_gun(gun: Node3D) -> void:
 	_gun_holder = Node3D.new()
 	# 锚点抬到视锥内：原点在相机上时枪/手臂的 y 偏移会落到画面底边
@@ -559,8 +583,13 @@ func mount_gun(gun: Node3D) -> void:
 	_gun_holder.position = Vector3(0.26, -0.22, -0.55)
 	_gun_holder.rotation_degrees = Vector3(2.5, 4.0, 3.0)
 	cam.add_child(_gun_holder)
-	gun.scale = Vector3.ONE * 0.62
+	gun.scale = Vector3.ONE * GUN_SCALE
 	_gun_holder.add_child(gun)
+	# 量枪模包围盒：开镜时把枪顶（机瞄/瞄具）正好放到屏幕中心下方
+	var bb := _local_aabb(gun)
+	if bb.size != Vector3.ZERO:
+		_sight_top = bb.end.y
+		_sight_cx = bb.get_center().x
 	# 枪上弹匣（换弹动画：脱落/滑入用）
 	var mag_mesh := BoxMesh.new()
 	mag_mesh.size = Vector3(0.055, 0.17, 0.09)
@@ -740,20 +769,31 @@ func update(dt: float) -> void:
 	if slide_t > 0.0 and not scoped:
 		target_fov += 10.0   # 滑铲速度感
 	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
-	# 开镜 = 枪模收到屏幕中心瞄准位（不再整体隐藏，镜内可见枪身）；
-	# 腰射回到持枪位
-	_ads = move_toward(_ads, 1.0 if scoped else 0.0, dt * 5.0 * grip_ads_mul)
-	_gun_holder.visible = true
-	var prone_drop := -0.12 if prone else 0.0
-	_gun_holder.position = GUN_HIP_POS.lerp(GUN_ADS_POS, _ads) \
-			+ Vector3(0, prone_drop, 0)
-	_gun_holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3(1.5, 2.0, 0), _ads)
+	# 开镜 = 枪模收到屏幕正中：枪顶（机瞄/瞄具）贴在准星正下方，镜内可见枪身。
+	# 原来瞄准位 x=0.09 且带 2° 偏航，枪停在屏幕中心右侧约 150px，
+	# 准星和枪上的瞄具对不上。3× 以上高倍镜开镜到位后隐藏枪模
+	#（镜筒贴脸会挡满半屏，FOV 一缩还会被放大好几倍），只看镜内画面
+	var aiming := scoped
+	_ads = move_toward(_ads, 1.0 if aiming else 0.0, dt * 5.0 * grip_ads_mul)
+	_gun_holder.visible = not (aiming and _ads > 0.9 and current_zoom() >= 3.0)
+	var ads_pos := Vector3(-GUN_SCALE * _sight_cx,
+			-0.012 - GUN_SCALE * _sight_top, GUN_ADS_Z)
+	var prone_drop := (-0.12 if prone else 0.0) * (1.0 - _ads)
+	_gun_holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) \
+			+ Vector3(0, prone_drop, 0) + _reload_off
+	# 换弹下倾动画（_reload_off/_reload_rot 原来算了没用上）
+	_gun_holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
 	# 枪口火光衰减
 	if _flash_t > 0.0:
 		_flash_t -= dt
 		if _flash_t <= 0.0:
 			_flash.visible = false
 			_flash_mesh.visible = false
+
+
+## R 键手动换弹（弹匣未满、不在换弹中才生效）
+func reload() -> void:
+	_start_reload()
 
 
 func _start_reload() -> void:
@@ -827,20 +867,27 @@ func toggle_scope() -> void:
 	scoped = not scoped
 
 
-## 滚轮切倍镜：0=1.5×（分枪风格镜）1=5×（狙击密位镜），开镜中即时生效
-func cycle_scope_zoom(dir: int) -> void:
-	scope_lv = wrapi(scope_lv + dir, 0, 2)
+## 滚轮切倍镜：在当前瞄具的可调倍率档间切换，开镜中即时生效。
+## 固定倍率的瞄具（红点/全息/3.5×/热成像/机瞄）滚轮无效——
+## 原来任何瞄具都能滚到 5×，700 金币的红点镜等于白送一个 5× 镜
+func cycle_scope_zoom(dir: int) -> bool:
+	var n := _scope_zooms().size()
+	if n < 2:
+		scope_lv = 0
+		return false
+	scope_lv = wrapi(scope_lv + dir, 0, n)
+	return true
 
 
-## 当前开镜倍率：装了瞄具用瞄具 zoom（滚轮 5× 档切到 5.0，热成像保持 4×）；
-## 未装瞄具 = 机瞄无放大（1.0）
+func _scope_zooms() -> Array:
+	var sc: Dictionary = scope_provider.call(_gun_id) \
+			if scope_provider != null else {}
+	return Guns.scope_zooms(sc)
+
+
+## 当前开镜倍率：瞄具当前档的倍率；未装瞄具 = 机瞄无放大（1.0）
 func current_zoom() -> float:
 	if not scoped:
 		return 1.0
-	var sc: Dictionary = scope_provider.call(_gun_id) \
-			if scope_provider != null else {}
-	if sc.is_empty():
-		return 1.0
-	if scope_lv >= 1 and str(sc.get("id", "")) != "thermal":
-		return 5.0
-	return float(sc.get("zoom", 1.0))
+	var zs := _scope_zooms()
+	return float(zs[clampi(scope_lv, 0, zs.size() - 1)])

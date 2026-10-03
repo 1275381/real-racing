@@ -3453,10 +3453,6 @@ func _gen_buildings() -> Array:
 	var buildable := func(cx: float, cz: float, hw: float, hd: float) -> bool:
 		if absf(cx) < 150.0 and absf(cz) < 150.0:
 			return false                       # 中心广场留空
-		# 湖畔别墅地块（出生车库南侧）：楼与别墅互不压
-		if cx + hw > 194.0 and cx - hw < 224.0 \
-				and cz + hd > -506.0 and cz - hd < -478.0:
-			return false
 		for lz in LM_ZONES:
 			if Vector2(cx, cz).distance_to(lz["c"]) \
 					< float(lz["r"]) + maxf(hw, hd):
@@ -3882,7 +3878,8 @@ func _emit_buildings(recs: Array) -> void:
 	ant_mmi = ammi
 
 
-func _place_buildings() -> void:
+## 补丁前的底板楼（烘焙快照 → 剔除后加地块）。补丁层与测试都以它为准。
+func base_buildings() -> Array:
 	# 底板取烘焙快照而不是现跑生成器：生成器的随机流是数据相关的，
 	# 任何常量一改就会让之后每一栋楼重排，按 id 挂靠的补丁会张冠李戴。
 	# 烘焙缺失时回退到生成器（默认城市下两者逐位相同，golden 守着）。
@@ -3890,21 +3887,25 @@ func _place_buildings() -> void:
 	if base.is_empty():
 		push_warning("[map] 取不到烘焙底板，回退到现跑生成器")
 		base = _gen_buildings()
-	# 湖畔别墅地块（出生车库南侧）内的底板楼剔除——烘焙数据不经过
-	# 生成器的 buildable，别墅是后加的，必须在这里手工避让
+	# 湖畔别墅地块（出生车库南侧）内的底板楼剔除。后加地块一律在这里
+	# 按矩形剔除，不能改生成器的 buildable——那会让随机流错位、之后
+	# 每栋楼都变样（golden 失配、补丁挂错楼）。
 	# 底板字段是 w/dep（半宽在生成端才除 2），矩形覆盖整块别墅+门口引道
-	var villa_free := []
+	var out := []
 	for b in base:
 		var bx: float = float(b.get("x", 0.0))
 		var bz: float = float(b.get("z", 0.0))
 		var bw: float = float(b.get("w", 0.0)) * 0.5
 		var bd: float = float(b.get("dep", 0.0)) * 0.5
 		if bx + bw > 190.0 and bx - bw < 228.0 \
-				and bz + bd > -504.0 and bz - bd < -474.0:
+				and bz + bd > -506.0 and bz - bd < -474.0:
 			continue
-		villa_free.append(b)
-	base = villa_free
-	var res: Dictionary = CityData.apply_patches(base, _city)
+		out.append(b)
+	return out
+
+
+func _place_buildings() -> void:
+	var res: Dictionary = CityData.apply_patches(base_buildings(), _city)
 	orphans = res["orphans"]
 	if not orphans.is_empty():
 		print("[map] ⚠ %d 条补丁找不到宿主（底板变过？）" % orphans.size())
@@ -4479,7 +4480,14 @@ func _make_villa() -> void:
 	sgn2.outline_size = 30
 	sgn2.position = Vector3(vx - 1.1, lv[0] + 1.8, vz + 0.5)
 	sgn2.rotation.y = -PI * 0.5
+	# 牌子悬在开放的中厅里，从东侧看 Label3D 默认双面 = 镜像反字：
+	# 改单面，再背靠背放一块朝东的，两边都读得正
+	sgn2.double_sided = false
 	root.add_child(sgn2)
+	var sgn2b: Label3D = sgn2.duplicate()
+	sgn2b.rotation.y = PI * 0.5
+	sgn2b.position.x += 0.02
+	root.add_child(sgn2b)
 	_lm_box(root, Vector3(vx - 1.0, lv[0] + 1.45, vz + 0.5),
 			Vector3(0.08, 0.5, 2.6),
 			_lm_mat(Color(0.3, 0.7, 0.9), Color(0.3, 0.75, 1.0), 1.5))

@@ -19,7 +19,9 @@ func _init() -> void:
 
 
 func _run() -> void:
-	var base: Array = CityData.base_buildings()
+	var fm0 := FreeroamMap.new()
+	var base: Array = fm0.base_buildings()   # 地图实际用的底板（剔除别墅地块）
+	fm0.free()
 	var n0 := base.size()
 	var victim: String = base[500]["id"]
 

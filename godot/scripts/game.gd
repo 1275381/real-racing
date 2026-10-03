@@ -320,21 +320,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_G and state == ST.BATTLE:
 		_battle_gadget()
-	# 滚轮：开镜中切倍镜 1.5× ↔ 5×
+	# 滚轮：开镜中在瞄具的可调倍率档间切换（固定倍率瞄具无效）
 	if event is InputEventMouseButton and event.pressed and on_foot \
-			and onfoot.scoped and state in [ST.ROAM, ST.BATTLE]:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			onfoot.cycle_scope_zoom(1)
-			hud.set_scope(true, onfoot.get_gun_id(), onfoot.scope_lv)
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			onfoot.cycle_scope_zoom(-1)
-			hud.set_scope(true, onfoot.get_gun_id(), onfoot.scope_lv)
+			and onfoot.scoped and state in [ST.ROAM, ST.BATTLE] \
+			and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		if onfoot.cycle_scope_zoom(1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1):
+			_sync_scope_hud()
+			hud.show_center("%.0f×" % onfoot.current_zoom(), "", 500)
 	# Z 键：趴下/起身（步行，大战场与漫游通用）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_Z and on_foot \
 			and state in [ST.ROAM, ST.BATTLE]:
 		onfoot.toggle_prone()
-		hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
+		_sync_scope_hud()
 
 	# T 键：大战场循环切换已购弹药类型（标准/强力/穿甲/燃烧）
 	if event is InputEventKey and event.pressed and not event.echo \
@@ -851,12 +849,13 @@ func _on_battle_deploy(cls: int, spawn_i: int) -> void:
 		player_armor = 50.0
 		_save_settings()
 		armor_note = " · 已穿防弹衣(50)"
+	hud.set_max_health(_battle_max_hp)
 	hud.set_health(player_hp)
 	hud.set_armor(player_armor)
 	hud.set_gun_name(Guns.gun_by_id(cd["gun"])["name"])
 	hud.set_scope(false)
 	bhud.banner("部署 · " + str(cd["name"]),
-			"G 使用%s · T 切弹药 · Tab 计分板 · Esc 退出%s" % [cd["gadget_name"],
+			"G 使用%s · R 换弹 · T 切弹药 · Tab 计分板 · Esc 退出%s" % [cd["gadget_name"],
 			armor_note], 2.5)
 
 
@@ -934,6 +933,16 @@ func _battle_gadget() -> void:
 
 ## 退出战场回车库（恢复环境与界面）
 func exit_battle() -> void:
+	# 活着退场、防弹衣一点没挨打：退回库存（原来部署即扣，开局就退也白丢一件）
+	if bf != null and bf.player_alive and player_armor >= 50.0:
+		armor_stock += 1
+		_save_settings()
+	player_armor = 0.0
+	hud.set_armor(0.0)
+	# 战场血量按兵种（可能 0 = 阵亡后退场）不带回城：回满到步行默认 100
+	player_hp = 100.0
+	hud.set_max_health(100.0)
+	hud.set_health(player_hp)
 	if bf != null:
 		bf.active = false
 		bf.player_alive = false
@@ -1150,6 +1159,12 @@ func _thermal_points() -> Array:
 					and (c3 - eye).normalized().dot(eye_f) >= 0.0:
 				out.append(c3)
 	return out
+## 开镜 HUD：镜面风格 + 当前倍率（镜面上的倍率标注跟着瞄具/滚轮档走）
+func _sync_scope_hud() -> void:
+	hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv,
+			onfoot.current_zoom())
+
+
 func _current_scope_kind() -> String:
 	var gid := gun_equipped
 	if state == ST.BATTLE and _battle_cls >= 0:
@@ -1194,27 +1209,41 @@ func _on_scope_pick(scope_id: String, gun_id: String) -> void:
 		hud.show_center("%s 已安装" % s["name"],
 				"%s · %s" % [Guns.gun_by_id(gun_id)["name"], s["desc"]], 2000)
 		return
-	# 已拥有：同枪同镜 = 卸下回机瞄；否则换装到该枪
+	# 已拥有：同枪同镜 = 卸下；否则从原来那把枪上拆下，换装到该枪
+	#（一个瞄具同一时间只装在一把枪上——原来买一个就能同时装满所有枪）
 	if str(scope_fit.get(gun_id, "")) == scope_id:
 		scope_fit.erase(gun_id)
 		_save_settings()
 		_refresh_gunshop_ui()
-		hud.show_center("已卸下 " + str(s["name"]), "恢复机瞄", 1400)
+		var back: String = str(Guns.gun_by_id(gun_id).get("builtin_scope", {}) \
+				.get("name", "机瞄"))
+		hud.show_center("已卸下 " + str(s["name"]), "恢复" + back, 1400)
 	else:
+		var from_gun := ""
+		for g2 in scope_fit.keys():
+			if str(scope_fit[g2]) == scope_id and g2 != gun_id:
+				scope_fit.erase(g2)
+				from_gun = str(Guns.gun_by_id(g2)["name"])
 		scope_fit[gun_id] = scope_id
 		_save_settings()
 		_refresh_gunshop_ui()
 		hud.show_center("%s → %s" % [s["name"], Guns.gun_by_id(gun_id)["name"]],
-				str(s["desc"]), 1600)
+				("从%s上拆下 · " % from_gun if from_gun != "" else "") + str(s["desc"]),
+				1600)
 
 
 ## 当前枪的瞄具（无 = 机瞄）
 func player_scope_for(gun_id: String) -> Dictionary:
 	# 按枪查询已装瞄具；大战场里兵种枪未装时继承玩家装备枪的瞄具
 	#（商店里装在哪把枪上都行，部署后自动带进战场）
+	# 优先级：该枪另装的瞄具 > 枪自带瞄具（狙击步枪 6×）> 战场继承 > 机瞄
 	var f = str(scope_fit.get(gun_id, ""))
-	if f == "" and state == ST.BATTLE and _battle_cls >= 0 \
-			and gun_id != gun_equipped:
+	if f != "":
+		return Guns.scope_by_id(f)
+	var builtin: Dictionary = Guns.gun_by_id(gun_id).get("builtin_scope", {})
+	if not builtin.is_empty():
+		return builtin
+	if state == ST.BATTLE and _battle_cls >= 0 and gun_id != gun_equipped:
 		f = str(scope_fit.get(gun_equipped, ""))
 	return Guns.scope_by_id(f) if f != "" else {}
 
@@ -2563,13 +2592,15 @@ func _handle_hotkeys() -> void:
 		else:
 			cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
 			hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
-	if Input.is_action_just_pressed("rr_rescue") and state != ST.BATTLE \
-			and not (plane_mode and state == ST.ROAM and not on_foot):
-		rescue()
+	if Input.is_action_just_pressed("rr_rescue"):
+		if on_foot and onfoot != null and (state == ST.ROAM or state == ST.BATTLE):
+			onfoot.reload()   # 步行 R = 换弹（原来是把停着的车瞬移回路上，且没有手动换弹）
+		elif state != ST.BATTLE and not (plane_mode and state == ST.ROAM and not on_foot):
+			rescue()
 	if Input.is_action_just_pressed("rr_scope") and on_foot \
 			and (state == ST.ROAM or state == ST.BATTLE):
 		onfoot.toggle_scope()
-		hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
+		_sync_scope_hud()
 	if Input.is_action_just_pressed("rr_mute"):
 		audio.ensure()
 		audio.set_muted(not audio.muted)
@@ -2832,7 +2863,7 @@ func _step_sim(h: float) -> void:
 				player_hp = minf(100.0, player_hp + 5.0 * h)
 			hud.set_health(player_hp)
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(gun_equipped)["name"])
-			hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
+			_sync_scope_hud()
 			# 地标交互提示（摩天轮 / 电视塔观景电梯）
 			var lm_hint := ""
 			var shaft_d: float = Vector2(onfoot.pos.x - 90,
@@ -3023,7 +3054,7 @@ func _step_sim(h: float) -> void:
 			bhud.set_gadget(cd["gadget_name"], 1.0 - _gadget_cd / float(cd["gadget_cd"]))
 			bhud.player_yaw = onfoot.yaw
 			hud.set_ammo(onfoot.ammo, onfoot.reloading, Guns.gun_by_id(cd["gun"])["name"])
-			hud.set_scope_style(onfoot.scoped, _current_scope_kind(), onfoot.scope_lv)
+			_sync_scope_hud()
 		if shake > 0.002 and on_foot:
 			var a3 := shake * 0.2
 			camera.position += Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * a3
