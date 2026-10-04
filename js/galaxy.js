@@ -1,0 +1,782 @@
+// 银河系全景 · 程序化银河 + 双视角控制
+// 通过 galaxy.html 的 importmap 引入仓库本地 three（r160），零外部资源
+import * as THREE from 'three';
+
+/* ================= 1. 参数与 DOM ================= */
+const params = {
+    arms: 4,        // 旋臂数量
+    starCount: 80000,
+    spin: 1,        // 自转速度倍率
+    brightness: 1,  // 整体亮度
+    twinkle: true,  // 恒星闪烁
+};
+const $ = (id) => document.getElementById(id);
+const veil = $('loadingVeil');
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function gauss() { // Box-Muller 标准正态
+    let u = 0, v = 0;
+    while (!u) u = Math.random();
+    while (!v) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/* ================= 2. 渲染器 / 场景 / 相机 ================= */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x020308, 1);
+renderer.domElement.id = 'gl';
+document.body.appendChild(renderer.domElement);
+const canvas = renderer.domElement;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 4000);
+
+/* ================= 3. 程序纹理 ================= */
+function makeStarTexture() { // 柔和圆星点
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.22, 'rgba(255,255,255,0.85)');
+    grad.addColorStop(0.48, 'rgba(255,255,255,0.28)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+}
+function makeGlowTexture() { // 银心辉光
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, 'rgba(255,244,224,1)');
+    grad.addColorStop(0.22, 'rgba(255,224,185,0.55)');
+    grad.addColorStop(0.55, 'rgba(255,195,150,0.16)');
+    grad.addColorStop(1, 'rgba(255,180,140,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 256);
+    return new THREE.CanvasTexture(c);
+}
+const starTex = makeStarTexture();
+const glowTex = makeGlowTexture();
+
+/* ================= 4. 银河着色器 =================
+   差速自转在 GPU 完成：每星存初始角/柱半径/高度，
+   顶点着色器按 ω ∝ 1/(r+c)（近似平坦旋转曲线）旋转。
+   aSpd 为速度倍率（亮星中的太阳固定为 0，作相机锚点）。 */
+const VERT = `
+uniform float uTime;
+uniform float uSpinSpeed;
+uniform float uSize;
+uniform float uPixelRatio;
+uniform float uTwinkle;
+attribute float aTheta;
+attribute float aRadius;
+attribute float aY;
+attribute float aSize;
+attribute float aPhase;
+attribute float aSpd;
+attribute vec3 aColor;
+varying vec3 vColor;
+varying float vTw;
+void main() {
+    float omega = uSpinSpeed * 1.7 / (aRadius * 0.55 + 9.0);
+    float th = aTheta + uTime * omega * aSpd;
+    vec3 p = vec3(cos(th) * aRadius, aY, sin(th) * aRadius);
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mv;
+    float tw = 1.0 + 0.42 * uTwinkle * sin(uTime * 2.6 + aPhase);
+    float ps = aSize * uSize * uPixelRatio * tw * (250.0 / max(1.0, -mv.z));
+    gl_PointSize = clamp(ps, 0.0, POINT_MAX * uPixelRatio);
+    vColor = aColor;
+    vTw = tw;
+}`;
+const FRAG = `
+uniform sampler2D uMap;
+uniform float uBrightness;
+varying vec3 vColor;
+varying float vTw;
+void main() {
+    vec4 tex = texture2D(uMap, gl_PointCoord);
+    if (tex.a < 0.02) discard;
+    gl_FragColor = vec4(vColor * uBrightness * (0.8 + 0.2 * vTw), tex.a);
+}`;
+function makeGalaxyMaterial(pointMax) {
+    const m = new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 },
+            uSpinSpeed: { value: params.spin },
+            uSize: { value: 1 },
+            uPixelRatio: { value: renderer.getPixelRatio() },
+            uTwinkle: { value: params.twinkle ? 1 : 0 },
+            uBrightness: { value: params.brightness },
+            uMap: { value: starTex },
+        },
+        vertexShader: VERT,
+        fragmentShader: FRAG,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        defines: { POINT_MAX: pointMax.toFixed(1) },
+    });
+    return m;
+}
+const galaxyMat = makeGalaxyMaterial(90);
+const namedMat = makeGalaxyMaterial(26);
+namedMat.uniforms.uSize.value = 1.2;
+const spinMats = [galaxyMat, namedMat]; // 联动 uniform 用
+
+/* ================= 5. 银河构建 ================= */
+const GALAXY_R = 100;
+let galaxyPoints = null;
+
+function buildGalaxy() {
+    const count = params.starCount;
+    // 颜色板：核心暖黄白 → 旋臂蓝白，点缀电离氢区/红巨星/蓝白亮星
+    const cIn = new THREE.Color(0xffd9a8);
+    const cMid = new THREE.Color(0xfff3dd);
+    const cOut = new THREE.Color(0x7fa8ff);
+    const cHII = new THREE.Color(0xff5f9e);
+    const cRed = new THREE.Color(0xff8f6a);
+    const cBlue = new THREE.Color(0x9db8ff);
+    const tmp = new THREE.Color();
+
+    const thetas = new Float32Array(count);
+    const radii = new Float32Array(count);
+    const ys = new Float32Array(count);
+    const colors = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    const phases = new Float32Array(count);
+    const spds = new Float32Array(count);
+    const positions = new Float32Array(count * 3); // t=0 位置，仅用于包围球
+
+    for (let i = 0; i < count; i++) {
+        spds[i] = 1;
+        phases[i] = Math.random() * Math.PI * 2;
+        const dice = Math.random();
+        let r, th, y, color, size;
+        if (dice < 0.22) {
+            // 核球：略扁的高斯球
+            r = Math.abs(gauss()) * GALAXY_R * 0.12;
+            th = Math.random() * Math.PI * 2;
+            y = gauss() * GALAXY_R * 0.075;
+            tmp.copy(cIn).lerp(cMid, Math.random() * 0.7);
+            color = tmp; size = 0.55 + Math.random();
+        } else if (dice < 0.30) {
+            // 盘面弥散星（不属旋臂）
+            r = (0.12 + 0.88 * Math.pow(Math.random(), 1.5)) * GALAXY_R;
+            th = Math.random() * Math.PI * 2;
+            y = gauss() * 2.6 * (1.1 - 0.5 * r / GALAXY_R);
+            tmp.copy(cIn).lerp(cOut, Math.min(1, (r / GALAXY_R) * 1.15));
+            color = tmp; size = 0.5 + Math.pow(Math.random(), 2) * 1.1;
+        } else if (dice < 0.96) {
+            // 旋臂：对数缠绕 + 随半径增大的角向离散
+            const arm = i % params.arms;
+            r = (0.12 + 0.88 * Math.pow(Math.random(), 1.35)) * GALAXY_R;
+            const twist = Math.pow(r / GALAXY_R, 0.72) * 3.6;
+            const scatter = gauss() * (0.10 + 0.15 * r / GALAXY_R);
+            th = (arm / params.arms) * Math.PI * 2 + twist + scatter;
+            y = gauss() * 3.4 * (1.15 - 0.55 * r / GALAXY_R) * (0.45 + 0.55 * Math.random());
+            const d2 = Math.random();
+            if (d2 < 0.015) { tmp.copy(cHII); size = 2.1 + Math.random() * 2.1; }
+            else if (d2 < 0.03) { tmp.copy(cRed); size = 1.3 + Math.random() * 1.2; }
+            else if (d2 < 0.075) { tmp.copy(cBlue); size = 1.15 + Math.random() * 1.35; }
+            else {
+                tmp.copy(cIn).lerp(cOut, Math.min(1, Math.max(0, (r / GALAXY_R) * 1.3 + gauss() * 0.08)));
+                size = 0.55 + Math.pow(Math.random(), 2.2) * 1.5;
+            }
+            color = tmp;
+        } else {
+            // 内晕：稀疏球状包裹
+            const u = Math.random() * 2 - 1;
+            const ang = Math.random() * Math.PI * 2;
+            const s = Math.sqrt(1 - u * u);
+            const rr = GALAXY_R * (1.05 + Math.pow(Math.random(), 2.2) * 2.6);
+            const x = s * Math.cos(ang) * rr, z = s * Math.sin(ang) * rr;
+            th = Math.atan2(z, x);
+            r = Math.hypot(x, z);
+            y = u * rr * 0.85;
+            tmp.copy(cMid).lerp(cOut, Math.random()).multiplyScalar(0.55);
+            color = tmp; size = 0.45 + Math.random() * 0.8;
+        }
+        thetas[i] = th; radii[i] = r; ys[i] = y; sizes[i] = size;
+        colors[i * 3] = color.r; colors[i * 3 + 1] = color.g; colors[i * 3 + 2] = color.b;
+        positions[i * 3] = Math.cos(th) * r;
+        positions[i * 3 + 1] = y;
+        positions[i * 3 + 2] = Math.sin(th) * r;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('aTheta', new THREE.BufferAttribute(thetas, 1));
+    geo.setAttribute('aRadius', new THREE.BufferAttribute(radii, 1));
+    geo.setAttribute('aY', new THREE.BufferAttribute(ys, 1));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
+    geo.setAttribute('aSpd', new THREE.BufferAttribute(spds, 1));
+
+    if (galaxyPoints) {
+        galaxyPoints.geometry.dispose();
+        galaxyPoints.geometry = geo;
+    } else {
+        galaxyPoints = new THREE.Points(geo, galaxyMat);
+        galaxyPoints.frustumCulled = false; // 真实位置在着色器中计算，包围球不可信
+        scene.add(galaxyPoints);
+    }
+}
+
+function buildCoreGlow() {
+    const mk = (scale, opacity) => {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: glowTex, transparent: true, opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        sp.scale.setScalar(scale);
+        scene.add(sp);
+    };
+    mk(150, 0.32); // 大范围暖雾
+    mk(60, 0.85);  // 银心主体
+    mk(24, 1);     // 极亮核
+}
+
+/* ---------- 背景远景星场 ---------- */
+function buildBackground() {
+    const mk = (n, rMin, rSpan, size, opacity) => {
+        const pos = new Float32Array(n * 3);
+        const col = new Float32Array(n * 3);
+        const c = new THREE.Color();
+        for (let i = 0; i < n; i++) {
+            const u = Math.random() * 2 - 1;
+            const ang = Math.random() * Math.PI * 2;
+            const s = Math.sqrt(1 - u * u);
+            const rr = rMin + Math.random() * rSpan;
+            pos[i * 3] = s * Math.cos(ang) * rr;
+            pos[i * 3 + 1] = u * rr;
+            pos[i * 3 + 2] = s * Math.sin(ang) * rr;
+            const d = Math.random();
+            c.setHSL(d < 0.6 ? 0.62 : 0.09, 0.35 * Math.random(), 0.75 + Math.random() * 0.25);
+            col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        const m = new THREE.PointsMaterial({
+            size, map: starTex, transparent: true, opacity,
+            vertexColors: true, sizeAttenuation: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        scene.add(new THREE.Points(g, m));
+    };
+    mk(2400, 1150, 500, 3.2, 0.8);
+    mk(140, 1000, 600, 6.5, 1); // 少量更亮的远景
+}
+
+/* ---------- 卫星星系（大小麦哲伦云） ---------- */
+function buildSatellites() {
+    const defs = [
+        { pos: [-660, -160, 540], R: 55, n: 900 }, // 大麦哲伦云
+        { pos: [-480, -300, 780], R: 32, n: 520 }, // 小麦哲伦云
+    ];
+    const cCore = new THREE.Color(0xffe9cf);
+    const cEdge = new THREE.Color(0x9fb6ff);
+    for (const d of defs) {
+        const pos = new Float32Array(d.n * 3);
+        const col = new Float32Array(d.n * 3);
+        const c = new THREE.Color();
+        for (let i = 0; i < d.n; i++) {
+            pos[i * 3] = d.pos[0] + gauss() * d.R * 0.4;
+            pos[i * 3 + 1] = d.pos[1] + gauss() * d.R * 0.28;
+            pos[i * 3 + 2] = d.pos[2] + gauss() * d.R * 0.4;
+            c.copy(cCore).lerp(cEdge, Math.random());
+            col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+            size: 2.1, map: starTex, transparent: true, opacity: 0.9,
+            vertexColors: true, blending: THREE.AdditiveBlending, depthWrite: false,
+        })));
+    }
+}
+
+/* ================= 6. 亮星（可点击） ================= */
+const SUN_THETA = 2.3, SUN_R = 55;
+const sunPos = new THREE.Vector3(Math.cos(SUN_THETA) * SUN_R, 1.2, Math.sin(SUN_THETA) * SUN_R);
+const insideCamPos = sunPos.clone().add(new THREE.Vector3(0, 1.8, 0));
+
+// zone: near=太阳附近（内部全景主角） far=盘面各处
+const NAMED_STARS = [
+    { name: '太阳', spec: 'G2V 黄矮星', dist: 0, size: 2.0, col: '#ffe3b0', zone: 'sun', desc: '我们的家园恒星，位于猎户臂内侧、距银心约 2.6 万光年处。此刻你正站在它附近仰望银河。' },
+    { name: '比邻星', spec: 'M5.5Ve 红矮星', dist: 4.2, size: 1.7, col: '#ffb08a', zone: 'near', desc: '距太阳最近的恒星，拥有宜居带内的行星比邻星 b，隶属半人马座 α 三合星系统。' },
+    { name: '南门二', spec: 'G2V 黄矮星', dist: 4.4, size: 2.2, col: '#ffe9c0', zone: 'near', desc: '即半人马座 α 星 A，与太阳同为 G 型黄矮星，全天第三亮星。' },
+    { name: '巴纳德星', spec: 'M4V 红矮星', dist: 6.0, size: 1.7, col: '#ffb08a', zone: 'near', desc: '蛇夫座红矮星，自行速度全天最大，约 180 年可在天球上移动一个月亮直径。' },
+    { name: '天狼星', spec: 'A1V 蓝白主序星', dist: 8.6, size: 2.6, col: '#e8eeff', zone: 'near', desc: '大犬座 α，全天最亮恒星。它的伴星天狼 B 是人类最早发现的白矮星。' },
+    { name: '牛郎星', spec: 'A7V 白色主序星', dist: 16.7, size: 2.4, col: '#eef2ff', zone: 'near', desc: '又名河鼓二，天鹰座 α。与织女星隔银河相望，是「夏季大三角」成员。' },
+    { name: '南河三', spec: 'F5IV 亚巨星', dist: 11.5, size: 2.2, col: '#fff4e4', zone: 'near', desc: '小犬座 α，「冬季大三角」成员，同样拥有一颗白矮星伴星。' },
+    { name: '织女星', spec: 'A0V 蓝白主序星', dist: 25, size: 2.5, col: '#e8eeff', zone: 'near', desc: '天琴座 α，北半球夏夜最亮的恒星之一，曾是历史上的北极星。' },
+    { name: '北落师门', spec: 'A3V 白色主序星', dist: 25, size: 2.2, col: '#eef2ff', zone: 'near', desc: '南鱼座 α，秋夜南方低空最亮星，周围有醒目的尘埃盘。' },
+    { name: '五车二', spec: 'G8III 黄巨星', dist: 42.9, size: 2.5, col: '#ffe9c0', zone: 'near', desc: '御夫座 α，实际是两对黄巨星组成的四合星系统。' },
+    { name: '北河三', spec: 'K0III 橙巨星', dist: 33.8, size: 2.4, col: '#ffca96', zone: 'near', desc: '双子座 β，「北河之子」，最早确认拥有行星的巨星之一。' },
+    { name: '大角星', spec: 'K1.5III 橙巨星', dist: 36.7, size: 2.6, col: '#ffca96', zone: 'near', desc: '牧夫座 α，北天最亮恒星。其橙红色光芒来自膨胀后的巨星外层。' },
+    { name: '水委一', spec: 'B6V 蓝白主序星', dist: 139, size: 2.3, col: '#c4d4ff', zone: 'near', desc: '波江座 α，自转极快而被压成扁球形，赤道抛出气体环。' },
+    { name: '老人星', spec: 'A9II 亮巨星', dist: 310, size: 3.0, col: '#fff6ea', zone: 'far', desc: '船底座 α，全天第二亮星，南天的标志性亮星，仅在南半球和低纬度易见。' },
+    { name: '毕宿五', spec: 'K5III 橙巨星', dist: 65, size: 2.4, col: '#ffbe8a', zone: 'far', desc: '金牛座 α，「跟随者」，位于毕星团方向，前景橙巨星。' },
+    { name: '轩辕十四', spec: 'B8IV 蓝白亚巨星', dist: 79, size: 2.2, col: '#c4d4ff', zone: 'far', desc: '狮子座 α，「小王」，几乎正好落在黄道上，常被月亮掩食。' },
+    { name: '角宿一', spec: 'B1V 蓝色主序星', dist: 250, size: 2.6, col: '#b8ccff', zone: 'far', desc: '室女座 α，「春季大三角」成员，密近双星互绕周期仅 4 天。' },
+    { name: '十字架二', spec: 'B0.5IV 蓝色亚巨星', dist: 320, size: 2.7, col: '#b8ccff', zone: 'far', desc: '南十字座 α，南天导航标志——十字长轴指向南天极。' },
+    { name: '北极星', spec: 'F7Ib 黄超巨星', dist: 433, size: 2.7, col: '#fff4e0', zone: 'far', desc: '小熊座 α，现任北极星，一颗造父变星，周期约 4 天。' },
+    { name: '心宿二', spec: 'M1.5Iab 红超巨星', dist: 550, size: 3.1, col: '#ff9d76', zone: 'far', desc: '天蝎座 α，又名「大火」，直径约为太阳 700 倍的红超巨星。' },
+    { name: '参宿四', spec: 'M1-2Ia 红超巨星', dist: 550, size: 3.3, col: '#ff9d76', zone: 'far', desc: '猎户座 α，左肩红超巨星，已进入生命末期，未来百万年内将以超新星终结。' },
+    { name: '参宿七', spec: 'B8Ia 蓝超巨星', dist: 860, size: 3.3, col: '#c4d4ff', zone: 'far', desc: '猎户座 β，猎户「左足」，光度约为太阳的 12 万倍。' },
+    { name: '参宿三', spec: 'O9.5II 蓝亮巨星', dist: 1200, size: 3.0, col: '#b8ccff', zone: 'far', desc: '猎户腰带三星之一，多星系统，腰带三星在多种文化中都是著名符号。' },
+    { name: '天津四', spec: 'A2Ia 蓝白超巨星', dist: 2600, size: 3.3, col: '#dfe6ff', zone: 'far', desc: '天鹅座 α，「夏季大三角」最远一角，距离约 2600 光年却仍是一等星。' },
+];
+
+let namedPoints = null;
+const namedData = { thetas: null, radii: null, ys: null, spds: null };
+
+function buildNamedStars() {
+    const n = NAMED_STARS.length;
+    const thetas = new Float32Array(n);
+    const radii = new Float32Array(n);
+    const ys = new Float32Array(n);
+    const spds = new Float32Array(n);
+    const colors = new Float32Array(n * 3);
+    const sizes = new Float32Array(n);
+    const phases = new Float32Array(n);
+    const positions = new Float32Array(n * 3); // CPU 同步位置，供射线拾取
+    const c = new THREE.Color();
+
+    NAMED_STARS.forEach((s, i) => {
+        phases[i] = Math.random() * Math.PI * 2;
+        c.set(s.col);
+        colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+        sizes[i] = s.size;
+        if (s.zone === 'sun') {
+            // 太阳固定不动，作为内部全景的相机锚点
+            thetas[i] = Math.atan2(sunPos.z, sunPos.x);
+            radii[i] = Math.hypot(sunPos.x, sunPos.z);
+            ys[i] = sunPos.y;
+            spds[i] = 0;
+        } else if (s.zone === 'near') {
+            // 太阳邻域：球状散布在太阳周围
+            const u = Math.random() * 2 - 1;
+            const ang = Math.random() * Math.PI * 2;
+            const sxy = Math.sqrt(1 - u * u);
+            const d = 6 + Math.random() * 24;
+            const x = sunPos.x + sxy * Math.cos(ang) * d;
+            const z = sunPos.z + sxy * Math.sin(ang) * d;
+            const y = sunPos.y + u * d * 0.35;
+            thetas[i] = Math.atan2(z, x);
+            radii[i] = Math.hypot(x, z);
+            ys[i] = y;
+            spds[i] = 1;
+        } else {
+            // 远方盘面各处
+            const r = 18 + Math.random() * 92;
+            const th = Math.random() * Math.PI * 2;
+            thetas[i] = th; radii[i] = r;
+            ys[i] = gauss() * 4;
+            spds[i] = 1;
+        }
+    });
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('aTheta', new THREE.BufferAttribute(thetas, 1));
+    geo.setAttribute('aRadius', new THREE.BufferAttribute(radii, 1));
+    geo.setAttribute('aY', new THREE.BufferAttribute(ys, 1));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
+    geo.setAttribute('aSpd', new THREE.BufferAttribute(spds, 1));
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 260);
+
+    namedPoints = new THREE.Points(geo, namedMat);
+    namedPoints.frustumCulled = false;
+    scene.add(namedPoints);
+    namedData.thetas = thetas; namedData.radii = radii;
+    namedData.ys = ys; namedData.spds = spds;
+    syncNamedPositions();
+}
+
+// CPU 侧用同一差速公式镜像亮星位置，保证拾取与画面一致
+function syncNamedPositions() {
+    if (!namedPoints) return;
+    const t = galaxyMat.uniforms.uTime.value;
+    const spd = params.spin;
+    const attr = namedPoints.geometry.getAttribute('position');
+    const arr = attr.array;
+    for (let i = 0; i < NAMED_STARS.length; i++) {
+        const omega = spd * 1.7 / (namedData.radii[i] * 0.55 + 9) * namedData.spds[i];
+        const th = namedData.thetas[i] + t * omega;
+        arr[i * 3] = Math.cos(th) * namedData.radii[i];
+        arr[i * 3 + 1] = namedData.ys[i];
+        arr[i * 3 + 2] = Math.sin(th) * namedData.radii[i];
+    }
+    attr.needsUpdate = true;
+}
+
+/* ================= 7. 相机控制（自实现，含惯性/触摸/双指） ================= */
+const ctrl = {
+    mode: 'outside', // outside | inside | cruise
+    sph: new THREE.Spherical(178, 1.08, 0.9), // 外部球坐标
+    savedSph: new THREE.Spherical(178, 1.08, 0.9),
+    vel: { th: 0, ph: 0 },      // 外部惯性
+    look: { yaw: 0, pitch: 0, vyaw: 0, vpitch: 0 }, // 内部自由环视
+    fov: 60, fovTarget: 60,
+    dragging: false,
+};
+const DEFAULT_SPH = new THREE.Spherical(178, 1.08, 0.9);
+let tween = null;
+let cruiseT = 0;
+
+const easeInOut = (k) => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+
+// 用户任何输入都可打断转场：取消 tween 并从相机当前姿态无缝接管
+function interruptTween() {
+    if (!tween) return;
+    tween = null;
+    if (ctrl.mode === 'outside' || ctrl.mode === 'cruise') {
+        const r = camera.position.length();
+        ctrl.sph.setFromSphericalCoords(
+            r,
+            Math.acos(clamp(camera.position.y / (r || 1), -1, 1)),
+            Math.atan2(camera.position.x, camera.position.z));
+    } else if (ctrl.mode === 'inside') {
+        const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+        ctrl.look.pitch = e.x;
+        ctrl.look.yaw = e.y;
+    }
+}
+
+function flyTo(pos, quat, dur, done) {
+    tween = {
+        t: 0, dur,
+        p0: camera.position.clone(), q0: camera.quaternion.clone(),
+        p1: pos.clone(), q1: quat.clone(), done,
+    };
+}
+function stepTween(dt) {
+    tween.t += dt;
+    const k = easeInOut(Math.min(1, tween.t / tween.dur));
+    camera.position.lerpVectors(tween.p0, tween.p1, k);
+    camera.quaternion.slerpQuaternions(tween.q0, tween.q1, k);
+    if (tween.t >= tween.dur) {
+        const d = tween.done;
+        tween = null;
+        d && d();
+    }
+}
+function quatLookAtOrigin(from) {
+    const m = new THREE.Matrix4().lookAt(from, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0));
+    return new THREE.Quaternion().setFromRotationMatrix(m);
+}
+function sphToVec(sph) {
+    return new THREE.Vector3().setFromSphericalCoords(sph.radius, sph.phi, sph.theta);
+}
+// 内部视角朝向银心的初始 yaw/pitch（Euler YXZ 约定）
+function insideFaceCenter() {
+    const d = new THREE.Vector3(0, 0, 0).sub(insideCamPos).normalize();
+    return { pitch: Math.asin(clamp(d.y, -1, 1)), yaw: Math.atan2(-d.x, -d.z) };
+}
+
+function applyOutside(dt) {
+    if (!ctrl.dragging) {
+        ctrl.sph.theta += ctrl.vel.th;
+        ctrl.sph.phi = clamp(ctrl.sph.phi + ctrl.vel.ph, 0.12, Math.PI - 0.35);
+        ctrl.vel.th *= 0.93; ctrl.vel.ph *= 0.93;
+    }
+    camera.position.copy(sphToVec(ctrl.sph));
+    camera.lookAt(0, 0, 0);
+}
+function applyInside() {
+    if (!ctrl.dragging) {
+        ctrl.look.yaw += ctrl.look.vyaw;
+        ctrl.look.pitch = clamp(ctrl.look.pitch + ctrl.look.vpitch, -1.45, 1.45);
+        ctrl.look.vyaw *= 0.9; ctrl.look.vpitch *= 0.9;
+    }
+    camera.position.copy(insideCamPos);
+    camera.quaternion.setFromEuler(new THREE.Euler(ctrl.look.pitch, ctrl.look.yaw, 0, 'YXZ'));
+}
+function applyCruise(dt) {
+    cruiseT += dt;
+    ctrl.sph.theta += dt * 0.055;
+    const tR = 158 + 80 * Math.sin(cruiseT * 0.1 + 0.6);
+    const tP = Math.PI * 0.35 + 0.44 * Math.sin(cruiseT * 0.067 + 2.0);
+    const k = Math.min(1, dt * 0.6);
+    ctrl.sph.radius += (tR - ctrl.sph.radius) * k;
+    ctrl.sph.phi += (tP - ctrl.sph.phi) * k;
+    camera.position.copy(sphToVec(ctrl.sph));
+    camera.lookAt(0, 0, 0);
+}
+
+function setMode(next) {
+    interruptTween();
+    if (next === ctrl.mode && next !== 'cruise') return;
+    if (ctrl.mode === 'outside' || ctrl.mode === 'cruise') {
+        ctrl.savedSph.copy(ctrl.sph);
+    }
+    if (next === 'inside') {
+        ctrl.fovTarget = 60;
+        const f = insideFaceCenter();
+        ctrl.look.yaw = f.yaw; ctrl.look.pitch = f.pitch;
+        ctrl.look.vyaw = ctrl.look.vpitch = 0;
+        ctrl.mode = 'inside';
+        flyTo(insideCamPos, new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 2.4);
+    } else if (next === 'outside') {
+        ctrl.fovTarget = 60;
+        const pos = sphToVec(ctrl.savedSph);
+        ctrl.sph.copy(ctrl.savedSph);
+        ctrl.vel.th = ctrl.vel.ph = 0;
+        ctrl.mode = 'outside';
+        flyTo(pos, quatLookAtOrigin(pos), 2.2);
+    } else if (next === 'cruise') {
+        ctrl.sph.setFromSphericalCoords(
+            camera.position.length(),
+            Math.acos(clamp(camera.position.y / camera.position.length(), -1, 1)),
+            Math.atan2(camera.position.x, camera.position.z));
+        cruiseT = 0;
+        ctrl.mode = 'cruise';
+    }
+    updateModeButtons();
+}
+function exitCruise() { // 用户拖拽时无缝接管，不飞行
+    if (ctrl.mode !== 'cruise') return;
+    ctrl.mode = 'outside';
+    ctrl.vel.th = ctrl.vel.ph = 0;
+    updateModeButtons();
+}
+function resetView() {
+    interruptTween();
+    if (ctrl.mode === 'cruise') exitCruise();
+    if (ctrl.mode === 'inside') {
+        const f = insideFaceCenter();
+        ctrl.look.yaw = f.yaw; ctrl.look.pitch = f.pitch;
+        ctrl.fovTarget = 60;
+        flyTo(insideCamPos, new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 1.2);
+    } else {
+        const pos = sphToVec(DEFAULT_SPH);
+        ctrl.sph.copy(DEFAULT_SPH);
+        ctrl.vel.th = ctrl.vel.ph = 0;
+        flyTo(pos, quatLookAtOrigin(pos), 1.2);
+    }
+}
+
+/* ---------- 指针 / 滚轮 / 双指 ---------- */
+const pointers = new Map();
+let pinchD = 0, movedPx = 0;
+const mouseNDC = new THREE.Vector2();
+let mouseActive = false;
+
+canvas.addEventListener('pointerdown', (e) => {
+    mouseNDC.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    mouseActive = true;
+    interruptTween();
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    ctrl.dragging = true;
+    movedPx = 0;
+    ctrl.vel.th = ctrl.vel.ph = 0;
+    ctrl.look.vyaw = ctrl.look.vpitch = 0;
+    canvas.classList.add('dragging');
+    exitCruise();
+    if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+});
+canvas.addEventListener('pointermove', (e) => {
+    mouseNDC.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    mouseActive = true;
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    movedPx += Math.abs(dx) + Math.abs(dy);
+    if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinchD > 0 && d > 0) {
+            const s = pinchD / d;
+            if (ctrl.mode === 'inside') ctrl.fovTarget = clamp(ctrl.fovTarget * s, 30, 78);
+            else ctrl.sph.radius = clamp(ctrl.sph.radius * s, 26, 560);
+        }
+        pinchD = d;
+        return;
+    }
+    if (ctrl.mode === 'inside') {
+        const s = 0.0026;
+        ctrl.look.yaw -= dx * s;
+        ctrl.look.pitch = clamp(ctrl.look.pitch - dy * s, -1.45, 1.45);
+        ctrl.look.vyaw = -dx * s;
+        ctrl.look.vpitch = -dy * s;
+    } else {
+        const s = 0.0045;
+        ctrl.sph.theta -= dx * s;
+        ctrl.sph.phi = clamp(ctrl.sph.phi - dy * s, 0.12, Math.PI - 0.35);
+        ctrl.vel.th = -dx * s;
+        ctrl.vel.ph = -dy * s;
+    }
+});
+function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchD = 0;
+    if (pointers.size === 0) {
+        ctrl.dragging = false;
+        canvas.classList.remove('dragging');
+        if (movedPx < 6) handleClick();
+    }
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    interruptTween();
+    exitCruise();
+    if (ctrl.mode === 'inside') {
+        ctrl.fovTarget = clamp(ctrl.fovTarget * Math.exp(e.deltaY * 0.0009), 30, 78);
+    } else {
+        ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 26, 560);
+    }
+}, { passive: false });
+canvas.addEventListener('dblclick', resetView);
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideCard();
+});
+
+/* ================= 8. 亮星拾取与信息卡 ================= */
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 3.2;
+
+function pickNamed() {
+    if (!namedPoints || !mouseActive) return -1;
+    raycaster.setFromCamera(mouseNDC, camera);
+    const hits = raycaster.intersectObject(namedPoints, false);
+    return hits.length ? hits[0].index : -1;
+}
+function handleClick() {
+    const idx = pickNamed();
+    if (idx >= 0) showCard(idx);
+    else hideCard();
+}
+function showCard(idx) {
+    const s = NAMED_STARS[idx];
+    $('cardName').textContent = s.name;
+    $('cardSpec').textContent = s.spec;
+    $('cardDist').textContent = s.dist === 0 ? '我们在这里' : `距太阳 ${s.dist} 光年`;
+    $('cardDesc').textContent = s.desc;
+    $('starCard').classList.add('show');
+}
+function hideCard() {
+    $('starCard').classList.remove('show');
+}
+$('cardClose').addEventListener('click', hideCard);
+
+/* ================= 9. UI 联动 ================= */
+const modeBtns = [...document.querySelectorAll('#modeBar .btn[data-mode]')];
+function updateModeButtons() {
+    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === ctrl.mode));
+    $('cruiseBtn').textContent = ctrl.mode === 'cruise' ? '⏸ 停止巡演' : '🎬 自动巡演';
+}
+modeBtns.forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.mode === 'cruise' && ctrl.mode === 'cruise') setMode('outside');
+    else setMode(b.dataset.mode);
+}));
+$('resetBtn').addEventListener('click', resetView);
+
+const fmtMul = (v) => `${(+v).toFixed(2).replace(/\.?0+$/, '')}×`;
+$('arms').addEventListener('input', (e) => { $('armsOut').textContent = e.target.value; });
+$('arms').addEventListener('change', (e) => { params.arms = +e.target.value; buildGalaxy(); });
+$('stars').addEventListener('input', (e) => { $('starsOut').textContent = `${e.target.value / 10000} 万`; });
+$('stars').addEventListener('change', (e) => { params.starCount = +e.target.value; buildGalaxy(); });
+$('spin').addEventListener('input', (e) => {
+    params.spin = +e.target.value;
+    $('spinOut').textContent = fmtMul(params.spin);
+    spinMats.forEach(m => { m.uniforms.uSpinSpeed.value = params.spin; });
+});
+$('bright').addEventListener('input', (e) => {
+    params.brightness = +e.target.value;
+    $('brightOut').textContent = fmtMul(params.brightness);
+    spinMats.forEach(m => { m.uniforms.uBrightness.value = params.brightness; });
+});
+$('twinkle').addEventListener('change', (e) => {
+    params.twinkle = e.target.checked;
+    spinMats.forEach(m => { m.uniforms.uTwinkle.value = params.twinkle ? 1 : 0; });
+});
+$('panelHead').addEventListener('click', () => {
+    const p = $('panel');
+    p.classList.toggle('collapsed');
+    $('panelToggle').textContent = p.classList.contains('collapsed') ? '展开' : '收起';
+});
+if (innerWidth < 720) {
+    $('panel').classList.add('collapsed');
+    $('panelToggle').textContent = '展开';
+}
+
+/* ================= 10. 初始化与主循环 ================= */
+buildGalaxy();
+buildCoreGlow();
+buildBackground();
+buildSatellites();
+buildNamedStars();
+camera.position.copy(sphToVec(ctrl.sph));
+camera.lookAt(0, 0, 0);
+updateModeButtons();
+
+window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+let fpsFrames = 0, fpsTime = 0, fpsVal = 0, firstFrame = true;
+
+function loop() {
+    requestAnimationFrame(loop);
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    galaxyMat.uniforms.uTime.value += dt;
+    namedMat.uniforms.uTime.value = galaxyMat.uniforms.uTime.value;
+
+    if (tween) stepTween(dt);
+    else if (ctrl.mode === 'outside') applyOutside(dt);
+    else if (ctrl.mode === 'inside') applyInside();
+    else applyCruise(dt);
+
+    // 视场平滑（内部模式滚轮=变焦）
+    const fovT = ctrl.mode === 'inside' ? ctrl.fovTarget : 60;
+    if (Math.abs(camera.fov - fovT) > 0.05) {
+        camera.fov += (fovT - camera.fov) * Math.min(1, dt * 9);
+        camera.updateProjectionMatrix();
+    }
+
+    // 悬停亮星 → 手型光标
+    if (!ctrl.dragging && !tween && mouseActive) {
+        canvas.classList.toggle('hoverStar', pickNamed() >= 0);
+    }
+
+    renderer.render(scene, camera);
+
+    if (firstFrame) {
+        firstFrame = false;
+        veil.classList.add('done');
+        veil.dataset.done = '1';
+    }
+    fpsFrames++;
+    fpsTime += dt;
+    if (fpsTime >= 0.5) {
+        fpsVal = Math.round(fpsFrames / fpsTime);
+        fpsFrames = 0; fpsTime = 0;
+        $('stats').textContent = `FPS ${fpsVal} · 恒星 ${(params.starCount / 10000).toFixed(0)} 万`;
+    }
+}
+loop();

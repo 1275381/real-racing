@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>银河系全景 · Galaxy Panorama</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌌</text></svg>">
+<script>
+// 模块加载失败兜底：直接屏显，避免停在加载页（与 index.html 同思路）
+(function () {
+    window.addEventListener('error', function (e) {
+        var veil = document.getElementById('loadingVeil');
+        if (!veil || veil.dataset.done) return;
+        var msg = (e && (e.message || e.filename)) ? (e.message || e.filename) : String(e);
+        veil.innerHTML = '<b>资源加载/运行出错</b><br>' + String(msg).slice(0, 300) +
+            '<br><br>请按 <b>Cmd+Shift+R</b> 强制刷新后重试。';
+    });
+})();
+</script>
+<link rel="stylesheet" href="./css/galaxy.css">
+<script type="importmap">
+{
+    "imports": {
+        "three": "./lib/three.module.js",
+        "three/addons/": "./lib/addons/"
+    }
+}
+</script>
+</head>
+<body>
+
+<div id="loadingVeil">
+    <div class="veilRing"></div>
+    <div class="veilTitle">银河系全景</div>
+    <div class="veilSub">正在生成 8 万颗恒星 …</div>
+</div>
+
+<header id="title">
+    <h1>银河系全景</h1>
+    <p>程序化银河 · 拖拽探索 · 点击亮星</p>
+</header>
+
+<nav id="modeBar">
+    <button class="btn active" data-mode="outside">🛰 外部俯瞰</button>
+    <button class="btn" data-mode="inside">🌍 内部全景</button>
+    <button class="btn" data-mode="cruise" id="cruiseBtn">🎬 自动巡演</button>
+    <button class="btn" id="resetBtn">⟲ 重置视角</button>
+</nav>
+
+<aside id="panel">
+    <div id="panelHead">
+        <span>⚙ 星系参数</span>
+        <span id="panelToggle">收起</span>
+    </div>
+    <div id="panelBody">
+        <label class="row">旋臂数量 <output id="armsOut">4</output></label>
+        <input type="range" id="arms" min="2" max="6" step="1" value="4">
+        <label class="row">恒星数量 <output id="starsOut">8 万</output></label>
+        <input type="range" id="stars" min="20000" max="200000" step="10000" value="80000">
+        <label class="row">自转速度 <output id="spinOut">1.0×</output></label>
+        <input type="range" id="spin" min="0" max="3" step="0.05" value="1">
+        <label class="row">整体亮度 <output id="brightOut">1.0×</output></label>
+        <input type="range" id="bright" min="0.3" max="2.2" step="0.05" value="1">
+        <label class="check"><input type="checkbox" id="twinkle" checked> 恒星闪烁</label>
+    </div>
+</aside>
+
+<div id="stats">FPS -- · 恒星 --</div>
+
+<div id="hints">
+    左键拖拽 环视 / 旋转 &nbsp;·&nbsp; 滚轮 缩放 / 视场<br>
+    点击亮星 查看星名信息 &nbsp;·&nbsp; 双击 复位视角
+</div>
+
+<div id="starCard">
+    <button id="cardClose" title="关闭">✕</button>
+    <h3 id="cardName"></h3>
+    <div id="cardMeta">
+        <span id="cardSpec"></span>
+        <span id="cardDist"></span>
+    </div>
+    <p id="cardDesc"></p>
+</div>
+
+<script type="module" src="./js/galaxy.js"></script>
+</body>
+</html>
