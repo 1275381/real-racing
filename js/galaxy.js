@@ -422,10 +422,146 @@ function syncNamedPositions() {
     attr.needsUpdate = true;
 }
 
+/* ================= 6.5 太阳系（☀ 模式，位于太阳标记处） ================= */
+const SOLAR_VIEW_R = 46;
+let solarGroup = null;
+const solarPickables = [];
+const solarBodies = []; // { holder, mesh, orbitR, speed, angle }
+let moonPivot = null, moonAngle = 0;
+
+const PLANETS = [
+    { name: '水星', type: '岩质行星 · 第 1 行星', au: 0.39, color: '#b8afa2', kind: 'rock', orbitR: 4.6, size: 0.17, period: 7, inc: 0.12, axial: 0.01, desc: '距太阳最近的行星，表面布满陨石坑，昼夜温差接近 600℃，几乎没有大气。' },
+    { name: '金星', type: '岩质行星 · 第 2 行星', au: 0.72, color: '#e6c088', kind: 'rock', orbitR: 6.5, size: 0.26, period: 11, inc: 0.06, axial: 3.1, desc: '浓密的二氧化碳大气造就 460℃ 的失控温室效应，自转方向与多数行星相反。' },
+    { name: '地球', type: '岩质行星 · 第 3 行星', au: 1.00, color: '#3f7fd0', kind: 'earth', orbitR: 8.6, size: 0.28, period: 15, inc: 0, axial: 0.41, desc: '目前已知唯一存在生命的星球，71% 的表面被海洋覆盖，拥有一颗大卫星——月球。' },
+    { name: '火星', type: '岩质行星 · 第 4 行星', au: 1.52, color: '#c97a55', kind: 'rock', orbitR: 11.2, size: 0.23, period: 24, inc: 0.03, axial: 0.44, desc: '红色荒漠世界，拥有太阳系最高的火山——奥林帕斯山，两极有干冰极冠。' },
+    { name: '木星', type: '气态巨行星 · 第 5 行星', au: 5.20, color: '#c9a678', kind: 'gas', orbitR: 15.5, size: 0.85, period: 45, inc: 0.02, axial: 0.05, desc: '太阳系最大的行星，大红斑风暴已持续数百年，已知卫星超过 90 颗。' },
+    { name: '土星', type: '气态巨行星 · 第 6 行星', au: 9.58, color: '#d9c08e', kind: 'gas', orbitR: 20.5, size: 0.72, period: 60, inc: 0.04, axial: 0.47, desc: '以壮丽的冰质光环著称，密度比水还低，是肉眼可见的最远行星。' },
+    { name: '天王星', type: '冰巨星 · 第 7 行星', au: 19.2, color: '#9fd4d8', kind: 'ice', orbitR: 25, size: 0.46, period: 80, inc: 0.01, axial: 1.7, desc: '自转轴几乎躺倒的冰巨星，呈现淡青色，是第一颗用望远镜发现的行星。' },
+    { name: '海王星', type: '冰巨星 · 第 8 行星', au: 30.1, color: '#5d7fd6', kind: 'ice', orbitR: 29.5, size: 0.45, period: 100, inc: 0.03, axial: 0.49, desc: '太阳系最外侧的行星，深蓝色大气中咆哮着时速 2100 公里的最强风暴。' },
+];
+
+function makePlanetTexture(p) { // 简易程序纹理：岩质斑驳 / 气巨星条纹 / 地球海陆
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 48;
+    const g = c.getContext('2d');
+    g.fillStyle = p.color;
+    g.fillRect(0, 0, 64, 48);
+    if (p.kind === 'gas' || p.kind === 'ice') {
+        for (let y = 0; y < 48; y += 4) {
+            g.fillStyle = (y % 8) ? 'rgba(255,255,255,0.10)' : 'rgba(10,15,40,0.18)';
+            g.fillRect(0, y, 64, 2);
+        }
+    } else if (p.kind === 'earth') {
+        for (let i = 0; i < 14; i++) {
+            g.fillStyle = 'rgba(96,160,90,0.9)';
+            const x = Math.random() * 64, y = 8 + Math.random() * 32, w = 4 + Math.random() * 10;
+            g.beginPath();
+            g.ellipse(x, y, w, w * 0.4, 0, 0, Math.PI * 2);
+            g.fill();
+        }
+        g.fillStyle = 'rgba(255,255,255,0.5)';
+        g.fillRect(0, 0, 64, 3);
+        g.fillRect(0, 45, 64, 3);
+    } else {
+        for (let i = 0; i < 40; i++) {
+            g.fillStyle = 'rgba(0,0,0,0.12)';
+            g.fillRect(Math.random() * 64, Math.random() * 48, 2, 2);
+        }
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+}
+
+function buildSolarSystem() {
+    solarGroup = new THREE.Group();
+    solarGroup.position.copy(sunPos);
+    solarGroup.visible = false;
+    scene.add(solarGroup);
+
+    // 太阳本体（可点击）+ 辉光 + 光源
+    const sunMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1.9, 32, 24),
+        new THREE.MeshBasicMaterial({ color: 0xffedb8 }));
+    sunMesh.userData.card = {
+        name: '太阳', spec: 'G2V 黄矮星 · 太阳系中心',
+        dist: '我们在这里', desc: NAMED_STARS[0].desc,
+    };
+    solarGroup.add(sunMesh);
+    solarPickables.push(sunMesh);
+    const mkGlow = (s, o) => {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: glowTex, transparent: true, opacity: o,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        sp.scale.setScalar(s);
+        solarGroup.add(sp);
+    };
+    mkGlow(9, 0.9);
+    mkGlow(26, 0.4);
+    solarGroup.add(new THREE.PointLight(0xfff0d0, 3, 0, 0));
+    scene.add(new THREE.AmbientLight(0x2a3352, 0.9)); // 仅供行星标准材质
+
+    for (const p of PLANETS) {
+        const orbit = new THREE.Group(); // 轨道面（小倾角）
+        orbit.rotation.x = p.inc;
+        solarGroup.add(orbit);
+
+        const pts = [];
+        for (let i = 0; i <= 128; i++) {
+            const a = (i / 128) * Math.PI * 2;
+            pts.push(new THREE.Vector3(Math.cos(a) * p.orbitR, 0, Math.sin(a) * p.orbitR));
+        }
+        orbit.add(new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(pts),
+            new THREE.LineBasicMaterial({ color: 0x66779f, transparent: true, opacity: 0.35 })));
+
+        const holder = new THREE.Group(); // 行星位置（含轴倾角）
+        holder.rotation.z = p.axial;
+        orbit.add(holder);
+
+        const mesh = new THREE.Mesh(
+            new THREE.SphereGeometry(p.size, 28, 20),
+            new THREE.MeshStandardMaterial({ map: makePlanetTexture(p), roughness: 0.85, metalness: 0 }));
+        mesh.userData.card = { name: p.name, spec: p.type, dist: `距太阳 ${p.au.toFixed(2)} AU`, desc: p.desc };
+        holder.add(mesh);
+        solarPickables.push(mesh);
+
+        if (p.name === '土星') {
+            const ring = new THREE.Mesh(
+                new THREE.RingGeometry(p.size * 1.5, p.size * 2.4, 64),
+                new THREE.MeshBasicMaterial({ color: 0xcbb98f, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+            ring.rotation.x = Math.PI / 2;
+            holder.add(ring);
+        }
+        if (p.name === '地球') {
+            moonPivot = new THREE.Mesh(
+                new THREE.SphereGeometry(0.075, 16, 12),
+                new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 1 }));
+            holder.add(moonPivot);
+        }
+        solarBodies.push({ holder, mesh, orbitR: p.orbitR, speed: (Math.PI * 2) / p.period, angle: Math.random() * Math.PI * 2 });
+    }
+}
+
+function updateSolar(dt) {
+    if (!solarGroup || !solarGroup.visible) return;
+    for (const b of solarBodies) {
+        b.angle += dt * b.speed;
+        b.holder.position.set(Math.cos(b.angle) * b.orbitR, 0, Math.sin(b.angle) * b.orbitR);
+        b.mesh.rotation.y += dt * 0.5;
+    }
+    if (moonPivot) {
+        moonAngle += dt * 2.4;
+        moonPivot.position.set(Math.cos(moonAngle) * 0.55, 0, Math.sin(moonAngle) * 0.55);
+    }
+}
+
 /* ================= 7. 相机控制（自实现，含惯性/触摸/双指） ================= */
 const ctrl = {
-    mode: 'outside', // outside | inside | cruise
-    sph: new THREE.Spherical(178, 1.08, 0.9), // 外部球坐标
+    mode: 'outside', // outside | inside | solar | cruise
+    sph: new THREE.Spherical(178, 1.08, 0.9), // 环绕球坐标（相对 target）
+    target: new THREE.Vector3(0, 0, 0),       // 环绕中心：星系中心或太阳位置
     savedSph: new THREE.Spherical(178, 1.08, 0.9),
     vel: { th: 0, ph: 0 },      // 外部惯性
     look: { yaw: 0, pitch: 0, vyaw: 0, vpitch: 0 }, // 内部自由环视
@@ -433,8 +569,9 @@ const ctrl = {
     dragging: false,
 };
 const DEFAULT_SPH = new THREE.Spherical(178, 1.08, 0.9);
+const ORIGIN = new THREE.Vector3(0, 0, 0);
 let tween = null;
-let cruiseT = 0;
+let cruiseT = 0, cruiseTheta0 = 0;
 
 const easeInOut = (k) => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
 
@@ -442,12 +579,14 @@ const easeInOut = (k) => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) /
 function interruptTween() {
     if (!tween) return;
     tween = null;
-    if (ctrl.mode === 'outside' || ctrl.mode === 'cruise') {
-        const r = camera.position.length();
-        ctrl.sph.setFromSphericalCoords(
+    if (ctrl.mode !== 'solar') solarGroup.visible = false;
+    const rel = camera.position.clone().sub(ctrl.target);
+    const r = rel.length();
+    if (ctrl.mode === 'outside' || ctrl.mode === 'cruise' || ctrl.mode === 'solar') {
+        ctrl.sph.set(
             r,
-            Math.acos(clamp(camera.position.y / (r || 1), -1, 1)),
-            Math.atan2(camera.position.x, camera.position.z));
+            Math.acos(clamp(rel.y / (r || 1), -1, 1)),
+            Math.atan2(rel.x, rel.z));
     } else if (ctrl.mode === 'inside') {
         const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
         ctrl.look.pitch = e.x;
@@ -473,8 +612,8 @@ function stepTween(dt) {
         d && d();
     }
 }
-function quatLookAtOrigin(from) {
-    const m = new THREE.Matrix4().lookAt(from, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0));
+function quatLookAt(from, target) {
+    const m = new THREE.Matrix4().lookAt(from, target, new THREE.Vector3(0, 1, 0));
     return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 function sphToVec(sph) {
@@ -492,8 +631,8 @@ function applyOutside(dt) {
         ctrl.sph.phi = clamp(ctrl.sph.phi + ctrl.vel.ph, 0.12, Math.PI - 0.35);
         ctrl.vel.th *= 0.93; ctrl.vel.ph *= 0.93;
     }
-    camera.position.copy(sphToVec(ctrl.sph));
-    camera.lookAt(0, 0, 0);
+    camera.position.copy(ctrl.target).add(sphToVec(ctrl.sph));
+    camera.lookAt(ctrl.target);
 }
 function applyInside() {
     if (!ctrl.dragging) {
@@ -504,14 +643,16 @@ function applyInside() {
     camera.position.copy(insideCamPos);
     camera.quaternion.setFromEuler(new THREE.Euler(ctrl.look.pitch, ctrl.look.yaw, 0, 'YXZ'));
 }
+// 巡演路径：方位角持续推进（约 25°/s，肉眼明显），半径与俯仰以不同周期起伏
+function cruisePose(tau) {
+    return new THREE.Spherical(
+        150 + 85 * Math.sin(0.13 * tau + 0.6),
+        0.95 + 0.62 * Math.sin(0.085 * tau + 2.2),
+        cruiseTheta0 + 0.14 * tau);
+}
 function applyCruise(dt) {
     cruiseT += dt;
-    ctrl.sph.theta += dt * 0.055;
-    const tR = 158 + 80 * Math.sin(cruiseT * 0.1 + 0.6);
-    const tP = Math.PI * 0.35 + 0.44 * Math.sin(cruiseT * 0.067 + 2.0);
-    const k = Math.min(1, dt * 0.6);
-    ctrl.sph.radius += (tR - ctrl.sph.radius) * k;
-    ctrl.sph.phi += (tP - ctrl.sph.phi) * k;
+    ctrl.sph.copy(cruisePose(cruiseT));
     camera.position.copy(sphToVec(ctrl.sph));
     camera.lookAt(0, 0, 0);
 }
@@ -522,28 +663,54 @@ function setMode(next) {
     if (ctrl.mode === 'outside' || ctrl.mode === 'cruise') {
         ctrl.savedSph.copy(ctrl.sph);
     }
+    // 离开太阳系时，飞行结束后再隐藏行星系，避免眼前突然消失
+    const hideSolar = ctrl.mode === 'solar' && next !== 'solar'
+        ? () => { if (ctrl.mode !== 'solar') solarGroup.visible = false; }
+        : null;
     if (next === 'inside') {
+        ctrl.target.copy(ORIGIN);
         ctrl.fovTarget = 60;
         const f = insideFaceCenter();
         ctrl.look.yaw = f.yaw; ctrl.look.pitch = f.pitch;
         ctrl.look.vyaw = ctrl.look.vpitch = 0;
         ctrl.mode = 'inside';
         flyTo(insideCamPos, new THREE.Quaternion().setFromEuler(
-            new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 2.4);
+            new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 2.4, hideSolar);
     } else if (next === 'outside') {
+        ctrl.target.copy(ORIGIN);
         ctrl.fovTarget = 60;
-        const pos = sphToVec(ctrl.savedSph);
-        ctrl.sph.copy(ctrl.savedSph);
+        if (ctrl.mode === 'cruise') {
+            // 巡演中切回：镜头就地接管，不飞行
+            ctrl.vel.th = ctrl.vel.ph = 0;
+            ctrl.mode = 'outside';
+        } else {
+            const pos = sphToVec(ctrl.savedSph);
+            ctrl.sph.copy(ctrl.savedSph);
+            ctrl.vel.th = ctrl.vel.ph = 0;
+            ctrl.mode = 'outside';
+            flyTo(pos, quatLookAt(pos, ORIGIN), 2.2, hideSolar);
+        }
+    } else if (next === 'solar') {
+        ctrl.target.copy(sunPos);
+        ctrl.fovTarget = 60;
+        // 延续当前方位角，飞到太阳系上空
+        const rel = camera.position.clone().sub(sunPos);
+        ctrl.sph.set(SOLAR_VIEW_R, 1.05, Math.atan2(rel.x, rel.z));
         ctrl.vel.th = ctrl.vel.ph = 0;
-        ctrl.mode = 'outside';
-        flyTo(pos, quatLookAtOrigin(pos), 2.2);
+        ctrl.mode = 'solar';
+        solarGroup.visible = true;
+        const p0 = ctrl.target.clone().add(sphToVec(ctrl.sph));
+        flyTo(p0, quatLookAt(p0, ctrl.target), 2.2);
     } else if (next === 'cruise') {
-        ctrl.sph.setFromSphericalCoords(
-            camera.position.length(),
-            Math.acos(clamp(camera.position.y / camera.position.length(), -1, 1)),
-            Math.atan2(camera.position.x, camera.position.z));
+        ctrl.target.copy(ORIGIN);
+        ctrl.fovTarget = 60;
+        // 路径起点沿用当前方位角，先飞至起点再沿路径巡游
+        cruiseTheta0 = Math.atan2(camera.position.x, camera.position.z);
+        ctrl.sph.copy(cruisePose(0));
         cruiseT = 0;
         ctrl.mode = 'cruise';
+        const p0 = sphToVec(ctrl.sph);
+        flyTo(p0, quatLookAt(p0, ORIGIN), 1.6, hideSolar);
     }
     updateModeButtons();
 }
@@ -562,11 +729,15 @@ function resetView() {
         ctrl.fovTarget = 60;
         flyTo(insideCamPos, new THREE.Quaternion().setFromEuler(
             new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 1.2);
+    } else if (ctrl.mode === 'solar') {
+        ctrl.sph.set(SOLAR_VIEW_R, 1.05, ctrl.sph.theta); // 保留方位角，仅复位距离/高度
+        const p0 = ctrl.target.clone().add(sphToVec(ctrl.sph));
+        flyTo(p0, quatLookAt(p0, ctrl.target), 1.2);
     } else {
         const pos = sphToVec(DEFAULT_SPH);
         ctrl.sph.copy(DEFAULT_SPH);
         ctrl.vel.th = ctrl.vel.ph = 0;
-        flyTo(pos, quatLookAtOrigin(pos), 1.2);
+        flyTo(pos, quatLookAt(pos, ORIGIN), 1.2);
     }
 }
 
@@ -607,6 +778,7 @@ canvas.addEventListener('pointermove', (e) => {
         if (pinchD > 0 && d > 0) {
             const s = pinchD / d;
             if (ctrl.mode === 'inside') ctrl.fovTarget = clamp(ctrl.fovTarget * s, 30, 78);
+            else if (ctrl.mode === 'solar') ctrl.sph.radius = clamp(ctrl.sph.radius * s, 9, 160);
             else ctrl.sph.radius = clamp(ctrl.sph.radius * s, 26, 560);
         }
         pinchD = d;
@@ -643,6 +815,8 @@ canvas.addEventListener('wheel', (e) => {
     exitCruise();
     if (ctrl.mode === 'inside') {
         ctrl.fovTarget = clamp(ctrl.fovTarget * Math.exp(e.deltaY * 0.0009), 30, 78);
+    } else if (ctrl.mode === 'solar') {
+        ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 9, 160);
     } else {
         ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 26, 560);
     }
@@ -662,18 +836,34 @@ function pickNamed() {
     const hits = raycaster.intersectObject(namedPoints, false);
     return hits.length ? hits[0].index : -1;
 }
+function pickSolar() {
+    if (!solarGroup || !solarGroup.visible || !mouseActive) return null;
+    raycaster.setFromCamera(mouseNDC, camera);
+    const hits = raycaster.intersectObjects(solarPickables, false);
+    return hits.length ? hits[0].object : null;
+}
 function handleClick() {
+    const body = pickSolar();
+    if (body) { showCardData(body.userData.card); return; }
     const idx = pickNamed();
     if (idx >= 0) showCard(idx);
     else hideCard();
 }
+function showCardData(c) {
+    $('cardName').textContent = c.name;
+    $('cardSpec').textContent = c.spec;
+    $('cardDist').textContent = c.dist;
+    $('cardDesc').textContent = c.desc;
+    $('starCard').classList.add('show');
+}
 function showCard(idx) {
     const s = NAMED_STARS[idx];
-    $('cardName').textContent = s.name;
-    $('cardSpec').textContent = s.spec;
-    $('cardDist').textContent = s.dist === 0 ? '我们在这里' : `距太阳 ${s.dist} 光年`;
-    $('cardDesc').textContent = s.desc;
-    $('starCard').classList.add('show');
+    showCardData({
+        name: s.name,
+        spec: s.spec,
+        dist: s.dist === 0 ? '我们在这里' : `距太阳 ${s.dist} 光年`,
+        desc: s.desc,
+    });
 }
 function hideCard() {
     $('starCard').classList.remove('show');
@@ -727,6 +917,7 @@ buildCoreGlow();
 buildBackground();
 buildSatellites();
 buildNamedStars();
+buildSolarSystem();
 camera.position.copy(sphToVec(ctrl.sph));
 camera.lookAt(0, 0, 0);
 updateModeButtons();
@@ -746,9 +937,10 @@ function loop() {
 
     galaxyMat.uniforms.uTime.value += dt;
     namedMat.uniforms.uTime.value = galaxyMat.uniforms.uTime.value;
+    updateSolar(dt);
 
     if (tween) stepTween(dt);
-    else if (ctrl.mode === 'outside') applyOutside(dt);
+    else if (ctrl.mode === 'outside' || ctrl.mode === 'solar') applyOutside(dt);
     else if (ctrl.mode === 'inside') applyInside();
     else applyCruise(dt);
 
@@ -759,9 +951,9 @@ function loop() {
         camera.updateProjectionMatrix();
     }
 
-    // 悬停亮星 → 手型光标
+    // 悬停亮星/行星 → 手型光标
     if (!ctrl.dragging && !tween && mouseActive) {
-        canvas.classList.toggle('hoverStar', pickNamed() >= 0);
+        canvas.classList.toggle('hoverStar', pickNamed() >= 0 || !!pickSolar());
     }
 
     renderer.render(scene, camera);
