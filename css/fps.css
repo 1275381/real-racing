@@ -1,0 +1,531 @@
+/* =====================================================================
+   css/fps.css —— 战术 FPS 页面皮肤（hud.js FALLBACK_CSS 的正式覆盖版）
+   hud.js 会在 <head> 最前插入一份保守兜底样式；本文件在其后加载，
+   同名规则永远胜出。命名全 hud- 前缀（interfaces 样式清单）。
+   主题：戈壁黄昏 · 橄榄绿底 · 琥珀强调（#ffb35c）· 荧光绿确认（#7ee2a8）
+   ===================================================================== */
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #070907;
+    color: #d8e2d4;
+    font-family: "PingFang SC", "Microsoft YaHei", Menlo, Consolas, "SF Mono", monospace;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+}
+
+canvas#gameCanvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+/* ---------- 加载遮罩（照 galaxy.html 骨架） ---------- */
+#loadingVeil {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: #070a07;
+    color: #9db89d;
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.9;
+    transition: opacity .8s ease;
+}
+#loadingVeil.done { opacity: 0; pointer-events: none; }
+.veilRing {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 179, 92, .15);
+    border-top-color: rgba(255, 179, 92, .85);
+    animation: fpsSpin 1.1s linear infinite;
+}
+.veilTitle {
+    font-size: 19px;
+    letter-spacing: .35em;
+    text-indent: .35em;
+    color: #eef3e8;
+}
+.veilSub { opacity: .55; }
+@keyframes fpsSpin { to { transform: rotate(360deg); } }
+
+/* =====================================================================
+   HUD 根与准星
+   ===================================================================== */
+.hud-root {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+    user-select: none;
+    letter-spacing: .04em;
+    color: #d8e2d4;
+}
+.hud-root > div { position: absolute; }
+
+.hud-crosshair { left: 50%; top: 50%; width: 0; height: 0; }
+.hud-ch-dot {
+    position: absolute;
+    left: -1.5px; top: -1.5px;
+    width: 3px; height: 3px;
+    background: #d9ffe8;
+    box-shadow: 0 0 3px rgba(0, 0, 0, .85), 0 0 6px rgba(126, 226, 168, .5);
+}
+.hud-ch-line {
+    position: absolute;
+    left: -1px; top: -5px;
+    width: 2px; height: 10px;
+    background: #d9ffe8;
+    box-shadow: 0 0 3px rgba(0, 0, 0, .85);
+}
+
+/* ---------- 命中标记（X 四线，JS 内联 transform） ---------- */
+.hud-hitmarker { left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
+.hud-hit-line {
+    position: absolute;
+    width: 2px; height: 9px;
+    background: #f4f7ee;
+    box-shadow: 0 0 4px rgba(0, 0, 0, .9);
+}
+.hud-hitmarker.hud-kill .hud-hit-line {
+    background: #ff5941;
+    height: 12px;
+    box-shadow: 0 0 6px rgba(255, 89, 65, .55);
+}
+.hud-hitmarker.hud-head .hud-hit-line { background: #ffd257; }
+
+/* =====================================================================
+   弹药 / 换弹
+   ===================================================================== */
+.hud-ammo-box {
+    right: 26px; bottom: 22px;
+    text-align: right;
+    background: rgba(10, 14, 10, .55);
+    border: 1px solid rgba(216, 226, 212, .22);
+    border-right: 3px solid rgba(255, 179, 92, .65);
+    padding: 8px 16px 7px 14px;
+    min-width: 128px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+.hud-ammo-cur {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 12px rgba(0, 0, 0, .6);
+}
+.hud-ammo-cur.hud-low { color: #ff7a45; }
+.hud-ammo-reserve {
+    font-size: 14px;
+    opacity: .75;
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-reload-hint {
+    right: 26px; bottom: 102px;
+    width: 150px;
+    text-align: center;
+    font-size: 12px;
+    opacity: .92;
+    display: none;
+}
+.hud-reload-text { display: block; text-shadow: 0 0 4px #000; }
+.hud-reload-track {
+    height: 3px;
+    background: rgba(216, 226, 212, .18);
+    margin-top: 5px;
+    overflow: hidden;
+}
+.hud-reload-fill { height: 100%; width: 0; background: #ffb35c; box-shadow: 0 0 6px rgba(255, 179, 92, .7); }
+
+/* =====================================================================
+   血量
+   ===================================================================== */
+.hud-health-bar {
+    left: 26px; bottom: 30px;
+    width: 224px; height: 10px;
+    background: rgba(10, 14, 10, .6);
+    border: 1px solid rgba(216, 226, 212, .3);
+}
+.hud-health-fill {
+    height: 100%; width: 100%;
+    background: linear-gradient(90deg, #7fa76c, #9fb98a);
+    transition: width .15s;
+}
+.hud-health-bar.hud-low .hud-health-fill { background: linear-gradient(90deg, #a03828, #c74a3c); }
+.hud-health-num {
+    left: 26px; bottom: 46px;
+    font-size: 21px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 4px #000;
+}
+
+/* =====================================================================
+   阶段卡 / 目标
+   ===================================================================== */
+.hud-phase-card {
+    left: 50%; top: 18px;
+    transform: translateX(-50%);
+    text-align: center;
+    background: rgba(10, 14, 10, .5);
+    border: 1px solid rgba(216, 226, 212, .2);
+    border-top: 2px solid rgba(255, 179, 92, .55);
+    padding: 6px 24px;
+    min-width: 300px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+.hud-phase-name {
+    font-size: 13px;
+    letter-spacing: .35em;
+    text-indent: .35em;
+    color: #ffb35c;
+}
+.hud-objective-text { font-size: 12px; opacity: .85; margin-top: 3px; }
+.hud-phase-card.hud-flash { animation: hudFlash .5s ease-out; }
+@keyframes hudFlash {
+    0% { background: rgba(255, 179, 92, .4); }
+    100% { background: rgba(10, 14, 10, .5); }
+}
+
+/* =====================================================================
+   世界标记（屏内菱形 / 屏外夹边箭头）
+   ===================================================================== */
+.hud-world-marker { opacity: 0; }
+.hud-marker-diamond {
+    position: absolute;
+    left: -7px; top: -7px;
+    width: 14px; height: 14px;
+    border: 2px solid #7ee2a8;
+    transform: rotate(45deg);
+    background: rgba(126, 226, 168, .12);
+    box-shadow: 0 0 8px rgba(126, 226, 168, .4);
+}
+.hud-marker-arrow {
+    position: absolute;
+    left: -8px; top: -8px;
+    width: 0; height: 0;
+    display: none;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-bottom: 12px solid #7ee2a8;
+    filter: drop-shadow(0 0 4px rgba(126, 226, 168, .6));
+}
+.hud-marker-label {
+    position: absolute;
+    top: 15px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: #7ee2a8;
+    white-space: nowrap;
+    text-shadow: 0 0 3px #000;
+}
+.hud-marker-dist {
+    position: absolute;
+    top: -27px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    white-space: nowrap;
+    text-shadow: 0 0 3px #000;
+    font-variant-numeric: tabular-nums;
+}
+
+/* =====================================================================
+   罗盘（宽 340 与 hud.js 背景定位运算同源）
+   ===================================================================== */
+.hud-compass-strip {
+    left: 50%; top: 56px;
+    transform: translateX(-50%);
+    width: 340px; height: 34px;
+    background-repeat: repeat-x;
+    background-size: 1440px 34px;
+    opacity: .92;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+.hud-compass-center {
+    position: absolute;
+    left: 50%; top: 0;
+    width: 2px; height: 10px;
+    background: #ffb35c;
+    transform: translateX(-50%);
+    box-shadow: 0 0 5px rgba(255, 179, 92, .9);
+}
+.hud-compass-deg {
+    left: 50%; top: 94px;
+    transform: translateX(-50%);
+    font-size: 13px;
+    color: #ffb35c;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 3px #000;
+}
+
+/* =====================================================================
+   击杀播报 / 受击
+   ===================================================================== */
+.hud-killfeed {
+    right: 24px; top: 90px;
+    text-align: right;
+    font-size: 13px;
+    max-width: 340px;
+}
+.hud-kill-item {
+    margin: 3px 0;
+    padding: 3px 12px 3px 10px;
+    background: rgba(10, 14, 10, .58);
+    border-right: 2px solid #ffb35c;
+    color: #e8ecdf;
+    white-space: nowrap;
+}
+
+.hud-damage-vignette {
+    inset: 0;
+    opacity: 0;
+    transition: opacity .5s;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 52%, rgba(150, 20, 10, .55) 100%);
+}
+.hud-damage-vignette.hud-show { opacity: 1; transition: opacity .08s; }
+.hud-damage-vignette.hud-lowblood { opacity: .75; transition: opacity .8s; }
+
+.hud-dmg-dir { left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
+.hud-dmg-dir-mark {
+    position: absolute;
+    left: -15px; top: -88px;
+    width: 30px; height: 11px;
+    background: rgba(255, 70, 50, .88);
+    clip-path: polygon(0 100%, 50% 0, 100% 100%);
+    filter: drop-shadow(0 0 5px rgba(255, 70, 50, .7));
+}
+
+/* =====================================================================
+   读条：撤离 / 情报环
+   ===================================================================== */
+.hud-extract-bar {
+    left: 50%; bottom: 120px;
+    transform: translateX(-50%);
+    width: 260px; height: 8px;
+    background: rgba(10, 14, 10, .6);
+    border: 1px solid rgba(126, 226, 168, .5);
+    display: none;
+}
+.hud-extract-fill { height: 100%; width: 0; background: #7ee2a8; box-shadow: 0 0 8px rgba(126, 226, 168, .6); }
+.hud-extract-label {
+    position: absolute;
+    top: -20px;
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    color: #7ee2a8;
+    text-shadow: 0 0 3px #000;
+}
+
+.hud-intel-ring {
+    left: 50%; top: 58%;
+    transform: translate(-50%, -50%);
+    width: 96px; height: 96px;
+    display: none;
+}
+.hud-intel-svg { width: 96px; height: 96px; transform: rotate(-90deg); }
+.hud-intel-bg { fill: none; stroke: rgba(216, 226, 212, .25); stroke-width: 6; }
+.hud-intel-fg {
+    fill: none;
+    stroke: #ffb35c;
+    stroke-width: 6;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 4px rgba(255, 179, 92, .7));
+}
+.hud-intel-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 27px;
+    color: #ffb35c;
+    font-weight: 700;
+}
+
+/* =====================================================================
+   浮层提示 / 简报 / 目标详情 / 靶场成绩板
+   ===================================================================== */
+.hud-toast-box {
+    left: 50%; bottom: 172px;
+    transform: translateX(-50%);
+    text-align: center;
+    pointer-events: none;
+}
+.hud-toast {
+    margin: 4px auto;
+    padding: 5px 18px;
+    background: rgba(10, 14, 10, .74);
+    border: 1px solid rgba(216, 226, 212, .28);
+    border-left: 3px solid rgba(255, 179, 92, .7);
+    font-size: 13px;
+    width: max-content;
+    max-width: 70vw;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+.hud-brief-card {
+    left: 50%; top: 34%;
+    transform: translateX(-50%);
+    text-align: center;
+    background: rgba(10, 14, 10, .8);
+    border: 1px solid rgba(255, 179, 92, .5);
+    padding: 18px 42px;
+    max-width: 80vw;
+    display: none;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.hud-brief-title { font-size: 15px; letter-spacing: .4em; text-indent: .4em; color: #ffb35c; }
+.hud-brief-sub { font-size: 13px; margin-top: 9px; opacity: .85; line-height: 1.8; }
+
+.hud-objective-detail {
+    left: 50%; top: 142px;
+    transform: translateX(-50%);
+    display: none;
+    background: rgba(10, 14, 10, .74);
+    border: 1px solid rgba(216, 226, 212, .26);
+    padding: 10px 26px;
+    font-size: 13px;
+    line-height: 1.9;
+    max-width: 70vw;
+    white-space: pre-line;
+    text-align: center;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+.hud-range-stats {
+    right: 26px; top: 150px;
+    text-align: right;
+    font-size: 14px;
+    line-height: 1.9;
+    background: rgba(10, 14, 10, .55);
+    border: 1px solid rgba(216, 226, 212, .24);
+    border-right: 3px solid rgba(255, 179, 92, .6);
+    padding: 8px 14px;
+    font-variant-numeric: tabular-nums;
+    display: none;
+}
+
+/* =====================================================================
+   主菜单 / 结算 / 帮助（默认隐藏，JS 内联 display 控制）
+   ===================================================================== */
+.hud-menu-root, .hud-result-root, .hud-help-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(6, 8, 6, .82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    pointer-events: auto;
+    font-family: inherit;
+    color: #d8e2d4;
+}
+.hud-menu-title {
+    font-size: 27px;
+    letter-spacing: .5em;
+    text-indent: .5em;
+    color: #ffb35c;
+    margin-bottom: 4px;
+    text-shadow: 0 0 18px rgba(255, 179, 92, .35);
+}
+.hud-menu-sub { font-size: 12px; opacity: .55; letter-spacing: .2em; margin-bottom: 10px; }
+.hud-menu-keys {
+    font-size: 12px;
+    opacity: .6;
+    line-height: 1.9;
+    margin-top: 12px;
+    white-space: pre;
+    text-align: left;
+}
+
+.hud-btn {
+    min-width: 250px;
+    padding: 11px 28px;
+    background: rgba(24, 30, 24, .85);
+    border: 1px solid rgba(216, 226, 212, .35);
+    color: #d8e2d4;
+    font-size: 15px;
+    letter-spacing: .12em;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: center;
+    transition: all .18s ease;
+}
+.hud-btn:hover { border-color: rgba(255, 179, 92, .6); color: #ffe2b8; }
+.hud-btn.hud-btn-focus {
+    border-color: #ffb35c;
+    color: #ffb35c;
+    background: rgba(60, 48, 24, .85);
+    box-shadow: 0 0 14px rgba(255, 179, 92, .22);
+}
+
+.hud-result-title {
+    font-size: 31px;
+    letter-spacing: .5em;
+    text-indent: .5em;
+    margin-bottom: 4px;
+}
+.hud-result-title.hud-win { color: #7ee2a8; text-shadow: 0 0 20px rgba(126, 226, 168, .4); }
+.hud-result-title.hud-lose { color: #ff5941; text-shadow: 0 0 20px rgba(255, 89, 65, .35); }
+.hud-rank {
+    font-size: 66px;
+    font-weight: 700;
+    color: #ffb35c;
+    margin: 6px 0;
+    text-shadow: 0 0 26px rgba(255, 179, 92, .45);
+}
+.hud-result-stats {
+    font-size: 14px;
+    line-height: 2;
+    opacity: .9;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-help-overlay { background: rgba(6, 8, 6, .9); font-size: 14px; line-height: 2.1; }
+.hud-help-title { font-size: 20px; letter-spacing: .4em; text-indent: .4em; color: #ffb35c; margin-bottom: 8px; }
+.hud-help-body { white-space: pre; text-align: left; }
+
+/* ---------- 部署黑幕 ---------- */
+.hud-deploy-veil {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 15;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .4s;
+}
+
+/* ---------- 窄屏微调 ---------- */
+@media (max-width: 720px) {
+    .hud-compass-strip { width: 240px; }
+    .hud-health-bar { width: 160px; }
+    .hud-ammo-cur { font-size: 30px; }
+    .hud-range-stats { top: 128px; font-size: 12px; }
+}

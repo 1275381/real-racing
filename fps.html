@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>战术行动 · Tactical FPS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+<script>
+// 模块加载失败兜底：直接屏显，避免停在加载页（与 galaxy.html 同思路）
+(function () {
+    window.addEventListener('error', function (e) {
+        var veil = document.getElementById('loadingVeil');
+        if (!veil || veil.dataset.done) return;
+        var msg = (e && (e.message || e.filename)) ? (e.message || e.filename) : String(e);
+        veil.innerHTML = '<b>资源加载/运行出错</b><br>' + String(msg).slice(0, 300) +
+            '<br><br>请按 <b>Cmd+Shift+R</b> 强制刷新后重试。';
+    });
+})();
+</script>
+<link rel="stylesheet" href="./css/fps.css">
+<script type="importmap">
+{
+    "imports": {
+        "three": "./lib/three.module.js",
+        "three/addons/": "./lib/addons/"
+    }
+}
+</script>
+</head>
+<body>
+
+<div id="loadingVeil">
+    <div class="veilRing"></div>
+    <div class="veilTitle">战术行动</div>
+    <div class="veilSub">正在生成战场 · 120m 交战地域 …</div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<!-- HUD DOM：interfaces 清单 29 个 id 建齐（缺失时 hud.js 会 warn+自动补建，建齐可获最佳布局） -->
+<div id="hud-root" class="hud-root">
+    <div id="hud-crosshair" class="hud-crosshair"></div>
+    <div id="hud-hitmarker" class="hud-hitmarker"></div>
+    <div id="hud-killfeed" class="hud-killfeed"></div>
+    <div id="hud-damage-vignette" class="hud-damage-vignette"></div>
+    <div id="hud-phase-card" class="hud-phase-card">
+        <div id="hud-phase-name" class="hud-phase-name">待命</div>
+        <div id="hud-objective-text" class="hud-objective-text">在菜单中选择模式</div>
+    </div>
+    <div id="hud-compass-strip" class="hud-compass-strip"><div class="hud-compass-center"></div></div>
+    <div id="hud-world-marker" class="hud-world-marker">
+        <div class="hud-marker-dist"></div>
+        <div class="hud-marker-diamond"></div>
+        <div class="hud-marker-arrow"></div>
+        <div class="hud-marker-label"></div>
+    </div>
+    <div id="hud-ammo-box" class="hud-ammo-box">
+        <div id="hud-ammo-cur" class="hud-ammo-cur">30</div>
+        <div id="hud-ammo-reserve" class="hud-ammo-reserve">/ 150</div>
+    </div>
+    <div id="hud-reload-hint" class="hud-reload-hint"></div>
+    <div id="hud-health-num" class="hud-health-num">100</div>
+    <div id="hud-health-bar" class="hud-health-bar"><div class="hud-health-fill"></div></div>
+    <div id="hud-extract-bar" class="hud-extract-bar"><div id="hud-extract-fill" class="hud-extract-fill"></div></div>
+    <div id="hud-intel-ring" class="hud-intel-ring"></div>
+    <div id="hud-toast-box" class="hud-toast-box"></div>
+</div>
+
+<div id="hud-menu-root" class="hud-menu-root">
+    <div class="hud-menu-title">行动准备</div>
+    <div class="hud-menu-sub">TACTICAL OPERATION · 战术行动</div>
+    <div class="hud-menu-keys">移动 W/A/S/D · 疾跑 Shift · 蹲伏 C · 跳跃 Space
+开火 鼠标左键 · 机瞄 右键/Q · 换弹 R · 交互 按住 F
+静音 M · 键位帮助 H · 目标详情 按住 Tab</div>
+    <button id="btnMission" class="hud-btn">1 · 行动模式（获取情报 → 撤离）</button>
+    <button id="btnRange" class="hud-btn">2 · 靶场模式（练枪 · 计分）</button>
+</div>
+
+<div id="hud-result-root" class="hud-result-root">
+    <div id="hud-result-title" class="hud-result-title">行动结束</div>
+    <div id="hud-result-stats" class="hud-result-stats"></div>
+    <button id="btnRetry" class="hud-btn">R · 重新部署</button>
+    <button id="btnMenu" class="hud-btn">Esc · 返回主菜单</button>
+</div>
+
+<div id="hud-help-overlay" class="hud-help-overlay"></div>
+<div id="deployVeil" class="hud-deploy-veil"></div>
+
+<script type="module" src="./js/fps/main.js"></script>
+</body>
+</html>
