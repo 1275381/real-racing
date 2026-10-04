@@ -1,6 +1,19 @@
 // 银河系全景 · 程序化银河 + 双视角控制
 // 通过 galaxy.html 的 importmap 引入仓库本地 three（r160），零外部资源
 import * as THREE from 'three';
+// 八大行星高清程序贴图模块（契约见 out/solar-design.md §1，导出名统一为 build）
+import { build as texMercury } from './planets/mercury.js';
+import { build as texVenus }   from './planets/venus.js';
+import { build as texEarth }   from './planets/earth.js';
+import { build as texMars }    from './planets/mars.js';
+import { build as texJupiter } from './planets/jupiter.js';
+import { build as texSaturn }  from './planets/saturn.js';
+import { build as texUranus }  from './planets/uranus.js';
+import { build as texNeptune } from './planets/neptune.js';
+const PLANET_TEX = {
+    mercury: texMercury, venus: texVenus, earth: texEarth, mars: texMars,
+    jupiter: texJupiter, saturn: texSaturn, uranus: texUranus, neptune: texNeptune,
+};
 
 /* ================= 1. 参数与 DOM ================= */
 const params = {
@@ -445,47 +458,36 @@ const solarBodies = []; // { holder, mesh, orbitR, speed, angle }
 let moonPivot = null, moonAngle = 0;
 
 const PLANETS = [
-    { name: '水星', type: '岩质行星 · 第 1 行星', au: 0.39, color: '#b8afa2', kind: 'rock', orbitR: 4.6, size: 0.17, period: 7, inc: 0.12, axial: 0.01, desc: '距太阳最近的行星，表面布满陨石坑，昼夜温差接近 600℃，几乎没有大气。' },
-    { name: '金星', type: '岩质行星 · 第 2 行星', au: 0.72, color: '#e6c088', kind: 'rock', orbitR: 6.5, size: 0.26, period: 11, inc: 0.06, axial: 3.1, desc: '浓密的二氧化碳大气造就 460℃ 的失控温室效应，自转方向与多数行星相反。' },
-    { name: '地球', type: '岩质行星 · 第 3 行星', au: 1.00, color: '#3f7fd0', kind: 'earth', orbitR: 8.6, size: 0.28, period: 15, inc: 0, axial: 0.41, desc: '目前已知唯一存在生命的星球，71% 的表面被海洋覆盖，拥有一颗大卫星——月球。' },
-    { name: '火星', type: '岩质行星 · 第 4 行星', au: 1.52, color: '#c97a55', kind: 'rock', orbitR: 11.2, size: 0.23, period: 24, inc: 0.03, axial: 0.44, desc: '红色荒漠世界，拥有太阳系最高的火山——奥林帕斯山，两极有干冰极冠。' },
-    { name: '木星', type: '气态巨行星 · 第 5 行星', au: 5.20, color: '#c9a678', kind: 'gas', orbitR: 15.5, size: 0.85, period: 45, inc: 0.02, axial: 0.05, desc: '太阳系最大的行星，大红斑风暴已持续数百年，已知卫星超过 90 颗。' },
-    { name: '土星', type: '气态巨行星 · 第 6 行星', au: 9.58, color: '#d9c08e', kind: 'gas', orbitR: 20.5, size: 0.72, period: 60, inc: 0.04, axial: 0.47, desc: '以壮丽的冰质光环著称，密度比水还低，是肉眼可见的最远行星。' },
-    { name: '天王星', type: '冰巨星 · 第 7 行星', au: 19.2, color: '#9fd4d8', kind: 'ice', orbitR: 25, size: 0.46, period: 80, inc: 0.01, axial: 1.7, desc: '自转轴几乎躺倒的冰巨星，呈现淡青色，是第一颗用望远镜发现的行星。' },
-    { name: '海王星', type: '冰巨星 · 第 8 行星', au: 30.1, color: '#5d7fd6', kind: 'ice', orbitR: 29.5, size: 0.45, period: 100, inc: 0.03, axial: 0.49, desc: '太阳系最外侧的行星，深蓝色大气中咆哮着时速 2100 公里的最强风暴。' },
+    { name: '水星', key: 'mercury', type: '岩质行星 · 第 1 行星', au: 0.39, color: '#b8afa2', kind: 'rock', orbitR: 4.6, size: 0.17, period: 7, inc: 0.12, axial: 0.01, desc: '距太阳最近的行星，表面布满陨石坑，昼夜温差接近 600℃，几乎没有大气。' },
+    { name: '金星', key: 'venus', type: '岩质行星 · 第 2 行星', au: 0.72, color: '#e6c088', kind: 'rock', orbitR: 6.5, size: 0.26, period: 11, inc: 0.06, axial: 3.1, desc: '浓密的二氧化碳大气造就 460℃ 的失控温室效应，自转方向与多数行星相反。' },
+    { name: '地球', key: 'earth', type: '岩质行星 · 第 3 行星', au: 1.00, color: '#3f7fd0', kind: 'earth', orbitR: 8.6, size: 0.28, period: 15, inc: 0, axial: 0.41, desc: '目前已知唯一存在生命的星球，71% 的表面被海洋覆盖，拥有一颗大卫星——月球。' },
+    { name: '火星', key: 'mars', type: '岩质行星 · 第 4 行星', au: 1.52, color: '#c97a55', kind: 'rock', orbitR: 11.2, size: 0.23, period: 24, inc: 0.03, axial: 0.44, desc: '红色荒漠世界，拥有太阳系最高的火山——奥林帕斯山，两极有干冰极冠。' },
+    { name: '木星', key: 'jupiter', type: '气态巨行星 · 第 5 行星', au: 5.20, color: '#c9a678', kind: 'gas', orbitR: 15.5, size: 0.85, period: 45, inc: 0.02, axial: 0.05, desc: '太阳系最大的行星，大红斑风暴已持续数百年，已知卫星超过 90 颗。' },
+    { name: '土星', key: 'saturn', type: '气态巨行星 · 第 6 行星', au: 9.58, color: '#d9c08e', kind: 'gas', orbitR: 20.5, size: 0.72, period: 60, inc: 0.04, axial: 0.47, desc: '以壮丽的冰质光环著称，密度比水还低，是肉眼可见的最远行星。' },
+    { name: '天王星', key: 'uranus', type: '冰巨星 · 第 7 行星', au: 19.2, color: '#9fd4d8', kind: 'ice', orbitR: 25, size: 0.46, period: 80, inc: 0.01, axial: 1.7, desc: '自转轴几乎躺倒的冰巨星，呈现淡青色，是第一颗用望远镜发现的行星。' },
+    { name: '海王星', key: 'neptune', type: '冰巨星 · 第 8 行星', au: 30.1, color: '#5d7fd6', kind: 'ice', orbitR: 29.5, size: 0.45, period: 100, inc: 0.03, axial: 0.49, desc: '太阳系最外侧的行星，深蓝色大气中咆哮着时速 2100 公里的最强风暴。' },
 ];
 
-function makePlanetTexture(p) { // 简易程序纹理：岩质斑驳 / 气巨星条纹 / 地球海陆
-    const c = document.createElement('canvas');
-    c.width = 64; c.height = 48;
-    const g = c.getContext('2d');
-    g.fillStyle = p.color;
-    g.fillRect(0, 0, 64, 48);
-    if (p.kind === 'gas' || p.kind === 'ice') {
-        for (let y = 0; y < 48; y += 4) {
-            g.fillStyle = (y % 8) ? 'rgba(255,255,255,0.10)' : 'rgba(10,15,40,0.18)';
-            g.fillRect(0, y, 64, 2);
-        }
-    } else if (p.kind === 'earth') {
-        for (let i = 0; i < 14; i++) {
-            g.fillStyle = 'rgba(96,160,90,0.9)';
-            const x = Math.random() * 64, y = 8 + Math.random() * 32, w = 4 + Math.random() * 10;
-            g.beginPath();
-            g.ellipse(x, y, w, w * 0.4, 0, 0, Math.PI * 2);
-            g.fill();
-        }
-        g.fillStyle = 'rgba(255,255,255,0.5)';
-        g.fillRect(0, 0, 64, 3);
-        g.fillRect(0, 45, 64, 3);
-    } else {
-        for (let i = 0; i < 40; i++) {
-            g.fillStyle = 'rgba(0,0,0,0.12)';
-            g.fillRect(Math.random() * 64, Math.random() * 48, 2, 2);
-        }
+/* ---------- 行星环绕观光（planet 模式）状态与常量 ---------- */
+const BASE_NEAR = 0.1;              // 常规近平面（与 camera 初始值一致）
+let planetIdx = -1;                 // 当前环绕的行星下标（与 PLANETS/solarBodies 对齐）
+const planetR = (i) => PLANETS[i].size * SOLAR_SCALE;            // 行星半径
+const planetNear = (i) => planetR(i) * 0.02;                     // planet 模式近平面
+const planetZoom = (i) => [planetR(i) * 1.6, planetR(i) * 14];   // 环绕半径上下限
+const PLANET_HOME = 4;              // 进入时默认环绕半径 = 4×行星半径
+const _flyTarget = new THREE.Vector3(); // tween 每帧取行星世界坐标（避免逐帧 new）
+
+// 土星环 UV 重排：RingGeometry 默认 UV 是平面投影，径向条带贴图（x=半径方向）
+// 要求 u 沿半径线性、v 取条带中线
+function makeRingGeometry(inner, outer) {
+    const g = new THREE.RingGeometry(inner, outer, 128, 1);
+    const pos = g.attributes.position, uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) {
+        const r = Math.hypot(pos.getX(i), pos.getY(i));    // 顶点在 XY 平面，直接取平面半径
+        uv.setXY(i, (r - inner) / (outer - inner), 0.5);   // u: 内缘0 → 外缘1
     }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
+    uv.needsUpdate = true;
+    return g;
 }
 
 function buildSolarSystem() {
@@ -525,7 +527,8 @@ function buildSolarSystem() {
     solarGroup.add(new THREE.PointLight(0xfff0d0, 3, 0, 0));
     scene.add(new THREE.AmbientLight(0x2a3352, 0.9)); // 仅供行星标准材质
 
-    for (const p of PLANETS) {
+    for (let idx = 0; idx < PLANETS.length; idx++) { // 带下标，供 userData.planetIdx 双击进入
+        const p = PLANETS[idx];
         const oR = p.orbitR * SOLAR_SCALE;
         const sz = p.size * SOLAR_SCALE;
         const orbit = new THREE.Group(); // 轨道面（小倾角）
@@ -545,10 +548,18 @@ function buildSolarSystem() {
         holder.rotation.z = p.axial;
         orbit.add(holder);
 
-        const mesh = new THREE.Mesh(
-            new THREE.SphereGeometry(sz, 28, 20),
-            new THREE.MeshStandardMaterial({ map: makePlanetTexture(p), roughness: 0.85, metalness: 0 }));
+        // 每行星恰好一次纹理构建；本迭代后续分支（本体/bump/云/环/月球）只引用 tex.*
+        const tex = PLANET_TEX[p.key]();
+        const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        for (const t of [tex.map, tex.bumpMap, tex.cloudMap, tex.ringMap, tex.moonMap])
+            if (t) t.anisotropy = maxAniso;
+
+        // 行星本体：高清程序贴图（契约必返 map）+ 可选 bump
+        const mat = new THREE.MeshStandardMaterial({ map: tex.map, roughness: 0.9, metalness: 0 });
+        if (tex.bumpMap) { mat.bumpMap = tex.bumpMap; mat.bumpScale = sz * 0.6; }
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(sz, 96, 64), mat);
         mesh.userData.card = { name: p.name, spec: p.type, dist: `距太阳 ${p.au.toFixed(2)} AU`, desc: p.desc };
+        mesh.userData.planetIdx = idx; // 双击进入环绕观光
         holder.add(mesh);
         solarPickables.push(mesh);
 
@@ -557,23 +568,48 @@ function buildSolarSystem() {
             new THREE.SphereGeometry(Math.max(sz * 3.5, 0.02), 8, 6),
             new THREE.MeshBasicMaterial({ visible: false }));
         proxy.userData.card = mesh.userData.card;
+        proxy.userData.planetIdx = idx; // 双击代理同样可进入
         holder.add(proxy);
         solarPickables.push(proxy);
 
-        if (p.name === '土星') {
-            const ring = new THREE.Mesh(
-                new THREE.RingGeometry(sz * 1.5, sz * 2.4, 64),
-                new THREE.MeshBasicMaterial({ color: 0xcbb98f, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
-            ring.rotation.x = Math.PI / 2;
+        // 云层：凡提供 cloudMap 的行星（地球/金星）自动生效，缺省跳过
+        let cloud = null;
+        if (tex.cloudMap) {
+            cloud = new THREE.Mesh(
+                new THREE.SphereGeometry(sz * 1.015, 96, 64), // 略大于地表 +1.5%，差速自转
+                new THREE.MeshStandardMaterial({
+                    map: tex.cloudMap, transparent: true, opacity: 0.85,
+                    depthWrite: false, roughness: 1, metalness: 0,
+                }));
+            holder.add(cloud);
+        }
+
+        // 土星环：ringMap 径向条带 + UV 重排；缺省回退纯色环（契约违约降级）
+        if (p.key === 'saturn') {
+            const ring = tex.ringMap
+                ? new THREE.Mesh(
+                    makeRingGeometry(sz * 1.5, sz * 2.4),
+                    new THREE.MeshBasicMaterial({
+                        map: tex.ringMap, transparent: true,
+                        side: THREE.DoubleSide, depthWrite: false,
+                    }))
+                : new THREE.Mesh(
+                    new THREE.RingGeometry(sz * 1.5, sz * 2.4, 64),
+                    new THREE.MeshBasicMaterial({ color: 0xcbb98f, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+            ring.rotation.x = Math.PI / 2; // 随 holder 轴倾角一起倾斜
             holder.add(ring);
         }
-        if (p.name === '地球') {
+
+        // 地球月球：moonMap 贴图；缺省回退灰月（契约违约降级）
+        if (p.key === 'earth') {
             moonPivot = new THREE.Mesh(
-                new THREE.SphereGeometry(0.075 * SOLAR_SCALE, 16, 12),
-                new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 1 }));
+                new THREE.SphereGeometry(0.075 * SOLAR_SCALE, 24, 16),
+                tex.moonMap
+                    ? new THREE.MeshStandardMaterial({ map: tex.moonMap, roughness: 1, metalness: 0 })
+                    : new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 1 }));
             holder.add(moonPivot);
         }
-        solarBodies.push({ holder, mesh, orbitR: oR, speed: (Math.PI * 2) / p.period, angle: Math.random() * Math.PI * 2 });
+        solarBodies.push({ holder, mesh, cloud, orbitR: oR, speed: (Math.PI * 2) / p.period, angle: Math.random() * Math.PI * 2 });
     }
 }
 
@@ -583,11 +619,14 @@ function updateSolar(dt) {
         b.angle += dt * b.speed;
         b.holder.position.set(Math.cos(b.angle) * b.orbitR, 0, Math.sin(b.angle) * b.orbitR);
         b.mesh.rotation.y += dt * 0.5;
+        if (b.cloud) b.cloud.rotation.y += dt * 0.535; // 与地表 0.5 差速 → 缓慢相对漂移
     }
     if (moonPivot) {
         moonAngle += dt * 2.4;
         moonPivot.position.set(Math.cos(moonAngle) * MOON_ORBIT, 0, Math.sin(moonAngle) * MOON_ORBIT);
+        moonPivot.rotation.y = -moonAngle; // 潮汐锁定：始终同面朝向地球
     }
+    solarGroup.updateMatrixWorld(true); // planet 模式相机锁定需零滞后的世界矩阵
 }
 
 /* 太阳系内看到的「真实夜空」：其他恒星都在成千上万倍太阳系宽度之外，
@@ -658,7 +697,7 @@ function buildSolarSky() {
 
 /* ================= 7. 相机控制（自实现，含惯性/触摸/双指） ================= */
 const ctrl = {
-    mode: 'outside', // outside | inside | solar | cruise
+    mode: 'outside', // outside | inside | solar | cruise | planet（行星环绕观光）
     sph: new THREE.Spherical(178, 1.08, 0.9), // 环绕球坐标（相对 target）
     target: new THREE.Vector3(0, 0, 0),       // 环绕中心：星系中心或太阳位置
     savedSph: new THREE.Spherical(178, 1.08, 0.9),
@@ -678,10 +717,11 @@ const easeInOut = (k) => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) /
 function interruptTween() {
     if (!tween) return;
     tween = null;
-    if (ctrl.mode !== 'solar') solarGroup.visible = false;
+    // solar/planet 同属太阳系层级，打断后行星系不得消失
+    if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet') solarGroup.visible = false;
     const rel = camera.position.clone().sub(ctrl.target);
     const r = rel.length();
-    if (ctrl.mode === 'outside' || ctrl.mode === 'cruise' || ctrl.mode === 'solar') {
+    if (ctrl.mode === 'outside' || ctrl.mode === 'cruise' || ctrl.mode === 'solar' || ctrl.mode === 'planet') {
         ctrl.sph.set(
             r,
             Math.acos(clamp(rel.y / (r || 1), -1, 1)),
@@ -693,15 +733,25 @@ function interruptTween() {
     }
 }
 
-function flyTo(pos, quat, dur, done) {
+// moving：返回运动目标当前世界坐标的函数。存在时 pos 视为相对目标的偏移，
+// 落点与朝向每帧重算（行星公转最快 0.897 rad/s，固定落点必脱靶）；既有 4 参调用不受影响
+function flyTo(pos, quat, dur, done, moving) {
     tween = {
         t: 0, dur,
         p0: camera.position.clone(), q0: camera.quaternion.clone(),
-        p1: pos.clone(), q1: quat.clone(), done,
+        off: pos.clone(), // moving 存在时：相对运动目标的落点偏移
+        p1: moving ? moving().clone().add(pos) : pos.clone(),
+        q1: quat ? quat.clone() : null,
+        done, moving: moving || null,
     };
 }
 function stepTween(dt) {
     tween.t += dt;
+    if (tween.moving) { // 紧盯运动中的行星：每帧重算落点与朝向
+        const tp = tween.moving();
+        tween.p1.copy(tp).add(tween.off);
+        tween.q1 = quatLookAt(tween.p1, tp);
+    }
     const k = easeInOut(Math.min(1, tween.t / tween.dur));
     camera.position.lerpVectors(tween.p0, tween.p1, k);
     camera.quaternion.slerpQuaternions(tween.q0, tween.q1, k);
@@ -759,12 +809,17 @@ function applyCruise(dt) {
 function setMode(next) {
     interruptTween();
     if (next === ctrl.mode && next !== 'cruise') return;
+    if (ctrl.mode === 'planet' && next !== 'planet') { // 从行星观光直接切其他模式：统一收尾
+        hidePlanetNav();
+        planetIdx = -1;
+    }
     if (ctrl.mode === 'outside' || ctrl.mode === 'cruise') {
         ctrl.savedSph.copy(ctrl.sph);
     }
-    // 离开太阳系时，飞行结束后再隐藏行星系，避免眼前突然消失
-    const hideSolar = ctrl.mode === 'solar' && next !== 'solar'
-        ? () => { if (ctrl.mode !== 'solar') solarGroup.visible = false; }
+    // 离开太阳系层级（solar/planet → 非 solar 且非 planet）时，
+    // 飞行结束后再隐藏行星系，避免眼前突然消失
+    const hideSolar = (ctrl.mode === 'solar' || ctrl.mode === 'planet') && next !== 'solar' && next !== 'planet'
+        ? () => { if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet') solarGroup.visible = false; }
         : null;
     if (next === 'inside') {
         ctrl.target.copy(ORIGIN);
@@ -828,6 +883,10 @@ function resetView() {
         ctrl.fovTarget = 60;
         flyTo(insideCamPos, new THREE.Quaternion().setFromEuler(
             new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 1.2);
+    } else if (ctrl.mode === 'planet') {
+        ctrl.sph.radius = planetR(planetIdx) * PLANET_HOME; // 保留方位/俯仰，仅复位距离
+        flyTo(sphToVec(ctrl.sph), null, 1.0, null,
+            () => planetWorldPos(planetIdx, _flyTarget));
     } else if (ctrl.mode === 'solar') {
         ctrl.sph.set(SOLAR_VIEW_R, 1.05, ctrl.sph.theta); // 保留方位角，仅复位距离/高度
         const p0 = ctrl.target.clone().add(sphToVec(ctrl.sph));
@@ -878,6 +937,12 @@ canvas.addEventListener('pointermove', (e) => {
             const s = pinchD / d;
             if (ctrl.mode === 'inside') ctrl.fovTarget = clamp(ctrl.fovTarget * s, 30, 78);
             else if (ctrl.mode === 'solar') ctrl.sph.radius = clamp(ctrl.sph.radius * s, 0.35, 10);
+            else if (ctrl.mode === 'planet') { // 环绕半径按行星大小自适应
+                const [rMin, rMax] = planetZoom(planetIdx);
+                // 半径仍超上限（进入飞行途中/刚打断转场）时不向内硬拉瞬移，只阻止继续拉远
+                const hi = Math.max(rMax, ctrl.sph.radius);
+                ctrl.sph.radius = clamp(ctrl.sph.radius * s, rMin, hi);
+            }
             else ctrl.sph.radius = clamp(ctrl.sph.radius * s, 26, 560);
         }
         pinchD = d;
@@ -916,13 +981,35 @@ canvas.addEventListener('wheel', (e) => {
         ctrl.fovTarget = clamp(ctrl.fovTarget * Math.exp(e.deltaY * 0.0009), 30, 78);
     } else if (ctrl.mode === 'solar') {
         ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 0.35, 10);
+    } else if (ctrl.mode === 'planet') { // 环绕半径按行星大小自适应
+        const [rMin, rMax] = planetZoom(planetIdx);
+        // 半径仍超上限（进入飞行途中/刚打断转场）时不向内硬拉瞬移，只阻止继续拉远
+        const hi = Math.max(rMax, ctrl.sph.radius);
+        ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), rMin, hi);
     } else {
         ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 26, 560);
     }
 }, { passive: false });
-canvas.addEventListener('dblclick', resetView);
+// 太阳系/行星环绕模式下双击行星 → 进入（切换到）该行星的环绕观光；
+// 双击太阳/空处维持原复位逻辑
+canvas.addEventListener('dblclick', () => {
+    if (ctrl.mode === 'solar' || ctrl.mode === 'planet') {
+        const hit = pickSolar();
+        if (hit && hit.userData.planetIdx !== undefined) {
+            enterPlanet(hit.userData.planetIdx); // 内部会 hideCard() 收掉双击残留的信息卡
+            return;
+        }
+    }
+    resetView();
+});
 window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideCard();
+    // 参数面板控件持焦点时方向键归滑杆专用，避免「切换行星 + 改参数」双重效果
+    // （ESC 不受影响：滑杆不响应 ESC，保留全局退出语义）
+    if (e.target && e.target.closest && e.target.closest('#panel')
+        && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
+    if (e.key === 'Escape') { ctrl.mode === 'planet' ? exitPlanet() : hideCard(); }
+    else if (ctrl.mode === 'planet' && e.key === 'ArrowLeft') switchPlanet(-1);
+    else if (ctrl.mode === 'planet' && e.key === 'ArrowRight') switchPlanet(1);
 });
 
 /* ================= 8. 亮星拾取与信息卡 ================= */
@@ -943,16 +1030,19 @@ function pickSolar() {
 }
 function handleClick() {
     const body = pickSolar();
-    if (body) { showCardData(body.userData.card); return; }
+    if (body) { showCardData(body.userData.card, body.userData.planetIdx); return; }
     const idx = pickNamed();
     if (idx >= 0) showCard(idx);
     else hideCard();
 }
-function showCardData(c) {
+let cardPlanetIdx = null; // 当前信息卡对应的行星下标（有值时显示「进入环绕观光」入口）
+function showCardData(c, planetIdx) {
     $('cardName').textContent = c.name;
     $('cardSpec').textContent = c.spec;
     $('cardDist').textContent = c.dist;
     $('cardDesc').textContent = c.desc;
+    cardPlanetIdx = (planetIdx === undefined || planetIdx === null) ? null : planetIdx;
+    $('cardEnter').classList.toggle('show', cardPlanetIdx !== null);
     $('starCard').classList.add('show');
 }
 function showCard(idx) {
@@ -968,11 +1058,80 @@ function hideCard() {
     $('starCard').classList.remove('show');
 }
 $('cardClose').addEventListener('click', hideCard);
+// 行星卡内的环绕观光入口（触屏双击 dblclick 不可靠时的首次进入通道，非行星卡自动隐藏）
+$('cardEnter').addEventListener('click', () => {
+    if (cardPlanetIdx !== null) enterPlanet(cardPlanetIdx); // 内部会 hideCard()
+});
+
+/* ================= 8.5 行星环绕观光（planet 模式） ================= */
+// holder 挂在带倾角的 orbit 组内，世界坐标须经矩阵变换取
+function planetWorldPos(i, out) {
+    return solarBodies[i].holder.getWorldPosition(out);
+}
+// 每帧把环绕中心锁到公转中的行星（applyOutside 的 sph 是相对 target 的偏移，
+// target 跟随即刚性锁定；须在主循环 tween/派发之前调用）
+function syncPlanetCamera() {
+    if (ctrl.mode !== 'planet' || planetIdx < 0) return;
+    planetWorldPos(planetIdx, ctrl.target);
+}
+
+function enterPlanet(i) {
+    if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet') return;
+    interruptTween();
+    hideCard(); // 双击会先触发两次单击弹卡，这里收掉
+    planetIdx = clamp(i, 0, PLANETS.length - 1);
+    const r = planetR(planetIdx);
+    ctrl.mode = 'planet'; // 先定模式，interruptTween/派发都能正确归类
+    ctrl.fovTarget = 60;
+    ctrl.vel.th = ctrl.vel.ph = 0;
+    solarGroup.visible = true;
+    planetWorldPos(planetIdx, ctrl.target); // 立即锁定，转场期间也跟随
+    // 延续当前方位角：从相机→行星的方向取 theta，落点高度略俯视
+    const rel = camera.position.clone().sub(ctrl.target);
+    ctrl.sph.set(r * PLANET_HOME, 1.15, Math.atan2(rel.x, rel.z));
+    // 近平面收紧须在飞行开始前：接近段（<0.1）行星否则会被近平面整体裁掉
+    camera.near = planetNear(planetIdx);
+    camera.updateProjectionMatrix();
+    flyTo(sphToVec(ctrl.sph), null, 1.9,
+        () => {}, // 到达即处于 applyOutside 环绕
+        () => planetWorldPos(planetIdx, _flyTarget));
+    showPlanetNav();
+    updateModeButtons();
+}
+
+function exitPlanet() { // ESC / 导航按钮 / 模式按钮统一走这里
+    if (ctrl.mode !== 'planet') return;
+    hideCard();
+    hidePlanetNav();
+    planetIdx = -1;
+    setMode('solar'); // 复用 solar 分支：target=sunPos、飞回 SOLAR_VIEW_R
+    // camera.near 不在此恢复 → 交给主循环自愈守卫，避免飞行途中行星突然消失
+}
+
+function switchPlanet(dir) { // 导航「上一颗/下一颗」与 ←/→ 键（环形取模）
+    if (ctrl.mode !== 'planet') return;
+    enterPlanet((planetIdx + dir + PLANETS.length) % PLANETS.length);
+}
+
+function showPlanetNav() {
+    const p = PLANETS[planetIdx];
+    $('planetLabel').textContent = `${p.name} · ${p.type.replace(' · ', '（')}）`;
+    $('planetNav').classList.add('show');
+    $('planetNav').setAttribute('aria-hidden', 'false');
+}
+function hidePlanetNav() {
+    $('planetNav').classList.remove('show');
+    $('planetNav').setAttribute('aria-hidden', 'true');
+}
+$('prevPlanet').addEventListener('click', () => switchPlanet(-1));
+$('nextPlanet').addEventListener('click', () => switchPlanet(1));
+$('exitPlanet').addEventListener('click', exitPlanet);
 
 /* ================= 9. UI 联动 ================= */
 const modeBtns = [...document.querySelectorAll('#modeBar .btn[data-mode]')];
 function updateModeButtons() {
-    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === ctrl.mode));
+    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === ctrl.mode
+        || (ctrl.mode === 'planet' && b.dataset.mode === 'solar'))); // planet 无独立按钮，☀ 保持高亮
     $('cruiseBtn').textContent = ctrl.mode === 'cruise' ? '⏸ 停止巡演' : '🎬 自动巡演';
 }
 modeBtns.forEach(b => b.addEventListener('click', () => {
@@ -1040,7 +1199,8 @@ function loop() {
     updateSolar(dt);
 
     // 银河场景 ↔ 太阳系夜空 的交叉淡入淡出（由相机到太阳的距离驱动）
-    let k = ctrl.mode === 'solar'
+    // planet 模式相机距 sunPos ≈ 0.2~1.5，k 自动 = 1，夜空层全程保持
+    let k = (ctrl.mode === 'solar' || ctrl.mode === 'planet')
         ? clamp((40 - camera.position.distanceTo(sunPos)) / 30, 0, 1)
         : 0;
     k = k * k * (3 - 2 * k); // smoothstep
@@ -1051,10 +1211,19 @@ function loop() {
     solarSky.visible = skyFade > 0.01;
     if (solarSky.visible) for (const f of skyFadeMats) f.m.opacity = f.base * skyFade;
 
+    syncPlanetCamera(); // planet 模式：target 逐帧锁定公转中的行星（先于转场与环绕派发）
     if (tween) stepTween(dt);
-    else if (ctrl.mode === 'outside' || ctrl.mode === 'solar') applyOutside(dt);
+    else if (ctrl.mode === 'outside' || ctrl.mode === 'solar' || ctrl.mode === 'planet') applyOutside(dt);
     else if (ctrl.mode === 'inside') applyInside();
     else applyCruise(dt);
+
+    // near 自愈守卫：离开 planet 模式且无转场、相机已拉远后才恢复默认近平面
+    // （覆盖 exitPlanet 飞行结束、飞行中被打断、planet 直接切其他模式三条路径）
+    if (ctrl.mode !== 'planet' && camera.near !== BASE_NEAR && !tween
+        && camera.position.distanceTo(sunPos) > 0.8) {
+        camera.near = BASE_NEAR;
+        camera.updateProjectionMatrix();
+    }
 
     // 视场平滑（内部模式滚轮=变焦）
     const fovT = ctrl.mode === 'inside' ? ctrl.fovTarget : 60;

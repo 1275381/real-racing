@@ -266,6 +266,37 @@ label.check input { accent-color: #7da2ff; width: 14px; height: 14px; cursor: po
     transition: all .2s;
 }
 #cardClose:hover { background: rgba(140, 170, 255, .3); color: #fff; }
+/* 行星信息卡内的「进入环绕观光」入口（触屏设备双击不可靠时的可发现入口） */
+#cardEnter {
+    display: none; /* 仅行星卡（有 planetIdx）显示 */
+    width: 100%;
+    margin-top: 12px;
+}
+#cardEnter.show { display: block; }
+
+/* ---------- 行星观光导航条（planet 模式） ---------- */
+#planetNav {
+    position: fixed; top: 64px; left: 50%;
+    transform: translateX(-50%) translateY(-8px);
+    z-index: 11;
+    display: flex; gap: 8px; align-items: center;
+    flex-wrap: wrap; justify-content: center; /* 窄屏自身可换行，不溢出 */
+    max-width: calc(100vw - 24px);
+    padding: 8px 10px; border-radius: 999px;
+    border: 1px solid rgba(130, 170, 255, .25);
+    background: rgba(12, 16, 30, .6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease, transform .3s ease;
+}
+#planetNav.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+#planetNav .btn { padding: 5px 12px; font-size: 12px; }
+#planetLabel {
+    min-width: 96px; max-width: 40vw;
+    text-align: center; font-size: 12.5px; color: #dfe8ff; letter-spacing: .08em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* ---------- 窄屏适配 ---------- */
 @media (max-width: 720px) {
@@ -281,4 +312,7 @@ label.check input { accent-color: #7da2ff; width: 14px; height: 14px; cursor: po
     }
     #hints { display: none; }
     #stats { top: auto; bottom: 14px; right: auto; left: 14px; }
+    /* modeBar 两行底缘 ≈126px（58+30+8+30），导航条让位到 132px */
+    #planetNav { top: 132px; border-radius: 16px; }
+    #planetLabel { min-width: 0; }
 }

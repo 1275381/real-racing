@@ -48,6 +48,13 @@
     <button class="btn" id="resetBtn">⟲ 重置视角</button>
 </nav>
 
+<nav id="planetNav" aria-hidden="true">
+    <button class="btn" id="prevPlanet">‹ 上一颗</button>
+    <span id="planetLabel">—</span>
+    <button class="btn" id="nextPlanet">下一颗 ›</button>
+    <button class="btn" id="exitPlanet">☀ 返回太阳系</button>
+</nav>
+
 <aside id="panel">
     <div id="panelHead">
         <span>⚙ 星系参数</span>
@@ -70,7 +77,8 @@
 
 <div id="hints">
     左键拖拽 环视 / 旋转 &nbsp;·&nbsp; 滚轮 缩放 / 视场<br>
-    点击亮星或行星 查看信息 &nbsp;·&nbsp; 双击 复位视角
+    点击亮星或行星 查看信息 &nbsp;·&nbsp; 双击 复位视角<br>
+    太阳系内双击行星 进入环绕观光 &nbsp;·&nbsp; ←/→ 切换行星 &nbsp;·&nbsp; ESC 返回
 </div>
 
 <div id="starCard">
@@ -81,6 +89,7 @@
         <span id="cardDist"></span>
     </div>
     <p id="cardDesc"></p>
+    <button id="cardEnter" class="btn" type="button">🪐 进入环绕观光</button>
 </div>
 
 <script type="module" src="./js/galaxy.js"></script>
