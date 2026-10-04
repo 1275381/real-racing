@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RIFLE, buildRifle } from './gun.js';
 import { gunMaterials } from './gunTextures.js';
+import { buildHand } from './hands.js';
 
 /* GunView：第一人称 viewmodel + 射击循环 + 后坐力 + 换弹状态机 + 世界空间特效池
  * 渲染约定：自建 vmScene + vmCamera(FOV 55，恒等位姿挂载)——viewmodel 只进
@@ -25,6 +26,21 @@ const ADS_TARGET = new THREE.Vector3(0, -0.006, -0.46);
 
 /* 新弹匣入场：起点 ≈ 画面右下 (0.35,-0.45,-0.35)（相机空间）折算到枪本地（腰射位） */
 const GRAB_OFF = new THREE.Vector3(0.18, -0.30, 0.08);
+
+/* 换弹双手关键帧（枪本地系；写实度评审 #2）：
+ * 左手：藏位(画面左下外) → 抓旧匣(贴井口，随匣下滑) → 带离(左下出画) →
+ *       随新匣入画(骑在 _grabMag 上) → 拍合后回握护木；
+ * 右手：常握握把；空仓拉栓段移到枪机后端随 bolt 后拉。 */
+const LH_HIDE = { p: new THREE.Vector3(-0.14, -0.30, 0.12), r: [0.3, Math.PI, -0.3] };
+const LH_WELL = { p: new THREE.Vector3(0.0, -0.075, 0.058), r: [0.25, Math.PI, -0.12] };
+const LH_EXIT = { p: new THREE.Vector3(-0.13, -0.25, 0.10), r: [0.45, Math.PI, -0.35] };
+const LH_GRAB_OFF = new THREE.Vector3(0.0, -0.052, 0.048);   // 手腕相对新匣的握持偏移
+const LH_GUARD = { p: new THREE.Vector3(0, 0.010, -0.148), r: [-Math.PI / 2, 0, 0] };
+const RH_GRIP = { p: new THREE.Vector3(0.020, -0.064, 0.108), r: [0.15, 0.25, 1.30] };
+const RH_BOLT = { p: new THREE.Vector3(0.024, 0.078, 0.20), r: [Math.PI / 2, -0.15, 0.1] };
+
+/* 曳光占比（写实度评审 #5）：真实交战约 1/4~1/5，其余只留弹着与抛壳 */
+const TRACER_EVERY = 4;
 
 /* 换弹时间轴（reloadTimeline 规格；弹药生效/开火解锁挂绝对秒点） */
 const TACTICAL_TL = {
@@ -76,9 +92,35 @@ function muzzleFlashTexture() {
     return t;
 }
 
+/* 软烟团贴图：径向羽化 + 破边（弹着烟 / 枪口残烟共用，normal 混合） */
+function smokePuffTexture() {
+    const S = 96;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    const rg = g.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
+    rg.addColorStop(0, 'rgba(255,255,255,0.85)');
+    rg.addColorStop(0.45, 'rgba(255,255,255,0.45)');
+    rg.addColorStop(0.8, 'rgba(255,255,255,0.12)');
+    rg.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, S, S);
+    g.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < 14; i++) {   // 破边去规整感
+        g.beginPath();
+        g.arc(S / 2 + (Math.random() - 0.5) * S * 0.7, S / 2 + (Math.random() - 0.5) * S * 0.7,
+            4 + Math.random() * 9, 0, 7);
+        g.fill();
+    }
+    return new THREE.CanvasTexture(c);
+}
+
 /* ==== 2. GunView ==== */
 
 export class GunView {
+    /* 换弹手姿态临时量（复用，避免每帧分配） */
+    static _hp = { p: new THREE.Vector3(), r: [0, 0, 0] };
+
     constructor({ scene, camera, audio = null, ground = null }) {
         this.scene = scene;
         this.camera = camera;
@@ -108,9 +150,11 @@ export class GunView {
         const key = new THREE.DirectionalLight(0xfff2dc, 1.7);
         key.position.set(0.5, 1.0, 0.4);
         this.vmScene.add(key);
+        this._keyLight = key;                 // setEnvironment 里对齐太阳方向
         const rim = new THREE.DirectionalLight(0xa8c4ff, 0.5);
         rim.position.set(-0.6, 0.3, -0.5);
         this.vmScene.add(rim);
+        this._rimLight = rim;
 
         /* ---- 程序化步枪 + 持枪挂点 ---- */
         const built = buildRifle();
@@ -130,23 +174,52 @@ export class GunView {
         this._grabMag.visible = false;
         this.gun.add(this._grabMag);
 
-        /* ---- vm 枪口火光（正对一片 + 纵横两片，加法混合） ---- */
+        /* ---- 换弹双手（写实度评审 #2）：右手常握握把，左手换弹期入画 ---- */
+        this.leftHand = buildHand(-1).root;
+        this.leftHand.visible = false;
+        this.gun.add(this.leftHand);
+        this._poseHand(this.leftHand, LH_HIDE);
+        this.rightHand = buildHand(1).root;
+        this.gun.add(this.rightHand);
+        this._poseHand(this.rightHand, RH_GRIP);
+
+        /* ---- vm 枪口火光（写实度评审 #8 双层）：外层大 glow 三片 + 内层花瓣白核 ---- */
         const fTex = muzzleFlashTexture();
         this._flashMat = new THREE.MeshBasicMaterial({
             map: fTex, transparent: true, blending: THREE.AdditiveBlending,
             depthWrite: false, side: THREE.DoubleSide
         });
         this._flash = new THREE.Group();
-        const fp1 = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.24), this._flashMat);
-        const fp2 = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), this._flashMat);
+        const fp1 = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.36), this._flashMat);
+        const fp2 = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.22), this._flashMat);
         fp2.rotation.y = Math.PI / 2;
-        const fp3 = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), this._flashMat);
+        const fp3 = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.22), this._flashMat);
         fp3.rotation.x = Math.PI / 2;
         this._flash.add(fp1, fp2, fp3);
         this._flash.position.copy(this.gun.userData.muzzle);
         this._flash.position.z -= 0.02;
         this._flash.visible = false;
         this.gun.add(this._flash);
+        /* 内层：5 片窄长花瓣围枪口一圈，白核 40ms 快速收缩 */
+        this._petals = new THREE.Group();
+        this._petalMat = new THREE.MeshBasicMaterial({
+            color: 0xfff6df, transparent: true, opacity: 0.95,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+        });
+        for (let i = 0; i < 5; i++) {
+            const petal = new THREE.Mesh(new THREE.PlaneGeometry(0.020, 0.11), this._petalMat);
+            petal.position.y = 0.055;                       // 自基部向外
+            const pivot = new THREE.Group();
+            pivot.rotation.z = (i / 5) * Math.PI * 2;
+            pivot.add(petal);
+            this._petals.add(pivot);
+        }
+        this._petals.position.copy(this.gun.userData.muzzle);
+        this._petals.position.z -= 0.015;
+        this._petals.visible = false;
+        this.gun.add(this._petals);
+        this._petalT = 0;
+        this._nextSmokeShot = 5 + (Math.random() * 4 | 0);   // 每 5-8 发一股枪口残烟
 
         /* ---- 世界空间特效池（曳光 12 / 抛壳 24 / 掉落弹匣 4 / 命中闪光 10） ---- */
         this._initPools();
@@ -181,6 +254,10 @@ export class GunView {
         this._tV3 = new THREE.Vector3(); this._tV4 = new THREE.Vector3();
         this._tV5 = new THREE.Vector3(); this._tV6 = new THREE.Vector3();
         this._tV7 = new THREE.Vector3(); this._tV8 = new THREE.Vector3();
+        /* 弹着/枪口烟专用（_spawnImpact/_spawnMuzzleSmoke 在 tryFire 的
+         * _tV1.._tV6 全部存活期间被调，严禁复用，否则抛壳/曳光向量被改写） */
+        this._tV9 = new THREE.Vector3(); this._tV10 = new THREE.Vector3();
+        this._tV11 = new THREE.Vector3(); this._tV12 = new THREE.Vector3();
         this._tM = new THREE.Matrix4();
         this._tE = new THREE.Euler();
         this._muzzleOut = new THREE.Vector3();
@@ -206,6 +283,22 @@ export class GunView {
             this._light.parent.remove(this._light);
             this._light = null;
         }
+    }
+
+    /* 黄昏环境贴图（env.js 的 PMREM 纹理直接复用）+ 太阳方向对齐 vm 主灯——
+     * 金属材质(metalness 0.85~1)由此获得 IBL 天光反射（写实度评审 #1） */
+    setEnvironment(envTexture, sunDir) {
+        if (envTexture) this.vmScene.environment = envTexture;
+        if (sunDir && this._keyLight) {
+            this._keyLight.position.copy(sunDir).normalize();
+            if (this._rimLight) this._rimLight.position.copy(sunDir).multiplyScalar(-1).normalize();
+        }
+    }
+
+    /* 手腕姿态快捷设置（pose = { p: Vector3, r: [rx,ry,rz] }） */
+    _poseHand(hand, pose) {
+        hand.position.copy(pose.p);
+        hand.rotation.set(pose.r[0], pose.r[1], pose.r[2]);
     }
 
     /* 换弹：满弹/换弹中/备弹耗尽返回 false；按下瞬间快照 ammo>0 ⇒ 战术 */
@@ -236,6 +329,8 @@ export class GunView {
         this.parts.mag.position.copy(this._magHome);
         this.parts.bolt.position.z = this._boltHome.z;
         this._grabMag.visible = false;
+        this.leftHand.visible = false;                 // 手复位
+        this._poseHand(this.rightHand, RH_GRIP);
     }
 
     /* 枪口世界坐标（主场景系）：vm 相机空间 → 主相机世界 */
@@ -290,13 +385,21 @@ export class GunView {
             }
             if (this.audio) this.audio.hit(killed);
         }
-        if (hit && hit.point) this._spawnImpact(end);   // 打墙也出火花
+        if (hit && hit.point) {
+            /* 弹着反馈（写实度评审 #6）：肉体=仅火花；硬面=火花+烟团+碎屑 */
+            const flesh = hit.type === 'enemy' || hit.type === 'enemy_head';
+            this._spawnImpact(end, flesh ? 'flesh' : 'surface');
+        }
 
-        /* 曳光 / 抛壳 / 枪口火光 */
-        this._spawnTracer(this.muzzleWorld(), end, !!hit);
+        /* 曳光（仅 1/4，其余弹只留弹着火花与抛壳）/ 抛壳 / 枪口火光 / 残烟 */
+        if (this.stats.shots % TRACER_EVERY === 1) this._spawnTracer(this.muzzleWorld(), end, !!hit);
         this._spawnShell(right, up);
         this._flashOn();
         this._lightI = 55;
+        if (this.stats.shots >= this._nextSmokeShot) {   // 每 5-8 发补一股枪口烟
+            this._spawnMuzzleSmoke(right, up);
+            this._nextSmokeShot = this.stats.shots + 5 + (Math.random() * 4 | 0);
+        }
         if (this.audio) this.audio.shot();
 
         /* 后坐：onfoot.gd:848-849 公式（连发累增 + 水平漂移，开镜 6 折） */
@@ -320,6 +423,7 @@ export class GunView {
         dt = clamp(dt, 0, 0.05);          // 防御性再夹（main 已夹紧）
         this._time += dt;
         if (this.reloading) this._updateReload(dt);
+        else this.leftHand.visible = false;
         this._updateAds(dt);
         this._updateRecoil(dt);
         this._updateSwayBob(dt);
@@ -339,6 +443,7 @@ export class GunView {
         const prev = this._reloadT;
         const t = this._reloadT = Math.min(prev + dt, tl.end);
         const mag = this.parts.mag;
+        this._updateHands(t, tl);
 
         /* magSlide：旧匣沿本地 Y 下滑 5cm（仍挂枪上） */
         if (t >= tl.slideStart && t < tl.magOutAt) {
@@ -420,7 +525,64 @@ export class GunView {
             mag.position.copy(this._magHome);
             gm.visible = false;
             this.reloadProgress = 1;
+            this.leftHand.visible = false;             // 左手出画、右手回握把
+            this._poseHand(this.rightHand, RH_GRIP);
         }
+    }
+
+    /* ---- 2.3b 换弹双手时间轴（写实度评审 #2，秒点挂现有 tl 事件） ---- */
+    _updateHands(t, tl) {
+        /* 左手：藏位 → 抓旧匣(随匣下滑) → 带离出画 → 随新匣骑乘入井 → 回握护木 */
+        const L = this.leftHand;
+        L.visible = true;
+        const tmp = GunView._hp;
+        if (t < tl.slideStart) {
+            this._lerpPose(LH_HIDE, LH_WELL, easeOutQuad(t / tl.slideStart), tmp);
+        } else if (t < tl.magOutAt) {
+            tmp.p.copy(LH_WELL.p);
+            tmp.p.y += this.parts.mag.position.y - this._magHome.y;   // 跟随旧匣下滑
+            tmp.r = LH_WELL.r;
+        } else if (t < tl.grabStart) {
+            this._lerpPose(LH_WELL, LH_EXIT, easeInOutQuad((t - tl.magOutAt) / (tl.grabStart - tl.magOutAt)), tmp);
+        } else if (t < tl.seatEnd) {
+            /* 骑在新匣上（_grabMag 的位置/缓动由上方现有逻辑驱动，手只挂偏移） */
+            tmp.p.copy(this._grabMag.position).add(LH_GRAB_OFF);
+            tmp.r = LH_WELL.r;
+        } else if (t < tl.fireUnlock) {
+            this._lerpPose(LH_WELL, LH_GUARD, easeInOutQuad((t - tl.seatEnd) / (tl.fireUnlock - tl.seatEnd)), tmp);
+        } else {
+            tmp.p.copy(LH_GUARD.p);
+            tmp.r = LH_GUARD.r;
+        }
+        this._poseHand(L, tmp);
+
+        /* 右手：空仓段移到枪机后端随 bolt 后拉，之后 0.15s 回握把 */
+        if (tl.boltStart > 0) {
+            const inT = Math.max(tl.boltStart - 0.12, tl.seatEnd);
+            if (t >= inT && t <= tl.boltRelEnd) {
+                const k = clamp((t - inT) / 0.12, 0, 1);
+                this._lerpPose(RH_GRIP, RH_BOLT, easeInOutQuad(k), tmp);
+                tmp.p.z += this.parts.bolt.position.z - this._boltHome.z;   // 随拉栓后移
+                this._poseHand(this.rightHand, tmp);
+                return;
+            }
+            if (t > tl.boltRelEnd && t < tl.boltRelEnd + 0.15) {
+                const k = (t - tl.boltRelEnd) / 0.15;
+                this._lerpPose(RH_BOLT, RH_GRIP, easeInOutQuad(k), tmp);
+                this._poseHand(this.rightHand, tmp);
+                return;
+            }
+        }
+        this._poseHand(this.rightHand, RH_GRIP);
+    }
+
+    _lerpPose(a, b, k, out) {
+        out.p.lerpVectors(a.p, b.p, k);
+        const ra = a.r, rb = b.r;
+        out.r[0] = ra[0] + (rb[0] - ra[0]) * k;
+        out.r[1] = ra[1] + (rb[1] - ra[1]) * k;
+        out.r[2] = ra[2] + (rb[2] - ra[2]) * k;
+        return out;
     }
 
     /* ---- 2.4 开镜（换弹锁定段 6/s 强制回 0；解锁点同开火） ---- */
@@ -541,15 +703,28 @@ export class GunView {
     _flashOn() {
         this._flash.visible = true;
         this._flash.rotation.z = Math.random() * Math.PI * 2;
-        const s = 0.75 + Math.random() * 0.55;
+        const s = 0.9 + Math.random() * 0.65;           // 外层 glow ~0.35m 级
         this._flash.scale.set(s, s, s);
         this._flashT = 0.05;
+        /* 内层花瓣白核：随机朝向 + 40ms 快速收缩 */
+        this._petals.visible = true;
+        this._petals.rotation.z = Math.random() * Math.PI * 2;
+        const ps = 0.8 + Math.random() * 0.5;
+        this._petals.scale.set(ps, ps, ps);
+        this._petalT = 0.04;
     }
 
     _updateVmFlash(dt) {
         if (this._flashT > 0) {
             this._flashT -= dt;
             if (this._flashT <= 0) this._flash.visible = false;
+        }
+        if (this._petalT > 0) {
+            this._petalT -= dt;
+            const k = Math.max(this._petalT / 0.04, 0);
+            this._petals.scale.setScalar(Math.max(0.001, k));
+            this._petalMat.opacity = 0.95 * k;
+            if (this._petalT <= 0) this._petals.visible = false;
         }
     }
 
@@ -639,6 +814,56 @@ export class GunView {
             this.scene.add(m);
             this._impacts.push({ m, t: 0, active: false });
         }
+
+        /* ---- 弹着烟团 8（写实度评审 #6）：normal 混合软烟，0.4s 上飘淡出 ---- */
+        this._smokeTex = smokePuffTexture();
+        this._impactSmokes = [];
+        for (let i = 0; i < 8; i++) {
+            const mat = new THREE.MeshBasicMaterial({
+                map: this._smokeTex, color: 0xb9a67f, transparent: true, opacity: 0,
+                depthWrite: false, side: THREE.DoubleSide,
+            });
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.24), mat);
+            m.visible = false;
+            m.frustumCulled = false;
+            this.scene.add(m);
+            this._impactSmokes.push({
+                m, v: new THREE.Vector3(), t: 0, dur: 0.4, grow: 0.5, spin: 0, active: false,
+            });
+        }
+
+        /* ---- 弹着碎屑 12：小盒抛物线，落地即灭 ---- */
+        const dGeo = new THREE.BoxGeometry(0.014, 0.014, 0.02);
+        const dMats = [
+            new THREE.MeshStandardMaterial({ color: 0x6b6154, roughness: 0.95 }),
+            new THREE.MeshStandardMaterial({ color: 0x8a8578, roughness: 0.95 }),
+        ];
+        this._debris = [];
+        for (let i = 0; i < 12; i++) {
+            const m = new THREE.Mesh(dGeo, dMats[i % 2]);
+            m.visible = false;
+            m.frustumCulled = false;
+            this.scene.add(m);
+            this._debris.push({
+                m, v: new THREE.Vector3(), ax: new THREE.Vector3(), w: 0, t: 0, active: false,
+            });
+        }
+
+        /* ---- 枪口残烟 3：每 5-8 发一股，0.3s 向右上飘 ---- */
+        this._muzzleSmokes = [];
+        for (let i = 0; i < 3; i++) {
+            const mat = new THREE.MeshBasicMaterial({
+                map: this._smokeTex, color: 0x9d968c, transparent: true, opacity: 0,
+                depthWrite: false, side: THREE.DoubleSide,
+            });
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.18), mat);
+            m.visible = false;
+            m.frustumCulled = false;
+            this.scene.add(m);
+            this._muzzleSmokes.push({
+                m, v: new THREE.Vector3(), t: 0, dur: 0.3, active: false,
+            });
+        }
     }
 
     _spawnTracer(from, to, impact) {
@@ -726,7 +951,8 @@ export class GunView {
         for (const m of slot.mats) { m.transparent = false; m.opacity = 1; }
     }
 
-    _spawnImpact(pos) {
+    /* 弹着反馈（写实度评审 #6）：火花常开；硬面再叠 2 团尘烟 + 3-4 颗碎屑 */
+    _spawnImpact(pos, kind = 'surface') {
         const s = this._impacts.find((i) => !i.active) || this._impacts[0];
         s.m.position.copy(pos);
         s.m.scale.set(1, 1, 1);
@@ -734,6 +960,64 @@ export class GunView {
         s.m.visible = true;
         s.t = 0;
         s.active = true;
+        if (kind === 'flesh') return;                 // 肉体：仅火花，不扬尘
+
+        this.camera.updateMatrixWorld(true);
+        const right = this._tV9.setFromMatrixColumn(this.camera.matrixWorld, 0);
+        const up = this._tV10.setFromMatrixColumn(this.camera.matrixWorld, 1);
+        const fwd = this._tV11.set(0, 0, -1).transformDirection(this.camera.matrixWorld);
+
+        /* 尘烟 2 团：错开出生点、随机朝向、缓慢上飘 */
+        for (let k = 0; k < 2; k++) {
+            const q = this._impactSmokes.find((i) => !i.active);
+            if (!q) break;
+            q.m.position.copy(pos)
+                .addScaledVector(right, (Math.random() - 0.5) * 0.05)
+                .addScaledVector(up, 0.02 + Math.random() * 0.04)
+                .addScaledVector(fwd, (Math.random() - 0.5) * 0.05);
+            q.v.set((Math.random() - 0.5) * 0.24, 0.22 + Math.random() * 0.22, (Math.random() - 0.5) * 0.24);
+            q.t = 0;
+            q.dur = 0.36 + Math.random() * 0.14;
+            q.grow = 0.55 + Math.random() * 0.35;
+            q.spin = (Math.random() - 0.5) * 1.6;
+            q.rot = Math.random() * Math.PI * 2;
+            q.m.scale.setScalar(0.55 + Math.random() * 0.3);
+            q.m.material.opacity = 0.55;
+            q.m.visible = true;
+            q.active = true;
+        }
+        /* 碎屑 3-4 颗：朝相机前上方抛洒，重力抛物线，落地即灭 */
+        const n = 3 + (Math.random() * 2 | 0);
+        for (let k = 0; k < n; k++) {
+            const d = this._debris.find((i) => !i.active);
+            if (!d) break;
+            d.m.position.copy(pos);
+            d.v.copy(right).multiplyScalar((Math.random() - 0.5) * 2.4)
+                .addScaledVector(up, 0.7 + Math.random() * 1.2)
+                .addScaledVector(fwd, 0.1 + Math.random() * 0.5);
+            d.ax.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+            d.w = (Math.random() < 0.5 ? -1 : 1) * (540 + Math.random() * 360) * DEG;
+            d.t = 0;
+            d.m.visible = true;
+            d.active = true;
+        }
+    }
+
+    /* 枪口残烟：向右上飘的小股烟（连发间留残烟，写实度评审 #8） */
+    _spawnMuzzleSmoke(right, up) {
+        const q = this._muzzleSmokes.find((i) => !i.active);
+        if (!q) return;
+        this.camera.updateMatrixWorld(true);
+        const fwd = this._tV12.set(0, 0, -1).transformDirection(this.camera.matrixWorld);
+        q.m.position.copy(this.muzzleWorld());
+        q.v.copy(right).multiplyScalar(0.22).addScaledVector(up, 0.38).addScaledVector(fwd, 0.06);
+        q.t = 0;
+        q.rot = Math.random() * Math.PI * 2;
+        q.spin = (Math.random() - 0.5) * 1.2;
+        q.m.scale.setScalar(0.55);
+        q.m.material.opacity = 0.3;
+        q.m.visible = true;
+        q.active = true;
     }
 
     /* 池推进：曳光飞行 / 弹壳物理 / 弹匣物理 / 闪光衰减 */
@@ -859,6 +1143,51 @@ export class GunView {
             s.m.scale.setScalar(0.6 + 0.4 * k);
             s.m.quaternion.copy(this.camera.quaternion);
         }
+
+        /* 弹着尘烟：上飘、膨胀、淡出，面向相机缓旋 */
+        for (const q of this._impactSmokes) {
+            if (!q.active) continue;
+            q.t += dt;
+            const k = q.t / q.dur;
+            if (k >= 1) { q.active = false; q.m.visible = false; continue; }
+            q.v.x *= (1 - 1.4 * dt);
+            q.v.z *= (1 - 1.4 * dt);
+            q.m.position.addScaledVector(q.v, dt);
+            q.m.scale.addScalar(q.grow * dt);
+            q.rot += q.spin * dt;
+            q.m.quaternion.copy(this.camera.quaternion);
+            q.m.rotateZ(q.rot);
+            q.m.material.opacity = 0.55 * (1 - k) * Math.min(1, k / 0.12);
+        }
+
+        /* 弹着碎屑：重力抛物线 + 自旋，落地/超时即灭 */
+        for (const d of this._debris) {
+            if (!d.active) continue;
+            d.t += dt;
+            d.v.y -= 9.8 * dt;
+            d.m.position.addScaledVector(d.v, dt);
+            d.m.rotateOnWorldAxis(d.ax, d.w * dt);
+            const h = this._ground(d.m.position.x, d.m.position.z);
+            if (d.m.position.y <= h + 0.006 || d.t > 0.9) {
+                d.active = false;
+                d.m.visible = false;
+            }
+        }
+
+        /* 枪口残烟：0.3s 向右上飘、快速放大淡出 */
+        for (const q of this._muzzleSmokes) {
+            if (!q.active) continue;
+            q.t += dt;
+            const k = q.t / q.dur;
+            if (k >= 1) { q.active = false; q.m.visible = false; continue; }
+            q.v.multiplyScalar(1 - 0.8 * dt);
+            q.m.position.addScaledVector(q.v, dt);
+            q.m.scale.addScalar(1.1 * dt);
+            q.rot += q.spin * dt;
+            q.m.quaternion.copy(this.camera.quaternion);
+            q.m.rotateZ(q.rot);
+            q.m.material.opacity = 0.3 * (1 - k);
+        }
     }
 
     /* 地面高度查询（异常/未注入兜底 0） */
@@ -878,6 +1207,9 @@ export class GunView {
         for (const d of this._drops) this.scene.remove(d.g);
         for (const t of this._tracers) this.scene.remove(t.m);
         for (const i of this._impacts) this.scene.remove(i.m);
+        for (const q of this._impactSmokes) this.scene.remove(q.m);
+        for (const d of this._debris) this.scene.remove(d.m);
+        for (const q of this._muzzleSmokes) this.scene.remove(q.m);
         if (this._light && this._light.parent) this._light.parent.remove(this._light);
         this._light = null;
     }

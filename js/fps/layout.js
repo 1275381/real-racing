@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { boundaryBoxes, terrainHeight } from './env.js';
+import { weaveHeight, speckleHeight, grainHeight, normalFromCanvas, toNormalTexture } from './normalmap.js';
 
 /* ==== 1. 道具尺寸表 ==== */
 // 碰撞登记用实测包围盒（tools/inspect_fps_props.py 探明，W×H×D，原点在底面中心、正面朝 +Z）
@@ -32,12 +33,61 @@ const TINTABLE = new Set(['Paint', 'Plaster', 'Concrete', 'TankPaint', 'Canvas']
 
 /* ==== 2. loadProps：14 个 GLB 预载，单个失败降级同尺寸盒体（car.js 容错风格） ==== */
 
+/* GLB 材质补法线（写实度评审 #4）：资产无烘焙法线，按材质名挂程序化高度场法线。
+ * 材质被同模板所有实例共享，只在此处理一次（_fpsNormal 防重）。 */
+const NORMAL_RULES = {
+    Burlap:   { kind: 'weave',   cell: 18, repeat: 6, strength: 1.1, scale: 0.9 },
+    Canvas:   { kind: 'weave',   cell: 10, repeat: 4, strength: 0.8, scale: 0.6 },
+    Wood:     { kind: 'grain',   repeat: 3, strength: 1.0, scale: 0.5 },
+    Bark:     { kind: 'grain',   repeat: 2, strength: 1.4, scale: 0.8 },
+    Plaster:  { kind: 'speckle', repeat: 3, strength: 1.6, scale: 0.45 },
+    Concrete: { kind: 'speckle', repeat: 3, strength: 1.6, scale: 0.5 },
+    TankPaint:{ kind: 'speckle', repeat: 3, strength: 1.2, scale: 0.4 },
+    Paint:    { kind: 'speckle', repeat: 4, strength: 1.0, scale: 0.35 },
+    Metal:    { kind: 'speckle', repeat: 4, strength: 1.2, scale: 0.45 },
+    Rust:     { kind: 'speckle', repeat: 3, strength: 1.8, scale: 0.6 },
+    Rock:     { kind: 'speckle', repeat: 2, strength: 2.0, scale: 0.7 },
+};
+const _normalCache = new Map();
+function detailNormal(matName) {
+    const rule = NORMAL_RULES[matName];
+    if (!rule) return null;
+    if (!_normalCache.has(matName)) {
+        let h;
+        if (rule.kind === 'weave') h = weaveHeight(256, rule.cell || 16);
+        else if (rule.kind === 'grain') h = grainHeight(256);
+        else h = speckleHeight(256, rule.strength > 1.4 ? 3.4 : 2.4);
+        _normalCache.set(matName, {
+            tex: toNormalTexture(normalFromCanvas(h, rule.strength), rule.repeat),
+            scale: rule.scale,
+        });
+    }
+    return _normalCache.get(matName);
+}
+
+function applyDetailNormals(root) {
+    root.traverse((o) => {
+        if (!o.isMesh) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+            if (!m || m._fpsNormal) continue;
+            const n = detailNormal(m.name);
+            if (!n) continue;
+            m.normalMap = n.tex;
+            if (m.normalScale) m.normalScale.set(n.scale, n.scale);
+            m.needsUpdate = true;
+            m._fpsNormal = true;
+        }
+    });
+}
+
 export async function loadProps() {
     const loader = new GLTFLoader();
     const templates = new Map();
     await Promise.all(PROP_NAMES.map(async (name) => {
         try {
             const gltf = await loader.loadAsync(`assets/fps/props/${name}.glb?v=1`);
+            applyDetailNormals(gltf.scene);      // 法线挂模板材质（实例共享）
             templates.set(name, gltf.scene);
         } catch (e) {
             console.warn(`[场景] 道具 ${name}.glb 加载失败，改用同尺寸盒体：`, e && e.message);

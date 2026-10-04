@@ -12,7 +12,7 @@
    · 主相机 fov 由 GunView 随 ADS 驱动（75→55），本文件不再改 fov。
    ===================================================================== */
 import * as THREE from 'three';
-import { Environment } from './env.js';
+import { Environment, SUN_DIR } from './env.js';
 import { loadProps, BattleMap } from './layout.js';
 import { Player } from './player.js';
 import { EnemyManager } from './enemies.js';
@@ -58,6 +58,9 @@ const gunview = new GunView({
     scene, camera, audio: gunAudio,
     ground: (x, z) => collision.groundHeight(x, z),   // 抛壳/掉落弹匣贴地用
 });
+/* 枪身 IBL：复用主场景黄昏 PMREM 环境贴图，vm 主灯对齐太阳方向（写实度评审 #1）
+ * ——金属材质(metalness 0.85~1)由此反射天光，不再死黑 */
+gunview.setEnvironment(scene.environment, SUN_DIR);
 const player = new Player({ camera, collision });
 const enemies = new EnemyManager({ scene, collision, audio: gunAudio });
 const targets = new TargetRange({ scene });           // 音效由 RangeMode 的 UIAudio 叮/闷响承担，不重复注入

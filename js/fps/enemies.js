@@ -14,6 +14,7 @@
    ===================================================================== */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { weaveHeight, normalFromCanvas, toNormalTexture } from './normalmap.js';
 
 /* ==== 1. 常量（数值均注明出处） ==== */
 const SOLDIER_URL = 'assets/fps/soldier.glb?v=1';
@@ -43,13 +44,23 @@ const EYE_H = 1.6;                            // 敌兵眼睛高度（模型 1.7
 const MUZZLE_LOCAL = new THREE.Vector3(-0.12, 1.5, 0.95).multiplyScalar(SOLDIER_SCALE); // battlefield.gd:48
 const PLAYER_CAP_R = 0.45, PLAYER_CAP_H = 1.7; // 玩家命中胶囊（interfaces）
 const DEATH_HOLD = 3.5, DEATH_FADE = 1.2;     // 倒地停留后淡出
-const TRACER_POOL = 24, TRACER_SPEED = 110, TRACER_LEN = 3.0;
+const TRACER_POOL = 24, TRACER_SPEED = 320, TRACER_LEN = 3.0;   // 提速去激光感（评审 #5）
+const TRACER_RATIO = 0.34;            // 仅约 1/3 敌弹出曳光，其余只枪口闪
 const SND_BUDGET_MAX = 6, SND_BUDGET_REFILL = 6; // battlefield.gd:77 每秒 6 发枪声预算
 const CALLSIGNS = ['夜枭', '磐石', '疾风', '铁砧', '苍狼', '寒霜', '雷鸣', '赤狐']; // battlefield.gd:52
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+
+/* 织物法线（军装布纹浮雕，全部敌兵共享一张；写实度评审 #3/#4） */
+let _fabricNormal = null;
+function fabricNormal() {
+    if (!_fabricNormal) {
+        _fabricNormal = toNormalTexture(normalFromCanvas(weaveHeight(128, 8, 0.2), 1.1), 8);
+    }
+    return _fabricNormal;
+}
 
 /* 点到竖直线段距离（敌弹打玩家胶囊的近似） */
 function distToVertSegment(p, ax, az, y0, y1) {
@@ -96,7 +107,7 @@ export class EnemyManager {
     _initFx() {
         if (!this.scene) return;
         const mat = new THREE.LineBasicMaterial({
-            color: 0xFFCC59, transparent: true, opacity: 0.9, depthWrite: false,
+            color: 0xFFCC59, transparent: true, opacity: 0.5, depthWrite: false,
         });
         for (let i = 0; i < TRACER_POOL; i++) {
             const geo = new THREE.BufferGeometry();
@@ -228,9 +239,19 @@ export class EnemyManager {
                 const ms = Array.isArray(o.material) ? o.material : [o.material];
                 for (const m of ms) {
                     if (!m) continue;
-                    /* 敌军配色（battlefield.gd:1250-1251 def=敌） */
-                    if (m.name === 'Uniform') m.color.setRGB(0.7, 0.5, 0.4);
-                    else if (m.name === 'Gear') m.color.setRGB(0.48, 0.41, 0.33);
+                    /* 敌军配色：sRGB 指定军橄榄调乘子（评审 #3——旧 setRGB 线性值
+                     * 0.7/0.5/0.4 等效亮米色，把 256px 迷彩洗白），另叠织物法线出布纹 */
+                    if (m.name === 'Uniform') {
+                        m.color.setRGB(0.55, 0.47, 0.38, THREE.SRGBColorSpace);
+                        m.normalMap = fabricNormal();
+                        m.normalScale = new THREE.Vector2(0.45, 0.45);
+                        m.needsUpdate = true;
+                    } else if (m.name === 'Gear') {
+                        m.color.setRGB(0.42, 0.38, 0.31, THREE.SRGBColorSpace);
+                        m.normalMap = fabricNormal();
+                        m.normalScale = new THREE.Vector2(0.35, 0.35);
+                        m.needsUpdate = true;
+                    }
                     mats.push(m);
                 }
             }
@@ -656,7 +677,7 @@ export class EnemyManager {
             if (wd < STATS.range) endD = wd;
         }
         const end = _v3.set(ex + _v1.x * endD, ey + _v1.y * endD, ez + _v1.z * endD);
-        this._spawnTracer(muzzle, end);
+        if (Math.random() < TRACER_RATIO) this._spawnTracer(muzzle, end);   // 约 1/3 出曳光
         this._muzzleFlash(muzzle);
         if (typeof this.onEnemyFire === 'function') {
             this.onEnemyFire(muzzle.clone(), end.clone());

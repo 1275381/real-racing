@@ -59,8 +59,8 @@ function groundTexture() {
             16 + Math.random() * 60, Math.random() * Math.PI, 0, 7);
         g.fill();
     }
-    // 干草短线簇
-    for (let i = 0; i < 5200; i++) {
+    // 干草短线簇（写实度评审 #4：密度上调，平铺周期内高频细节更足）
+    for (let i = 0; i < 7200; i++) {
         const v = Math.random();
         g.strokeStyle = `rgba(${120 + v * 60 | 0},${105 + v * 50 | 0},${52 + v * 30 | 0},${0.25 + Math.random() * 0.3})`;
         g.lineWidth = 1;
@@ -76,7 +76,7 @@ function groundTexture() {
         g.fill();
     }
     // 砾石
-    for (let i = 0; i < 2600; i++) {
+    for (let i = 0; i < 4200; i++) {
         const v = Math.random();
         g.fillStyle = `rgba(${125 + v * 55 | 0},${115 + v * 45 | 0},${95 + v * 40 | 0},${0.5 + Math.random() * 0.4})`;
         g.fillRect(Math.random() * S, Math.random() * S, 1 + Math.random() * 2.2, 1 + Math.random() * 2.2);
@@ -122,8 +122,9 @@ function boundaryTexture() {
 
 /* ==== 2. 傍晚天空穹（渐变 + 太阳辉光，写法同 js/textures.js skyMaterial，换黄昏调色） ==== */
 
-// 太阳方向（指向太阳的单位向量）：西偏北、仰角 ≈15°，长影拖向东侧
-const SUN_DIR = new THREE.Vector3(-0.80, 0.235, -0.34).normalize();
+// 太阳方向（指向太阳的单位向量）：西偏北、仰角 ≈15°，长影拖向东侧。
+// 导出给 GunView.setEnvironment 对齐 vm 主灯（写实度评审 #1）
+export const SUN_DIR = new THREE.Vector3(-0.80, 0.235, -0.34).normalize();
 
 const SKY = {
     top: new THREE.Color(0x1e2f5c),     // 天顶暮蓝
