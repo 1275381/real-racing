@@ -1345,6 +1345,24 @@ var _surf_holes: Array[Rect2] = [Rect2(GAR_C.x - RRGarage.ROOM_HALF,
 		GAR_C.y - RRGarage.ROOM_HALF, RRGarage.ROOM_HALF * 2.0, RRGarage.ROOM_HALF * 2.0)]
 
 
+## 城市地表（_build_zone_ground 分区网格）挖洞区：地下楼梯井从建筑地板洞下行会
+## 穿过 y≈0 的整张白色水泥地表——那块面正好横在楼梯半程，把下行楼梯盖得严严实实
+## （物理走得到、视觉看不见）。在两个楼梯开口各挖一块矩形（世界坐标）：
+## · 车库东南角地板洞（→ 楼梯间下军械室）：对齐 RRGarage 地板洞
+## · 别墅一层中厅楼梯井（同下军械室直达梯）：一层地板洞 z 并到军械室天花板洞
+var _ground_holes: Array[Rect2] = [
+	Rect2(201.75, -511.25, 6.5, 3.5),
+	Rect2(206.5, -493.5, 4.0, 4.0),
+]
+
+
+func _ground_hole_hit(r: Rect2) -> bool:
+	for h in _ground_holes:
+		if h.intersects(r):
+			return true
+	return false
+
+
 func _in_surf_hole(x: float, z: float) -> bool:
 	for h in _surf_holes:
 		if h.has_point(Vector2(x, z)):
@@ -2763,9 +2781,10 @@ func _build_zone_ground() -> void:
 			var vpos := PackedVector3Array()
 			var vnrm := PackedVector3Array()
 			var vcol := PackedColorArray()
-			vpos.resize(BLOCK * BLOCK * 6)
-			vnrm.resize(BLOCK * BLOCK * 6)
-			vcol.resize(BLOCK * BLOCK * 6)
+			# 常规格 6 顶点；被 _ground_holes 切割的格剖分后会更多，先备富余
+			vpos.resize(BLOCK * BLOCK * 6 + 128)
+			vnrm.resize(BLOCK * BLOCK * 6 + 128)
+			vcol.resize(BLOCK * BLOCK * 6 + 128)
 			var w := 0
 			for iz in BLOCK:
 				for ix in BLOCK:
@@ -2784,6 +2803,11 @@ func _build_zone_ground() -> void:
 					var p10 := Vector3(x0 + cell, hv[k00 + 1], z0)
 					var p01 := Vector3(x0, hv[k01], z0 + cell)
 					var p11 := Vector3(x0 + cell, hv[k01 + 1], z0 + cell)
+					# 地表挖洞（楼梯井穿地层）：格子矩形与任一洞相交走裁剪路径
+					if _ground_hole_hit(Rect2(x0, z0, cell, cell)):
+						w = _emit_ground_cell_cut(vpos, vnrm, vcol, w,
+								p00, p10, p11, p01, c00, c10, c11, c01)
+						continue
 					# 两个三角形 (00,10,11) / (00,11,01)；法线按实际三角形算，
 					# 山脊才有明暗；全 UP 会把山坡打成平地
 					var n1 := _up_normal((p10 - p00).cross(p11 - p00))
@@ -2795,6 +2819,9 @@ func _build_zone_ground() -> void:
 					vpos[w + 4] = p11; vcol[w + 4] = c11; vnrm[w + 4] = n2
 					vpos[w + 5] = p01; vcol[w + 5] = c01; vnrm[w + 5] = n2
 					w += 6
+			vpos.resize(w)
+			vnrm.resize(w)
+			vcol.resize(w)
 			var arrays := []
 			arrays.resize(Mesh.ARRAY_MAX)
 			arrays[Mesh.ARRAY_VERTEX] = vpos
@@ -2807,6 +2834,77 @@ func _build_zone_ground() -> void:
 			mi.material_override = mat
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(mi)
+
+
+## 挖洞格剖分：格子矩形减去各洞（矩形差集分解为 ≤4 条带）。不用
+## Geometry2D.clip_polygons——50m 大格对 4m 内洞做布尔裁剪会得到面积反而
+## 变大、含洞内三角形的错误结果（实测）。差集矩形每个按原两三角
+## (00,10,11)/(00,11,01) 的重心坐标回插 y 与顶点色（城区地面平坦 y≈0，
+## 洞都在城区）。返回新写入下标。
+func _emit_ground_cell_cut(vpos: PackedVector3Array, vnrm: PackedVector3Array,
+		vcol: PackedColorArray, w: int, p00: Vector3, p10: Vector3, p11: Vector3,
+		p01: Vector3, c00: Color, c10: Color, c11: Color, c01: Color) -> int:
+	var src: Array = [[p00, p10, p11, c00, c10, c11], [p00, p11, p01, c00, c11, c01]]
+	var cellr := Rect2(p00.x, p00.z, p10.x - p00.x, p01.z - p00.z)
+	var rects: Array = [cellr]
+	for h in _ground_holes:
+		var nxt: Array = []
+		for r in rects:
+			nxt.append_array(_rect_minus_rect(r, h))
+		rects = nxt
+	for r in rects:
+		if r.size.x <= 0.01 or r.size.y <= 0.01:
+			continue
+		var tris_xz: Array = [
+			[Vector2(r.position.x, r.position.y), Vector2(r.end.x, r.position.y),
+					Vector2(r.end.x, r.end.y)],
+			[Vector2(r.position.x, r.position.y), Vector2(r.end.x, r.end.y),
+					Vector2(r.position.x, r.end.y)],
+		]
+		for tri_xz in tris_xz:
+			var vv: Array = []
+			for q in tri_xz:
+				vv.append(_ground_vc(src, q, p00, c00))
+			var nn := _up_normal((vv[1][0] - vv[0][0]).cross(vv[2][0] - vv[0][0]))
+			for e in vv:
+				vpos[w] = e[0]
+				vnrm[w] = nn
+				vcol[w] = e[1]
+				w += 1
+	return w
+
+
+## 矩形差集 a−b：b 与 a 相交时切成 ≤4 条带，不相交原样返回
+func _rect_minus_rect(a: Rect2, b: Rect2) -> Array:
+	var ix0 := maxf(a.position.x, b.position.x)
+	var ix1 := minf(a.end.x, b.end.x)
+	var iz0 := maxf(a.position.y, b.position.y)
+	var iz1 := minf(a.end.y, b.end.y)
+	if ix0 >= ix1 or iz0 >= iz1:
+		return [a]
+	var out: Array = []
+	if iz0 > a.position.y:
+		out.append(Rect2(a.position.x, a.position.y, a.size.x, iz0 - a.position.y))
+	if iz1 < a.end.y:
+		out.append(Rect2(a.position.x, iz1, a.size.x, a.end.y - iz1))
+	if ix0 > a.position.x:
+		out.append(Rect2(a.position.x, iz0, ix0 - a.position.x, iz1 - iz0))
+	if ix1 < a.end.x:
+		out.append(Rect2(ix1, iz0, a.end.x - ix1, iz1 - iz0))
+	return out
+
+
+## 挖洞格顶点：XZ 坐标按原两三角重心回插 y 与顶点色，数值外兜底 00 角
+func _ground_vc(src: Array, q: Vector2, p00: Vector3, c00: Color) -> Array:
+	for tri in src:
+		var bc: Vector3 = _bary(q, Vector2(tri[0].x, tri[0].z),
+				Vector2(tri[1].x, tri[1].z), Vector2(tri[2].x, tri[2].z))
+		if bc.x < -1e-3 or bc.y < -1e-3 or bc.z < -1e-3:
+			continue
+		return [Vector3(q.x, float(tri[0].y) * bc.x + float(tri[1].y) * bc.y
+				+ float(tri[2].y) * bc.z, q.y),
+				tri[3] * bc.x + tri[4] * bc.y + tri[5] * bc.z]
+	return [Vector3(q.x, p00.y, q.y), c00]
 
 
 ## 区域配色：海 / 沙滩 / 沙漠 / 山地 / 城市水泥 / 草地（+ 噪声抖动）

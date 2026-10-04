@@ -71,7 +71,52 @@ func _initialize() -> void:
 		game._step_sim(1.0 / 60.0)
 		await frames(1)
 	print("[v3] 二层→三层 y=%.2f（期望 ≈7.0）" % game.onfoot.pos.y)
+	# 6) 楼梯开口地表挖洞：y≈0 的白色城市地表曾整块横在下行楼梯半程
+	#    （走得到、看不见）。遍历地图网格数据，地平高度层（|y|<0.05）内
+	#    不得有三角形质心落进两个开口（矩形按洞边内缩 0.3m；台阶顶面
+	#    y≈0.18、地板剖切边 0.01..0.13 都在地平带外/洞边外，不误报）
+	var holes := [Rect2(202.05, -510.95, 5.9, 2.9), Rect2(206.8, -493.2, 3.4, 2.9)]
+	var stack: Array = [fm]
+	var bad := 0
+	while not stack.is_empty():
+		var nd: Node = stack.pop_back()
+		stack.append_array(nd.get_children())
+		if not (nd is MeshInstance3D):
+			continue
+		var mm: Mesh = (nd as MeshInstance3D).mesh
+		if mm == null or mm.get_surface_count() == 0:
+			continue
+		var xf: Transform3D = (nd as MeshInstance3D).global_transform
+		for si in mm.get_surface_count():
+			var va: Array = mm.surface_get_arrays(si)
+			if va.is_empty() or va[Mesh.ARRAY_VERTEX] == null:
+				continue
+			var vs: PackedVector3Array = va[Mesh.ARRAY_VERTEX]
+			var ia_raw = va[Mesh.ARRAY_INDEX]
+			var ia: PackedInt32Array = ia_raw if ia_raw != null else PackedInt32Array()
+			var tri_n: int = (vs.size() / 3) if ia.is_empty() else (ia.size() / 3)
+			for t3 in tri_n:
+				var i0: int = t3 * 3 if ia.is_empty() else ia[t3 * 3]
+				var i1: int = t3 * 3 + 1 if ia.is_empty() else ia[t3 * 3 + 1]
+				var i2: int = t3 * 3 + 2 if ia.is_empty() else ia[t3 * 3 + 2]
+				var a3: Vector3 = xf * vs[i0]
+				var b3: Vector3 = xf * vs[i1]
+				var c3: Vector3 = xf * vs[i2]
+				if maxf(a3.y, maxf(b3.y, c3.y)) > 0.05 \
+						or minf(a3.y, minf(b3.y, c3.y)) < -0.05:
+					continue
+				var cen := Vector2((a3.x + b3.x + c3.x) / 3.0,
+						(a3.z + b3.z + c3.z) / 3.0)
+				for hh in holes:
+					if hh.has_point(cen):
+						bad += 1
+						if bad <= 12:
+							print("[v3] bad 三角形 cen=(%.1f,%.1f) y=%.2f..%.2f %s" % [
+									cen.x, cen.y, minf(a3.y, minf(b3.y, c3.y)),
+									maxf(a3.y, maxf(b3.y, c3.y)),
+									String(nd.get_path())])
+	print("[v3] 楼梯开口地表洞 bad=%d（期望 0）" % bad)
 	var ok: bool = absf(y_tunnel - (-3.2)) < 0.6 \
-			and absf(game.onfoot.pos.y - 7.0) < 0.6
+			and absf(game.onfoot.pos.y - 7.0) < 0.6 and bad == 0
 	print("[v3] %s" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)
