@@ -248,11 +248,11 @@ func _build_cars() -> void:
 			"speed": rng.randf_range(8.0, 14.0), "stop_t": 0.0, "hit_cd": 0.0,
 			"hp": 4.0, "disabled": false, "roll": 0.0,
 		})
-		_place_car(cars[i], true)
+		_place_car(cars[i], i)   # 原来误传 true 进 i 形参：20 台车全写进实例槽 1，其余叠在世界原点
 	_refresh_lights(true)
 
 
-func _place_car(car: Dictionary, i: int, silent := false) -> void:
+func _place_car(car: Dictionary, i: int) -> void:
 	var pts: PackedVector3Array = fm.roads[car["r"]].pts
 	var i0 := clampi(int(floor(car["idx"])), 0, pts.size() - 2)
 	var f: float = clampf(car["idx"] - float(i0), 0.0, 1.0)
@@ -699,13 +699,14 @@ func update(dt: float) -> void:
 	for i in cars.size():
 		_update_car(cars[i], dt, i)
 	_update_peds(dt)
+	# 车灯组颜色节拍刷新：每帧跑（原来缩进在通缉块内——入夜后民用车
+	# 不开大灯、被撞车不双闪，除非玩家恰好被通缉）
+	_refresh_lights()
 	if wanted:
 		_update_police(dt)
 		_wanted_t += dt
 		# _update_police 内可能本帧已逃脱/被捕（wanted 置 false），
 		# 此时不能再回写「通缉中」横幅——否则字幕逃脱后永远残留
-		# 车灯组颜色节拍刷新
-		_refresh_lights()
 		if wanted:
 			hud.set_wanted(true, _esc_t / 6.0)
 
@@ -926,6 +927,9 @@ func _update_police(dt: float) -> void:
 			pos.z += n.y * (2.4 - d) * 0.5
 		if not player_on_foot and d < 3.5 and player_speed < 3.0:
 			_bust_t += dt
+		else:
+			# 逮捕计时半速衰减：原来只加不减，两次短暂停车隔任意久也会累计被捕
+			_bust_t = maxf(0.0, _bust_t - dt * 0.5)
 		# 步行玩家：60m 内警车开枪还击
 		if player_on_foot and d < 60.0:
 			u["fire_cd"] = maxf(0.0, float(u.get("fire_cd", 0.0)) - dt)
@@ -1017,11 +1021,16 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 		var perp: float = (c - from - dir * t).length()
 		if perp < 1.45:
 			best = {"type": "police", "i": i, "d": t, "point": from + dir * t}
-	# 楼房阻挡：沿射线 3m 步进检查点是否在 OBB 内
+	# 楼房阻挡：沿射线 3m 步进检查点是否在 OBB 内；
+	# 带 top/bot 的障碍按真实高度过滤（观景台/地下层射击不被地表投影挡）
 	var t2 := 2.0
 	while t2 < best["d"]:
 		var p: Vector3 = from + dir * t2
 		for ob in fm.obstacles_near(p.x, p.z):
+			if ob.has("top") and p.y > float(ob["top"]):
+				continue
+			if ob.has("bot") and p.y < float(ob["bot"]):
+				continue
 			var dx: float = p.x - ob["c"].x
 			var dz: float = p.z - ob["c"].y
 			if dx * dx + dz * dz > 8100.0:

@@ -162,8 +162,8 @@ const CAR_MODELS := [
 	{"id": "aifd", "name": "马自达 RX-7", "file": "res://assets/cars/car_tripo_k.glb", "desc": "珠白跳灯双座 + 大尾翼 · 惯性漂移：点一次手刹+方向起漂", "yaw_deg": 0.0, "scale": 4.6,
 		"class": "street", "inertia_drift": true,
 		"stats": {"top": 89.0, "power": 61.0, "accel": 12.0, "grip": 0.96, "brake": 18.2}},
-	# 白灰幽灵：柯尼塞格风格极速旗舰，全队最快
-	{"id": "aighost", "name": "幽灵超跑", "file": "res://assets/cars/car_tripo_l.glb", "desc": "白刃车身 · 环刀尾翼 · 极速旗舰", "yaw_deg": -90.0, "scale": 4.6,
+	# 白灰幽灵：柯尼塞格风格燃油极速代表（混动 aiped 与烈风 GT 面世后让出极速头名）
+	{"id": "aighost", "name": "幽灵超跑", "file": "res://assets/cars/car_tripo_l.glb", "desc": "白刃车身 · 环刀尾翼 · 燃油极速代表", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "endurance",
 		"stats": {"top": 97.0, "power": 66.0, "accel": 12.0, "grip": 1.08, "brake": 19.4}},
 	# 奔驰 AMG：荧光绿涂装混动电驱（源模型贴图名即「奔驰跑车」）

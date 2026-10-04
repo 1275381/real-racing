@@ -138,12 +138,14 @@ func start(side: String) -> void:
 
 func _make_soldier(team: String, slot: int) -> Dictionary:
 	var cls: int = [0, 0, 0, 1, 1, 2, 2, 3][slot % 8]   # 突击多、侦察少
+	var gun: Dictionary = Guns.gun_by_id(str(CLASSES[cls]["gun"]))
 	return {
 		"team": team, "slot": slot, "cls": cls,
 		"name": "%s-%02d" % [CALLSIGNS[team][slot % 6], slot + 1],
 		"pos": Vector3.ZERO, "yaw": 0.0, "hp": 100.0, "dead": true,
 		"respawn_t": 0.0, "tgt_i": -1, "tgt_player": false,
-		"fire_cd": randf_range(0.5, 1.5), "burst": 0, "mag": 30, "reload_t": 0.0,
+		"fire_cd": randf_range(0.5, 1.5), "burst": 0,
+		"mag": int(gun.get("mag", 30)), "reload_t": 0.0,
 		"los_ok": false, "los_t": randf_range(0.0, 0.4), "tgt_t": randf_range(0.0, 0.5),
 		"strafe_t": 0.0, "strafe_dir": 1.0, "phase": randf() * TAU, "moving": false,
 		"goal": Vector3.ZERO, "goal_t": 0.0, "nade_cd": randf_range(8.0, 20.0),
@@ -356,9 +358,7 @@ func _update_soldier(i: int, dt: float) -> void:
 		var can_respawn: bool = (s["team"] == "atk" and tickets > 0) \
 				or (s["team"] == "def" and def_tickets > 0)
 		if float(s["respawn_t"]) <= 0.0 and can_respawn:
-			if s["team"] == "atk":
-				tickets -= 1
-			_respawn(s)
+			_respawn(s)   # 兵力票已在死亡瞬间扣（与守方/玩家同一时点）
 			_write_pose(s)
 		return
 	var cd: Dictionary = CLASSES[s["cls"]]
@@ -598,7 +598,7 @@ func _try_fire(i: int, s: Dictionary, t_pos: Vector3, dist: float, dt: float) ->
 		return
 	if int(s["mag"]) <= 0:
 		s["reload_t"] = 2.2
-		s["mag"] = 30
+		s["mag"] = int(Guns.gun_by_id(str(cd["gun"])).get("mag", 30))   # 支援兵 LMG 等按枪械真实弹匣
 		return
 	if int(s["burst"]) <= 0:
 		s["burst"] = cd["burst"]
@@ -690,6 +690,8 @@ func _los(from: Vector3, to: Vector3) -> bool:
 
 ## 士兵受伤；src = 攻击者士兵序号（-1 = 玩家，-2 = 爆炸无主）
 func _damage_soldier(j: int, dmg: float, src: int, head: bool, weapon: String) -> void:
+	if battle_over:
+		return   # 结算后投掷物余爆不再造成伤害/扣票（画面已定格）
 	var s: Dictionary = soldiers[j]
 	if s["dead"]:
 		return
@@ -701,8 +703,12 @@ func _damage_soldier(j: int, dmg: float, src: int, head: bool, weapon: String) -
 	s["moving"] = false
 	s["deaths"] = int(s["deaths"]) + 1
 	s["respawn_t"] = RESPAWN_AI
+	# 兵力票双方都在死亡瞬间扣（原来进攻方在重生时才扣，比守方/玩家晚 9 秒，
+	# tickets=1 时进攻 AI 还能多打一条命）
 	if s["team"] == "def":
 		def_tickets -= 1   # 击杀守军立即消耗防守方兵力（HUD 数字立减）
+	else:
+		tickets -= 1
 	_write_pose(s)
 	# 击杀距离：击杀者（玩家/士兵/载具）到受害者的水平距离
 	var kpos: Vector3 = player_pos if src == -1 \
@@ -800,31 +806,34 @@ func player_shot(kind: String, idx: int, dmg: float) -> void:
 		return
 	var s: Dictionary = soldiers[idx]
 	if s["team"] == player_team or s["dead"]:
-		return   # 无友伤（子弹已被队友挡下）
+		return   # 无友伤（友军在 raycast 里也不挡子弹，与 AI 同规则）
 	var head := kind == "soldier_head"
 	_damage_soldier(idx, dmg * (HEAD_MUL if head else 1.0), -1, head,
 			CLASSES[player_cls]["gun"])
 	hitmark.emit(s["dead"], head)
 
 
-## onfoot 子弹射线（同 npc.raycast 契约）：士兵躯干/头部 + 墙体
+## onfoot 子弹射线（同 npc.raycast 契约）：士兵躯干/头部 + 墙体。
+## 友军不挡玩家子弹（与 AI hitscan 同规则——AI 本来就穿过队友开火）
 func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	var best := {"type": "", "i": -1, "d": max_d, "point": from + dir * max_d}
 	for i in soldiers.size():
 		var s: Dictionary = soldiers[i]
-		if s["dead"]:
+		if s["dead"] or s["team"] == player_team:
 			continue
+		# 命中球半径同步 SOLDIER_SCALE：模型放大 1.5 倍后仍用 0.2/0.5 会「看着打中没判定」
 		var hc: Vector3 = s["pos"] + Vector3(0, 1.65 * SOLDIER_SCALE, 0)   # 头盔中心（随模型放大）
 		var th: float = (hc - from).dot(dir)
-		if th > 0.5 and th < best["d"] and (hc - from - dir * th).length() < 0.2:
+		if th > 0.5 and th < best["d"] and (hc - from - dir * th).length() < 0.2 * SOLDIER_SCALE:
 			best = {"type": "soldier_head", "i": i, "d": th, "point": from + dir * th}
 			continue
 		var c: Vector3 = s["pos"] + Vector3(0, 1.05 * SOLDIER_SCALE, 0)   # 胸口（随模型放大）
 		var t: float = (c - from).dot(dir)
-		if t > 0.5 and t < best["d"] and (c - from - dir * t).length() < 0.5:
+		if t > 0.5 and t < best["d"] and (c - from - dir * t).length() < 0.5 * SOLDIER_SCALE:
 			best = {"type": "soldier", "i": i, "d": t, "point": from + dir * t}
 	var vh: Array = veh.ray_hit(from, dir, best["d"], veh.player_v)
-	if int(vh[0]) >= 0:
+	if int(vh[0]) >= 0 and veh.vehicles[int(vh[0])]["team"] != player_team:
+		# 友方载具不吞子弹（出生在坦克旁边时整梭子弹白打的现象）
 		best = {"type": "vehicle", "i": vh[0], "d": vh[1], "point": from + dir * float(vh[1])}
 	var wd := _wall_dist(from, dir, best["d"])
 	if wd < best["d"]:
@@ -1160,22 +1169,25 @@ func explode_raw(pos: Vector3, radius: float, dmg: float, vdmg: float, team: Str
 	slot["light"].visible = true
 	slot["t"] = 0.45
 	slot["radius"] = radius
-	for j in soldiers.size():
-		var s: Dictionary = soldiers[j]
-		if s["dead"] or (team != "" and s["team"] == team):
-			continue
-		var d: float = s["pos"].distance_to(pos)
-		if d <= radius:
-			_damage_soldier(j, dmg * (1.0 - d / radius * 0.6), src, false, weapon)
-			if src == -1:
-				hitmark.emit(s["dead"], false)
-	if player_alive and veh.player_v < 0:
-		var pd := player_pos.distance_to(pos)
-		if pd <= radius and (team != player_team or src == -1 or team == ""):
-			player_hit.emit(dmg * (1.0 - pd / radius * 0.6) * 0.8, pos)
-			if src != -1:
-				player_last_hit_by = src
-	if vdmg > 0.0:
+	if not battle_over:
+		for j in soldiers.size():
+			var s: Dictionary = soldiers[j]
+			if s["dead"] or (team != "" and s["team"] == team):
+				continue
+			var d: float = s["pos"].distance_to(pos)
+			if d <= radius:
+				_damage_soldier(j, dmg * (1.0 - d / radius * 0.6), src, false, weapon)
+				if src == -1:
+					hitmark.emit(s["dead"], false)
+		if player_alive and veh.player_v < 0:
+			var pd := player_pos.distance_to(pos)
+			if pd <= radius and (team != player_team or src == -1 or team == ""):
+				player_hit.emit(dmg * (1.0 - pd / radius * 0.6) * 0.8, pos)
+				if src != -1:
+					player_last_hit_by = src
+				else:
+					player_last_hit_by = -1   # 被自己的爆炸炸死不记到早先的敌人头上
+	if vdmg > 0.0 and not battle_over:
 		veh.explosion(pos, radius, vdmg, team, src, weapon)
 	explosion_at.emit(pos)
 

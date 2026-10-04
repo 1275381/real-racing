@@ -1121,6 +1121,8 @@ func resolve_obstacles(v: Vehicle) -> void:
 	for ob in obstacles_near(v.pos.x, v.pos.z):
 		if ob.has("bot") and v.pos.y + 1.0 < float(ob["bot"]):
 			continue   # 车在障碍物下方（高处栏杆等）
+		if ob.has("top") and v.pos.y > float(ob["top"]):
+			continue   # 车在障碍物上方（地下军械室墙/武器架的 top 对地表车辆不生效）
 		var dx: float = v.pos.x - ob["c"].x
 		var dz: float = v.pos.z - ob["c"].y
 		if dx * dx + dz * dz > 90.0 * 90.0:
@@ -1188,6 +1190,8 @@ func push_out_circle(p: Vector3, r: float) -> Vector3:
 			continue
 		if ob.has("bot") and p.y + 1.0 < float(ob["bot"]):
 			continue
+		if ob.has("top") and p.y > float(ob["top"]):
+			continue   # 与 resolve_obstacles 同口径：top 之上的障碍不挡
 		var dx: float = p.x - ob["c"].x
 		var dz: float = p.z - ob["c"].y
 		var ca: float = cos(ob["rot"])
@@ -3238,7 +3242,11 @@ func _build_intersections() -> void:
 		var cx: float = inner[ix]
 		for iz in inner.size():
 			var cz: float = inner[iz]
-			var p := (ix + iz) % 2
+			# 棋盘奇偶必须与 npc_traffic._tl_gate 同源：那边用的是
+			# tl_index()＝GRID_COORDS 全表下标（-180→4 / 180→6），inner 过滤掉
+			# ±720/±900/0 后下标整体左移，正负侧坐标差不同——一正一负的
+			# 18 个路口奇偶正好差 1（半周期反相：灯杆绿灯 NPC 却停车）
+			var p := (GRID_COORDS.find(cx) + GRID_COORDS.find(cz)) % 2
 			# 四角各一杆（进路口方向右侧远端：北行看 NE、南行看 SW、东行看 SE、
 			# 西行看 NW）——NE/SW 服务南北向（组 p）、SE/NW 服务东西向（组 p+1），
 			# 同轴对向车流读同一组灯，交叉车流必然反相
@@ -4322,6 +4330,8 @@ func _make_villa() -> void:
 		_lm_box(root, fp[0], fp[1], floor_mat)
 	_lm_box(root, Vector3(vx - 12.2, 0.04, vz - 2.0), Vector3(3.2, 0.1, 5.0),
 			_lm_mat(Color(0.7, 0.66, 0.58)))   # 门廊台阶
+	road_pads.append({"c": Vector2(vx - 12.2, vz - 2.0), "fx": 1.0, "fz": 0.0,
+			"hf": 1.6, "hl": 2.5, "y": 0.09})   # 台阶也是硬质铺装：不登记则车压上按草地阻力
 	# 外墙三层贯通（厚 0.3、总高 10.2），西墙一层留门洞
 	var wall_h := 10.2
 	for w in [

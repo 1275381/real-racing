@@ -416,7 +416,7 @@ func _register_inputs() -> void:
 		"rr_gun4": [KEY_4], "rr_gun5": [KEY_5],
 		"rr_pause": [KEY_P, KEY_ESCAPE],
 		"rr_start": [KEY_ENTER],
-		"rr_dual": [KEY_O],
+		"rr_dual": [KEY_X],   # 双模车切换（原 O 与导航/领航员同键冲突，两动作会同时触发）
 		"rr_interact": [KEY_F],
 		"rr_bomb": [KEY_SPACE],        # 大战场飞行投弹（驾车时仍为手刹）
 		"rr_debug": [KEY_I, KEY_F3],   # macOS 上 F3 会被 Mission Control 吃掉
@@ -738,7 +738,9 @@ func close_gunshop() -> void:
 	hud.set_shop_hint(false)
 	if on_foot:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	hud.show_only("roam" if gunshop_from_roam else "garage")
+	# 按当前状态判定而非进店快照：快照会跨界面残留（漫游进过店后，
+	# 车库其它面板的「返回」会把漫游 HUD 顶进车库）
+	hud.show_only("roam" if state == ST.ROAM else "garage")
 
 
 func _refresh_gunshop_ui() -> void:
@@ -797,6 +799,7 @@ func enter_battle() -> void:
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): audio.play_reload())
 	onfoot.retarget(bmap, bf)   # 开机先进过漫游：onfoot 原本指着城市
+	onfoot.scope_provider = player_scope_for   # 两处 setup 都要注入（否则先进战场永远机瞄）
 	bf.visible = true
 	on_foot = false
 	onfoot.exit()
@@ -908,8 +911,9 @@ func _on_player_vehicle_destroyed() -> void:
 
 ## G 键：兵种道具（手雷 / 火箭筒 / 医疗包 / 侦察信标）
 func _battle_gadget() -> void:
-	if bf == null or not bf.player_alive or not on_foot or _gadget_cd > 0.0:
-		return
+	if bf == null or bf.battle_over or not bf.player_alive \
+			or not on_foot or _gadget_cd > 0.0:
+		return   # 结算后 AI 已冻结：不再投掷（否则朝人堆刷击杀金币）
 	var cd: Dictionary = RRBattleField.CLASSES[_battle_cls]
 	var fwd := -camera.global_transform.basis.z
 	var eye := camera.global_position
@@ -950,6 +954,8 @@ func exit_battle() -> void:
 	hud.set_max_health(100.0)
 	hud.set_health(player_hp)
 	if bf != null:
+		if not bf.player_drone.is_empty():
+			bf._end_drone(false)   # 操控巡飞弹中退场：不清掉则 input_block 永久卡死
 		bf.active = false
 		bf.player_alive = false
 		bf._clear_projectiles()
@@ -1023,7 +1029,7 @@ func _battle_cycle_ammo() -> void:
 
 
 func _on_bf_player_hit(dmg: float, from: Vector3) -> void:
-	if not on_foot or bf == null or not bf.player_alive:
+	if not on_foot or bf == null or not bf.player_alive or bf.battle_over:
 		return
 	# 护甲先扛：每点护甲吸收 1 点伤害，打穿后溢出部分进血条
 	if player_armor > 0.0:
@@ -1042,7 +1048,10 @@ func _on_bf_player_hit(dmg: float, from: Vector3) -> void:
 
 ## 阵亡：播报 → 俯瞰战场 → 5 秒后可重新部署（可换兵种/出生点）
 func _battle_downed() -> void:
-	bf.report_player_death()
+	if not bf.battle_over:
+		bf.report_player_death()   # 结算后残余爆炸压死不再扣票/播报（避免卡俯瞰态）
+	if not bf.player_drone.is_empty():
+		bf._end_drone(false)   # 带弹阵亡：不清理则重生后 input_block 卡死
 	on_foot = false
 	onfoot.exit()
 	hud.set_onfoot(false)
@@ -1054,7 +1063,8 @@ func _battle_downed() -> void:
 
 func _on_bf_killed(info: Dictionary) -> void:
 	bhud.add_kill(info)
-	if info.get("by_player", false):
+	if info.get("by_player", false) and bf != null and not bf.battle_over:
+		# 结算画面出现后再杀冻结的 AI 不给金币/战绩（同上：堵结算后刷分）
 		coins += 200 if info.get("vehicle", false) else (75 if info.get("head", false) else 50)
 		battle_kills_total += 1
 		_save_settings()
@@ -1370,7 +1380,8 @@ func close_shop() -> void:
 	hud.set_shop_hint(false)
 	if on_foot:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)   # 步行中关店 → 回到锁定视角
-	hud.show_only("roam" if shop_from_roam else "garage")
+	# 同 close_gunshop：按当前状态决定回漫游还是车库（快照会跨界面残留）
+	hud.show_only("roam" if state == ST.ROAM else "garage")
 
 
 func _on_shop_equip(slot: String, opt_id: String) -> void:
@@ -1407,8 +1418,10 @@ func _carinfo_text() -> String:
 	if base.has("top_disp"):
 		bd = base.duplicate()
 		cd = cur.duplicate()
+		# 显示极速同样吃配件增益：按物理 top 的增益比例折算（否则装引擎面板恒 400、▲恒空）
+		var gain: float = float(cur.get("top", 0)) / maxf(float(base.get("top", 1)), 1.0)
 		bd["top"] = base["top_disp"]
-		cd["top"] = cur.get("top_disp", cur.get("top", 0))
+		cd["top"] = int(round(float(base["top_disp"]) * gain))
 	var lines := [
 		"马力    %d → %d %s" % [roundi(bd.get("power", 0) * 10.0),
 			roundi(cd.get("power", 0) * 10.0), _arrow(cur.power, base.power)],
@@ -1505,7 +1518,7 @@ func _apply_engine_profile() -> void:
 	audio.set_engine_profile(car.get("class", "combustion"))
 
 
-## 双组别车：O 键在加速模式 / 极速模式之间切换（只改性能数值，声浪不变）
+## 双组别车：X 键在加速模式 / 极速模式之间切换（只改性能数值，声浪不变）
 func _toggle_dual_mode() -> void:
 	var car: Dictionary = TrackData.model_by_id(car_model_id)
 	if not car.has("modes"):
@@ -1701,9 +1714,14 @@ func _roam_plane_step(dt: float) -> void:
 	p["landed"] = p["pos"].y - ground < 0.6 and float(p["speed"]) < 18.0
 	if p["landed"]:
 		p["speed"] = maxf(0.0, float(p["speed"]) - 26.0 * dt)
-	# 低空楼体粗碰撞（<26m 时从 OBB 推出）
+	# 低空楼体粗碰撞（<26m 时从 OBB 推出）；带 top/bot 的障碍按真实高度过滤——
+	# 20m 平飞不能被 7.5m 的路灯/1m 长椅水平推开（与 onfoot 判定同口径）
 	if p["pos"].y - ground < 26.0:
 		for ob in freeroam.obstacles_box:
+			if ob.has("top") and float(p["pos"].y) > float(ob["top"]):
+				continue
+			if ob.has("bot") and float(p["pos"].y) < float(ob["bot"]):
+				continue
 			var dx: float = p["pos"].x - ob["c"].x
 			var dz: float = p["pos"].z - ob["c"].y
 			if dx * dx + dz * dz > 8100.0:
@@ -1816,6 +1834,7 @@ func enter_roam() -> void:
 	hud.add_map_marker(FreeroamMap.GUNSHOP_POS.x, FreeroamMap.GUNSHOP_POS.y, "枪")
 	hud.add_map_marker(-1476.0, -570.0, "货")   # 截机任务·停靠货机
 	hud.add_map_marker(480.0, 2470.0, "赛")     # RR 国际赛车场
+	hud.add_map_marker(196.0, -492.0, "家")     # 湖畔别墅（出生的家）
 	hud.set_roam_tach()
 	# NPC 交通 + 行人 + 警察
 	if npc == null:
@@ -1831,11 +1850,11 @@ func enter_roam() -> void:
 		onfoot = OnFoot.new()
 		add_child(onfoot)
 		onfoot.setup(freeroam, npc, audio, camera)
-		onfoot.scope_provider = player_scope_for
 		onfoot.set_ammo_type(ammo_type)
 		onfoot.shoot_hit.connect(_on_foot_shot)
 		onfoot.reload_done.connect(func(): pass)
 		onfoot.reload_done.connect(func(): audio.play_reload())
+	onfoot.scope_provider = player_scope_for   # 无条件注入：先进过战场时 onfoot 已存在
 	onfoot.retarget(freeroam, npc)   # 从大战场回来：改指回城市地图与交通
 	# 开局在车内（清除可能的步行残留）
 	on_foot = false
@@ -2047,7 +2066,7 @@ func _nav_drive(h: float) -> Dictionary:
 	if _nav_stuck_t > 2.5:
 		_nav_rev_t = 1.2
 		_nav_stuck_t = 0.0
-	# 转向/油门分配：急弯减速，直道全速（~86km/h 封顶）
+	# 转向/油门分配：急弯减速，直道全速（开阔 180km/h / 城市街 122km/h）
 	var thr := 0.0
 	var brk := 0.0
 	if blocked:
@@ -2383,7 +2402,7 @@ func rescue() -> void:
 
 ## 漫游地图边界软限位（世界扩展后覆盖山海沙漠四区）
 func _roam_bound(v: Vehicle) -> void:
-	var lim := 2800.0
+	var lim := float(FreeroamMap.MAP_LIMIT)   # 与地图/导航同源，避免扩图后此处漂移
 	if absf(v.pos.x) > lim:
 		v.pos.x = clampf(v.pos.x, -lim, lim)
 		v.vf *= 0.96
@@ -2672,6 +2691,7 @@ func _handle_hotkeys() -> void:
 			if Input.is_action_just_pressed("rr_handbrake"):
 				bhud.try_deploy()
 		elif bf != null and bf.player_alive and not bf.battle_over \
+				and bf.player_drone.is_empty() \
 				and Input.is_action_just_pressed("rr_interact"):
 			_battle_toggle_vehicle()
 	# 货运劫案：地面靠近停机货机接取 / 飞行中靠近货舱夺货
@@ -2714,10 +2734,12 @@ func _handle_hotkeys() -> void:
 			and Input.is_action_just_pressed("rr_start"):
 		exit_battle()   # 战斗结束：Enter 返回车库
 	if state == ST.ROAM and not shop_open and not gunshop_open:
-		var d_parts: float = Vector2(player.veh.pos.x - FreeroamMap.SHOP_DOOR.x,
-				player.veh.pos.z - FreeroamMap.SHOP_DOOR.y).length()
-		var d_guns: float = Vector2(player.veh.pos.x - FreeroamMap.GUNSHOP_DOOR.x,
-				player.veh.pos.z - FreeroamMap.GUNSHOP_DOOR.y).length()
+		# 步行时用人坐标：车停在店门口十几米外人已走到门下，提示却不出现
+		var shop_ref: Vector3 = onfoot.pos if on_foot else player.veh.pos
+		var d_parts: float = Vector2(shop_ref.x - FreeroamMap.SHOP_DOOR.x,
+				shop_ref.z - FreeroamMap.SHOP_DOOR.y).length()
+		var d_guns: float = Vector2(shop_ref.x - FreeroamMap.GUNSHOP_DOOR.x,
+				shop_ref.z - FreeroamMap.GUNSHOP_DOOR.y).length()
 		_near_shop = d_parts < 14.0
 		var near_guns := d_guns < 14.0
 		hud.set_shop_hint(_near_shop, "按 Enter 进入配件店")

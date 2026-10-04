@@ -186,6 +186,11 @@ func _ground_physics(k: int, v: Dictionary, dt: float) -> void:
 				else:
 					var push := Vector2(s["pos"].x - np.x, s["pos"].z - np.y).normalized() * (r - ds)
 					s["pos"] = s["pos"] + Vector3(push.x, 0, push.y)
+		# 步行玩家同样吃碾压（敌车）——原来坦克从玩家身上开过去毫发无损
+		if bf.player_alive and player_v < 0 and v["team"] != bf.player_team:
+			var dp := Vector2(bf.player_pos.x - np.x, bf.player_pos.z - np.y).length()
+			if dp < r * 0.9:
+				bf.player_hit.emit(160.0, v["pos"])
 
 
 # ================= AI =================

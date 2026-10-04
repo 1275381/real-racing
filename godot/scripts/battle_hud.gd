@@ -433,7 +433,7 @@ func _draw_scoreboard(sz: Vector2, font: Font) -> void:
 		draw_string(font, Vector2(cx + 200, org.y + 66), "击杀  阵亡   得分",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.8, 0.8, 0.8))
 		var rows: Array = bf.scoreboard(team)
-		for r in mini(rows.size(), 16):
+		for r in mini(rows.size(), 25):   # 全队 25 行（16 行会裁掉排在后面的自己）
 			var row: Dictionary = rows[r]
 			var ry := org.y + 92 + r * 22
 			if row["me"]:

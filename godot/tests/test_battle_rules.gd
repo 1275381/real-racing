@@ -72,5 +72,61 @@ func _initialize() -> void:
 	check("完好防弹衣退场退回", game.armor_stock == 2, "stock=%d" % game.armor_stock)
 	check("退场血条满格值复位 100", is_equal_approx(game.hud._gun_hp_max, 100.0))
 
+	# ---- 3) T 切弹药不再瞬间满弹匣（gun_ammo 按真实余量回写）----
+	game.enter_battle()
+	await frames(20)
+	game._on_battle_side("atk")
+	await frames(10)
+	game._on_battle_deploy(0, 0)   # 突击兵 rifle
+	await frames(10)
+	bf = game.bf
+	game.guns_owned = ["pistol", "rifle", "standard", "power"]
+	game.ammo_type = "standard"
+	game._battle_cycle_ammo()
+	await frames(2)
+	game.onfoot.ammo = 5
+	game.onfoot.gun_ammo["rifle"] = 5
+	game._battle_cycle_ammo()   # 切回 standard：重建枪模必须按余量恢复
+	await frames(2)
+	check("T 切弹药不回满弹匣", game.onfoot.ammo == 5, "ammo=%d" % game.onfoot.ammo)
+
+	# ---- 4) 结算后 G 道具无效（堵朝冻结 AI 人堆扔雷刷金币）----
+	bf._clear_projectiles()
+	bf.battle_over = true
+	bf.player_alive = true
+	game.on_foot = true
+	game.player_hp = 100.0
+	game._gadget_cd = 0.0
+	game._battle_gadget()
+	check("结算后道具无效", bf.projectiles.is_empty(),
+			"projectiles=%d" % bf.projectiles.size())
+	game.exit_battle()
+	await frames(5)
+
+	# ---- 5) 操控巡飞弹中退场：drone 清理、重部署状态复位 ----
+	game.enter_battle()
+	await frames(20)
+	game._on_battle_side("atk")
+	await frames(10)
+	game._on_battle_deploy(1, 0)   # 工程兵（巡飞弹）
+	await frames(10)
+	bf = game.bf
+	bf.launch_drone(bf.player_pos + Vector3(0, 2, 1), Vector3(0, 0, 1), bf.player_team)
+	await frames(2)
+	check("巡飞弹已发射", not bf.player_drone.is_empty())
+	game.exit_battle()
+	await frames(5)
+	check("退场清理巡飞弹", bf.player_drone.is_empty())
+	game.enter_battle()
+	await frames(20)
+	game._on_battle_side("atk")
+	await frames(10)
+	game._on_battle_deploy(0, 0)
+	await frames(2)
+	check("重部署 input_block 复位", game.onfoot.input_block == false)
+	check("重部署 fire_block 复位", game.onfoot.fire_block == false)
+	game.exit_battle()
+	await frames(5)
+
 	print("[br] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	quit(0 if fails == 0 else 1)

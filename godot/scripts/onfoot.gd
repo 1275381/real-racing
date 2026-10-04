@@ -93,6 +93,15 @@ func enter(p: Vector3, head: float) -> void:
 	ammo = _g.get("mag", 12)
 	reloading = 0.0
 	scoped = false
+	# 跨场次状态复位：巡飞弹 input_block / 漫游门旁 fire_block / 趴下与后坐力
+	# 都会跨场残留（贴门退场再进战场 → 整场打不出枪；操控弹中阵亡 → 重生不能动）
+	input_block = false
+	fire_block = false
+	prone = false
+	recoil_pitch = 0.0
+	recoil_yaw = 0.0
+	if _gun_id != "":
+		gun_ammo[_gun_id] = ammo
 	if cam != null:
 		cam.fov = _base_fov
 
@@ -666,6 +675,7 @@ func update(dt: float) -> void:
 		if reloading <= 0.0:
 			reloading = 0.0
 			ammo = _g.get("mag", 12)
+			gun_ammo[_gun_id] = ammo   # 回写：否则切枪/换弹药重建枪模时恒取旧值
 			reload_done.emit()
 	else:
 		_reload_off = Vector3.ZERO
@@ -805,6 +815,7 @@ func _start_reload() -> void:
 
 func _shoot() -> void:
 	ammo -= 1
+	gun_ammo[_gun_id] = ammo   # 回写剩余弹数：切枪/换弹药时按真实余量恢复
 	fire_cd = _g.get("cd", 0.13)
 	# 枪口火光（发光片贴枪口 + 瞬时点光）
 	_flash_t = 0.05

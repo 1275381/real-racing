@@ -81,7 +81,6 @@ func setup(spots: Array, fm_ref = null) -> void:
 ## 货运任务：客机停在停机坪，后舱门坡道放平，车辆可驶入货仓夺货
 func _build_cargo_plane(origin: Vector2, airport_heading: float) -> void:
 	var ph := airport_heading + PI   # 机尾朝停机坪开阔侧
-	print("[cp] fm非空=", fm != null, " pads=", fm.road_pads.size() if fm != null else -1)
 	var axis := Vector2(sin(ph), cos(ph))          # 机头方向
 	var rear_dir := -axis
 	var rear := origin + rear_dir * 14.0            # 机尾位置
@@ -161,7 +160,7 @@ func respawn_cargo() -> void:
 		cargo_crates.visible = true
 
 
-## 每帧维护：班机被调走后 30 秒自动补充新班机
+## 每帧维护：班机被调走后 8 秒自动补充新班机
 func tick(dt: float) -> void:
 	for ap in airports:
 		var s: Dictionary = ap["service"]

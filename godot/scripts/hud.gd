@@ -989,6 +989,7 @@ func nav_pois() -> Array:
 		{"label": "配件店", "pos": Vector2(34, 34)},
 		{"label": "枪械店", "pos": Vector2(-46, 46)},
 		{"label": "车库", "pos": Vector2(198, -505)},
+		{"label": "湖畔别墅（家）", "pos": Vector2(190, -497)},
 		{"label": "机 场", "pos": Vector2(-1161, -94)},
 		{"label": "截机任务 货机", "pos": Vector2(-1476, -570)},
 		{"label": "云顶之针 电视塔", "pos": Vector2(90, 116)},
@@ -1325,11 +1326,13 @@ func _build_shop() -> void:
 			_shop_rows["%s|%s" % [sid, oid]] = {"btn": b, "note": name_lab}
 
 	var back := Button.new()
-	back.text = "返 回 车 库"
+	back.text = "返 回"
 	back.custom_minimum_size = Vector2(0, 42)
 	back.add_theme_font_size_override("font_size", 18)
 	back.pressed.connect(func(): shop_back.emit())
 	box.add_child(back)
+	# 与枪械店同病：16 选项行在 1440×810 下返回键出屏，中段收进滚动区
+	_scrollify(box, 3, 1, 190.0)
 
 
 ## 刷新配件店各行状态（owned/equipped/价格/余额），漂移胎分区按车型显隐
@@ -1339,10 +1342,8 @@ func refresh_shop(car_name: String, coins: int, equipped: Dictionary, owned: Arr
 	shop_coins_label.text = "金币：%d" % coins
 	for slot in TrackData.PART_SLOTS:
 		var sid: String = slot["id"]
-		var sec: VBoxContainer = _shop_slot_boxes[sid]
-		sec.visible = is_drift_car or not slot.get("drift_only", false)
-		if sec.visible:
-			continue
+		(_shop_slot_boxes[sid] as VBoxContainer).visible = \
+				is_drift_car or not slot.get("drift_only", false)
 	for slot in TrackData.PART_SLOTS:
 		var sid2: String = slot["id"]
 		if not (_shop_slot_boxes[sid2] as VBoxContainer).visible:
@@ -1473,8 +1474,7 @@ func _build_gunshop() -> void:
 	box.add_child(gcap)
 	_grip_rows.clear()
 	for g in Guns.GRIPS:
-		if g["id"] == "none":
-			continue
+		# none 行也要有：否则买过握把就永远回不去原厂手感（game 侧支持切回）
 		var gid: String = g["id"]
 		var grow := HBoxContainer.new()
 		box.add_child(grow)
@@ -1508,7 +1508,7 @@ func _build_gunshop() -> void:
 	_armor_row = {"btn": ab2, "note": alab2}
 
 	var back := Button.new()
-	back.text = "返 回 车 库"
+	back.text = "返 回"
 	back.custom_minimum_size = Vector2(0, 42)
 	back.add_theme_font_size_override("font_size", 18)
 	back.pressed.connect(func(): gunshop_back.emit())
@@ -1670,7 +1670,7 @@ func _build_carinfo() -> void:
 	box.add_child(info_rows)
 
 	var back := Button.new()
-	back.text = "返 回 车 库"
+	back.text = "返 回"
 	back.custom_minimum_size = Vector2(0, 42)
 	back.add_theme_font_size_override("font_size", 18)
 	back.pressed.connect(func(): shop_back.emit())

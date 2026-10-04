@@ -32,6 +32,14 @@ func _initialize() -> void:
 			and fm.tl_index(180.0) == 6 and fm.tl_index(0.0) < 0 \
 			and fm.tl_index(900.0) < 0
 	print("[tl] 相位/索引映射 ok=%s" % ok_phase)
+	# 灯杆/NPC 同源校验：tl_index 必须是 GRID_COORDS 全表下标——
+	# 历史上灯杆奇偶用 inner 过滤下标（-180→2/180→3），NPC 用全表下标（-180→4/180→6），
+	# 一正一负混排的 18 个路口奇偶差 1 = 半周期反相（灯杆绿灯 NPC 却停车）
+	var ok_idx: bool = fm.tl_index(-540.0) == 2 and fm.tl_index(-360.0) == 3 \
+			and fm.tl_index(-180.0) == 4 and fm.tl_index(180.0) == 6 \
+			and fm.tl_index(360.0) == 7 and fm.tl_index(540.0) == 8 \
+			and fm.tl_index(0.0) < 0 and fm.tl_index(900.0) < 0
+	print("[tl] 灯区索引全表下标 ok=%s" % ok_idx)
 	# 找一条纵向、且所在街有信号灯的网格街（固定 x ∈ 内城灯区）
 	var r := -1
 	for ri in fm.roads.size():
@@ -124,9 +132,9 @@ func _initialize() -> void:
 	ok_sig = ok_sig and m0["g"].emission_energy_multiplier > 2.0 \
 			and m1["r"].emission_energy_multiplier > 2.0
 	print("[tl] 灯光-相位联动 ok=%s" % ok_sig)
-	var all_ok := ok_phase and ok_stop and frozen and ok_go and ok_q and ok_flow and ok_sig
-	print("[tl] %s（phase=%s stop=%s frozen=%s go=%s queue=%s flow=%s sig=%s）" % [
-			"PASS" if all_ok else "FAIL", ok_phase, ok_stop, frozen, ok_go,
+	var all_ok := ok_phase and ok_idx and ok_stop and frozen and ok_go and ok_q and ok_flow and ok_sig
+	print("[tl] %s（phase=%s idx=%s stop=%s frozen=%s go=%s queue=%s flow=%s sig=%s）" % [
+			"PASS" if all_ok else "FAIL", ok_phase, ok_idx, ok_stop, frozen, ok_go,
 			ok_q, ok_flow, ok_sig])
 	quit(0 if all_ok else 1)
 
