@@ -32,7 +32,7 @@
 <div id="loadingVeil">
     <div class="veilRing"></div>
     <div class="veilTitle">战术行动</div>
-    <div class="veilSub">正在生成战场 · 120m 交战地域 …</div>
+    <div class="veilSub">正在生成战场 · 340m 烽火地带 …</div>
 </div>
 
 <canvas id="gameCanvas"></canvas>
@@ -67,24 +67,28 @@
 </div>
 
 <div id="hud-menu-root" class="hud-menu-root">
-    <div class="hud-menu-title">行动准备</div>
+    <div class="hud-menu-title">行动暂停</div>
     <div class="hud-menu-sub">TACTICAL OPERATION · 战术行动</div>
     <div class="hud-menu-keys">移动 W/A/S/D · 疾跑 Shift · 蹲伏 C · 跳跃 Space
-开火 鼠标左键 · 机瞄 右键/Q · 换弹 R · 交互 按住 F
+开火 左键 · 开镜 右键/Q · 换弹 R · 切枪 1/2 · 搜索/互动 按住 F
 静音 M · 键位帮助 H · 目标详情 按住 Tab</div>
-    <button id="btnMission" class="hud-btn">1 · 行动模式（获取情报 → 撤离）</button>
-    <button id="btnRange" class="hud-btn">2 · 靶场模式（练枪 · 计分）</button>
+    <button id="btnMission" class="hud-btn">1 · 重开行动（沿用携带）</button>
+    <button id="btnRange" class="hud-btn">2 · 重开靶场</button>
+    <button id="btnAbort" class="hud-btn hud-btn-abort">3 · 放弃行动（视同阵亡）</button>
 </div>
 
 <div id="hud-result-root" class="hud-result-root">
     <div id="hud-result-title" class="hud-result-title">行动结束</div>
     <div id="hud-result-stats" class="hud-result-stats"></div>
-    <button id="btnRetry" class="hud-btn">R · 重新部署</button>
-    <button id="btnMenu" class="hud-btn">Esc · 返回主菜单</button>
+    <button id="btnRetry" class="hud-btn">R · 同图再战</button>
+    <button id="btnMenu" class="hud-btn">回车 / Esc · 返回大厅</button>
 </div>
 
 <div id="hud-help-overlay" class="hud-help-overlay"></div>
 <div id="deployVeil" class="hud-deploy-veil"></div>
+
+<!-- 大厅根占位：lobby.js _build() 复用填充（缺失时自建，z-index 30） -->
+<div id="fps-lobby"></div>
 
 <script type="module" src="./js/fps/main.js"></script>
 </body>

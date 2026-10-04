@@ -1,10 +1,26 @@
 /* =====================================================================
-   css/fps.css —— 战术 FPS 页面皮肤（hud.js FALLBACK_CSS 的正式覆盖版）
+   css/fps.css —— 战术 FPS 页面皮肤（hud.js / lobby.js 兜底样式的正式覆盖版）
    hud.js 会在 <head> 最前插入一份保守兜底样式；本文件在其后加载，
-   同名规则永远胜出。命名全 hud- 前缀（interfaces 样式清单）。
+   同名规则永远胜出。命名全 hud- / lobby- 前缀（interfaces 样式清单）。
    主题：戈壁黄昏 · 橄榄绿底 · 琥珀强调（#ffb35c）· 荧光绿确认（#7ee2a8）
    ===================================================================== */
 * { box-sizing: border-box; }
+
+/* ---------- 主题变量：品质七档色（loot.js RARITY 同源）+ 强调色 ----------
+ * 引用示例：.lobby-cell{border-color:var(--fps-rarity-2)}；
+ * 实际格框色由 lobby.js 按物品品质内联指定，这里供皮肤统一取色。 */
+:root {
+    --fps-accent: #ffb35c;            /* 琥珀 · 强调/进度/危险描边 */
+    --fps-confirm: #7ee2a8;           /* 荧光绿 · 确认/撤离/金额 */
+    --fps-danger: #ff5941;            /* 红 · 阵亡/失败 */
+    --fps-rarity-0: #d8d8d8;          /* 白 · 普通 */
+    --fps-rarity-1: #4caf50;          /* 绿 · 优良 */
+    --fps-rarity-2: #2f7fd8;          /* 蓝 · 稀有 */
+    --fps-rarity-3: #9a4fd8;          /* 紫 · 史诗 */
+    --fps-rarity-4: #d8a12f;          /* 金 · 传说 */
+    --fps-rarity-5: #d83a2f;          /* 红 · 旷世 */
+    --fps-rarity-6: #e84fd8;          /* 彩 · 至臻（辉光动画见 .lobby-cell-rainbow） */
+}
 
 html, body {
     margin: 0;
@@ -528,4 +544,500 @@ canvas#gameCanvas {
     .hud-health-bar { width: 160px; }
     .hud-ammo-cur { font-size: 30px; }
     .hud-range-stats { top: 128px; font-size: 12px; }
+    .lobby-panel { width: 96vw; padding: 14px 14px; }
+    .lobby-grid { grid-template-columns: repeat(4, 1fr); }
+    .lobby-topbar { padding: 10px 16px; gap: 14px; }
+    .lobby-logo { font-size: 17px; letter-spacing: .28em; }
+    .lobby-tab { padding: 8px 16px; font-size: 12px; letter-spacing: .18em; }
 }
+
+/* =====================================================================
+   危险区警示（mission → hud.setDanger 开关；【大厅】组新增分区）
+   ===================================================================== */
+.hud-danger-banner {
+    left: 50%; top: 132px;
+    transform: translateX(-50%);
+    padding: 5px 26px;
+    background: rgba(96, 18, 8, .6);
+    border: 1px solid rgba(255, 116, 64, .8);
+    color: #ff9a6a;
+    font-size: 13px;
+    letter-spacing: .3em;
+    text-indent: .3em;
+    animation: hudDangerPulse 1.5s ease-in-out infinite;
+    display: none;
+}
+.hud-danger-vignette {
+    inset: 0;
+    pointer-events: none;
+    display: none;
+    background: radial-gradient(ellipse at center, transparent 58%, rgba(200, 60, 20, .28) 100%);
+}
+@keyframes hudDangerPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(255, 116, 64, .2); }
+    50% { box-shadow: 0 0 16px rgba(255, 116, 64, .65); }
+}
+
+/* =====================================================================
+   局内背包 12 格（hud.setBag：格点 JS 生成，hud-bag-pip-full 点亮）
+   ===================================================================== */
+.hud-bag {
+    left: 26px; bottom: 70px;
+    background: rgba(10, 14, 10, .55);
+    border: 1px solid rgba(216, 226, 212, .25);
+    border-left: 3px solid rgba(255, 179, 92, .55);
+    padding: 6px 10px 5px;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+.hud-bag-num {
+    font-size: 12px;
+    letter-spacing: .12em;
+    margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.hud-bag-pips { display: flex; gap: 3px; }
+.hud-bag-pip {
+    width: 8px; height: 8px;
+    background: rgba(216, 226, 212, .16);
+    border: 1px solid rgba(216, 226, 212, .25);
+}
+.hud-bag-pip-full {
+    background: var(--fps-accent);
+    border-color: var(--fps-accent);
+    box-shadow: 0 0 4px rgba(255, 179, 92, .55);
+}
+
+/* =====================================================================
+   武器槽（gunview.onSwitch → hud.setWeaponSlots；active 槽琥珀高亮）
+   ===================================================================== */
+.hud-weapon-slots {
+    right: 26px; bottom: 136px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-end;
+}
+.hud-wslot {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 10px;
+    background: rgba(10, 14, 10, .55);
+    border: 1px solid rgba(216, 226, 212, .22);
+    border-right: 3px solid rgba(216, 226, 212, .22);
+    font-size: 12px;
+    letter-spacing: .08em;
+}
+.hud-wslot-key { color: var(--fps-confirm); }
+.hud-wslot-active {
+    border-color: rgba(255, 179, 92, .85);
+    border-right-color: var(--fps-accent);
+    color: #ffd9a3;
+}
+
+/* ---------- 暂停菜单「放弃行动」按钮（红调，区别于普通项） ---------- */
+.hud-btn.hud-btn-abort { border-color: rgba(255, 89, 65, .45); color: #ff8a70; }
+.hud-btn.hud-btn-abort:hover {
+    border-color: rgba(255, 89, 65, .8);
+    color: #ffb3a3;
+    background: rgba(70, 26, 20, .85);
+}
+
+/* =====================================================================
+   大厅（【大厅】组 lobby- 前缀样式清单；lobby.js 注入的同名兜底样式
+   在 <head> 最前，本段永远胜出。z-index 30 > 帮助层 20 > hud 10）
+   ===================================================================== */
+.lobby-root {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: none;
+    flex-direction: column;
+    pointer-events: auto;
+    user-select: none;
+    color: #d8ded2;
+    font-family: Menlo, Consolas, "SF Mono", monospace;
+    letter-spacing: .04em;
+    background: linear-gradient(180deg, rgba(6, 9, 7, .93), rgba(8, 11, 9, .88));
+    overflow: hidden;
+}
+.lobby-root::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(216, 222, 210, .028) 0 1px, transparent 1px 4px);
+}
+
+/* ---------- 顶栏：LOGO / 战绩 / 现金 ---------- */
+.lobby-topbar {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    padding: 16px 34px;
+    border-bottom: 1px solid rgba(255, 179, 92, .28);
+    background: linear-gradient(180deg, rgba(20, 26, 20, .85), rgba(20, 26, 20, .35));
+}
+.lobby-logo {
+    font-size: 22px;
+    letter-spacing: .42em;
+    color: var(--fps-accent);
+    font-weight: 700;
+}
+.lobby-logo-sub {
+    display: block;
+    font-size: 10px;
+    letter-spacing: .3em;
+    opacity: .55;
+    margin-top: 3px;
+    font-weight: 400;
+}
+.lobby-record {
+    margin-left: auto;
+    font-size: 12px;
+    opacity: .75;
+    font-variant-numeric: tabular-nums;
+}
+.lobby-cash {
+    font-size: 22px;
+    color: var(--fps-confirm);
+    font-variant-numeric: tabular-nums;
+    min-width: 150px;
+    text-align: right;
+}
+.lobby-cash-flash { animation: lobbyCashFlash .6s ease-out; }
+@keyframes lobbyCashFlash {
+    0% { color: #ff5941; transform: scale(1.12); }
+    100% { }
+}
+
+/* ---------- 主体面板 / 页签页 / 选中态 ---------- */
+.lobby-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+}
+.lobby-panel {
+    width: min(1020px, 92vw);
+    max-height: 78vh;
+    display: flex;
+    flex-direction: column;
+    background: rgba(10, 14, 11, .72);
+    border: 1px solid rgba(216, 222, 210, .22);
+    box-shadow: 0 0 40px rgba(0, 0, 0, .5);
+    padding: 20px 26px;
+}
+.lobby-page {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow: auto;
+}
+.lobby-hint {
+    font-size: 12px;
+    opacity: .6;
+    text-align: center;
+    letter-spacing: .18em;
+    padding-top: 2px;
+}
+.lobby-sel {
+    border-color: var(--fps-accent) !important;
+    background: rgba(255, 179, 92, .13) !important;
+    box-shadow: inset 0 0 0 1px var(--fps-accent), 0 0 12px rgba(255, 179, 92, .28);
+}
+
+/* ---------- 出发页：主副槽 + 候选枪 + 出发按钮 ---------- */
+.lobby-slots { display: flex; gap: 14px; }
+.lobby-slot {
+    flex: 1;
+    position: relative;
+    padding: 12px 16px;
+    border: 1px solid rgba(216, 222, 210, .3);
+    background: rgba(24, 30, 24, .6);
+    cursor: pointer;
+}
+.lobby-slot-label {
+    font-size: 11px;
+    letter-spacing: .3em;
+    color: var(--fps-confirm);
+    margin-bottom: 6px;
+}
+.lobby-slot-gun {
+    font-size: 19px;
+    color: #ffd9a3;
+    letter-spacing: .12em;
+}
+.lobby-slot-desc {
+    font-size: 12px;
+    opacity: .6;
+    margin-top: 4px;
+}
+.lobby-slot-tag {
+    position: absolute;
+    right: 10px; top: 10px;
+    font-size: 11px;
+    color: var(--fps-confirm);
+}
+.lobby-slot-focus { border-color: rgba(126, 226, 168, .75); }
+.lobby-guns { display: flex; flex-direction: column; gap: 6px; }
+.lobby-gun-row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 9px 16px;
+    border: 1px solid rgba(216, 222, 210, .22);
+    background: rgba(24, 30, 24, .5);
+    cursor: pointer;
+}
+.lobby-gun-name {
+    font-size: 15px;
+    color: #e8ecdf;
+    min-width: 110px;
+    letter-spacing: .14em;
+}
+.lobby-gun-desc { font-size: 12px; opacity: .6; flex: 1; }
+.lobby-gun-price {
+    font-size: 13px;
+    color: var(--fps-confirm);
+    font-variant-numeric: tabular-nums;
+}
+.lobby-gun-locked { opacity: .42; }
+.lobby-gun-locked .lobby-gun-price { color: var(--fps-accent); }
+
+/* -- 出发页：左区武器预览 + 右区列表（写实度评审 #06） -- */
+.lobby-deploy-cols {
+    display: flex;
+    gap: 18px;
+    align-items: stretch;
+    min-height: 0;
+}
+.lobby-preview {
+    width: 340px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.lobby-preview-cv {
+    width: 100%;
+    border: 1px solid rgba(216, 222, 210, .22);
+    background: rgba(10, 14, 10, .6);
+}
+.lobby-preview-name {
+    font-size: 15px;
+    letter-spacing: .14em;
+    color: #ffd9a3;
+}
+.lobby-stat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lobby-stat-chip {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    padding: 3px 10px;
+    border: 1px solid rgba(216, 222, 210, .22);
+    background: rgba(24, 30, 24, .5);
+    font-size: 12px;
+}
+.lobby-stat-chip .k { opacity: .55; letter-spacing: .15em; }
+.lobby-stat-chip .v { color: var(--fps-confirm); font-variant-numeric: tabular-nums; }
+.lobby-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    overflow: auto;
+}
+.lobby-guns-title {
+    font-size: 11px;
+    letter-spacing: .3em;
+    color: var(--fps-confirm);
+    opacity: .85;
+}
+.lobby-gun-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 96px;
+    margin-left: auto;
+    flex: none;
+}
+.lobby-gun-bar { height: 4px; background: rgba(216, 222, 210, .12); }
+.lobby-gun-bar i { display: block; height: 100%; }
+.lobby-deploy-btn {
+    align-self: center;
+    margin-top: 4px;
+    padding: 12px 70px;
+    font-size: 17px;
+    letter-spacing: .5em;
+    text-indent: .5em;
+    border: 1px solid rgba(255, 179, 92, .7);
+    color: var(--fps-accent);
+    cursor: pointer;
+    background: rgba(60, 48, 24, .4);
+    transition: all .18s ease;
+}
+.lobby-deploy-btn:hover { background: rgba(255, 179, 92, .16); }
+.lobby-deploy-btn-sel { background: rgba(255, 179, 92, .22); color: #ffd9a3; }
+
+/* ---------- 仓库页：品质网格（格框色按品质内联指定，彩档呼吸辉光） ---------- */
+.lobby-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+}
+.lobby-cell {
+    border: 1px solid rgba(216, 222, 210, .3);
+    border-width: 2px;
+    background: rgba(24, 30, 24, .55);
+    padding: 8px 6px;
+    text-align: center;
+    cursor: pointer;
+    min-height: 86px;
+}
+.lobby-cell-rainbow { animation: lobbyGlow 1.6s ease-in-out infinite; }
+@keyframes lobbyGlow {
+    0%, 100% { box-shadow: 0 0 4px rgba(232, 79, 216, .3); }
+    50% { box-shadow: 0 0 16px rgba(232, 79, 216, .75); }
+}
+.lobby-cell-icon { font-size: 22px; }
+.lobby-cell-name {
+    font-size: 11px;
+    margin-top: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.lobby-cell-value {
+    font-size: 12px;
+    color: var(--fps-confirm);
+    margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+}
+.lobby-cell-empty {
+    font-size: 14px;
+    opacity: .55;
+    text-align: center;
+    padding: 40px 0;
+    letter-spacing: .2em;
+}
+.lobby-stash-foot {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-top: 2px;
+}
+.lobby-total {
+    font-size: 14px;
+    color: #ffd9a3;
+    font-variant-numeric: tabular-nums;
+}
+.lobby-sellall {
+    margin-left: auto;
+    padding: 7px 22px;
+    font-size: 13px;
+    letter-spacing: .2em;
+    cursor: pointer;
+    border: 1px solid rgba(255, 179, 92, .6);
+    color: var(--fps-accent);
+    background: rgba(60, 48, 24, .4);
+}
+.lobby-sellall:hover { background: rgba(255, 179, 92, .16); }
+.lobby-gunrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    border-top: 1px solid rgba(216, 222, 210, .18);
+    padding-top: 10px;
+}
+.lobby-gunrow-title {
+    font-size: 11px;
+    letter-spacing: .3em;
+    color: var(--fps-confirm);
+    margin-right: 6px;
+}
+.lobby-gunrow-item {
+    font-size: 12px;
+    padding: 4px 12px;
+    border: 1px solid rgba(216, 222, 210, .25);
+    background: rgba(24, 30, 24, .5);
+}
+
+/* ---------- 改枪台页：左列枪 / 右列瞄具 ---------- */
+.lobby-bench { display: flex; gap: 16px; }
+.lobby-bench-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+.lobby-bench-title {
+    font-size: 12px;
+    letter-spacing: .3em;
+    color: var(--fps-confirm);
+    margin-bottom: 2px;
+}
+.lobby-bench-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 14px;
+    border: 1px solid rgba(216, 222, 210, .22);
+    background: rgba(24, 30, 24, .5);
+    cursor: pointer;
+}
+.lobby-bench-name {
+    font-size: 14px;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.lobby-bench-tag {
+    font-size: 12px;
+    color: var(--fps-confirm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.lobby-bench-price { color: var(--fps-accent); }
+
+/* ---------- 底栏：三页签 + 靶场入口 ---------- */
+.lobby-bottombar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 34px;
+    border-top: 1px solid rgba(255, 179, 92, .28);
+    background: linear-gradient(0deg, rgba(20, 26, 20, .9), rgba(20, 26, 20, .4));
+}
+.lobby-tab {
+    padding: 9px 30px;
+    font-size: 14px;
+    letter-spacing: .3em;
+    cursor: pointer;
+    border: 1px solid rgba(216, 222, 210, .28);
+    background: rgba(24, 30, 24, .6);
+    color: #a8b0a2;
+}
+.lobby-tab-active {
+    border-color: var(--fps-accent);
+    color: var(--fps-accent);
+    background: rgba(60, 48, 24, .6);
+}
+.lobby-range-btn {
+    margin-left: auto;
+    padding: 9px 26px;
+    font-size: 13px;
+    letter-spacing: .24em;
+    cursor: pointer;
+    border: 1px solid rgba(126, 226, 168, .6);
+    color: var(--fps-confirm);
+    background: rgba(20, 40, 28, .45);
+}
+.lobby-range-btn:hover { background: rgba(126, 226, 168, .18); }

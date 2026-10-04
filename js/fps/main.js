@@ -2,14 +2,29 @@
    js/fps/main.js —— FPS 总装配与主循环（【集成】组）
    装配链：Environment/BattleMap（场景组）→ Player/EnemyManager/
    TargetRange/CombatWorld（玩家AI组）→ GunView/GunAudio（枪械组）→
-   HUD/Mission/RangeMode（HUD 任务组）。
-   已消化的跨组接口空隙（详见各组 deviations）：
+   HUD/LootManager/Backpack（战利品组）→ Mission/RangeMode（HUD 任务组）→
+   Stash/Lobby（大厅组）。
+   已消化的跨组接口空隙与本轮烽火地带接线（详见各构建者 deviations）：
    · 枪械命中无伤害出口 → gunview.applyDamage 桥到 combat.applyHit，
      并把 {killed,head} 回喂 hud.hitmarker；
    · ADS/换弹影响移速 → player.setMoveStateProvider 读枪械状态；
    · 敌弹伤玩家 → enemies.setPlayer(player)（走 player.takeDamage）；
-   · INTEL 警戒/重开复活敌兵 → mission.js 内 setAlert/resetAll 鸭子回退；
-   · 主相机 fov 由 GunView 随 ADS 驱动（75→55），本文件不再改 fov。
+   · 主相机 fov 由 GunView 随 ADS 驱动（FOV=baseFov/zoom），本文件不再改 fov；
+   · 入口流转：冷启动直达大厅（state.mode='lobby'）→ 出发 onDeploy /
+     G 靶场 onRange；hud 主菜单退役为对局内暂停/重开面板（Esc 两段），
+     Digit3=放弃行动（hud 菜单分支实证不认 Digit3，由本文件监听）；
+   · 搜刮链：LootManager/Backpack 注入 Mission，驱动唯一入口 =
+     mission.update 每帧 loot.update(dt,eyePos,fHeld)——本文件不绑
+     loot.onLooted / backpack.onFull（mission._takeLoot 单点出 toast）；
+   · 多枪：出发 gunview.setLoadout(主/副/瞄具)，对局内 1/2 切枪 →
+     onSwitch → hud.setWeaponSlots。重开行动也经 setLoadout 重置双枪满弹
+     ——不再用旧 resetAmmo(150)：枪械组 deviation③ 实证其排在 setLoadout
+     之后会把非步枪主枪备弹虚标 150；
+   · 结算：mission._end 一次给全结算页（main 不再 showResult），onEnd 只做
+     经济入账：win → depositItems+情报奖金+recordRaid；败/放弃 → 仅 recordRaid；
+   · 敌兵首部署在装配期 spawnPatrol(zones.patrol)：enemies.resetAll 只重铺
+     「最近一次非空部署」（enemies.js _deployRoutes），装配期不铺则首局
+     mission.restart→resetAll 是空操作——首局满编敌兵由此保证。
    ===================================================================== */
 import * as THREE from 'three';
 import { Environment, SUN_DIR } from './env.js';
@@ -23,6 +38,11 @@ import { GunAudio } from './gunAudio.js';
 import { HUD } from './hud.js';
 import { Mission } from './mission.js';
 import { RangeMode } from './rangeMode.js';
+import { LootManager, rollLoot } from './loot.js';
+import { Backpack } from './backpack.js';
+import { Stash } from './stash.js';
+import { Lobby } from './lobby.js';
+import { gunById } from './gunsData.js';
 
 /* ==== 1. 渲染器 / 场景 / 相机（照 js/main.js 先例） ==== */
 const canvas = document.getElementById('gameCanvas');
@@ -37,7 +57,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.02;
 
 const scene = new THREE.Scene();
-/* 主相机基线 fov 75：GunView 构造时快照并在 ADS 时驱动到 55，这里只定一次 */
+/* 主相机基线 fov 75：GunView 构造时快照并按瞄具倍率驱动（FOV=75/zoom），这里只定一次 */
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.08, 900);
 
 /* ==== 2. 世界装配（场景组接口：Environment → loadProps → BattleMap.build） ==== */
@@ -49,7 +69,7 @@ if (props.missing && props.missing.length) {
 const battleMap = new BattleMap(scene, props);
 await battleMap.build();
 const collision = battleMap.collision;   // CollisionWorld：pushOut/groundHeight/rayWall
-const zones = battleMap.zones;           // playerSpawn/patrol×3/intelPos/extractPos/rangeLanes×3
+const zones = battleMap.zones;           // playerSpawn/patrol/intelPos/extractPos×2/danger/containerSpots/rangeLanes×3
 
 /* ==== 3. 模块实例 ==== */
 const gunAudio = new GunAudio();
@@ -66,10 +86,18 @@ const enemies = new EnemyManager({ scene, collision, audio: gunAudio });
 const targets = new TargetRange({ scene });           // 音效由 RangeMode 的 UIAudio 叮/闷响承担，不重复注入
 targets.buildLanes(zones.rangeLanes);
 
+/* 战利品组：局内背包（纯数据）+ 容器世界（52 锚点自 layout.CONTAINER_SPOTS；
+ * 碰撞/贴地经 collision 同源注入，loot 构造内部鸭子接 groundHeight） */
+const backpack = new Backpack(12);
+const loot = new LootManager({ scene, collision, spots: zones.containerSpots });
+
 const combat = new CombatWorld();
 combat.setWalls(collision);      // 墙体遮挡聚合进 raycast
 combat.addProvider(enemies);     // damageStyle 'head'（爆头×2 在 EnemyManager.damage 内乘）
 combat.addProvider(targets);     // damageStyle 'hit'
+
+/* 敌兵首部署（装配期一次）：resetAll 只重铺最近一次非空部署，不铺则首局无敌 */
+enemies.spawnPatrol(zones.patrol);
 
 /* ==== 4. 跨组接线 ==== */
 
@@ -101,8 +129,19 @@ gunview.applyDamage = (hit, dmg) => {
     return res;
 };
 
-/* ==== 5. 模式状态机：menu / mission / range ==== */
-const state = { mode: 'menu', paused: false };
+/* -- 武器槽 HUD ← 切枪/装配完成回调（霰弹 6 弹丸聚合等枪内事务不经此） --
+ * 槽位名读 stash.loadout（出发后对局内不变）；HUD 弹药数字由
+ * mission/rangeMode 每帧读 g.ammo/g.reserve 自动随枪，无需在此刷。 */
+gunview.onSwitch = (slot) => {
+    hud.setWeaponSlots({
+        primary: (gunById(stash.loadout.primary) || {}).name || stash.loadout.primary,
+        secondary: (gunById(stash.loadout.secondary) || {}).name || stash.loadout.secondary,
+        active: slot,
+    });
+};
+
+/* ==== 5. 模式状态机：lobby（默认起点）/ mission / range ==== */
+const state = { mode: 'lobby', paused: false };
 let mission = null;      // 惰性构造（Mission 构造即 restart 进 DEPLOY）
 let rangeMode = null;
 
@@ -117,29 +156,63 @@ function faceTo(target) {
     player.pitch = 0;
 }
 
-function startMission() {
+/* 出发载荷 = 大厅当前配置快照（对局内 stash 只读，重启行动沿用携带） */
+function currentLoadoutPayload() {
+    return {
+        primary: stash.loadout.primary,
+        secondary: stash.loadout.secondary,
+        scopes: { ...(stash.guns.scopes || {}) },
+    };
+}
+
+/* 出发/重开行动：装配双枪（满匣 + mag×5 备弹各自保账）→ 行动状态机启动。
+ * 大厅 onDeploy 已先行 hide()（释放 uiBlocked/显示层）再回调本函数。 */
+function deploy() {
+    stash.raidActive = true;                   // 对局中禁写档（Stash 纪律）
     hud.hideResult();
     hud.hideRangeStats();
-    gunview.resetAmmo(150);                    // 新行动 = 满配 30+150（5 匣备弹）
+    hud.hideMenu();
+    gunview.setLoadout(currentLoadoutPayload());   // 顺带经 onSwitch 刷武器槽 HUD
     if (!mission) {
         mission = new Mission({
             hud, player, enemies, zones, gunview, audio: gunAudio,
-            onEnd: () => { if (document.pointerLockElement) document.exitPointerLock(); },
+            loot, backpack,
+            onEnd: handleMissionEnd,
         });
     } else {
-        mission.restart();                     // 内部经 resetAll/spawnPatrol 回退复活全部敌兵
+        mission.restart();                     // 内部 resetAll 复活敌兵 + loot/backpack 复位
     }
     state.mode = 'mission';
     state.paused = false;
 }
 
+/* 对局结束（撤离/阵亡/放弃）：经济入账，结算页已由 mission._end 一次给全
+ *（大厅组 deviation③：main 在此不得再调 hud.showResult，会重复响铃） */
+function handleMissionEnd({ win, stats, items, intelBonus }) {
+    if (document.pointerLockElement) document.exitPointerLock();
+    hud.hideMenu();                            // 放弃行动路径：菜单与结算不同屏
+    const kills = stats ? stats.kills : 0;
+    if (win) {
+        const n = stash.depositItems(items || []);
+        if (intelBonus > 0) stash.cash += intelBonus;   // recordRaid 内 save() 一并落盘
+        stash.recordRaid({ win: true, kills });
+        console.info(`[集成] 撤离：入库 ${n} 件 · 情报奖金 ₵${intelBonus || 0}`);
+    } else {
+        stash.recordRaid({ win: false, kills });        // 携带全丢；入库资产无损
+    }
+}
+
+/* 大厅 G / 暂停菜单 2 → 靶场：清场敌兵（部署记录保留，回行动满编复活），
+ * 按大厅配置装配（改枪台瞄具在靶场同样生效），备弹由 rangeMode 回满 120 */
 function startRange() {
     hud.hideResult();
+    hud.hideMenu();
     hud.showMarker(null);
     enemies.spawnPatrol([]);                   // 空路线 = 清空全部敌兵（靶场无交战）
+    gunview.setLoadout(currentLoadoutPayload());
     if (!rangeMode) rangeMode = new RangeMode({ hud, targets, gunview });
     rangeMode.start();                         // 备弹回满 120 + 靶场 HUD 文案
-    /* 玩家站中间射位（x=−52）后退一步半，面向 +X 靶道 */
+    /* 玩家站中间射位后退一步半，面向 +X 靶道 */
     const lane = zones.rangeLanes[1] || zones.rangeLanes[0];
     player.respawn(lane.origin.clone().addScaledVector(lane.dir, -1.5));
     faceTo(lane.origin.clone().addScaledVector(lane.dir, 10));
@@ -147,39 +220,52 @@ function startRange() {
     state.paused = false;
 }
 
-function toMenu() {
-    state.mode = 'menu';
+/* 回大厅（结算页 回车/Esc；唯一大厅入口）：清对局 UI 残留 + 解写档禁令兜底 */
+function toLobby() {
+    state.mode = 'lobby';
     state.paused = false;
     hud.hideResult();
     hud.hideRangeStats();
+    hud.hideMenu();
     hud.showMarker(null);
     hud.setExtractProgress(null);
     hud.setIntelProgress(null);
-    hud.showMenu();
+    hud.setDanger(false);
+    hud.setVeil(0);
+    stash.endRaid();                           // 异常路径兜底：解除写档禁令
+    player.respawn(zones.playerSpawn);         // 背景机位回出生点（下次出发照常 respawn）
+    faceTo(zones.intelPos);
+    player.update(0);
+    if (document.pointerLockElement) document.exitPointerLock();
+    lobby.show();                              // 置 uiBlocked + display:flex
 }
 
-hud.onSelectMission = () => startMission();
-hud.onSelectRange = () => startRange();
-hud.onRetry = () => {
-    hud.hideResult();
-    if (state.mode === 'mission' && mission) {
-        gunview.resetAmmo(150);
-        mission.restart();
-    } else if (state.mode === 'range' && rangeMode) {
-        rangeMode.reset();
-    }
+/* ==== 6. 模块回调装配 ==== */
+hud.onSelectMission = () => deploy();          // 暂停菜单 1：重开行动（沿用携带）
+hud.onSelectRange = () => startRange();        // 暂停菜单 2：重开靶场
+hud.onRetry = () => {                          // 结算页 R：同图再战
+    if (state.mode === 'range' && rangeMode) rangeMode.reset();
+    else deploy();
 };
-hud.onBackToMenu = () => toMenu();
+hud.onBackToMenu = () => toLobby();            // 结算页 回车/Esc：回大厅
 hud.onMuteToggle = (m) => gunAudio.setMuted(m);   // M 键由 HUD 监听并 toast
 
-/* 菜单背景 = 出生点朝情报点的定机位 */
+/* ==== 7. 大厅（默认起点）与开场机位 ==== */
+const stash = new Stash();
+const lobby = new Lobby({
+    hud, stash,
+    onDeploy: deploy,                          // 大厅内部已 hide() 再回调
+    onRange: startRange,
+});
 player.pos.copy(zones.playerSpawn);
 faceTo(zones.intelPos);
 player.update(0);       // 相机就位（dt=0 无副作用）
 gunview.update(0);      // viewmodel 姿态/相机宽高比同步
-hud.showMenu();
+hud.setBag(backpack.items, backpack.capacity);
+state.mode = 'lobby';
+lobby.show();
 
-/* ==== 6. 输入：开火 / 机瞄 / 换弹 / Esc 两段暂停 ==== */
+/* ==== 8. 输入：开火 / 机瞄 / 换弹 / 切枪 / Esc 两段暂停 / Digit3 放弃 ==== */
 let fireHeld = false, adsHeld = false, adsToggle = false;
 canvas.addEventListener('mousedown', (e) => {
     if (e.button === 0) fireHeld = true;
@@ -194,8 +280,18 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (e.code === 'KeyQ' && isPlaying()) adsToggle = !adsToggle;      // Q 机瞄切换
-    if (e.code === 'KeyR' && isPlaying()) gunview.startReload();       // R 换弹（靶场长按 R 重置归 RangeMode）
+    if (isPlaying()) {
+        if (e.code === 'KeyQ') adsToggle = !adsToggle;      // Q 机瞄切换
+        if (e.code === 'KeyR') gunview.startReload();       // R 换弹（靶场长按 R 重置归 RangeMode）
+        if (e.code === 'Digit1' || e.code === 'Numpad1') gunview.switchSlot(0);   // 切主武器
+        if (e.code === 'Digit2' || e.code === 'Numpad2') gunview.switchSlot(1);   // 切副武器
+    }
+    /* 暂停菜单 3 = 放弃行动（仅行动模式；hud 菜单分支实证不认 Digit3，
+     * hud.js 键盘段只处理 Digit1/Digit2/Enter/箭头——监听归集成者） */
+    if (e.code === 'Digit3' && hud.menuVisible
+        && state.mode === 'mission' && mission) {
+        mission.abort();                       // 视同阵亡结算（mission._end(false,{aborted:true})）
+    }
 });
 
 /* Esc 两段：锁定中按下由浏览器解锁（本下不暂停）；解锁后再按 → 暂停/恢复 */
@@ -207,7 +303,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape') return;
     if (document.pointerLockElement) return;                    // 第一段：先解锁
     if (performance.now() - lockLostAt < 350) return;           // 刚解锁的这半秒内不触发
-    if (state.mode === 'menu' || hud.resultVisible) return;     // 菜单/结算键归 HUD
+    if (state.mode === 'lobby' || hud.resultVisible) return;    // 大厅/结算键各归其主
     if (hud.menuVisible && state.paused) {                      // 暂停中再按 Esc：恢复
         state.paused = false;
         hud.hideMenu();
@@ -217,8 +313,16 @@ window.addEventListener('keydown', (e) => {
     if (hud.menuVisible) return;
     state.paused = true;                                        // 第二段：暂停
     hud.showMenu();
-    hud.toast('已暂停 —— Esc 恢复 · 1/2 重开对应模式');
+    hud.toast('已暂停 —— Esc 恢复 · 1 重开行动 · 2 重开靶场 · 3 放弃行动');
 });
+
+/* 暂停菜单「3 · 放弃行动」按钮（fps.html 静态节点；键盘路径在上面 Digit3） */
+const btnAbort = document.getElementById('btnAbort');
+if (btnAbort) {
+    btnAbort.addEventListener('click', () => {
+        if (hud.menuVisible && state.mode === 'mission' && mission) mission.abort();
+    });
+}
 
 /* 页面切走自动暂停 */
 document.addEventListener('visibilitychange', () => {
@@ -241,7 +345,7 @@ window.addEventListener('resize', () => {
     gunview.update(0);
 });
 
-/* ==== 7. 主循环：逻辑步进 + 双 pass 渲染（主场景 → 清深度 → viewmodel） ==== */
+/* ==== 9. 主循环：逻辑步进 + 双 pass 渲染（主场景 → 清深度 → viewmodel） ==== */
 const clock = new THREE.Clock();
 function frame() {
     requestAnimationFrame(frame);
@@ -280,7 +384,7 @@ function step(dt) {
     renderer.autoClear = true;
 }
 
-/* ==== 8. 运行时错误屏显（js/main.js 同款；加载期错误由 fps.html 内联兜底） ==== */
+/* ==== 10. 运行时错误屏显（js/main.js 同款；加载期错误由 fps.html 内联兜底） ==== */
 const errBox = document.createElement('div');
 errBox.style.cssText = 'position:fixed;left:8px;top:8px;z-index:99;background:rgba(160,20,20,.92);' +
     'color:#fff;font:12px/1.5 Menlo,monospace;padding:8px 12px;border-radius:8px;max-width:70vw;' +
@@ -299,7 +403,44 @@ function reportErr(e) {
 window.addEventListener('error', (e) => reportErr(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => reportErr(e.reason));
 
-/* ==== 9. 收尾：撤加载遮罩、启动循环、调试句柄 ==== */
+/* ==== 11. 调试句柄（extractFlow 契约） ==== */
+
+/* __fps.tp('spawn'|'center'|'wild'|'extract') 或 __fps.tp(x, z)：瞬移（贴地+满血） */
+function tp(a, b) {
+    let x, z;
+    if (typeof a === 'string') {
+        let p = null;
+        if (a === 'spawn') p = zones.playerSpawn;
+        else if (a === 'center') p = { x: zones.danger.cx, z: zones.danger.cz };
+        else if (a === 'wild') p = { x: -120, z: -120 };       // 荒野角（d>112，zoneAt='wild'）
+        else if (a === 'extract') p = zones.extractPos[0];     // 主撤离点 (128,24)
+        if (!p) return false;
+        x = p.x; z = p.z;
+    } else if (typeof a === 'number' && typeof b === 'number') {
+        x = a; z = b;
+    } else {
+        return false;
+    }
+    player.respawn(new THREE.Vector3(x, collision.groundHeight(x, z), z));
+    player.update(0);
+    return true;
+}
+
+/* __fps.give(rarityId, n=1)：直塞背包（战利品组 deviation① 的 forceRarity 通道），
+ * 经 mission._takeLoot 走统一链（入包+背包 HUD+品质色 toast+满包提示） */
+function give(rarityId, n = 1) {
+    if (!mission || !backpack) return 0;
+    let added = 0;
+    const k = Math.max(1, n | 0);
+    for (let i = 0; i < k; i++) {
+        const before = backpack.items.length;
+        mission._takeLoot(rollLoot('center', 'safe', rarityId));
+        if (backpack.items.length > before) added++;
+    }
+    return added;
+}
+
+/* ==== 12. 收尾：撤加载遮罩、启动循环、调试句柄 ==== */
 const veil = document.getElementById('loadingVeil');
 if (veil) {
     veil.classList.add('done');
@@ -309,7 +450,24 @@ if (veil) {
 window.__fps = {
     renderer, scene, camera, player, enemies, targets, combat,
     gunview, gunAudio, hud, battleMap, state,
+    stash,
+    /* __fps.loot：extractFlow 契约句柄 —— .containers() 可调用（战利品组 notes）。
+     * 注意不能在实例上直接覆盖 containers（内部 _updateSearch/_cullTick 迭代该数组），
+     * 故用闭包包一层的句柄对象；完整实例另挂 __fps.lootRef 供深度调试。 */
+    loot: {
+        spawnAt: (x, z, r) => loot.spawnAt(x, z, r),
+        containers: () => loot.containers,
+        isPrompting: () => loot.isPrompting(),
+        resetAll: () => loot.resetAll(),
+    },
+    lootRef: loot,
+    lobby, backpack,
     get mission() { return mission; },
     get rangeMode() { return rangeMode; },
+    tp, give,
+    raid: {
+        end: (win) => { if (mission) mission._end(!!win); },   // 强制走完整结算路径
+        abort: () => { if (mission) mission.abort(); },
+    },
 };
 requestAnimationFrame(frame);
