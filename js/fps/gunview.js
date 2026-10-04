@@ -715,7 +715,7 @@ export class GunView {
         }
         slot.g.visible = true;
         slot.g.position.setFromMatrixPosition(M);
-        slot.g.quaternion.setFromMatrixRotation(M);
+        slot.g.quaternion.setFromRotationMatrix(M);
         slot.g.scale.set(1, 1, 1);
         slot.v.copy(v);
         slot.spin = (Math.random() < 0.5 ? -1 : 1) * 480 * DEG;   // 绕弹匣长轴（本地 Y）

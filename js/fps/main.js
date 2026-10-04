@@ -289,6 +289,7 @@ function reportErr(e) {
     const key = msg.split('\n')[0];
     if (seenErrs.has(key) || seenErrs.size > 3) return;
     seenErrs.add(key);
+    console.error('[FPS]', msg);   // 同步镜像到浏览器 console（CDP/实测员可见）
     errBox.style.display = 'block';
     errBox.textContent += `[${new Date().toLocaleTimeString()}] ${msg.slice(0, 500)}\n`;
 }
