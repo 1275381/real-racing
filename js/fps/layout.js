@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { boundaryBoxes, terrainHeight } from './env.js';
 import { weaveHeight, speckleHeight, grainHeight, normalFromCanvas, toNormalTexture } from './normalmap.js';
+
+/* =====================================================================
+   js/fps/layout.js —— 战场摆布（【地图】组，8× 扩图版）
+   分区（zoneAt）：中心危险区 r=80 军事基地（集装箱巷道/军火库/油库/情报点，
+   精英 AI + 高品质容器 30）→ 80~112m 过渡带 → >112m 荒野环带
+   （7 POI：农场/废车场/哨塔/营地/加油站/管道带/靶场，散兵 + 容器 22）。
+   锚点：出生 (0,152) · 主撤离 (128,24) · 备撤离 (−136,96) · 情报 (32,−28.6)。
+   ===================================================================== */
 
 /* ==== 1. 道具尺寸表 ==== */
 // 碰撞登记用实测包围盒（tools/inspect_fps_props.py 探明，W×H×D，原点在底面中心、正面朝 +Z）
@@ -239,42 +248,40 @@ export class CollisionWorld {
     }
 }
 
-/* ==== 4. 摆位表（手工排布、确定性可复现；n=道具 x/z=位置 r=朝向 s=缩放 y=离地叠层 t=染色 col=碰撞覆盖[hx,hz,h]） ==== */
+/* ==== 4. 分区 API：坐标 → 分区（战利品品质 / HUD 危险警示 / AI 强度共用） ==== */
+
+// 中心危险区（军事基地）圆参数——zones.danger 同源；HUD 入区警示/精英 AI 以此判定
+export const DANGER = { cx: 0, cz: -10, r: 80 };
+// 分区边界数据：≤80 中心 / 80~112 过渡带 / >112 荒野环带（mapSpec 荒野 POI 全部 >112）
+export const ZONE_BANDS = { dangerR: DANGER.r, wildR: 112 };
+
+/* 坐标 → 分区名：'center'（危险区）| 'mid'（过渡）| 'wild'（荒野） */
+export function zoneAt(x, z) {
+    const d = Math.hypot(x - DANGER.cx, z - DANGER.cz);
+    if (d <= ZONE_BANDS.dangerR) return 'center';
+    if (d <= ZONE_BANDS.wildR) return 'mid';
+    return 'wild';
+}
+
+/* ==== 5. 摆位表（手工排布、确定性可复现；n=道具 x/z=位置 r=朝向 s=缩放 y=离地叠层 t=染色 col=碰撞覆盖[hx,hz,h]） ==== */
 
 const LAYOUT = [
-    // —— 南侧：出生观察点（帐篷 + 沙袋线 + 物资，玩家出生其后） ——
-    { n: 'tent', x: 3.4, z: 54.2, r: -0.25, t: 0xb59f7a },
-    { n: 'sandbags', x: -1.5, z: 50.6, r: 0.05 },
-    { n: 'sandbags', x: 1.1, z: 50.4, r: -0.12 },
-    { n: 'barrier', x: -4.6, z: 51.6, r: 0.18 },
-    { n: 'barrier', x: 5.4, z: 50.9, r: -0.1 },
-    { n: 'crate', x: 7.6, z: 57.0, r: 0.3, s: 0.95 },
-    { n: 'crate', x: 8.7, z: 56.2, r: -0.2 },
-    { n: 'barrel', x: -6.2, z: 55.0, r: 0, t: 0x9fb4c6 },
-    { n: 'barrel', x: -5.5, z: 55.6, r: 0, t: 0xb0452f },
-    { n: 'barrel', x: -6.1, z: 54.2, r: 0, t: 0x9fb4c6 },
-    { n: 'wreck', x: 10.6, z: 52.8, r: 2.35 },
-    { n: 'dead_tree', x: -8.5, z: 49.6, r: 0.7, col: [0.35, 0.35, 4.88] },
-    { n: 'dead_tree', x: 6.5, z: 47.6, r: 2.1, col: [0.35, 0.35, 4.88] },
+    // —— 北缘：出生营（帐篷 + 沙袋线 + 物资，玩家出生其后 (−1,151)） ——
+    { n: 'tent', x: 3.4, z: 152.2, r: -0.25, t: 0xb59f7a },
+    { n: 'sandbags', x: -1.5, z: 148.6, r: 0.05 },
+    { n: 'sandbags', x: 1.1, z: 148.4, r: -0.12 },
+    { n: 'barrier', x: -4.6, z: 149.6, r: 0.18 },
+    { n: 'barrier', x: 5.4, z: 148.9, r: -0.1 },
+    { n: 'crate', x: 7.6, z: 155.0, r: 0.3, s: 0.95 },
+    { n: 'crate', x: 8.7, z: 154.2, r: -0.2 },
+    { n: 'barrel', x: -6.2, z: 153.0, r: 0, t: 0x9fb4c6 },
+    { n: 'barrel', x: -5.5, z: 153.6, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: -6.1, z: 152.2, r: 0, t: 0x9fb4c6 },
+    { n: 'wreck', x: 10.6, z: 150.8, r: 2.35 },
+    { n: 'dead_tree', x: -8.5, z: 147.6, r: 0.7, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 6.5, z: 145.6, r: 2.1, col: [0.35, 0.35, 4.88] },
 
-    // —— 西侧：40m 靶场（北=仓库墙 南=乱石 东=集装箱档弹墙，西向射界） ——
-    { n: 'warehouse', x: -38, z: -28, r: 0, t: 0x9c8f7d },
-    { n: 'container', x: -22, z: -16.5, r: 0.02, t: 0x3f6f8f },
-    { n: 'container', x: -22, z: -10.25, r: -0.02, t: 0x8f5a3f },
-    { n: 'container', x: -22, z: -4.0, r: 0.02, t: 0x5a7050 },
-    { n: 'container', x: -22, z: 2.25, r: -0.02, t: 0x8a4a44 },
-    { n: 'container', x: -22, z: 8.5, r: 0.02, t: 0x6f6a5f },
-    { n: 'rocks', x: -40, z: 15.5, r: 0.06 },
-    { n: 'sandbags', x: -29.5, z: 15.2, r: 0.1 },
-    { n: 'crate', x: -53.8, z: -15.6, r: 0.2 },
-    { n: 'crate', x: -53.8, z: -3.6, r: -0.3 },
-    { n: 'crate', x: -53.8, z: 8.4, r: 0.15 },
-    { n: 'barrel', x: -55.5, z: -19.2, r: 0, t: 0xb0452f },
-    { n: 'barrel', x: -55.2, z: 13.6, r: 0, t: 0x9fb4c6 },
-    { n: 'dead_tree', x: -56.8, z: -23.5, r: 1.2, col: [0.35, 0.35, 4.88] },
-    { n: 'wreck', x: -26, z: 17.5, r: 1.1 },
-
-    // —— 中央：交战区掩体群（集装箱巷道 + 沙袋 + 油桶群 + 残骸 + 北侧地堡） ——
+    // —— 中心危险区 · 核心掩体巷道（集装箱巷道 + 沙袋 + 油桶群 + 残骸 + 地堡，旧交战区保留） ——
     { n: 'container', x: -3.5, z: -6.5, r: 0.12, t: 0x4a6d8f },
     { n: 'container', x: -3.5, z: -6.5, r: 0.02, y: 2.59, t: 0x7d5a45 },   // 叠层
     { n: 'container', x: -3.8, z: 0.2, r: -0.06, t: 0x6d6a58 },
@@ -302,10 +309,44 @@ const LAYOUT = [
     { n: 'crate', x: -1.5, z: 3.5, r: -0.4, s: 0.9 },
     { n: 'wreck', x: 21.5, z: -3.0, r: 0.75 },
     { n: 'wreck', x: -9.5, z: -13.5, r: -0.55 },
-    { n: 'fuel_tank', x: 26.0, z: -19.0, r: 0.25, t: 0x8f8578 },
     { n: 'bunker', x: 7.0, z: -26.5, r: 0 },
 
-    // —— 东北：情报点（小屋 + 帐篷营地，情报箱在屋前） ——
+    // —— 中心危险区 · 西侧军火库（仓库 + 集装箱弹列 + 门前卸货台） ——
+    { n: 'warehouse', x: -24, z: -44, r: 0, t: 0x8a8578 },
+    { n: 'container', x: -39, z: -45, r: 1.57, t: 0x5a7050 },
+    { n: 'container', x: -39, z: -39, r: 1.55, t: 0x8a4a44 },
+    { n: 'container', x: -8.5, z: -48, r: -1.57, t: 0x3f6f8f },
+    { n: 'crate', x: -16, z: -38.5, r: 0.25 },
+    { n: 'crate', x: -15.2, z: -37.6, r: -0.3 },
+    { n: 'barrel', x: -33, z: -37, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: -32.2, z: -36.2, r: 0, t: 0x9fb4c6 },
+    { n: 'sandbags', x: -24, z: -36.4, r: 0.04 },
+    { n: 'barrier', x: -29, z: -36.8, r: -0.06 },
+    { n: 'barrier', x: -19, z: -36.8, r: 0.08 },
+    { n: 'dead_tree', x: -42, z: -52, r: 1.2, col: [0.35, 0.35, 4.88] },
+    { n: 'wreck', x: -8, z: -52, r: -1.1 },
+
+    // —— 中心危险区 · 东侧油库（双立式油罐 + 桶阵 + 警戒沙袋） ——
+    { n: 'fuel_tank', x: 26.0, z: -19.0, r: 0.25, t: 0x8f8578 },
+    { n: 'fuel_tank', x: 44.0, z: -40.0, r: -0.12, t: 0x9a9484 },
+    { n: 'barrel', x: 20.0, z: -25.5, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: 20.8, z: -24.8, r: 0, t: 0x8f8a4a },
+    { n: 'barrel', x: 19.3, z: -24.9, r: 0, t: 0x9fb4c6 },
+    { n: 'barrel', x: 50.5, z: -35.0, r: 0, t: 0x8f8a4a },
+    { n: 'sandbags', x: 33.0, z: -20.5, r: 1.4 },
+    { n: 'wreck', x: 49.5, z: -24.5, r: 0.9 },
+    { n: 'barrier', x: 38.5, z: -22.5, r: 1.35 },
+
+    // —— 中心危险区 · 北门 / 东门（检查站 + 哨塔，土路穿门而过） ——
+    { n: 'barrier', x: -3.0, z: 60.5, r: 0.06 },
+    { n: 'barrier', x: 4.8, z: 60.0, r: -0.08 },
+    { n: 'sandbags', x: -6.5, z: 58.6, r: 0.1 },
+    { n: 'sandbags', x: 7.2, z: 58.2, r: -0.15 },
+    { n: 'barrier', x: 56.5, z: -4.5, r: 1.5 },
+    { n: 'barrier', x: 59.5, z: -1.5, r: 1.45 },
+    { n: 'sandbags', x: 55.0, z: 0.5, r: 1.55 },
+
+    // —— 中心危险区 · 东北情报点（小屋 + 帐篷营地，情报箱在屋前，位置保留） ——
     { n: 'house', x: 32.0, z: -32.5, r: 0.06, t: 0xc7b394 },
     { n: 'tent', x: 40.5, z: -29.5, r: -0.45, t: 0x8fa08f },
     { n: 'crate', x: 29.0, z: -27.6, r: 0.35 },
@@ -316,45 +357,231 @@ const LAYOUT = [
     { n: 'dead_tree', x: 26.5, z: -38.5, r: 2.6, col: [0.35, 0.35, 4.88] },
     { n: 'wreck', x: 38.5, z: -37.5, r: 2.2 },
 
-    // —— 东侧：撤离点（绿烟信标在场内，残骸与枯树在外圈） ——
-    { n: 'wreck', x: 39.5, z: 14.5, r: 1.35 },
-    { n: 'dead_tree', x: 49.5, z: 3.0, r: 1.8, col: [0.35, 0.35, 4.88] },
-    { n: 'barrel', x: 41.0, z: 2.5, r: 0, t: 0x9fb4c6 },
-    { n: 'barrel', x: 40.3, z: 3.2, r: 0, t: 0xb0452f },
+    // —— 荒野 POI · 农场（谷仓 + 农舍，西北向） ——
+    { n: 'barn', x: -104, z: 84, r: 0.3, t: 0xa4552f },
+    { n: 'house', x: -92, z: 70, r: -0.5, t: 0xb0a184 },
+    { n: 'dead_tree', x: -112, z: 92, r: 0.4, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -97, z: 96, r: 2.6, col: [0.35, 0.35, 4.88] },
+    { n: 'crate', x: -99.6, z: 93.4, r: 0.2 },
+    { n: 'barrel', x: -110, z: 78, r: 0, t: 0x8f8a4a },
+    { n: 'wreck', x: -90, z: 90, r: 1.3 },
+    { n: 'sandbags', x: -98, z: 75, r: 0.9 },
+    { n: 'dead_tree', x: -116, z: 76, r: 1.9, col: [0.35, 0.35, 4.88] },
 
-    // —— 全场散布：地标与废墟感 ——
-    { n: 'barn', x: -12.0, z: -49.0, r: 0.3, t: 0xa4552f },
-    { n: 'rocks', x: -48, z: -49, r: 0.55 },
-    { n: 'rocks', x: 50, z: -49, r: -0.8 },
-    { n: 'rocks', x: -45, z: 38, r: 0.15 },
-    { n: 'dead_tree', x: -30, z: -38, r: 0.4, col: [0.35, 0.35, 4.88] },
-    { n: 'dead_tree', x: 8, z: -44, r: 1.9, col: [0.35, 0.35, 4.88] },
-    { n: 'dead_tree', x: 22, z: 36, r: 2.8, col: [0.35, 0.35, 4.88] },
-    { n: 'dead_tree', x: -56, z: 24, r: 0.3, col: [0.35, 0.35, 4.88] },
-    { n: 'dead_tree', x: 52, z: 28, r: 1.1, col: [0.35, 0.35, 4.88] },
-    { n: 'dead_tree', x: -52.5, z: -36, r: 2.3, col: [0.35, 0.35, 4.88] },
-    { n: 'wreck', x: -16, z: 40, r: -1.1 },
-    { n: 'wreck', x: 2.5, z: 18, r: 1.2 },
-    { n: 'barrel', x: -19, z: -30, r: 0, t: 0x8f8a4a },
-    { n: 'crate', x: 18, z: -38, r: 0.2 },
-    { n: 'sandbags', x: 2.5, z: -36.5, r: 1.4 },
+    // —— 荒野 POI · 废车场（残骸群正西向） ——
+    { n: 'wreck', x: -148, z: 8, r: 0.2 },
+    { n: 'wreck', x: -153, z: 3, r: -1.1 },
+    { n: 'wreck', x: -143, z: 2, r: 2.4 },
+    { n: 'wreck', x: -151, z: 13, r: 1.1 },
+    { n: 'wreck', x: -144, z: 14, r: -0.6 },
+    { n: 'wreck', x: -157, z: 9, r: 0.9 },
+    { n: 'barrel', x: -147, z: 3, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: -146.2, z: 2.3, r: 0, t: 0x9fb4c6 },
+    { n: 'rocks', x: -140, z: 16, r: 0.4 },
+    { n: 'dead_tree', x: -156, z: -4, r: 0.8, col: [0.35, 0.35, 4.88] },
+    { n: 'sandbags', x: -141, z: 9, r: -0.4 },
+
+    // —— 荒野 POI · 哨塔（程序化瞭望塔 + 驻勤帐篷） ——
+    { n: 'tent', x: -113, z: -78, r: 0.35, t: 0x8f8a78 },
+    { n: 'sandbags', x: -103, z: -79, r: 0.2 },
+    { n: 'sandbags', x: -102, z: -82, r: -0.3 },
+    { n: 'barrel', x: -112, z: -90, r: 0, t: 0x8f8a4a },
+    { n: 'dead_tree', x: -100, z: -93, r: 1.4, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -115, z: -94, r: 2.7, col: [0.35, 0.35, 4.88] },
+    { n: 'crate', x: -104, z: -90, r: -0.2 },
+
+    // —— 荒野 POI · 露营营地（三帐环抱 + 篝火桶） ——
+    { n: 'tent', x: -32, z: -136, r: 0.15, t: 0x8f9a8a },
+    { n: 'tent', x: -24, z: -142, r: 1.2, t: 0xb59f7a },
+    { n: 'tent', x: -40, z: -142, r: -0.8, t: 0x8fa08f },
+    { n: 'barrel', x: -30, z: -131, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: -29.2, z: -130.3, r: 0, t: 0x9fb4c6 },
+    { n: 'crate', x: -36, z: -130, r: 0.35 },
+    { n: 'crate', x: -35.2, z: -129.1, r: -0.25 },
+    { n: 'dead_tree', x: -20, z: -132, r: 0.6, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -44, z: -130, r: 1.8, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -30, z: -150, r: 2.9, col: [0.35, 0.35, 4.88] },
+
+    // —— 荒野 POI · 加油站（立罐 + 雨棚柱 + 抛锚车） ——
+    { n: 'fuel_tank', x: 56, z: -142, r: 0.1, t: 0x9a9484 },
+    { n: 'barrier', x: 47.5, z: -133.5, r: 1.5 },
+    { n: 'barrier', x: 52.5, z: -133.5, r: 1.45 },
+    { n: 'wreck', x: 63, z: -135, r: 0.7 },
+    { n: 'barrel', x: 61, z: -148, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: 60.2, z: -147.2, r: 0, t: 0x9fb4c6 },
+    { n: 'barrel', x: 48, z: -146, r: 0, t: 0x8f8a4a },
+    { n: 'dead_tree', x: 66, z: -146, r: 1.1, col: [0.35, 0.35, 4.88] },
+    { n: 'sandbags', x: 49, z: -149, r: 0.3 },
+
+    // —— 荒野 POI · 管道带（废弃输送管三节 + 乱石） ——
+    { n: 'container', x: 128, z: -84, r: 1.57, t: 0x6f6a5f },
+    { n: 'container', x: 136, z: -84, r: 1.55, t: 0x7d5a45 },
+    { n: 'container', x: 144, z: -84, r: 1.57, t: 0x5a7050 },
+    { n: 'rocks', x: 132, z: -94, r: 0.5 },
+    { n: 'rocks', x: 147, z: -101, r: -0.7 },
+    { n: 'barrel', x: 124, z: -90, r: 0, t: 0x9fb4c6 },
+    { n: 'barrel', x: 123.2, z: -89.2, r: 0, t: 0xb0452f },
+    { n: 'sandbags', x: 148, z: -90, r: 1.2 },
+    { n: 'dead_tree', x: 150, z: -100, r: 0.5, col: [0.35, 0.35, 4.88] },
+
+    // —— 荒野 POI · 靶场（仓库挡弹墙 + 集装箱档弹排 + 三条靶道，自旧西靶场整体搬迁） ——
+    { n: 'warehouse', x: -43, z: 108, r: 0, t: 0x9c8f7d },
+    { n: 'container', x: -27, z: 119.5, r: 0.02, t: 0x3f6f8f },
+    { n: 'container', x: -27, z: 125.75, r: -0.02, t: 0x8f5a3f },
+    { n: 'container', x: -27, z: 132.0, r: 0.02, t: 0x5a7050 },
+    { n: 'container', x: -27, z: 138.25, r: -0.02, t: 0x8a4a44 },
+    { n: 'container', x: -27, z: 144.5, r: 0.02, t: 0x6f6a5f },
+    { n: 'rocks', x: -45, z: 151.5, r: 0.06 },
+    { n: 'sandbags', x: -34.5, z: 151.2, r: 0.1 },
+    { n: 'crate', x: -58.8, z: 120.4, r: 0.2 },
+    { n: 'crate', x: -58.8, z: 132.4, r: -0.3 },
+    { n: 'crate', x: -58.8, z: 144.4, r: 0.15 },
+    { n: 'barrel', x: -60.5, z: 116.8, r: 0, t: 0xb0452f },
+    { n: 'barrel', x: -60.2, z: 149.6, r: 0, t: 0x9fb4c6 },
+    { n: 'dead_tree', x: -61.8, z: 112.5, r: 1.2, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -50, z: 116, r: 2.0, col: [0.35, 0.35, 4.88] },
+    { n: 'wreck', x: -31, z: 153.5, r: 1.1 },
+
+    // —— 撤离点 ×2（绿烟信标由 BattleMap 摆放，此处摆外圈残骸/枯树/油桶） ——
+    { n: 'wreck', x: 135, z: 30, r: 1.35 },                 // 主撤离 (128,24)
+    { n: 'dead_tree', x: 141, z: 17, r: 1.8, col: [0.35, 0.35, 4.88] },
+    { n: 'barrel', x: 131, z: 19.0, r: 0, t: 0x9fb4c6 },
+    { n: 'barrel', x: 130.2, z: 19.8, r: 0, t: 0xb0452f },
+    { n: 'wreck', x: -143, z: 101, r: -1.2 },               // 备撤离 (−136,96)
+    { n: 'dead_tree', x: -147, z: 91, r: 0.9, col: [0.35, 0.35, 4.88] },
+    { n: 'barrel', x: -133, z: 92.0, r: 0, t: 0xb0452f },
+    { n: 'sandbags', x: -140, z: 90.5, r: 0.7 },
+
+    // —— 过渡带/荒野散布：枯树·乱石·残骸·弃桶（地标与废墟感，确定性坐标） ——
+    { n: 'dead_tree', x: 106.9, z: 67.1, r: 0.25, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -121.7, z: -115.8, r: 3.11, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -104.5, z: -33.4, r: 3.87, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 108.5, z: -114.7, r: 6.04, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -143.1, z: -72.1, r: 4.29, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -157.3, z: -54.3, r: 5.08, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 99.5, z: 117.5, r: 3.05, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 68.9, z: -94.8, r: 3.71, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 105.6, z: 63.1, r: 5.56, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 129.5, z: -18.5, r: 5.27, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -96.2, z: -60.3, r: 3.37, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: -143.4, z: 50.4, r: 4.7, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 98.7, z: 75.6, r: 1.82, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 32.1, z: 92.0, r: 2.98, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 109.0, z: -27.0, r: 1.65, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 98.2, z: -120.0, r: 0.84, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 110.9, z: -124.7, r: 5.0, col: [0.35, 0.35, 4.88] },
+    { n: 'dead_tree', x: 88.0, z: 54.7, r: 0.49, col: [0.35, 0.35, 4.88] },
+    { n: 'rocks', x: 37.5, z: -105.3, r: 2.65 },
+    { n: 'rocks', x: -69.2, z: 63.4, r: 5.31 },
+    { n: 'rocks', x: 125.4, z: 71.9, r: 3.04 },
+    { n: 'rocks', x: 38.4, z: 86.6, r: 4.33 },
+    { n: 'rocks', x: 10.9, z: 88.8, r: 3.14 },
+    { n: 'rocks', x: 128.3, z: -12.3, r: 4.87 },
+    { n: 'rocks', x: -55.1, z: -126.6, r: 4.41 },
+    { n: 'wreck', x: -53.8, z: 97.2, r: 0.13 },
+    { n: 'wreck', x: 108.1, z: -32.7, r: 1.59 },
+    { n: 'wreck', x: 149.8, z: -32.7, r: 2.58 },
+    { n: 'barrel', x: 125.1, z: 84.0, r: 3.47 },
+    { n: 'barrel', x: 85.7, z: -54.5, r: 1.81 },
 ];
 
-// 土路（纯视觉）：出生→交战区→情报点；分支去撤离点；支线去靶场
+/* ==== 6. 可搜刮容器锚点（52 处，LootManager 据此实例化容器与刷 loot；
+ * type ∈ CONTAINER_TYPES（loot.js 约定）；zone ∈ 'center'|'wild' 与 zoneAt 一致；
+ * 品质分布按 mapSpec：中心 30（含保险箱/军火库各 1），荒野 22 全部低 bias 档） ==== */
+
+export const CONTAINER_SPOTS = [
+    // —— 中心 · 军火库（仓库门前） ——
+    { type: 'rack', x: -24, z: -34.6, rotY: 0.1, zone: 'center' },
+    { type: 'crate', x: -14.5, z: -35.5, rotY: 0.4, zone: 'center' },
+    { type: 'toolbox', x: -30.5, z: -34.8, rotY: -0.3, zone: 'center' },
+    { type: 'crate', x: -38.6, z: -41.6, rotY: 0.3, zone: 'center' },
+    { type: 'ammo', x: -27.8, z: -52.2, rotY: 0.1, zone: 'center' },
+    { type: 'crate', x: -19.6, z: -51.6, rotY: -0.25, zone: 'center' },
+    { type: 'toolbox', x: -43.2, z: -48.8, rotY: 0.4, zone: 'center' },
+    // —— 中心 · 核心巷道 ——
+    { type: 'crate', x: 6.8, z: -2.6, rotY: 0.2, zone: 'center' },
+    { type: 'ammo', x: -6.5, z: -10.8, rotY: -0.15, zone: 'center' },
+    { type: 'ammo', x: 4.3, z: -16.8, rotY: 0.3, zone: 'center' },
+    { type: 'ammo', x: -13.4, z: -14.6, rotY: 0.2, zone: 'center' },
+    { type: 'duffle', x: 2.6, z: -11.6, rotY: 0.1, zone: 'center' },
+    { type: 'drawer', x: -7.2, z: -10.2, rotY: 0.25, zone: 'center' },
+    { type: 'crate', x: -9.8, z: -5.6, rotY: 0.1, zone: 'center' },
+    { type: 'crate', x: 11.4, z: -13.4, rotY: -0.2, zone: 'center' },
+    { type: 'duffle', x: -12.2, z: -0.6, rotY: 0.5, zone: 'center' },
+    // —— 中心 · 地堡/油库一带 ——
+    { type: 'medcab', x: 8.4, z: -19.6, rotY: 0.5, zone: 'center' },
+    { type: 'medcab', x: -2.2, z: -24.2, rotY: -0.2, zone: 'center' },
+    { type: 'safe', x: 16.9, z: -28.4, rotY: 0.2, zone: 'center' },
+    { type: 'drawer', x: -6.2, z: -22.6, rotY: -0.35, zone: 'center' },
+    { type: 'ammo', x: 16.4, z: -24.2, rotY: 0.35, zone: 'center' },
+    { type: 'crate', x: 20.2, z: -28.9, rotY: -0.3, zone: 'center' },
+    { type: 'toolbox', x: 35.4, z: -17.4, rotY: 0.5, zone: 'center' },
+    { type: 'ammo', x: 46.8, z: -30.2, rotY: -0.1, zone: 'center' },
+    { type: 'medcab', x: 52.6, z: -38.4, rotY: 0.2, zone: 'center' },
+    { type: 'toolbox', x: 26.2, z: -6.8, rotY: 0.1, zone: 'center' },
+    { type: 'duffle', x: 21.2, z: -9.4, rotY: 0.3, zone: 'center' },
+    // —— 中心 · 情报建筑区 ——
+    { type: 'medcab', x: 34.8, z: -25.4, rotY: -0.2, zone: 'center' },
+    { type: 'duffle', x: 45.6, z: -24.8, rotY: 0.3, zone: 'center' },
+    { type: 'crate', x: 27.2, z: -27.8, rotY: 0.15, zone: 'center' },
+    // —— 荒野 · 农场 ——
+    { type: 'crate', x: -95.4, z: 76.2, rotY: 0.4, zone: 'wild' },
+    { type: 'drawer', x: -89, z: 78.5, rotY: -0.3, zone: 'wild' },
+    { type: 'duffle', x: -109.6, z: 91.4, rotY: 0.2, zone: 'wild' },
+    // —— 荒野 · 废车场 ——
+    { type: 'ammo', x: -140.6, z: 22.4, rotY: 0.3, zone: 'wild' },
+    { type: 'crate', x: -149.2, z: 1.8, rotY: -0.2, zone: 'wild' },
+    { type: 'toolbox', x: -138.4, z: -0.6, rotY: 0.1, zone: 'wild' },
+    // —— 荒野 · 哨塔 ——
+    { type: 'medcab', x: -106.8, z: -77.4, rotY: -0.2, zone: 'wild' },
+    { type: 'duffle', x: -103.6, z: -87.2, rotY: 0.4, zone: 'wild' },
+    { type: 'crate', x: -112.8, z: -88.6, rotY: 0.15, zone: 'wild' },
+    // —— 荒野 · 露营营地 ——
+    { type: 'duffle', x: -26.2, z: -130.8, rotY: 0.2, zone: 'wild' },
+    { type: 'medcab', x: -33.4, z: -145.8, rotY: 0.5, zone: 'wild' },
+    { type: 'drawer', x: -21.4, z: -135.4, rotY: -0.3, zone: 'wild' },
+    // —— 荒野 · 加油站 ——
+    { type: 'toolbox', x: 66.8, z: -138.2, rotY: -0.4, zone: 'wild' },
+    { type: 'crate', x: 50.2, z: -150.4, rotY: 0.3, zone: 'wild' },
+    { type: 'ammo', x: 63.2, z: -150.2, rotY: 0.1, zone: 'wild' },
+    // —— 荒野 · 管道带 ——
+    { type: 'crate', x: 127.8, z: -88.0, rotY: 0.2, zone: 'wild' },
+    { type: 'drawer', x: 140.6, z: -87.6, rotY: -0.15, zone: 'wild' },
+    { type: 'ammo', x: 131.0, z: -87.2, rotY: 0.35, zone: 'wild' },
+    // —— 荒野 · 靶场 ——
+    { type: 'crate', x: -55.2, z: 123.8, rotY: 0.1, zone: 'wild' },
+    { type: 'drawer', x: -50.6, z: 140.2, rotY: 0.4, zone: 'wild' },
+    { type: 'medcab', x: -36.8, z: 152.2, rotY: -0.2, zone: 'wild' },
+    { type: 'duffle', x: -66.4, z: 123.2, rotY: 0.25, zone: 'wild' },
+];
+
+// 土路（纯视觉）三线：出生→北门→基地核心；核心→主撤离；核心→备撤离
 const ROADS = [
-    [[0, 57], [0, 34], [5, 12], [15, -8], [24, -18], [30, -25.5]],
-    [[18, -5], [28, 0], [38, 4], [44, 7.5]],
-    [[0, 40], [-14, 32], [-30, 22], [-40, 15]],
+    [[0, 150], [0, 116], [0, 84], [1, 62], [0, 40], [3, 18], [2, 2]],
+    [[8, -4], [38, -2], [68, 4], [98, 12], [126, 22]],
+    [[-6, -16], [-36, -8], [-68, 16], [-100, 48], [-134, 92]],
 ];
 
-// 巡逻线 3 条（8 名敌兵由 EnemyManager 分配：3+3+2）
+/* 巡逻线（spawnPatrol 分区契约）：
+ * 中心 4 条 = 精英 10（assault×4 / support×4 / recon×2，battlefield.gd:26-38 原值）；
+ * 荒野 4 条 = 散兵 8（wild 档弱化，viewDist 50）。mix=一线混编多兵种。 */
 const PATROL_ROUTES = [
-    [[0, 14], [22, 4], [16, -16], [-4, -20], [-12, -1]],       // 交战区环线
-    [[16, -35], [34, -44], [47, -31.5], [36, -20]],            // 情报点/油库环线
-    [[28, 0], [44, 16], [30, 30], [12, 20]],                   // 东侧通往撤离点
+    { pts: [[-40, 30], [8, 44], [38, 20], [20, -6], [-18, 6]], cls: 'elite', variant: 'assault', count: 2 },
+    { pts: [[20, -30], [46, -24], [54, 2], [30, 14], [6, 2]], cls: 'elite', variant: 'assault', count: 2 },
+    { pts: [[-14, -46], [-44, -40], [-56, -12], [-36, 4], [-10, -8]], cls: 'elite', mix: [['support', 2], ['recon', 1]] },
+    { pts: [[24, -52], [0, -64], [-28, -56], [-44, -30], [-16, -22]], cls: 'elite', mix: [['support', 2], ['recon', 1]] },
+    { pts: [[-40, 118], [-70, 104], [-100, 88], [-112, 64], [-104, 120], [-64, 134]], cls: 'wild', variant: 'rifleman', count: 2 },
+    { pts: [[-148, 8], [-154, -30], [-138, -62], [-112, -84], [-100, -52], [-118, -16]], cls: 'wild', variant: 'scout', count: 2 },
+    { pts: [[-32, -136], [4, -152], [44, -150], [80, -134], [96, -104], [58, -120], [12, -124]], cls: 'wild', variant: 'rifleman', count: 2 },
+    { pts: [[136, -88], [150, -46], [148, -2], [138, 42], [122, 74], [112, 20], [118, -52]], cls: 'wild', variant: 'scout', count: 2 },
 ];
 
-/* ==== 5. 程序化小件贴图：烟团 / 撤离地标线 / 土路 ==== */
+// 撤离点 / 情报点 / 靶道（构建期锚点，zones 同源输出）
+const EXTRACT_MAIN = [128, 24];
+const EXTRACT_BACK = [-136, 96];
+const RANGE_LANES = [[-57, 122], [-57, 134], [-57, 146]];   // 射位（向 +X 射击，x=−27 集装箱档弹）
+
+/* ==== 7. 程序化小件贴图：烟团 / 撤离地标线 / 土路 ==== */
 
 function makeCanvas(w, h) {
     const c = document.createElement('canvas');
@@ -452,7 +679,7 @@ function roadTexture() {
     return t;
 }
 
-/* ==== 6. 信号烟粒子柱（撤离点绿色信号烟，Points + 自写软烟着色器） ==== */
+/* ==== 8. 信号烟粒子柱（撤离点绿色信号烟，Points + 自写软烟着色器） ==== */
 
 class SmokeColumn {
     constructor(scene, x, z, count = 110) {
@@ -546,7 +773,36 @@ class SmokeColumn {
     }
 }
 
-/* ==== 7. BattleMap：按摆位表布置战场，产出 zones 与碰撞 ==== */
+/* ==== 9. 瞭望哨塔（程序化：木柱/平台/护栏/爬梯/顶板，合批为 2 网格共享素材） ==== */
+
+let _towerGeo = null, _towerMats = null;
+function watchtowerAssets() {
+    if (_towerGeo) return { geo: _towerGeo, mats: _towerMats };
+    const wood = [], roof = [];
+    const box = (w, h, d, x, y, z, arr) => {
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(x, y, z);
+        arr.push(g);
+    };
+    for (const sx of [-1.1, 1.1]) for (const sz of [-1.1, 1.1]) box(0.24, 5.4, 0.24, sx, 2.7, sz, wood);
+    box(3.4, 0.16, 3.4, 0, 5.4, 0, wood);              // 平台
+    box(3.4, 0.5, 0.08, 0, 5.95, -1.66, wood);         // 护栏三面
+    box(3.4, 0.5, 0.08, 0, 5.95, 1.66, wood);
+    box(0.08, 0.5, 3.4, -1.66, 5.95, 0, wood);
+    box(0.6, 5.4, 0.07, 0, 2.7, 1.82, wood);           // 爬梯背板
+    for (let k = 0; k < 8; k++) box(0.55, 0.06, 0.14, 0, 0.7 + k * 0.62, 1.78, wood);
+    for (const sx of [-1.3, 1.3]) box(0.14, 1.5, 0.14, sx, 6.85, 0, wood);   // 顶柱
+    box(4.0, 0.14, 4.0, 0, 7.65, 0, roof);             // 顶板
+    box(4.0, 0.3, 1.7, 0, 7.5, -1.15, roof);           // 顶檐（军绿）
+    _towerGeo = [mergeGeometries(wood), mergeGeometries(roof)];
+    _towerMats = [
+        new THREE.MeshStandardMaterial({ color: 0x6b543c, roughness: 0.95, metalness: 0 }),
+        new THREE.MeshStandardMaterial({ color: 0x4a5342, roughness: 0.9, metalness: 0 }),
+    ];
+    return { geo: _towerGeo, mats: _towerMats };
+}
+
+/* ==== 10. BattleMap：按摆位表布置战场，产出 zones 与碰撞 ==== */
 
 export class BattleMap {
     constructor(scene, props) {
@@ -557,9 +813,8 @@ export class BattleMap {
         this.zones = null;
         this._t = 0;
         this._roots = [];          // 便于整体卸载
-        this._smoke = null;
-        this._beaconLight = null;
-        this._beaconHead = null;
+        this._smokes = [];         // 撤离点绿烟 ×2
+        this._beacons = [];        // 撤离信标 ×2（相错相位闪烁）
         this._intelMat = null;
     }
 
@@ -567,45 +822,58 @@ export class BattleMap {
         // —— 摆件（视觉 + 自动按包围盒注册 OBB 碰撞） ——
         for (const e of LAYOUT) this._prop(e);
 
-        // —— 场地边界（墙体视觉在 env.js，碰撞在这里注册） ——
+        // —— 场地边界（墙体视觉在 env.js，碰撞在这里注册；±ARENA 链式满覆盖） ——
         for (const b of boundaryBoxes()) {
             this.collision.addBox(b.cx, b.cz, b.hx, b.hz, b.rotY, b.h);
         }
 
-        // —— 土路（纯视觉） ——
+        // —— 土路（纯视觉，三线） ——
         const roadMat = new THREE.MeshStandardMaterial({
             map: roadTexture(), roughness: 1, metalness: 0, side: THREE.DoubleSide,
         });
         for (const line of ROADS) this._buildRoad(line, 3.2, roadMat);
 
-        // —— 情报箱（呼吸灯） + 撤离点（绿烟 + 信标 + 地面标线） + 靶道射位标线 ——
+        // —— 哨塔 ×3（北门 / 东门 / 荒野哨塔 POI） ——
+        this._buildWatchtower(5, 67);
+        this._buildWatchtower(62, -6);
+        this._buildWatchtower(-108, -84);
+
+        // —— 情报箱（呼吸灯） + 撤离点 ×2（绿烟 + 信标 + 地面标线） + 靶道射位标线 ——
         this._buildIntel(32.9, -28.2, 0.35);
-        this._buildExtract(44, 8);
+        this._buildExtract(EXTRACT_MAIN[0], EXTRACT_MAIN[1]);
+        this._buildExtract(EXTRACT_BACK[0], EXTRACT_BACK[1]);
         this._buildRangeMarks();
 
-        // —— 交给任务/AI 的锚点 ——
+        // —— 交给任务/AI/战利品的锚点 ——
         this.zones = {
-            playerSpawn: this._v(-1.0, 53.2),
-            patrol: PATROL_ROUTES.map((rt) => rt.map((p) => this._v(p[0], p[1]))),
+            playerSpawn: this._v(-1.6, 150.6),
+            patrol: PATROL_ROUTES.map((rt) => ({
+                pts: rt.pts.map((p) => this._v(p[0], p[1])),
+                cls: rt.cls,
+                ...(rt.variant ? { variant: rt.variant } : {}),
+                ...(rt.variant ? { count: rt.count } : {}),
+                ...(rt.mix ? { mix: rt.mix } : {}),
+            })),
             intelPos: this._v(32.0, -28.6),
-            extractPos: this._v(44, 8),
-            extractR: 3,
-            rangeLanes: [
-                { origin: this._v(-52, -14), dir: new THREE.Vector3(1, 0, 0) },
-                { origin: this._v(-52, -2), dir: new THREE.Vector3(1, 0, 0) },
-                { origin: this._v(-52, 10), dir: new THREE.Vector3(1, 0, 0) },
-            ],
+            extractPos: [this._v(EXTRACT_MAIN[0], EXTRACT_MAIN[1]),
+                         this._v(EXTRACT_BACK[0], EXTRACT_BACK[1])],   // mission 取最近者
+            extractR: 3.2,
+            danger: { cx: DANGER.cx, cz: DANGER.cz, r: DANGER.r },     // HUD 入区警示用
+            rangeLanes: RANGE_LANES.map(([x, z]) => ({
+                origin: this._v(x, z), dir: new THREE.Vector3(1, 0, 0),
+            })),
+            containerSpots: CONTAINER_SPOTS,
         };
         return this;
     }
 
     update(dt) {
         this._t += dt;
-        if (this._smoke) this._smoke.update(dt, this._t);
-        if (this._beaconLight) {
-            const on = Math.sin(this._t * 4.2) > 0.35;
-            this._beaconLight.intensity = on ? 2.6 : 0.1;
-            this._beaconHead.emissiveIntensity = on ? 2.4 : 0.12;
+        for (const s of this._smokes) s.update(dt, this._t);
+        for (const b of this._beacons) {
+            const on = Math.sin(this._t * 4.2 + b.phase) > 0.35;
+            b.light.intensity = on ? 2.6 : 0.1;
+            b.head.emissiveIntensity = on ? 2.4 : 0.12;
         }
         if (this._intelMat) {
             this._intelMat.emissiveIntensity = 0.5 + 0.65 * (0.5 + 0.5 * Math.sin(this._t * 2.6));
@@ -615,7 +883,7 @@ export class BattleMap {
     dispose() {
         for (const r of this._roots) this.scene.remove(r);
         this._roots.length = 0;
-        if (this._smoke) this._smoke.dispose(this.scene);
+        for (const s of this._smokes) s.dispose(this.scene);
     }
 
     /* ---- 内部工具 ---- */
@@ -692,7 +960,7 @@ export class BattleMap {
         this.collision.addBox(x, z, 0.42, 0.34, rot, 0.85);
     }
 
-    // 撤离点：地面标线 + 信标灯杆 + 绿色信号烟
+    // 撤离点：地面标线 + 信标灯杆 + 绿色信号烟（主/备两点复用同一套组件）
     _buildExtract(x, z) {
         const y0 = terrainHeight(x, z);
         const mark = new THREE.Mesh(
@@ -707,7 +975,7 @@ export class BattleMap {
         this._roots.push(mark);
 
         // 信标灯杆（立在圈外东南角）
-        const bx = 47.8, bz = 11.5, by = terrainHeight(bx, bz);
+        const bx = x + 3.8, bz = z + 3.5, by = terrainHeight(bx, bz);
         const pole = new THREE.Mesh(
             new THREE.CylinderGeometry(0.04, 0.05, 2.3, 8),
             new THREE.MeshStandardMaterial({ color: 0x3a3f42, roughness: 0.6, metalness: 0.7 })
@@ -715,27 +983,44 @@ export class BattleMap {
         pole.position.set(bx, by + 1.15, bz);
         pole.castShadow = true;
         this.scene.add(pole);
-        this._beaconHead = new THREE.MeshStandardMaterial({
+        const headMat = new THREE.MeshStandardMaterial({
             color: 0x0d2414, emissive: new THREE.Color(0x46ff7d), emissiveIntensity: 2, roughness: 0.4,
         });
-        const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), this._beaconHead);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), headMat);
         head.position.set(bx, by + 2.36, bz);
         this.scene.add(head);
-        this._beaconLight = new THREE.PointLight(0x46ff7d, 2, 7, 2);
-        this._beaconLight.position.set(bx, by + 2.4, bz);
-        this.scene.add(this._beaconLight);
-        this._roots.push(pole, head, this._beaconLight);
+        const light = new THREE.PointLight(0x46ff7d, 2, 7, 2);
+        light.position.set(bx, by + 2.4, bz);
+        this.scene.add(light);
+        this._roots.push(pole, head, light);
         this.collision.addBox(bx, bz, 0.12, 0.12, 0, 2.4);
+        this._beacons.push({ light, head: headMat, phase: this._beacons.length * 1.7 });
 
-        this._smoke = new SmokeColumn(this.scene, x, z);
+        this._smokes.push(new SmokeColumn(this.scene, x, z));
+    }
+
+    // 瞭望哨塔：四腿注册碰撞（平台不可攀，地标/掩体用）
+    _buildWatchtower(x, z) {
+        const { geo, mats } = watchtowerAssets();
+        const g = new THREE.Group();
+        for (let k = 0; k < 2; k++) {
+            const m = new THREE.Mesh(geo[k], mats[k]);
+            m.castShadow = m.receiveShadow = true;
+            g.add(m);
+        }
+        g.position.set(x, terrainHeight(x, z) - 0.05, z);
+        this.scene.add(g);
+        this._roots.push(g);
+        for (const sx of [-1.1, 1.1]) for (const sz of [-1.1, 1.1]) {
+            this.collision.addBox(x + sx, z + sz, 0.16, 0.16, 0, 5.4);
+        }
     }
 
     // 靶道射位标线（黄色横条 + 立柱一对）
     _buildRangeMarks() {
         const stripeMat = new THREE.MeshBasicMaterial({ color: 0xd8c874, transparent: true, opacity: 0.75, depthWrite: false });
         const postMat = new THREE.MeshStandardMaterial({ color: 0x8a6f3a, roughness: 0.9 });
-        for (const lane of [[-52, -14], [-52, -2], [-52, 10]]) {
-            const [x, z] = lane;
+        for (const [x, z] of RANGE_LANES) {
             const y = terrainHeight(x, z);
             const stripe = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.45), stripeMat);
             stripe.rotation.x = -Math.PI / 2;

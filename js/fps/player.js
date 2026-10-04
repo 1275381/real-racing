@@ -7,6 +7,7 @@
    跳跃 v0=4.5、g=12（interfaces 约定）。
    ===================================================================== */
 import * as THREE from 'three';
+import { ARENA } from './env.js';
 
 /* ==== 1. 常量 ==== */
 const WALK_SPEED = 4.8;
@@ -26,7 +27,7 @@ const PITCH_LIMIT = 1.35;           // onfoot.gd:641
 const ARROW_YAW_DEG = 120;          // 回退键盘路径 ←/→ 偏航 °/s
 const ARROW_PITCH_DEG = 80;         // ↑/↓ 俯仰 °/s
 const LOCK_TIMEOUT_MS = 300;        // 锁定 300ms 未生效自动降级（interfaces）
-const EDGE = 58.0;                  // 120m 地表（±60）内侧安全边，防走出世界
+const EDGE = ARENA - 2.0;           // 地表（±ARENA）内侧安全边，防走出世界（随扩图派生，interface 约定）
 const MAX_HEALTH = 100.0;
 
 /* ==== 2. Player 类 ==== */

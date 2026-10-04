@@ -2,22 +2,33 @@ import * as THREE from 'three';
 
 /* ==== 0. 场地尺度与地形函数（layout.js 引用同一函数，视觉网格与碰撞地面同源） ==== */
 
-export const ARENA = 60;          // 场地半边长：120×120m 交战地域
-export const BOUNDARY_H = 3.6;    // 边界墙碰撞高度（含铁丝网视觉裕量）
+export const ARENA = 170;         // 场地半边长：340×340m 交战地域（8× 扩图，mapSpec）
+export const BOUNDARY_H = 4.6;    // 边界墙碰撞高度（含铁丝网视觉裕量；随墙加高同步上调）
 
-// 地形起伏：三个 octave 的正弦噪声。幅值 ≤0.78m、最大坡度 ≈6.5%，
-// 缓到不影响跑动与瞄准，又能让装甲/建筑接地有层次（battle_map.gd:96 同思路）
+// 地形起伏：基础三个 octave 正弦噪声（幅值 ≤0.78m、坡度 6.0%，旧版既有）+ 荒野环带大波。
+// 荒野起伏：距中心危险区圆心 78m 内（军事基地台地）保持平缓，78→112m 平滑过渡，
+// 外围 ±1.5m 大波——解析偏导 20 万采样实测全图最大坡度 9.7%（其中基础项 6.0% 为
+// 旧版存量手感，本模块增量 ≈3%）；游戏无坡度物理（贴地跟随），不影响跑动/瞄准；
+// 视觉网格与碰撞地面同源本函数（battle_map.gd:96 同思路）
 export function terrainHeight(x, z) {
-    return 0.42 * Math.sin(x * 0.043) * Math.cos(z * 0.050)
-         + 0.26 * Math.sin(x * 0.095 + 1.7) * Math.cos(z * 0.083 + 0.6)
-         + 0.10 * Math.sin(x * 0.210 + 4.0) * Math.cos(z * 0.190 + 2.2);
+    const base = 0.42 * Math.sin(x * 0.043) * Math.cos(z * 0.050)
+           + 0.26 * Math.sin(x * 0.095 + 1.7) * Math.cos(z * 0.083 + 0.6)
+           + 0.10 * Math.sin(x * 0.210 + 4.0) * Math.cos(z * 0.190 + 2.2);
+    const w = THREE.MathUtils.smoothstep(Math.hypot(x, z + 10), 78, 112);
+    if (w <= 0) return base;
+    return base + w * (1.0 * Math.sin(x * 0.016 + 0.8) * Math.cos(z * 0.019 - 1.2)
+                     + 0.5 * Math.sin(x * 0.031 + 2.1) * Math.cos(z * 0.027 + 0.4));
 }
 
-// 边界墙碰撞盒（每边 6 段贴合起伏地形；由 BattleMap 注册进 CollisionWorld）
+// 边界墙碰撞盒（贴合起伏地形；由 BattleMap 注册进 CollisionWorld）。
+// 段数/段长由 ARENA 派生（修硬编码：旧版固定 6 段，60→170 后每边会缺 220m 碰撞），
+// 段长上限 ≈20m，链式铺满 ±ARENA 无缺口
 export function boundaryBoxes() {
     const out = [];
-    const seg = 20, half = ARENA;
-    for (let i = 0; i < 6; i++) {
+    const half = ARENA;
+    const n = Math.max(6, Math.ceil((ARENA * 2) / 20));
+    const seg = (ARENA * 2) / n;
+    for (let i = 0; i < n; i++) {
         const c = -half + seg / 2 + i * seg;
         out.push({ cx: c,    cz: half,  hx: seg / 2 + 0.4, hz: 0.4, rotY: 0, h: BOUNDARY_H });
         out.push({ cx: c,    cz: -half, hx: seg / 2 + 0.4, hz: 0.4, rotY: 0, h: BOUNDARY_H });
@@ -93,7 +104,7 @@ function groundTexture() {
         }
         g.stroke();
     }
-    return toTex(c, 26, 26);
+    return toTex(c, 72, 72);   // 平铺密度与 120m 版持平（≈4.7m/格）
 }
 
 // 边界墙：混凝土板 + 污渍 + 顶部压顶条
@@ -210,7 +221,7 @@ export class Environment {
 
         // ---- 天空穹（背景 + PMREM 环境反射，game.js:35-41 同款流程） ----
         const skyMat = duskSkyMaterial();
-        const dome = new THREE.Mesh(new THREE.SphereGeometry(460, 40, 20), skyMat);
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(680, 40, 20), skyMat);
         scene.add(dome);
         const pmrem = new THREE.PMREMGenerator(renderer);
         const envScene = new THREE.Scene();
@@ -219,8 +230,8 @@ export class Environment {
         pmrem.dispose();
         this._track(dome.geometry, skyMat);
 
-        // ---- 距离雾（同地平线暖色） ----
-        scene.fog = new THREE.Fog(SKY.fog, 85, 470);
+        // ---- 距离雾（同地平线暖色；随扩图推远，mask 340m 场内视距） ----
+        scene.fog = new THREE.Fog(SKY.fog, 100, 620);
 
         // ---- 太阳：傍晚低角度暖光，唯一投影源，阴影相机随玩家平移 ----
         const sun = new THREE.DirectionalLight(0xffcf9c, 2.5);
@@ -235,14 +246,14 @@ export class Environment {
         scene.add(sun);
         scene.add(sun.target);
         this.sun = sun;
-        this.update(0, new THREE.Vector3(0, 0, 40));
+        this.update(0, new THREE.Vector3(0, 0, 150));
 
         // ---- 半球光（暮天天光偏蓝、地面反光偏暖）+ 一点环境补光 ----
         scene.add(new THREE.HemisphereLight(0x93a2cc, 0x9a7b52, 0.55));
         scene.add(new THREE.AmbientLight(0x4a4438, 0.25));
 
-        // ---- 地表：120×120m 起伏网格（与 terrainHeight 同源） ----
-        const gGeo = new THREE.PlaneGeometry(ARENA * 2, ARENA * 2, 120, 120);
+        // ---- 地表：340×340m 起伏网格（200×200 段，与 terrainHeight 同源） ----
+        const gGeo = new THREE.PlaneGeometry(ARENA * 2, ARENA * 2, 200, 200);
         gGeo.rotateX(-Math.PI / 2);
         const gp = gGeo.attributes.position;
         for (let i = 0; i < gp.count; i++) {
@@ -257,40 +268,40 @@ export class Environment {
 
         // ---- 场外大地（边界墙外的平地，遮住墙脚与远山之间的空隙） ----
         const apron = new THREE.Mesh(
-            new THREE.CircleGeometry(285, 48),
+            new THREE.CircleGeometry(480, 48),
             new THREE.MeshBasicMaterial({ color: 0x7d6c4e, fog: true })
         );
         apron.rotation.x = -Math.PI / 2;
-        apron.position.y = -1.1;
+        apron.position.y = -3.2;    // 压到荒野起伏最低谷之下（terrainHeight ≥ −2.6）
         scene.add(apron);
         this._track(apron.geometry, apron.material);
 
         // ---- 远山剪影两圈 ----
-        const r1 = makeRidge(300, 10, 16, 1.3, 0x574a58);
-        const r2 = makeRidge(345, 14, 22, 4.1, 0x6a5a60);
+        const r1 = makeRidge(560, 16, 30, 1.3, 0x574a58);
+        const r2 = makeRidge(640, 26, 42, 4.1, 0x6a5a60);
         scene.add(r1); scene.add(r2);
         this._track(r1.geometry, r1.material);
         this._track(r2.geometry, r2.material);
 
         // ---- 场地边界：混凝土围墙 + 四角哨塔柱（碰撞由 BattleMap 注册） ----
-        const bTex = toTex(boundaryTexture(), 16, 1);
+        const bTex = toTex(boundaryTexture(), 45, 1);
         const bMat = new THREE.MeshStandardMaterial({ map: bTex, roughness: 0.92, metalness: 0.02 });
-        const wallH = 5.0, len = ARENA * 2 + 1.4, th = 0.7;
+        const wallH = 7.0, len = ARENA * 2 + 1.4, th = 0.7;   // 墙加高：荒野起伏（±1.8m）下仍露出 ≥1.8m
         for (let side = 0; side < 4; side++) {
             const alongX = side < 2;   // 0=南(+Z) 1=北(−Z) 2=东(+X) 3=西(−X)
             const w = new THREE.Mesh(new THREE.BoxGeometry(
                 alongX ? len : th, wallH, alongX ? th : len), bMat);
-            w.position.set(side === 2 ? ARENA : side === 3 ? -ARENA : 0, 1.0,
+            w.position.set(side === 2 ? ARENA : side === 3 ? -ARENA : 0, 0.9,
                            side === 0 ? ARENA : side === 1 ? -ARENA : 0);
             w.receiveShadow = true;
             scene.add(w);
             this._track(w.geometry);
         }
-        const pGeo = new THREE.BoxGeometry(1.1, 5.8, 1.1);
+        const pGeo = new THREE.BoxGeometry(1.1, 7.4, 1.1);
         const pMat = new THREE.MeshStandardMaterial({ color: 0x7c776d, roughness: 0.9 });
         for (const sx of [-ARENA, ARENA]) for (const sz of [-ARENA, ARENA]) {
             const p = new THREE.Mesh(pGeo, pMat);
-            p.position.set(sx, 1.3, sz);
+            p.position.set(sx, 1.5, sz);
             p.castShadow = true;
             scene.add(p);
         }

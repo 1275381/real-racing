@@ -5,12 +5,15 @@
          lib/addons 无 SkeletonUtils，故每个敌兵独立加载一份 GLB（8×432KB 本地可承受），
          材质天然互不共享，死亡淡出只影响自己。
    AI：状态机 patrol/suspicious/combat/search/dead，1/60 定步（battlefield.gd:22）；
-       索敌 FOV110°/视距 60m/LOS 走 collision.rayWall（missionSpec）；
+       索敌 FOV110°/分区视距（e.stats.viewDist：wild 50 / elite 60）/LOS 走 collision.rayWall；
        交火点射/精度衰减/卡墙绕行 移植 battlefield.gd:561-581、591-621。
    命中球：battlefield.gd:824-833 公式参数化 SOLDIER_SCALE=1.2
        （头心 y=1.65×S r=0.2×S、胸心 y=1.05×S r=0.5×S）。
-   数值：battlefield.gd:28 突击兵 hp70/speed7.6(交火×0.45)/dmg5–8/cd0.11/
-       burst4/range75/acc0.095；爆头 ×2（battlefield.gd:23）。
+   数值（分区兵种表）：中心精英 assault/support/recon 取 battlefield.gd:26-38 原值
+       （assault hp70/acc0.095/dmg5-8；support hp80/acc0.115/cd0.09/burst9；
+         recon hp65/dmg28-40/cd2.0/burst1/range150/acc0.028）；
+       荒野散兵 scout/rifleman 为 wild 弱化档（hp55-65/acc0.06-0.08/dmg4-7）。
+       爆头 ×2（battlefield.gd:23）。
    ===================================================================== */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -22,10 +25,19 @@ const SOLDIER_SCALE = 1.2;                    // interfaces 约定（命中球�
 const AI_TICK = 1 / 60;                       // battlefield.gd:22
 const MAX_STEPS = 3;                          // battlefield.gd:315 每帧最多补 3 步
 const HEAD_MUL = 2.0;                         // battlefield.gd:23
-const STATS = {                               // battlefield.gd:28 突击兵
-    hp: 70, speed: 7.6, dmgMin: 5, dmgMax: 8, cd: 0.11, burst: 4,
-    range: 75, acc: 0.095,
+/* 分区兵种表（字段含 viewDist；_canSee 改查 e.stats.viewDist）：
+ * ELITE 三档 = battlefield.gd:26-38 原值；WILD 两档 = mapSpec 荒野弱化档。
+ * speed 沿用各自 gd 原速（交火/巡逻另有 ×0.45 等系数）。 */
+const WILD = {
+    scout:    { hp: 55, speed: 6.6, dmgMin: 4, dmgMax: 7, cd: 0.14, burst: 3, range: 60,  acc: 0.060, viewDist: 50 },
+    rifleman: { hp: 65, speed: 7.0, dmgMin: 4, dmgMax: 7, cd: 0.12, burst: 4, range: 65,  acc: 0.080, viewDist: 50 },
 };
+const ELITE = {
+    assault:  { hp: 70, speed: 7.6, dmgMin: 5, dmgMax: 8,  cd: 0.11, burst: 4, range: 75,  acc: 0.095, viewDist: 60 },
+    support:  { hp: 80, speed: 6.6, dmgMin: 5, dmgMax: 7,  cd: 0.09, burst: 9, range: 80,  acc: 0.115, viewDist: 60 },
+    recon:    { hp: 65, speed: 7.2, dmgMin: 28, dmgMax: 40, cd: 2.0, burst: 1, range: 150, acc: 0.028, viewDist: 60 },
+};
+const ELITE_LABEL = { assault: '精锐突击', support: '精锐支援', recon: '精锐狙击' };
 const ENGAGE_SPEED_MUL = 0.45;                // 交火移速 ×0.45（interfaces）
 const PATROL_SPEED_MUL = 0.45;                // 巡逻步行
 const SEARCH_SPEED_MUL = 0.62;                // 搜索小跑
@@ -88,6 +100,7 @@ export class EnemyManager {
         this.enemies = [];
         this.player = null;             // main 装配后 setPlayer(player) 注入
         this.alertMul = 1.0;            // INTEL 完成后全员警戒 ×1.2（missionSpec）
+        this._deployRoutes = [];        // 最近一次非空部署（resetAll 复活重铺用）
 
         this._loader = null;
         this._acc = 0;
@@ -158,7 +171,9 @@ export class EnemyManager {
         this._flashT = 0.06;
     }
 
-    /* ==== 4. 巡逻部署：3 条路线共 8 人（重复调用即全量重置） ==== */
+    /* ==== 4. 巡逻部署（分区契约）：routes 元素 {pts, cls:'wild'|'elite', count[, variant|mix]}
+     * 兼容旧纯数组路线（=荒野散兵单人线）；空数组 = 清空全部（靶场模式）。
+     * 重复调用即全量重置。实体带 e.stats（含 viewDist），_step/_canSee/_tryFire 按表取数 ==== */
     spawnPatrol(routes) {
         for (const e of this.enemies) {
             if (e.node && e.node.parent) e.node.parent.remove(e.node);
@@ -166,17 +181,20 @@ export class EnemyManager {
         this.enemies.length = 0;
         this.alertMul = 1.0;
         this._sndBudget = SND_BUDGET_MAX;
-        const list = Array.isArray(routes) ? routes.filter(r => Array.isArray(r) && r.length > 0) : [];
-        if (!list.length) return;
-        for (let i = 0; i < 8; i++) {
-            const route = list[i % list.length];
+        const list = this._normalizeRoutes(routes);
+        if (list.length) this._deployRoutes = list;   // 记录最近一次非空部署
+        for (let i = 0; i < list.length; i++) {
+            const plan = list[i];
+            const route = plan.pts;
             const start = route[0];
+            const cs = CALLSIGNS[i % CALLSIGNS.length]
+                + (i >= CALLSIGNS.length * 2 ? 'Ⅲ' : i >= CALLSIGNS.length ? 'Ⅱ' : '');
             const e = {
-                i, name: '敌兵·' + (CALLSIGNS[i % CALLSIGNS.length] || (i + 1)),
+                i, name: plan.label + '·' + cs,
                 node: null, mixer: null, actions: {}, capsule: null, anim: '',
                 route: route.slice(), wp: Math.min(1, route.length - 1),
                 pos: new THREE.Vector3().copy(start),
-                yaw: 0, hp: STATS.hp, state: 'patrol',
+                yaw: 0, stats: plan.stats, hp: plan.stats.hp, state: 'patrol',
                 fireCd: Math.random() * 0.5, mag: MAG_SIZE, reloadT: 0, burstLeft: 0,
                 staggerT: 0, losT: 0, losOk: false, lostT: 0, suspT: 0, searchT: 0,
                 searchGoal: new THREE.Vector3().copy(start), searchPickT: 0,
@@ -192,6 +210,44 @@ export class EnemyManager {
             this.enemies.push(e);
             this._attachModel(e);
         }
+    }
+
+    /* 部署计划规整：输出逐兵种展开表 [{pts,label,stats}]；
+     * 旧纯数组 = wild 单人线；对象缺 count 视为 1；未知兵种回落默认档 */
+    _normalizeRoutes(routes) {
+        const out = [];
+        if (!Array.isArray(routes)) return out;
+        for (const r of routes) {
+            if (Array.isArray(r)) {
+                if (r.length > 0) out.push({ pts: r.slice(), stats: WILD.rifleman, label: '散兵' });
+                continue;
+            }
+            if (!r || !Array.isArray(r.pts) || r.pts.length === 0) continue;
+            const elite = r.cls === 'elite';
+            const table = elite ? ELITE : WILD;
+            const fallback = elite ? 'assault' : 'rifleman';
+            const jobs = (elite && Array.isArray(r.mix) && r.mix.length)
+                ? r.mix
+                : [[(table[r.variant] ? r.variant : fallback), Math.max(1, (r.count | 0) || 1)]];
+            for (const mv of jobs) {
+                const vName = table[mv[0]] ? mv[0] : fallback;
+                const n = Math.max(1, Math.min(6, (mv[1] | 0) || 1));
+                for (let k = 0; k < n; k++) {
+                    out.push({
+                        pts: r.pts.slice(),
+                        stats: table[vName],
+                        label: elite ? (ELITE_LABEL[vName] || '精锐') : '散兵',
+                    });
+                }
+            }
+        }
+        return out;
+    }
+
+    /* 重开行动复活：按最近一次非空部署原样重铺
+     *（靶场 spawnPatrol([]) 清场后再重开任务，也能正确复活满编） */
+    resetAll() {
+        this.spawnPatrol(this._deployRoutes);
     }
 
     /* INTEL 完成：全员警戒 search + 移速 ×1.2（missionSpec；Mission 组调用） */
@@ -407,7 +463,7 @@ export class EnemyManager {
                 if (canSee && e.suspT <= 0) { this._toCombat(e); break; }
                 if (!canSee && e.suspT <= 0) { this._toSearch(e); break; }
                 /* 面向可疑点缓步逼近 */
-                this._moveToward(e, e.lastKnown, STATS.speed * 0.35 * this.alertMul, dt, e.lastKnown);
+                this._moveToward(e, e.lastKnown, e.stats.speed * 0.35 * this.alertMul, dt, e.lastKnown);
                 break;
             }
             case 'combat': {
@@ -421,9 +477,9 @@ export class EnemyManager {
                 if (canSee) { e.losOk = true; e.lostT = 0; } else { e.lostT += dt; }
                 const dist = this._hasPlayerEye
                     ? Math.hypot(this._playerEye.x - e.pos.x, this._playerEye.z - e.pos.z) : Infinity;
-                e.engaged = e.losOk && dist < STATS.range;
+                e.engaged = e.losOk && dist < e.stats.range;
                 if (e.engaged) this._combatMove(e, dt, dist);
-                else this._moveToward(e, e.lastKnown, STATS.speed * ENGAGE_SPEED_MUL * this.alertMul, dt, e.lastKnown);
+                else this._moveToward(e, e.lastKnown, e.stats.speed * ENGAGE_SPEED_MUL * this.alertMul, dt, e.lastKnown);
                 if (e.engaged) this._tryFire(e, dt, dist);
                 if (e.lostT > LOSE_TIME) this._toSearch(e);
                 break;
@@ -433,7 +489,7 @@ export class EnemyManager {
                 e.searchT -= dt;
                 e.searchPickT -= dt;
                 if (e.searchPickT <= 0) this._pickSearchGoal(e);
-                this._moveToward(e, e.searchGoal, STATS.speed * SEARCH_SPEED_MUL * this.alertMul, dt, e.searchGoal);
+                this._moveToward(e, e.searchGoal, e.stats.speed * SEARCH_SPEED_MUL * this.alertMul, dt, e.searchGoal);
                 if (e.searchT <= 0) { this._toPatrol(e); break; }
                 break;
             }
@@ -497,7 +553,7 @@ export class EnemyManager {
     _patrolMove(e, dt) {
         const wp = e.route[e.wp];
         if (!wp) return;
-        const arrive = this._moveToward(e, wp, STATS.speed * PATROL_SPEED_MUL * this.alertMul, dt, wp);
+        const arrive = this._moveToward(e, wp, e.stats.speed * PATROL_SPEED_MUL * this.alertMul, dt, wp);
         if (arrive) e.wp = (e.wp + 1) % e.route.length;
     }
 
@@ -520,7 +576,7 @@ export class EnemyManager {
             mx = fx * 0.55;
             mz = fz * 0.55;
         }
-        this._applyMove(e, mx, mz, fx, fz, STATS.speed * ENGAGE_SPEED_MUL * this.alertMul, dt);
+        this._applyMove(e, mx, mz, fx, fz, e.stats.speed * ENGAGE_SPEED_MUL * this.alertMul, dt);
     }
 
     /* 通用走位：到点返回 true */
@@ -591,11 +647,13 @@ export class EnemyManager {
         }
     }
 
-    /* ==== 9. 索敌：视距 + 视锥 + LOS（missionSpec：60m / FOV110°） ==== */
+    /* ==== 9. 索敌：分区视距 + 视锥 + LOS（FOV110°；视距查 e.stats.viewDist：
+     * 荒野散兵 50m / 中心精英 60m，字段缺失回落 VIEW_DIST 常量） ==== */
     _canSee(e, eye) {
         const dx = eye.x - e.pos.x, dz = eye.z - e.pos.z;
         const dist = Math.hypot(dx, dz);
-        if (dist > VIEW_DIST) return false;
+        const viewDist = (e.stats && e.stats.viewDist) || VIEW_DIST;
+        if (dist > viewDist) return false;
         if (dist > NEAR_SENSE) {
             const fx = Math.sin(e.yaw), fz = Math.cos(e.yaw);   // 面朝 +Z 基
             const cosA = (dx * fx + dz * fz) / dist;
@@ -623,15 +681,15 @@ export class EnemyManager {
             e.mag = MAG_SIZE;
             return;
         }
-        if (e.burstLeft <= 0) e.burstLeft = STATS.burst;
+        if (e.burstLeft <= 0) e.burstLeft = e.stats.burst;
         e.burstLeft--;
         e.mag--;
-        e.fireCd = e.burstLeft > 0 ? STATS.cd : (PAUSE_MIN + Math.random() * (PAUSE_MAX - PAUSE_MIN));
+        e.fireCd = e.burstLeft > 0 ? e.stats.cd : (PAUSE_MIN + Math.random() * (PAUSE_MAX - PAUSE_MIN));
 
         /* 弹道：目标方向 + 几何 jitter（acc × (1 + dist/60)，battlefield.gd:613-614） */
         const ex = e.pos.x, ey = e.pos.y + EYE_H, ez = e.pos.z;
         _v1.set(this._playerEye.x - ex, this._playerEye.y - ey, this._playerEye.z - ez).normalize();
-        const acc = STATS.acc * (1 + dist / 60);
+        const acc = e.stats.acc * (1 + dist / 60);
         _v1.x += (Math.random() - 0.5) * acc;
         _v1.y += (Math.random() - 0.5) * 0.5 * acc;
         _v1.z += (Math.random() - 0.5) * acc;
@@ -647,12 +705,12 @@ export class EnemyManager {
 
         /* 命中判定：几何 jitter 射线打玩家胶囊（r0.45 h1.7） */
         const pFoot = this.player ? this.player.pos : null;
-        let hitPlayer = false, endD = STATS.range;
+        let hitPlayer = false, endD = e.stats.range;
         if (pFoot) {
             const midY = pFoot.y + PLAYER_CAP_H * 0.5;
             _v3.set(pFoot.x - ex, midY - ey, pFoot.z - ez);
             const t = _v3.dot(_v1);
-            if (t > 0.5 && t < STATS.range) {
+            if (t > 0.5 && t < e.stats.range) {
                 const px = ex + _v1.x * t, py = ey + _v1.y * t, pz = ez + _v1.z * t;
                 if (distToVertSegment({ x: px, y: py, z: pz }, pFoot.x, pFoot.z,
                         pFoot.y + 0.1, pFoot.y + PLAYER_CAP_H - 0.1) < PLAYER_CAP_R) {
@@ -673,8 +731,8 @@ export class EnemyManager {
 
         /* 曳光终点：命中点 / 打到墙 / 沿射线射程处 */
         if (!hitPlayer && this.collision && typeof this.collision.rayWall === 'function') {
-            const wd = this.collision.rayWall(_v3.set(ex, ey, ez), _v1, STATS.range);
-            if (wd < STATS.range) endD = wd;
+            const wd = this.collision.rayWall(_v3.set(ex, ey, ez), _v1, e.stats.range);
+            if (wd < e.stats.range) endD = wd;
         }
         const end = _v3.set(ex + _v1.x * endD, ey + _v1.y * endD, ez + _v1.z * endD);
         if (Math.random() < TRACER_RATIO) this._spawnTracer(muzzle, end);   // 约 1/3 出曳光
@@ -683,7 +741,7 @@ export class EnemyManager {
             this.onEnemyFire(muzzle.clone(), end.clone());
         }
         if (hitPlayer) {
-            const dmg = STATS.dmgMin + Math.random() * (STATS.dmgMax - STATS.dmgMin);
+            const dmg = e.stats.dmgMin + Math.random() * (e.stats.dmgMax - e.stats.dmgMin);
             if (typeof this.onPlayerHit === 'function') {
                 this.onPlayerHit(dmg, muzzle.clone());
             } else if (this.player && typeof this.player.takeDamage === 'function') {
