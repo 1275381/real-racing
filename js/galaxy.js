@@ -422,8 +422,12 @@ function syncNamedPositions() {
     attr.needsUpdate = true;
 }
 
-/* ================= 6.5 太阳系（☀ 模式，位于太阳标记处） ================= */
-const SOLAR_VIEW_R = 46;
+/* ================= 6.5 太阳系（☀ 模式，位于太阳标记处） =================
+   尺寸按真实比例：整个太阳系相对银盘只是一个点（海王星轨道 ≈ 1.5 单位），
+   进入该模式后相机贴近到个位数量级观看。 */
+const SOLAR_SCALE = 0.05;       // 与银河的比例压缩（再大就会在银盘上明显可见）
+const SOLAR_VIEW_R = 2.4;       // 默认观看距离（约为海王星轨道的 1.6 倍）
+const MOON_ORBIT = 0.55 * SOLAR_SCALE;
 let solarGroup = null;
 const solarPickables = [];
 const solarBodies = []; // { holder, mesh, orbitR, speed, angle }
@@ -479,22 +483,30 @@ function buildSolarSystem() {
     solarGroup.visible = false;
     scene.add(solarGroup);
 
-    // 太阳本体（可点击）+ 辉光 + 光源
+    // 太阳本体（可点击）+ 辉光 + 光源 + 隐形点击代理（缩小后保证易点中）
+    const sunR = 1.9 * SOLAR_SCALE;
     const sunMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(1.9, 32, 24),
+        new THREE.SphereGeometry(sunR, 32, 24),
         new THREE.MeshBasicMaterial({ color: 0xffedb8 }));
-    sunMesh.userData.card = {
+    const sunCard = {
         name: '太阳', spec: 'G2V 黄矮星 · 太阳系中心',
         dist: '我们在这里', desc: NAMED_STARS[0].desc,
     };
+    sunMesh.userData.card = sunCard;
     solarGroup.add(sunMesh);
     solarPickables.push(sunMesh);
+    const sunProxy = new THREE.Mesh(
+        new THREE.SphereGeometry(sunR * 4, 8, 6),
+        new THREE.MeshBasicMaterial({ visible: false }));
+    sunProxy.userData.card = sunCard;
+    solarGroup.add(sunProxy);
+    solarPickables.push(sunProxy);
     const mkGlow = (s, o) => {
         const sp = new THREE.Sprite(new THREE.SpriteMaterial({
             map: glowTex, transparent: true, opacity: o,
             blending: THREE.AdditiveBlending, depthWrite: false,
         }));
-        sp.scale.setScalar(s);
+        sp.scale.setScalar(s * SOLAR_SCALE);
         solarGroup.add(sp);
     };
     mkGlow(9, 0.9);
@@ -503,6 +515,8 @@ function buildSolarSystem() {
     scene.add(new THREE.AmbientLight(0x2a3352, 0.9)); // 仅供行星标准材质
 
     for (const p of PLANETS) {
+        const oR = p.orbitR * SOLAR_SCALE;
+        const sz = p.size * SOLAR_SCALE;
         const orbit = new THREE.Group(); // 轨道面（小倾角）
         orbit.rotation.x = p.inc;
         solarGroup.add(orbit);
@@ -510,7 +524,7 @@ function buildSolarSystem() {
         const pts = [];
         for (let i = 0; i <= 128; i++) {
             const a = (i / 128) * Math.PI * 2;
-            pts.push(new THREE.Vector3(Math.cos(a) * p.orbitR, 0, Math.sin(a) * p.orbitR));
+            pts.push(new THREE.Vector3(Math.cos(a) * oR, 0, Math.sin(a) * oR));
         }
         orbit.add(new THREE.Line(
             new THREE.BufferGeometry().setFromPoints(pts),
@@ -521,26 +535,34 @@ function buildSolarSystem() {
         orbit.add(holder);
 
         const mesh = new THREE.Mesh(
-            new THREE.SphereGeometry(p.size, 28, 20),
+            new THREE.SphereGeometry(sz, 28, 20),
             new THREE.MeshStandardMaterial({ map: makePlanetTexture(p), roughness: 0.85, metalness: 0 }));
         mesh.userData.card = { name: p.name, spec: p.type, dist: `距太阳 ${p.au.toFixed(2)} AU`, desc: p.desc };
         holder.add(mesh);
         solarPickables.push(mesh);
 
+        // 隐形点击代理：放大命中范围，缩小后不用精确瞄准
+        const proxy = new THREE.Mesh(
+            new THREE.SphereGeometry(Math.max(sz * 3.5, 0.02), 8, 6),
+            new THREE.MeshBasicMaterial({ visible: false }));
+        proxy.userData.card = mesh.userData.card;
+        holder.add(proxy);
+        solarPickables.push(proxy);
+
         if (p.name === '土星') {
             const ring = new THREE.Mesh(
-                new THREE.RingGeometry(p.size * 1.5, p.size * 2.4, 64),
+                new THREE.RingGeometry(sz * 1.5, sz * 2.4, 64),
                 new THREE.MeshBasicMaterial({ color: 0xcbb98f, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
             ring.rotation.x = Math.PI / 2;
             holder.add(ring);
         }
         if (p.name === '地球') {
             moonPivot = new THREE.Mesh(
-                new THREE.SphereGeometry(0.075, 16, 12),
+                new THREE.SphereGeometry(0.075 * SOLAR_SCALE, 16, 12),
                 new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 1 }));
             holder.add(moonPivot);
         }
-        solarBodies.push({ holder, mesh, orbitR: p.orbitR, speed: (Math.PI * 2) / p.period, angle: Math.random() * Math.PI * 2 });
+        solarBodies.push({ holder, mesh, orbitR: oR, speed: (Math.PI * 2) / p.period, angle: Math.random() * Math.PI * 2 });
     }
 }
 
@@ -553,7 +575,7 @@ function updateSolar(dt) {
     }
     if (moonPivot) {
         moonAngle += dt * 2.4;
-        moonPivot.position.set(Math.cos(moonAngle) * 0.55, 0, Math.sin(moonAngle) * 0.55);
+        moonPivot.position.set(Math.cos(moonAngle) * MOON_ORBIT, 0, Math.sin(moonAngle) * MOON_ORBIT);
     }
 }
 
@@ -778,7 +800,7 @@ canvas.addEventListener('pointermove', (e) => {
         if (pinchD > 0 && d > 0) {
             const s = pinchD / d;
             if (ctrl.mode === 'inside') ctrl.fovTarget = clamp(ctrl.fovTarget * s, 30, 78);
-            else if (ctrl.mode === 'solar') ctrl.sph.radius = clamp(ctrl.sph.radius * s, 9, 160);
+            else if (ctrl.mode === 'solar') ctrl.sph.radius = clamp(ctrl.sph.radius * s, 0.35, 10);
             else ctrl.sph.radius = clamp(ctrl.sph.radius * s, 26, 560);
         }
         pinchD = d;
@@ -816,7 +838,7 @@ canvas.addEventListener('wheel', (e) => {
     if (ctrl.mode === 'inside') {
         ctrl.fovTarget = clamp(ctrl.fovTarget * Math.exp(e.deltaY * 0.0009), 30, 78);
     } else if (ctrl.mode === 'solar') {
-        ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 9, 160);
+        ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 0.35, 10);
     } else {
         ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 26, 560);
     }
