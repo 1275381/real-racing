@@ -211,6 +211,26 @@ const FALLBACK_CSS = `
 .hud-range-stats{right:26px;top:150px;text-align:right;font-size:14px;line-height:1.9;
   background:rgba(10,14,10,.55);border:1px solid rgba(216,222,210,.25);padding:8px 14px;
   font-variant-numeric:tabular-nums;display:none}
+.hud-danger-banner{left:50%;top:132px;transform:translateX(-50%);padding:5px 26px;
+  background:rgba(96,18,8,.6);border:1px solid rgba(255,116,64,.8);color:#ff9a6a;
+  font-size:13px;letter-spacing:.3em;animation:hudDangerPulse 1.5s ease-in-out infinite}
+.hud-danger-vignette{inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 58%,rgba(200,60,20,.28) 100%)}
+@keyframes hudDangerPulse{0%,100%{box-shadow:0 0 4px rgba(255,116,64,.2)}
+  50%{box-shadow:0 0 16px rgba(255,116,64,.65)}}
+.hud-bag{left:26px;bottom:70px;background:rgba(10,14,10,.55);
+  border:1px solid rgba(216,222,210,.25);padding:6px 10px 5px}
+.hud-bag-num{font-size:12px;letter-spacing:.12em;margin-bottom:4px;font-variant-numeric:tabular-nums}
+.hud-bag-pips{display:flex;gap:3px}
+.hud-bag-pip{width:8px;height:8px;background:rgba(216,222,210,.16);
+  border:1px solid rgba(216,222,210,.25)}
+.hud-bag-pip-full{background:#ffb35c;border-color:#ffb35c}
+.hud-weapon-slots{right:26px;bottom:136px;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.hud-wslot{display:flex;gap:8px;align-items:center;padding:4px 10px;background:rgba(10,14,10,.55);
+  border:1px solid rgba(216,222,210,.22);border-right:3px solid rgba(216,222,210,.22);
+  font-size:12px;letter-spacing:.08em}
+.hud-wslot-key{color:#7ee2a8}
+.hud-wslot-active{border-color:rgba(255,179,92,.85);border-right-color:#ffb35c;color:#ffd9a3}
 `;
 
 /* ==== 3. 罗盘刻度条：Canvas 程序化生成（零外部资源） ==== */
@@ -262,6 +282,7 @@ export class HUD {
         this.menuVisible = false;
         this.resultVisible = false;
         this.helpVisible = false;
+        this.uiBlocked = false;      // 大厅盖场时屏蔽 H/Tab 全局键（M 静音保留）
         this._menuIdx = 0;
 
         // 衰减效果统一用 performance.now() 时间戳，update(dt) 不调也不致卡死
@@ -307,16 +328,28 @@ export class HUD {
             helpOverlay: 'hud-help-overlay', reloadHint: 'hud-reload-hint',
         };
         this.dom = {};
-        for (const [id, cls] of Object.entries(MAP)) {
-            let el = document.getElementById(id);
+        /* 真实 html id 规约（fps.html / interfaces 29 id 冻结清单）：
+         * 句柄名 camel → kebab；已带 hud- 前缀的（hudRoot→hud-root）不重复加，
+         * 其余补 'hud-'（ammoCur→hud-ammo-cur），按钮本就是 camel（btnMission…）。
+         * 此前 getElementById(句柄名) 对 25 个 hud-* 全部落空 → 静默走补建分支
+         * 克隆出一整套影子 HUD（id="ammoCur" 等），且补建的 hudRoot 从未挂进
+         * body——整棵子树 detached，每帧弹药/危险警示/血量全部写进不可见节点，
+         * 页面停留 fps.html 原生壳初值（30/150）。BUG#2 根因，特此修正。 */
+        const htmlId = (k) => {
+            if (k.startsWith('btn')) return k;
+            const kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            return kebab.startsWith('hud-') ? kebab : 'hud-' + kebab;
+        };
+        for (const [key, cls] of Object.entries(MAP)) {
+            const hid = htmlId(key);
+            let el = document.getElementById(hid);
             if (!el) {
-                console.warn(`[HUD] fps.html 缺少 #${id}，已自动补建（建议集成者补进页面）`);
-                el = document.createElement(id === 'btnMission' || id === 'btnRange'
-                    || id === 'btnRetry' || id === 'btnMenu' ? 'button' : 'div');
-                el.id = id;
+                console.warn(`[HUD] fps.html 缺少 #${hid}，已自动补建（建议集成者补进页面）`);
+                el = document.createElement(key.startsWith('btn') ? 'button' : 'div');
+                el.id = hid;
             }
             el.classList.add(cls);
-            this.dom[id] = el;
+            this.dom[key] = el;
         }
         // 归位：真实 DOM 本就在这些父级里（append 幂等无害）；补建场景保证嵌套正确
         const D = this.dom;
@@ -417,6 +450,26 @@ export class HUD {
         this._detail = ensure(D.hudRoot, 'div', 'hud-objective-detail');
         this._rangeStats = ensure(D.hudRoot, 'div', 'hud-range-stats');
 
+        // 危险区警示（横幅 + 边缘渐晕，mission → setDanger 控制）/ 背包格 / 武器槽
+        // （【大厅】组新增 HUD 分区；样式见 FALLBACK_CSS，可被 css/fps.css 覆盖）
+        this._dangerBanner = ensure(D.hudRoot, 'div', 'hud-danger-banner', '');
+        this._dangerBanner.style.display = 'none';
+        this._dangerVig = ensure(D.hudRoot, 'div', 'hud-danger-vignette');
+        this._dangerVig.style.display = 'none';
+        this._bagBox = ensure(D.hudRoot, 'div', 'hud-bag');
+        this._bagNum = ensure(this._bagBox, 'div', 'hud-bag-num', '背包 0/12');
+        this._bagPips = ensure(this._bagBox, 'div', 'hud-bag-pips');
+        this._bagCap = 0;
+        this._bagPipEls = [];
+        this._wslots = ensure(D.hudRoot, 'div', 'hud-weapon-slots');
+        this._wslotEls = [0, 1].map((i) => {
+            const s = ensure(this._wslots, 'div', 'hud-wslot');
+            ensure(s, 'span', 'hud-wslot-key', i === 0 ? '1' : '2');
+            ensure(s, 'span', 'hud-wslot-name', '——');
+            return s;
+        });
+        this.setBag([], 12);
+
         // 主菜单：给补建场景注入按钮文字与键位说明；真实 DOM 有按钮则只补键位说明
         if (!D.btnMission.textContent) D.btnMission.textContent = '1 · 行动模式（获取情报 → 撤离）';
         if (!D.btnRange.textContent) D.btnRange.textContent = '2 · 靶场模式（练枪 · 计分）';
@@ -427,9 +480,17 @@ export class HUD {
         const keys = ensure(D.menuRoot, 'div', 'hud-menu-keys');
         keys.textContent = [
             '移动 W/A/S/D · 疾跑 Shift · 蹲伏 C · 跳跃 Space',
-            '开火 鼠标左键 · 机瞄 右键/Q · 换弹 R · 交互 按住 F',
+            '开火 左键 · 开镜 右键/Q · 换弹 R · 切枪 1/2 · 搜索/互动 按住 F',
+            '暂停菜单 1 重开行动 · 2 重开靶场 · 3 放弃行动（视同阵亡） · Esc 恢复',
             '静音 M · 键位帮助 H · 目标详情 按住 Tab',
         ].join('\n');
+        // 说明文字固定在前，按钮（含 fps.html 静态追加的「3 · 放弃行动」）按
+        // DOM 相对顺序统一排到其后——collectDom 的 append 移位不会打散排版
+        const _menuBtns = Array.from(D.menuRoot.querySelectorAll('button'));
+        [D.menuRoot.querySelector('.hud-menu-title'),
+            D.menuRoot.querySelector('.hud-menu-sub'), keys]
+            .forEach((el) => el && D.menuRoot.appendChild(el));
+        _menuBtns.forEach((b) => D.menuRoot.appendChild(b));
         D.btnMission.addEventListener('click', () => this._fireSelect(0));
         D.btnRange.addEventListener('click', () => this._fireSelect(1));
         D.btnRetry.addEventListener('click', () => this.onRetry && this.onRetry());
@@ -462,10 +523,16 @@ export class HUD {
             }
             if (this.resultVisible) {
                 if (code === 'KeyR') { this.ui.beep(660, 0.06, 0.15); this.onRetry && this.onRetry(); return; }
+                if (code === 'Enter' || code === 'NumpadEnter') {   // 结算回车 = 回大厅（extractFlow）
+                    this.ui.beep(440, 0.06, 0.12);
+                    this.onBackToMenu && this.onBackToMenu();
+                    return;
+                }
                 if (code === 'Escape') { this.ui.beep(440, 0.06, 0.12); this.onBackToMenu && this.onBackToMenu(); return; }
             }
-            if (code === 'KeyH') { this.showHelp(!this.helpVisible); }
-            else if (code === 'KeyM') { this.toggleMute(); }
+            if (code === 'KeyM') { this.toggleMute(); }               // 静音：全局保留
+            else if (this.uiBlocked) { /* 大厅盖场：H/Tab 不转发（lobby.show 置位） */ }
+            else if (code === 'KeyH') { this.showHelp(!this.helpVisible); }
             else if (code === 'Tab') {
                 e.preventDefault();
                 this._detail.style.display = 'block';
@@ -702,11 +769,15 @@ export class HUD {
         D.resultTitle.classList.toggle('hud-win', !!win);
         D.resultTitle.classList.toggle('hud-lose', !win);
         D.resultStats.innerHTML = '';
-        const rows = [
-            ['击杀', `${kills ?? 0}`],
-            ['命中率', `${acc.toFixed(1)}%`],
-            ['用时', `${mm}:${String(ss).padStart(2, '0')}`],
-        ];
+        // extraRows（[[label, value], ...]）非空时整体替换默认三行（撤离结算用：
+        // 带出价值/情报奖金/击杀/命中率/评级 等由调用方自由拼装）
+        const rows = (Array.isArray(arg.extraRows) && arg.extraRows.length)
+            ? arg.extraRows
+            : [
+                ['击杀', `${kills ?? 0}`],
+                ['命中率', `${acc.toFixed(1)}%`],
+                ['用时', `${mm}:${String(ss).padStart(2, '0')}`],
+            ];
         rows.forEach(([k, v]) => {
             const line = document.createElement('div');
             line.textContent = `${k}　${v}`;
@@ -736,13 +807,17 @@ export class HUD {
             const b = document.createElement('div');
             b.className = 'hud-help-body';
             b.textContent = [
+                '大厅　1/2/3 切换 出发/仓库/改枪台　·　G 去靶场试枪',
+                '出发页　←/→ 选择 · 回车 确认/出发　　仓库　↑↓←→ 选格 · 回车 变卖',
+                '改枪台　←→ 换列 · ↑↓ 选项 · 回车 购买/换装/卸下（瞄具单持）',
                 '移动　W/A/S/D　　疾跑　Shift（按住，禁开火）',
-                '蹲伏　C（切换）　跳跃　Space',
+                '蹲伏　C（切换）　跳跃　Space　　切枪　1 主武器 / 2 副武器',
                 '视角　点击画面锁定鼠标；?test=1 时鼠标滑过画面即转向 + ←→↑↓',
-                '开火　鼠标左键（全自动）　机瞄　右键按住 / Q 切换',
-                '换弹　R（自动判定战术/空仓）　交互　按住 F',
+                '开火　鼠标左键（全自动）　开镜　右键按住 / Q 切换',
+                '换弹　R（自动判定战术/空仓）　搜索/互动　按住 F',
                 '静音　M　　帮助　H　　目标详情　按住 Tab',
-                '靶场：长按 R 0.5s 重置全场　·　结算页：R 重开 / Esc 回菜单',
+                '暂停 Esc：1 重开行动 / 2 重开靶场 / 3 放弃行动 / Esc 恢复',
+                '靶场：长按 R 0.5s 重置全场　·　结算页：回车回大厅 / R 同图再战',
             ].join('\n');
             D.helpOverlay.append(t, b);
         }
@@ -764,10 +839,12 @@ export class HUD {
         this._briefTimer = setTimeout(() => { this._brief.style.display = 'none'; }, dur);
     }
 
-    toast(text, dur = 3000) {
+    // color（可选）：品质色描边+文字（拾取战利品 toast 用，如 loot.RARITY[i].color）
+    toast(text, dur = 3000, color) {
         const t = document.createElement('div');
         t.className = 'hud-toast';
         t.textContent = text;
+        if (color) { t.style.borderColor = color; t.style.color = color; }
         this.dom.toastBox.appendChild(t);
         while (this.dom.toastBox.children.length > 4) this.dom.toastBox.removeChild(this.dom.toastBox.firstChild);
         setTimeout(() => { t.style.transition = 'opacity .4s'; t.style.opacity = '0'; }, dur - 400);
@@ -800,6 +877,50 @@ export class HUD {
 
     hideRangeStats() {
         this._rangeStats.style.display = 'none';
+    }
+
+    /* ---------- 4.10b 大厅组新增 HUD 分区（样式见 FALLBACK_CSS / css/fps.css） ---------- */
+
+    // 危险区警示：true = 进入高危战区（横幅 + 边缘渐晕），false = 离开
+    setDanger(on) {
+        this._dangerBanner.textContent = '⚠ 高危战区 · 敌方精锐出没';
+        this._dangerBanner.style.display = on ? 'block' : 'none';
+        this._dangerVig.style.display = on ? 'block' : 'none';
+    }
+
+    // 背包格数：items 数组（取 length）或直接传数量；cap 默认 12（Backpack 容量）
+    setBag(items, cap = 12) {
+        const n = Array.isArray(items) ? items.length : Math.max(0, items | 0);
+        const c = Math.max(1, cap | 0);
+        if (this._bagCap !== c) {   // 容量变化才重建格点（每帧调用零 DOM 抖动）
+            this._bagCap = c;
+            this._bagPips.innerHTML = '';
+            this._bagPipEls = [];
+            for (let i = 0; i < c; i++) {
+                const p = document.createElement('span');
+                p.className = 'hud-bag-pip';
+                this._bagPips.appendChild(p);
+                this._bagPipEls.push(p);
+            }
+        }
+        this._bagPipEls.forEach((p, i) => p.classList.toggle('hud-bag-pip-full', i < n));
+        this._bagNum.textContent = `背包 ${n}/${c}`;
+    }
+
+    // 武器槽：{primary, secondary, active}；primary/secondary 传展示名或 {name}；
+    // active 传 0/1 或 'primary'/'secondary'（gunview.onSwitch → main 转喂）
+    setWeaponSlots(slots) {
+        const s = slots || {};
+        const label = (g) => g == null ? '——'
+            : (typeof g === 'string' ? g : (g.name || g.id || '——'));
+        const act = s.active === 'primary' ? 0
+            : s.active === 'secondary' ? 1
+                : (typeof s.active === 'number' ? s.active : -1);   // 缺省不高亮
+        const names = [label(s.primary), label(s.secondary)];
+        this._wslotEls.forEach((el, i) => {
+            el.querySelector('.hud-wslot-name').textContent = names[i];
+            el.classList.toggle('hud-wslot-active', act === i);
+        });
     }
 
     /* ---------- 4.11 每帧刷新 / 销毁 ---------- */

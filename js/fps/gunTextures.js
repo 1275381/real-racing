@@ -1,7 +1,17 @@
 import * as THREE from 'three';
 import { normalFromCanvas } from './normalmap.js';
 
-/* ==== 1. Canvas 工具（照 js/textures.js 先例：全部程序化生成，零外部资源） ==== */
+/* =====================================================================
+   js/fps/gunTextures.js —— 枪械程序化材质（【枪械】组，零外部资源）
+   gunMaterials(tint?)：tint = { receiver, polymer, mag, wood }（hex 串或 null）
+   → 返回该配色的材质包（receiver/barrel/polymer/mag/bolt/brass/wood 七材质）。
+   ① 空参 = 默认配色（与旧版逐像素一致，弹壳池等旧调用点不受影响）；
+   ② 每个 tint 一套缓存：着色差异通过「重生成 albedo 底色」实现
+     （深色底贴图乘 color 只会更暗，银灰/墨绿必须换底色画布）；
+   ③ 粗糙度/法线/黄铜贴图与配色无关，全局只生成一次共享。
+   ===================================================================== */
+
+/* ==== 1. Canvas 工具（照 js/textures.js 先例） ==== */
 
 function canvas(w, h) {
     const c = document.createElement('canvas');
@@ -47,11 +57,11 @@ function scratches(g, S, count, style, width, alpha) {
 
 /* ==== 2. 各部件贴图（写实度评审 #4：关键贴图 512 + 亮度法线） ==== */
 
-/* 机匣金属：枪灰底 + 磨砂颗粒 + 使用划痕（512） */
-function metalAlbedo() {
+/* 机匣金属：base 底色 + 磨砂颗粒 + 使用划痕（512） */
+function metalAlbedo(base = '#33363b') {
     const S = 512;
     const [c, g] = canvas(S, S);
-    g.fillStyle = '#33363b';
+    g.fillStyle = base;
     g.fillRect(0, 0, S, S);
     grain(g, S, 20000, 60, 105, 0.10, 1.6);
     scratches(g, S, 80, '#c2c8d0', 1.1, 0.10);
@@ -68,7 +78,7 @@ function metalAlbedo() {
     return c;
 }
 
-/* 金属磨砂粗糙度：中高粗糙底 + 划痕处磨亮（低粗糙）（512） */
+/* 金属磨砂粗糙度：中高粗糙底 + 划痕处磨亮（512） */
 function metalRough() {
     const S = 512;
     const [c, g] = canvas(S, S);
@@ -80,11 +90,11 @@ function metalRough() {
     return c;
 }
 
-/* 聚合物（护木/枪托/握把）：深灰底 + 防滑点纹 + 纤维微粒（512） */
-function polymerAlbedo() {
+/* 聚合物（护木/枪托/握把）：base 底色 + 防滑点纹 + 纤维微粒（512） */
+function polymerAlbedo(base = '#232528') {
     const S = 512;
     const [c, g] = canvas(S, S);
-    g.fillStyle = '#232528';
+    g.fillStyle = base;
     g.fillRect(0, 0, S, S);
     // 防滑纹：错排点阵
     for (let y = 0; y < S; y += 7) {
@@ -127,7 +137,33 @@ function steelAlbedo() {
     return c;
 }
 
-/* 黄铜弹壳：铜黄底 + 纵向拉丝 */
+/* 木托（霰弹枪）：base 木色 + 纵向木纹条 + 导管点（512） */
+function woodAlbedo(base = '#5a3d24') {
+    const S = 512;
+    const [c, g] = canvas(S, S);
+    g.fillStyle = base;
+    g.fillRect(0, 0, S, S);
+    for (let y = 0; y < S; y += 3) {           // 纵向木纹：明暗交替长条
+        const l = Math.random();
+        g.fillStyle = l > 0.5
+            ? `rgba(122,86,52,${0.10 + Math.random() * 0.16})`
+            : `rgba(40,24,12,${0.10 + Math.random() * 0.18})`;
+        g.fillRect(0, y, S, 1 + Math.random() * 2);
+    }
+    for (let i = 0; i < 26; i++) {             // 导管弧纹
+        g.strokeStyle = `rgba(34,20,10,${0.10 + Math.random() * 0.14})`;
+        g.lineWidth = 0.8 + Math.random();
+        const x0 = Math.random() * S, y0 = Math.random() * S;
+        g.beginPath();
+        g.moveTo(x0, y0);
+        g.bezierCurveTo(x0 + 40, y0 + 14, x0 + 110, y0 - 12, x0 + 190, y0 + 6);
+        g.stroke();
+    }
+    grain(g, S, 9000, 70, 115, 0.07, 1.3);
+    return c;
+}
+
+/* 黄铜弹壳：铜黄底 + 纵向拉丝（128，配色无关，只生成一次） */
 function brassAlbedo() {
     const S = 128;
     const [c, g] = canvas(S, S);
@@ -144,59 +180,83 @@ function brassAlbedo() {
     return c;
 }
 
-/* ==== 3. 单例材质包：gunMaterials() 返回六个 MeshStandardMaterial（缓存） ==== */
+/* ==== 3. 材质包：gunMaterials(tint?) —— 每个 tint 一套（缓存），空参=默认 ==== */
 
-let _cache = null;
+let _common = null;              // 配色无关贴图（粗糙度/法线/黄铜），全局一次
+const _tintCache = new Map();    // tintKey → 材质包
 
-export function gunMaterials() {
-    if (_cache) return _cache;
-    const mA_c = metalAlbedo();
-    const mR_c = metalRough();
-    const pA_c = polymerAlbedo();
-    const pR_c = polymerRough();
-    const sA_c = steelAlbedo();
-    const bA_c = brassAlbedo();
-    const mA = toTex(mA_c, true);
-    const mR = toTex(mR_c, false);      // 粗糙度贴图保持线性
-    const pA = toTex(pA_c, true);
-    const pR = toTex(pR_c, false);
-    const sA = toTex(sA_c, true);
-    const bA = toTex(bA_c, true);
-    /* 法线贴图：albedo 亮度当高度场求差分法线（磨砂颗粒/车削纹/防滑点起浮雕） */
-    const mN = toTex(normalFromCanvas(mA_c, 1.7), false);
-    const pN = toTex(normalFromCanvas(pA_c, 1.3), false);
-    const sN = toTex(normalFromCanvas(sA_c, 2.2), false);   // 车削横纹 → 细环脊
+/* 通用贴图惰性生成：金属/聚合物粗糙度、默认 albedo 派生法线、黄铜 */
+function common() {
+    if (_common) return _common;
+    const mRough_c = metalRough();
+    const pRough_c = polymerRough();
+    const mR = toTex(mRough_c, false);          // 粗糙度贴图保持线性
+    const pR = toTex(pRough_c, false);
+    /* 法线贴图：以默认 albedo 亮度为高度场求差分（磨砂颗粒/车削纹/防滑点起
+     * 浮雕；配色换底不换纹理，法线全局共享） */
+    const mN = toTex(normalFromCanvas(metalAlbedo(), 1.7), false);
+    const pN = toTex(normalFromCanvas(polymerAlbedo(), 1.3), false);
+    const sN = toTex(normalFromCanvas(steelAlbedo(), 2.2), false);
+    const bA = toTex(brassAlbedo(), true);
+    _common = { mR, pR, mN, pN, sN, bA };
+    return _common;
+}
+
+/* tint → 缓存键（null/undefined/非对象都归默认） */
+function tintKey(tint) {
+    if (!tint || typeof tint !== 'object') return '';
+    return JSON.stringify(tint);
+}
+
+export function gunMaterials(tint = null) {
+    const key = tintKey(tint);
+    if (_tintCache.has(key)) return _tintCache.get(key);
+    const t = (tint && typeof tint === 'object') ? tint : {};
+    const C = common();
+
+    /* 各 tint 重画的 albedo（底色差异）；未指定用默认底色 = 旧版外观 */
+    const mA = toTex(metalAlbedo(t.receiver || '#33363b'), true);
+    const pA = toTex(polymerAlbedo(t.polymer || '#232528'), true);
+    const sA = toTex(steelAlbedo(), true);
+    const wA = toTex(woodAlbedo(t.wood || '#5a3d24'), true);
     const ns = (x) => new THREE.Vector2(x, x);
-    _cache = {
-        // 机匣：深色铝合金 anodized，高金属度 + 磨砂
+
+    const pack = {
+        // 机匣：anodized 铝合金，高金属度 + 磨砂
         receiverMat: new THREE.MeshStandardMaterial({
-            map: mA, roughnessMap: mR, roughness: 1.0, metalness: 0.85,
-            normalMap: mN, normalScale: ns(0.55),
+            map: mA, roughnessMap: C.mR, roughness: 1.0, metalness: 0.85,
+            normalMap: C.mN, normalScale: ns(0.55),
         }),
-        // 枪管/消焰器：深钢，更高金属度
+        // 枪管/消焰器：深钢，更高金属度（所有枪统一深钢灰）
         barrelMat: new THREE.MeshStandardMaterial({
-            map: sA, roughnessMap: mR, roughness: 1.0, metalness: 0.95,
-            normalMap: sN, normalScale: ns(0.65),
+            map: sA, roughnessMap: C.mR, roughness: 1.0, metalness: 0.95,
+            normalMap: C.sN, normalScale: ns(0.65),
         }),
         // 聚合物：护木/枪托/握把，低反光
         polymerMat: new THREE.MeshStandardMaterial({
-            map: pA, roughnessMap: pR, roughness: 1.0, metalness: 0.05,
-            normalMap: pN, normalScale: ns(0.5),
+            map: pA, roughnessMap: C.pR, roughness: 1.0, metalness: 0.05,
+            normalMap: C.pN, normalScale: ns(0.5),
         }),
-        // 弹匣：同聚合物贴图 + 橄榄色染色
+        // 弹匣：聚合物贴图 + tint.mag 染色（默认橄榄色 = 旧版）
         magMat: new THREE.MeshStandardMaterial({
-            map: pA, roughnessMap: pR, roughness: 1.0, metalness: 0.05,
-            color: 0xb8bfa6, normalMap: pN, normalScale: ns(0.45),
+            map: pA, roughnessMap: C.pR, roughness: 1.0, metalness: 0.05,
+            color: new THREE.Color(t.mag || '#b8bfa6'),
+            normalMap: C.pN, normalScale: ns(0.45),
         }),
-        // 枪机/拉栓/小件：亮钢（无 albedo 贴图，纯色 + 粗糙度贴图）
+        // 枪机/拉栓/小件：亮钢（纯色 + 粗糙度贴图）
         boltMat: new THREE.MeshStandardMaterial({
-            color: 0x9aa1a9, roughnessMap: mR, roughness: 1.0, metalness: 1.0,
-            normalMap: mN, normalScale: ns(0.4),
+            color: 0x9aa1a9, roughnessMap: C.mR, roughness: 1.0, metalness: 1.0,
+            normalMap: C.mN, normalScale: ns(0.4),
         }),
-        // 黄铜弹壳
+        // 黄铜弹壳（配色无关，全局同一份贴图）
         brassMat: new THREE.MeshStandardMaterial({
-            map: bA, roughness: 0.32, metalness: 1.0
+            map: C.bA, roughness: 0.32, metalness: 1.0
+        }),
+        // 木托（霰弹枪，tint.wood 底色）
+        woodMat: new THREE.MeshStandardMaterial({
+            map: wA, roughness: 0.55, metalness: 0.0,
         }),
     };
-    return _cache;
+    _tintCache.set(key, pack);
+    return pack;
 }

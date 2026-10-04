@@ -1,9 +1,15 @@
 import * as THREE from 'three';
-import { RIFLE, buildRifle } from './gun.js';
+import { GUNS, gunById } from './gunsData.js';
+import { SCOPES, buildScopeMesh, ScopeOverlay } from './scopes.js';
+import { buildGunMesh } from './gun.js';
 import { gunMaterials } from './gunTextures.js';
 import { buildHand } from './hands.js';
 
 /* GunView：第一人称 viewmodel + 射击循环 + 后坐力 + 换弹状态机 + 世界空间特效池
+ * 多枪化（【枪械】组）：setLoadout({primary,secondary,scopes}) 装配、switchSlot(0|1)
+ * 主副切枪（0.45s 收抬枪动画，过半换模回满该枪弹）、per-gun 弹药账本、
+ * 全部枪械数值读 this._g（gunsData.js 五枪表，21 处 RIFLE.* 已参数化）；
+ * 瞄具经 scopes.js 挂镜模 + ScopeOverlay 高倍分划，FOV=baseFov/zoom（onfoot.gd:780）。
  * 渲染约定：自建 vmScene + vmCamera(FOV 55，恒等位姿挂载)——viewmodel 只进
  * vmScene；main.js 每帧双 pass：render(scene,camera) → clearDepth →
  * render(vmScene,vmCamera)。vmCamera 在 vmScene 中保持原点位姿，因此枪在
@@ -27,10 +33,12 @@ const ADS_TARGET = new THREE.Vector3(0, -0.006, -0.46);
 /* 新弹匣入场：起点 ≈ 画面右下 (0.35,-0.45,-0.35)（相机空间）折算到枪本地（腰射位） */
 const GRAB_OFF = new THREE.Vector3(0.18, -0.30, 0.08);
 
-/* 换弹双手关键帧（枪本地系；写实度评审 #2）：
+/* 换弹双手关键帧基位（枪本地系；写实度评审 #2；数值=步枪档）：
  * 左手：藏位(画面左下外) → 抓旧匣(贴井口，随匣下滑) → 带离(左下出画) →
  *       随新匣入画(骑在 _grabMag 上) → 拍合后回握护木；
- * 右手：常握握把；空仓拉栓段移到枪机后端随 bolt 后拉。 */
+ * 右手：常握握把；空仓拉栓段移到枪机后端随 bolt 后拉。
+ * 多枪适配：grip/guard/bolt/well 四位被各枪 gun.userData.hands 覆盖
+ * （gun.js 每枪自带手位），LH_HIDE/LH_EXIT 出入画位各枪通用。 */
 const LH_HIDE = { p: new THREE.Vector3(-0.14, -0.30, 0.12), r: [0.3, Math.PI, -0.3] };
 const LH_WELL = { p: new THREE.Vector3(0.0, -0.075, 0.058), r: [0.25, Math.PI, -0.12] };
 const LH_EXIT = { p: new THREE.Vector3(-0.13, -0.25, 0.10), r: [0.45, Math.PI, -0.35] };
@@ -42,21 +50,25 @@ const RH_BOLT = { p: new THREE.Vector3(0.024, 0.078, 0.20), r: [Math.PI / 2, -0.
 /* 曳光占比（写实度评审 #5）：真实交战约 1/4~1/5，其余只留弹着与抛壳 */
 const TRACER_EVERY = 4;
 
-/* 换弹时间轴（reloadTimeline 规格；弹药生效/开火解锁挂绝对秒点） */
-const TACTICAL_TL = {
-    rollIn: 0.25, rollOut: 1.15, end: RIFLE.reloadTactical,
+/* 换弹时间轴基表（rifle 档绝对秒点；其他枪按 reloadTactical/Empty 比例整体缩放，
+ * 见 _tlFor()——节奏手感一致，长短随枪）。 */
+const TACTICAL_TL0 = {
+    rollIn: 0.25, rollOut: 1.15, end: 1.8,
     slideStart: 0.10, magOutAt: 0.25,
     grabStart: 0.45, grabEnd: 0.95, seatEnd: 1.15, ammoAt: 1.15,
     fireUnlock: 1.30, rollDeg: 24, dropY: 0.06,
     boltStart: 0, boltEnd: 0, boltRelEnd: 0, boltBackSnd: 0, boltFwdSnd: 0
 };
-const EMPTY_TL = {
-    rollIn: 0.30, rollOut: 1.55, end: RIFLE.reloadEmpty,
+const EMPTY_TL0 = {
+    rollIn: 0.30, rollOut: 1.55, end: 2.6,
     slideStart: 0.15, magOutAt: 0.30,
     grabStart: 0.50, grabEnd: 1.05, seatEnd: 1.25, ammoAt: 1.25,
     fireUnlock: 1.80, rollDeg: 28, dropY: 0.08,
     boltStart: 1.25, boltEnd: 1.45, boltRelEnd: 1.55, boltBackSnd: 1.30, boltFwdSnd: 1.50
 };
+
+/* 切枪动画时长（收枪下摆→过半换模→抬枪）与栓动/套筒循环时长 */
+const SWITCH_TIME = 0.45;
 
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 function moveToward(v, t, d) { return v < t ? Math.min(v + d, t) : Math.max(v - d, t); }
@@ -127,11 +139,36 @@ export class GunView {
         this.audio = audio || null;
         this._groundFn = typeof ground === 'function' ? ground : null;
 
+        /* ---- 多枪状态（接口新增；默认装弹=旧行为：步枪 30+150） ---- */
+        this._loadout = { primary: 'rifle', secondary: 'pistol', scopes: {} };
+        this._slot = 0;                 // 0=主武器 1=副武器
+        this._gId = 'rifle';            // 当前枪 id（只读，经 currentGunId 暴露）
+        this._g = GUNS.rifle;           // 当前枪数值表（21 处 RIFLE.* 参数化的落点）
+        this._built = {};               // id → {root,parts} 建模缓存（切枪免重建）
+        this._gunState = {              // 每枪弹药状态（切枪各自保账）
+            rifle: { ammo: GUNS.rifle.mag, reserve: 150 },
+            pistol: { ammo: GUNS.pistol.mag, reserve: GUNS.pistol.mag * 5 },
+        };
+        this.onSwitch = null;           // (slot, gunId) => {}——切枪/装配完成回调
+        this._switchT = -1;             // 切枪动画时钟（-1=空闲）
+        this._switchToId = null;
+        this._switchSwapped = false;
+        this._zoom = 1;                 // 当前瞄具倍率（iron=1；FOV=baseFov/zoom）
+        this._scope = SCOPES.iron;
+        this._scopeKind = 'iron';
+        this._scopeMesh = null;
+        this._scopeLine = null;
+        this._slideT = -1;              // 手枪套筒循环时钟
+        this._boltAnimT = -1;           // 栓动枪机循环时钟
+        this._boltSndBack = false;
+        this._boltSndFwd = false;
+        this.overlay = new ScopeOverlay();   // 高倍镜 DOM 分划（自注入）
+
         /* ---- 公开状态（接口约定字段） ---- */
         this.recoilPitch = 0;           // rad，内部自衰减，Player 每帧读取合成相机
         this.recoilYaw = 0;
         this.adsAmount = 0;             // 0..1
-        this.ammo = RIFLE.mag;
+        this.ammo = this._g.mag;
         this.reserve = 150;             // 5 个弹匣（接口未规定初值，可 resetAmmo 覆盖）
         this.reloading = false;
         this.reloadKind = null;         // 'tactical' | 'empty' | null
@@ -156,14 +193,14 @@ export class GunView {
         this.vmScene.add(rim);
         this._rimLight = rim;
 
-        /* ---- 程序化步枪 + 持枪挂点 ---- */
-        const built = buildRifle();
+        /* ---- 程序化枪库 + 持枪挂点（多枪：经 _installGun 统一装配） ---- */
+        const built = this._buildGun('rifle');
         this.gun = built.root;
         this.parts = built.parts;
         this.holder = new THREE.Group();
         this.vmCamera.add(this.holder);
         this.holder.add(this.gun);
-        /* ADS 位 = 让机瞄线（root.userData.sight）贴到 ADS_TARGET（屏幕正中偏下） */
+        /* ADS 位 = 让瞄准线（机瞄 sight 或瞄具 _scopeLine）贴到 ADS_TARGET（屏幕正中偏下） */
         const s = this.gun.userData.sight;
         this._adsPos = new THREE.Vector3(0, ADS_TARGET.y - s.y, ADS_TARGET.z - s.z);
         this._magHome = this.parts.mag.position.clone();
@@ -173,15 +210,17 @@ export class GunView {
         this._grabMag.name = 'magGrab';
         this._grabMag.visible = false;
         this.gun.add(this._grabMag);
+        this._mountScope();             // 默认步枪=机瞄：只归一路径
 
         /* ---- 换弹双手（写实度评审 #2）：右手常握握把，左手换弹期入画 ---- */
+        this._P = this._makePoses();    // 双手关键位（随枪型覆盖）
         this.leftHand = buildHand(-1).root;
         this.leftHand.visible = false;
         this.gun.add(this.leftHand);
-        this._poseHand(this.leftHand, LH_HIDE);
+        this._poseHand(this.leftHand, this._P.LH_HIDE);
         this.rightHand = buildHand(1).root;
         this.gun.add(this.rightHand);
-        this._poseHand(this.rightHand, RH_GRIP);
+        this._poseHand(this.rightHand, this._P.RH_GRIP);
 
         /* ---- vm 枪口火光（写实度评审 #8 双层）：外层大 glow 三片 + 内层花瓣白核 ---- */
         const fTex = muzzleFlashTexture();
@@ -228,6 +267,8 @@ export class GunView {
         this._time = 0;
         this._nextFire = 0;
         this._dryLatched = false;
+        this._semiLatch = false;       // 半自动/栓动单发闩
+        this._aggHead = false;
         this._adsHold = false;
         this._raycast = null;
         this._reloadT = 0;
@@ -277,6 +318,225 @@ export class GunView {
 
     setAds(hold) { this._adsHold = !!hold; }
 
+    /* ==== 2.1a 多枪：装配 / 切换 / 瞄具（接口新增） ==== */
+
+    /* 只读：当前槽位 0=主 1=副 与当前枪 id */
+    get slot() { return this._slot; }
+    get currentGunId() { return this._gId; }
+
+    /* 大厅出发装配：{primary, secondary, scopes:{gunId:scopeId|null}}。
+     * 每枪弹药重置为满匣 + mag×5 备弹（接口弹药规则）；
+     * 默认槽位 0（主武器）；完成后回调 onSwitch 供 HUD 刷武器槽。 */
+    setLoadout({ primary, secondary, scopes } = {}) {
+        const p = (primary && GUNS[primary]) ? primary : 'rifle';
+        const s = (secondary && GUNS[secondary]) ? secondary : 'pistol';
+        this._loadout = { primary: p, secondary: s, scopes: Object.assign({}, scopes || {}) };
+        this._gunState = {
+            [p]: { ammo: GUNS[p].mag, reserve: GUNS[p].mag * 5 },
+            [s]: { ammo: GUNS[s].mag, reserve: GUNS[s].mag * 5 },
+        };
+        this._installGun(p, 0, true);
+        if (this.onSwitch) this.onSwitch(this._slot, this._gId);
+    }
+
+    /* 局内主副切枪（0.45s 动画：收枪下摆 → 过半换模回满该枪弹 → 抬枪）。
+     * 同槽/切枪中/无该槽返回 false。 */
+    switchSlot(slot) {
+        const target = slot === 1 ? 1 : 0;
+        if (target === this._slot) return false;
+        if (this._switchT >= 0) return false;
+        const toId = target === 0 ? this._loadout.primary : this._loadout.secondary;
+        if (!toId || toId === this._gId) return false;
+        this._switchToId = toId;
+        this._switchT = 0;
+        this._switchSwapped = false;
+        /* 切枪打断换弹（不扣备弹，视觉复位） */
+        if (this.reloading) {
+            this.reloading = false;
+            this.reloadKind = null;
+            this.reloadProgress = 0;
+            this._rollK = 0;
+            this._tiltK = 0;
+            this.parts.mag.visible = true;
+            this.parts.mag.position.copy(this._magHome);
+            this._grabMag.visible = false;
+            this.leftHand.visible = false;
+        }
+        return true;
+    }
+
+    /* 建模缓存（切回免重建几何） */
+    _buildGun(id) {
+        if (!this._built[id]) this._built[id] = buildGunMesh(id);
+        return this._built[id];
+    }
+
+    /* 换装枪体：换 mesh/新匣克隆/home/ADS 位/手位/特效挂点/弹药账本全量随枪重建。
+     * instant=true（装配）直接就位；false（切枪过半）配合 _updateSwitch 抬枪段。 */
+    _installGun(id, slot, instant = false) {
+        if (!this._gunState[id]) {
+            this._gunState[id] = { ammo: gunById(id).mag, reserve: gunById(id).mag * 5 };
+        }
+        /* 摘旧枪（缓存保留供切回）；静置复位防换弹中途残留（手枪弹匣带井位，
+         * home 一律取 gun.userData.magHome/boltHome——建模时记录） */
+        if (this.gun.parent) this.gun.parent.remove(this.gun);
+        const built = this._buildGun(id);
+        this.gun = built.root;
+        this.parts = built.parts;
+        this._gId = id;
+        this._g = gunById(id);
+        this._slot = slot;
+        built.parts.mag.visible = true;
+        built.parts.mag.position.copy(built.root.userData.magHome);
+        built.parts.bolt.position.copy(built.root.userData.boltHome);
+        this.holder.add(this.gun);
+
+        /* 新匣克隆 / home / ADS 位 / 手位 / 瞄具随枪重建 */
+        if (this._grabMag.parent) this._grabMag.parent.remove(this._grabMag);
+        this._grabMag = this.parts.mag.clone(true);
+        this._grabMag.name = 'magGrab';
+        this._grabMag.visible = false;
+        this.gun.add(this._grabMag);
+        this._magHome = built.root.userData.magHome.clone();
+        this._boltHome = built.root.userData.boltHome.clone();
+        this._P = this._makePoses();
+        this._scopeLine = null;
+        this._mountScope();
+
+        /* 枪口火光/花瓣/双手搬到新枪并按新参考点归位 */
+        for (const fx of [this._flash, this._petals]) {
+            if (fx.parent) fx.parent.remove(fx);
+            this.gun.add(fx);
+        }
+        this._flash.position.copy(this.gun.userData.muzzle);
+        this._flash.position.z -= 0.02;
+        this._petals.position.copy(this.gun.userData.muzzle);
+        this._petals.position.z -= 0.015;
+        for (const h of [this.leftHand, this.rightHand]) {
+            if (h.parent) h.parent.remove(h);
+            this.gun.add(h);
+        }
+        this._poseHand(this.rightHand, this._P.RH_GRIP);
+        this.leftHand.visible = false;
+
+        /* 弹药账本与动作复位 */
+        this.ammo = this._gunState[id].ammo;
+        this.reserve = this._gunState[id].reserve;
+        this.reloading = false;
+        this.reloadKind = null;
+        this.reloadProgress = 0;
+        this._reloadT = 0;
+        this._tl = null;
+        this._rollK = 0;
+        this._tiltK = 0;
+        this._slideT = -1;
+        this._boltAnimT = -1;
+        this._dropPoolRebuild();        // 掉匣池换成新枪的匣（飞行中的让其自然落完）
+    }
+
+    /* 该枪生效瞄具：改枪台装配 > 枪自带（狙击原厂 6×）> 机瞄。
+     * 挂镜身模型到导轨接口面，并按镜的瞄准线重算 ADS 位。 */
+    _mountScope() {
+        if (this._scopeMesh && this._scopeMesh.parent) {
+            this._scopeMesh.parent.remove(this._scopeMesh);
+        }
+        this._scopeMesh = null;
+        this._scopeLine = null;
+        const equipped = this._loadout.scopes ? this._loadout.scopes[this._gId] : null;
+        const sc = (equipped && SCOPES[equipped]) ? SCOPES[equipped]
+            : (this._g.builtinScope
+                ? Object.assign({ price: 0, desc: '' }, this._g.builtinScope)
+                : SCOPES.iron);
+        this._scope = sc;
+        this._zoom = sc.zoom || 1;
+        this._scopeKind = sc.kind || 'iron';
+        if (this._scopeKind !== 'iron') {
+            const mesh = buildScopeMesh(this._scopeKind);
+            if (mesh) {
+                const a = this.gun.userData.opticAnchor;
+                mesh.position.set(0, a.y, a.z);
+                this.gun.add(mesh);
+                this._scopeMesh = mesh;
+                this._scopeLine = { y: a.y + mesh.userData.sight.y, z: a.z + mesh.userData.sight.z };
+            }
+        }
+        this._recomputeSightLine();
+    }
+
+    /* ADS 位 = 瞄准线锚点（瞄具优先，退机瞄）贴 ADS_TARGET */
+    _recomputeSightLine() {
+        const s = this._scopeLine || this.gun.userData.sight;
+        this._adsPos = new THREE.Vector3(0, ADS_TARGET.y - s.y, ADS_TARGET.z - s.z);
+    }
+
+    /* 双手关键位实例化：grip/guard/bolt/well 按当前枪 userData.hands 覆盖 */
+    _makePoses() {
+        const h = this.gun.userData.hands || {};
+        const P3 = (v, fb) => ({ p: new THREE.Vector3().fromArray(v && v.p ? v.p : fb.p), r: (v && v.r ? v.r.slice() : fb.r.slice()) });
+        return {
+            LH_HIDE: LH_HIDE,
+            LH_WELL: P3(h.well, LH_WELL),
+            LH_EXIT: LH_EXIT,
+            LH_GUARD: P3(h.guard, LH_GUARD),
+            RH_GRIP: P3(h.grip, RH_GRIP),
+            RH_BOLT: P3(h.bolt, RH_BOLT),
+        };
+    }
+
+    /* 掉匣池：空闲槽重建为当前枪的弹匣克隆（正飞行的旧枪匣不动） */
+    _dropPoolRebuild() {
+        for (const d of this._drops) {
+            if (d.state !== 'off') continue;
+            this.scene.remove(d.g);
+            const g = this.parts.mag.clone(true);
+            g.name = 'magDropR';
+            const mats = [];
+            g.traverse((o) => {
+                if (o.isMesh) {
+                    o.material = o.material.clone();
+                    o.castShadow = true;
+                    mats.push(o.material);
+                }
+            });
+            g.visible = false;
+            this.scene.add(g);
+            d.g = g;
+            d.mats = mats;
+        }
+    }
+
+    /* 每帧换弹时间轴参数：基表按本枪 reload 时长整体缩放（rifle 档 = 原值） */
+    _tlFor(kind) {
+        const base = kind === 'tactical' ? TACTICAL_TL0 : EMPTY_TL0;
+        const end = kind === 'tactical' ? this._g.reloadTactical : this._g.reloadEmpty;
+        const s = end / base.end;
+        const sc = (v) => v * s;
+        return {
+            rollIn: sc(base.rollIn), rollOut: sc(base.rollOut), end,
+            slideStart: sc(base.slideStart), magOutAt: sc(base.magOutAt),
+            grabStart: sc(base.grabStart), grabEnd: sc(base.grabEnd),
+            seatEnd: sc(base.seatEnd), ammoAt: sc(base.ammoAt),
+            fireUnlock: sc(base.fireUnlock), rollDeg: base.rollDeg, dropY: base.dropY,
+            boltStart: sc(base.boltStart), boltEnd: sc(base.boltEnd),
+            boltRelEnd: sc(base.boltRelEnd), boltBackSnd: sc(base.boltBackSnd),
+            boltFwdSnd: sc(base.boltFwdSnd),
+        };
+    }
+
+    /* 高倍镜 DOM 分划联动 + 热成像染色（每帧） */
+    _syncScopeOverlay() {
+        const mag = this._zoom >= 3;
+        if (mag && this.adsAmount > 0.02) {
+            if (this.overlay.kind !== this._scopeKind) {
+                this.overlay.show(this._scopeKind, `${this._zoom}×`);
+            }
+        } else if (this.overlay.kind) {
+            this.overlay.hide();
+        }
+        this.overlay.setAds(this.adsAmount);
+        this.overlay.setThermal(this._scopeKind === 'thermal' && this.adsAmount > 0.9);
+    }
+
     setMuzzleLight(scene) {
         this._lightScene = scene || this.scene;
         if (this._light) {                 // 换场景：摘下重建
@@ -301,36 +561,46 @@ export class GunView {
         hand.rotation.set(pose.r[0], pose.r[1], pose.r[2]);
     }
 
-    /* 换弹：满弹/换弹中/备弹耗尽返回 false；按下瞬间快照 ammo>0 ⇒ 战术 */
+    /* 换弹：满弹/换弹中/切枪中/备弹耗尽返回 false；按下瞬间快照 ammo>0 ⇒ 战术 */
     startReload() {
-        if (this.reloading) return false;
-        if (this.ammo >= RIFLE.mag) return false;
+        if (this.reloading || this._switchT >= 0) return false;
+        if (this.ammo >= this._g.mag) return false;
         if (this.reserve <= 0) return false;
         this.reloadKind = this.ammo > 0 ? 'tactical' : 'empty';
-        this._tl = this.reloadKind === 'tactical' ? TACTICAL_TL : EMPTY_TL;
+        this._tl = this._tlFor(this.reloadKind);
         this._reloadStartAmmo = this.ammo;
         this._reloadT = 0;
         this.reloading = true;
         this.reloadProgress = 0;
         this._dryLatched = false;
+        this._slideT = -1;               // 动作循环让位换弹时间轴
+        this._boltAnimT = -1;
+        this.parts.bolt.position.z = this._boltHome.z;
         return true;
     }
 
-    resetAmmo(reserve = 150) {
-        this.reserve = reserve;
-        this.ammo = RIFLE.mag;
+    /* 重置弹药：回满当前枪 mag；reserve 缺省 = mag×5（接口弹药规则） */
+    resetAmmo(reserve = null) {
+        this.reserve = (reserve === null || reserve === undefined) ? this._g.mag * 5 : reserve;
+        this.ammo = this._g.mag;
         this.reloading = false;
         this.reloadKind = null;
         this.reloadProgress = 0;
         this._reloadT = 0;
         this._rollK = 0;
         this._tiltK = 0;
+        this._slideT = -1;
+        this._boltAnimT = -1;
         this.parts.mag.visible = true;
         this.parts.mag.position.copy(this._magHome);
         this.parts.bolt.position.z = this._boltHome.z;
         this._grabMag.visible = false;
         this.leftHand.visible = false;                 // 手复位
-        this._poseHand(this.rightHand, RH_GRIP);
+        this._poseHand(this.rightHand, this._P.RH_GRIP);
+        if (this._gunState && this._gunState[this._gId]) {
+            this._gunState[this._gId].ammo = this.ammo;
+            this._gunState[this._gId].reserve = this.reserve;
+        }
     }
 
     /* 枪口世界坐标（主场景系）：vm 相机空间 → 主相机世界 */
@@ -342,11 +612,15 @@ export class GunView {
         return this._muzzleOut;
     }
 
-    /* 每帧调用：pressed=true 全自动；返回本帧是否真的开了一发 */
+    /* 每帧调用：pressed=true；全自动枪连发，半自动/栓动一次按压一发；
+     * 返回本帧是否真的开了一发。霰弹 6 弹丸=6 射线：伤害逐弹丸分发
+     * （applyDamage 桥签名不变），hitmarker/命中音聚合一次（risks#11）。 */
     tryFire(pressed) {
-        if (!pressed) { this._dryLatched = false; return false; }
+        if (!pressed) { this._dryLatched = false; this._semiLatch = false; return false; }
+        if (this._switchT >= 0) return false;              // 切枪动画禁开火
         if (this._time < this._nextFire) return false;
         if (this.reloading && this._tl && this._reloadT < this._tl.fireUnlock) return false;
+        if (!this._g.auto && this._semiLatch) return false; // 半自动：松开才可再发
         if (this.ammo <= 0) {
             if (!this._dryLatched) {         // 空仓干响：一次按压只响一声
                 this._dryLatched = true;
@@ -354,45 +628,61 @@ export class GunView {
             }
             return false;
         }
-        this._nextFire = this._time + RIFLE.cd;
+        if (!this._g.auto) this._semiLatch = true;
+        this._nextFire = this._time + this._g.cd;
         this.ammo -= 1;
         this.stats.shots += 1;
 
-        /* 射线：自主相机眼位，散布 = 腰射 spread × 开镜插值倍率 */
+        /* 射线基准：自主相机眼位；散布 = 腰射 spread × 开镜插值倍率 */
         this.camera.updateMatrixWorld(true);
-        const from = this._tV1.setFromMatrixPosition(this.camera.matrixWorld);
+        const from = this._tV7.setFromMatrixPosition(this.camera.matrixWorld);
         const fwd = this._tV2.set(0, 0, -1).transformDirection(this.camera.matrixWorld);
         const right = this._tV3.setFromMatrixColumn(this.camera.matrixWorld, 0);
         const up = this._tV4.setFromMatrixColumn(this.camera.matrixWorld, 1);
-        const spreadMul = 1 + (RIFLE.adsSpreadMul - 1) * this.adsAmount;
-        const jx = (Math.random() * 2 - 1) * RIFLE.spread * spreadMul;
-        const jy = (Math.random() * 2 - 1) * RIFLE.spread * spreadMul;
-        const dir = this._tV5.copy(fwd).addScaledVector(right, jx).addScaledVector(up, jy).normalize();
+        const spreadMul = 1 + (this._g.adsSpreadMul - 1) * this.adsAmount;
+        const base = this._g.spread * spreadMul;
 
-        let hit = null;
-        if (this._raycast) hit = this._raycast(from, dir, RIFLE.range);
+        /* 弹丸循环（霰弹 6 / 其他 1）：from 挂 _tV7——_spawnTracer 内部占用
+         * _tV1，多弹丸循环间严禁复用（_spawnImpact 用 _tV9.._tV12） */
+        let aggKilled = false, aggHead = false, aggHit = false;
+        const pellets = Math.max(1, this._g.pellets | 0);
+        const dir = this._tV5;
         const end = this._tV6;
-        if (hit && hit.point) end.copy(hit.point);
-        else end.copy(from).addScaledVector(dir, RIFLE.range);
+        for (let pi = 0; pi < pellets; pi++) {
+            const jx = (Math.random() * 2 - 1) * base;
+            const jy = (Math.random() * 2 - 1) * base;
+            dir.copy(fwd).addScaledVector(right, jx).addScaledVector(up, jy).normalize();
+            let hit = null;
+            if (this._raycast) hit = this._raycast(from, dir, this._g.range);
+            if (hit && hit.point) end.copy(hit.point);
+            else end.copy(from).addScaledVector(dir, this._g.range);
 
-        /* 命中统计 / 伤害分发 / 命中音 */
-        if (hit && hit.type && hit.type !== 'wall') {
-            this.stats.hits += 1;
-            let killed = false;
-            if (typeof this.applyDamage === 'function') {
-                const r = this.applyDamage(hit, RIFLE.dmg);
-                killed = !!(r && r.killed);
+            /* 命中统计 / 伤害分发（逐弹丸）/ 命中音聚合 */
+            if (hit && hit.type && hit.type !== 'wall') {
+                aggHit = true;
+                aggHead = aggHead || hit.type === 'enemy_head';
+                if (typeof this.applyDamage === 'function') {
+                    const r = this.applyDamage(hit, this._g.dmg);
+                    aggKilled = aggKilled || !!(r && r.killed);
+                }
             }
-            if (this.audio) this.audio.hit(killed);
+            if (hit && hit.point) {
+                /* 弹着反馈（写实度评审 #6）：肉体=仅火花；硬面=火花+烟团+碎屑 */
+                const flesh = hit.type === 'enemy' || hit.type === 'enemy_head';
+                this._spawnImpact(end, flesh ? 'flesh' : 'surface');
+            }
+            /* 曳光仅首弹丸（且按曳光占比，其余弹只留弹着火花与抛壳） */
+            if (pi === 0 && this.stats.shots % TRACER_EVERY === 1) {
+                this._spawnTracer(this.muzzleWorld(), end, !!hit);
+            }
         }
-        if (hit && hit.point) {
-            /* 弹着反馈（写实度评审 #6）：肉体=仅火花；硬面=火花+烟团+碎屑 */
-            const flesh = hit.type === 'enemy' || hit.type === 'enemy_head';
-            this._spawnImpact(end, flesh ? 'flesh' : 'surface');
+        if (aggHit) {
+            this.stats.hits += 1;
+            if (this.audio) this.audio.hit(aggKilled);
+            this._aggHead = aggHead;                     // 留档（调试可读）
         }
 
-        /* 曳光（仅 1/4，其余弹只留弹着火花与抛壳）/ 抛壳 / 枪口火光 / 残烟 */
-        if (this.stats.shots % TRACER_EVERY === 1) this._spawnTracer(this.muzzleWorld(), end, !!hit);
+        /* 抛壳 / 枪口火光 / 残烟 */
         this._spawnShell(right, up);
         this._flashOn();
         this._lightI = 55;
@@ -400,20 +690,29 @@ export class GunView {
             this._spawnMuzzleSmoke(right, up);
             this._nextSmokeShot = this.stats.shots + 5 + (Math.random() * 4 | 0);
         }
-        if (this.audio) this.audio.shot();
+        if (this.audio) this.audio.shot(this._g.snd);
 
         /* 后坐：onfoot.gd:848-849 公式（连发累增 + 水平漂移，开镜 6 折） */
-        const mul = 1 + (RIFLE.recoilAdsMul - 1) * this.adsAmount;
+        const mul = 1 + (this._g.recoilAdsMul - 1) * this.adsAmount;
         const pitchDeg = this.recoilPitch / DEG;
-        this.recoilPitch = Math.min(RIFLE.recoilCapDeg * DEG,
-            this.recoilPitch + (RIFLE.recoil.kick + RIFLE.recoil.growth * pitchDeg * 0.5) * DEG * mul);
-        this.recoilYaw += (Math.random() * 2 - 1) * RIFLE.recoil.drift * DEG * mul;
+        this.recoilPitch = Math.min(this._g.recoilCapDeg * DEG,
+            this.recoilPitch + (this._g.recoil.kick + this._g.recoil.growth * pitchDeg * 0.5) * DEG * mul);
+        this.recoilYaw += (Math.random() * 2 - 1) * this._g.recoil.drift * DEG * mul;
         this._lastShotT = this._time;
 
-        /* viewmodel 踢（自身衰减） */
-        this._kickPos += 0.016;
-        this._kickRot += 0.022;
-        this._kickRoll += (Math.random() - 0.5) * 0.008;
+        /* viewmodel 踢（自身衰减；霰弹/狙击踢更沉） */
+        const kickMul = (this._g.id === 'shotgun' || this._g.id === 'sniper') ? 1.6 : 1;
+        this._kickPos += 0.016 * kickMul;
+        this._kickRot += 0.022 * kickMul;
+        this._kickRoll += (Math.random() - 0.5) * 0.008 * kickMul;
+
+        /* 手枪套筒随发循环 / 栓动枪机循环（狙击每发咔塔） */
+        if (this.gun.userData.slideFire) this._slideT = 0;
+        if (this._g.fx && this._g.fx.boltCycle) {
+            this._boltAnimT = 0;
+            this._boltSndBack = false;
+            this._boltSndFwd = false;
+        }
         return true;
     }
 
@@ -422,18 +721,82 @@ export class GunView {
     update(dt) {
         dt = clamp(dt, 0, 0.05);          // 防御性再夹（main 已夹紧）
         this._time += dt;
+        if (this._switchT >= 0) this._updateSwitch(dt);
         if (this.reloading) this._updateReload(dt);
         else this.leftHand.visible = false;
         this._updateAds(dt);
         this._updateRecoil(dt);
+        this._updateActionAnims(dt);      // 套筒/栓动循环（换弹时让位）
         this._updateSwayBob(dt);
         const kd = Math.exp(-13 * dt);
         this._kickPos *= kd; this._kickRot *= kd; this._kickRoll *= kd;
+        /* 弹药状态落账（多枪各记各账，切枪恢复） */
+        if (this._gunState && this._gunState[this._gId]) {
+            this._gunState[this._gId].ammo = this.ammo;
+            this._gunState[this._gId].reserve = this.reserve;
+        }
         this._composePose();
+        /* 开镜高倍隐枪（onfoot.gd:782：zoom≥3 且 ads>0.9 隐枪模，镜内画面由分划接管） */
+        this.holder.visible = !(this._zoom >= 3 && this.adsAmount > 0.9);
         this._updateVmFlash(dt);
         this._updatePools(dt);
         this._syncCameras();
+        this._syncScopeOverlay();
         this._updateMuzzleLight(dt);
+    }
+
+    /* ---- 2.2b 切枪时间轴（0.45s：收枪下摆 → 过半换模回满该枪弹 → 抬枪） ---- */
+
+    _updateSwitch(dt) {
+        const prev = this._switchT;
+        this._switchT = Math.min(prev + dt, SWITCH_TIME);
+        if (!this._switchSwapped && this._switchT >= SWITCH_TIME * 0.5) {
+            this._switchSwapped = true;
+            const toId = this._switchToId;
+            const slot = (this._loadout.secondary === toId && toId !== this._loadout.primary) ? 1 : 0;
+            this._installGun(toId, slot, false);
+            /* 过半换模回满该枪弹：等价一次战术补满（扣等量备弹，接口约定） */
+            const take = Math.min(this.reserve, this._g.mag - this.ammo);
+            this.reserve -= take;
+            this.ammo += take;
+            this._gunState[this._gId].ammo = this.ammo;
+            this._gunState[this._gId].reserve = this.reserve;
+            if (this.onSwitch) this.onSwitch(this._slot, this._gId);
+        }
+        if (this._switchT >= SWITCH_TIME) this._switchT = -1;
+    }
+
+    /* ---- 2.2c 套筒/栓动循环（换弹时间轴独占 bolt 时让位） ---- */
+
+    _updateActionAnims(dt) {
+        const bolt = this.parts.bolt;
+        if (!bolt || !this._boltHome) return;
+        if (this.reloading) return;                 // 换弹时间轴独占 bolt 位移
+        let off = 0;
+        if (this._slideT >= 0) {                    // 手枪套筒：60ms 后坐-回位
+            this._slideT += dt;
+            const t = this._slideT / 0.06;
+            off = t >= 1 ? 0 : Math.sin(Math.PI * t) * 0.016;
+            if (t >= 1) this._slideT = -1;
+        }
+        if (this._boltAnimT >= 0) {                 // 栓动：后拉-顿-回甩（0.52s 含枪机音）
+            this._boltAnimT += dt;
+            const t = this._boltAnimT;
+            if (t < 0.20) off = easeOutQuad(t / 0.20) * 0.05;
+            else if (t < 0.34) off = 0.05;
+            else if (t < 0.52) off = (1 - easeInQuad((t - 0.34) / 0.18)) * 0.05;
+            else this._boltAnimT = -1;
+            if (!this._boltSndBack && t >= 0.16) {
+                this._boltSndBack = true;
+                if (this.audio) this.audio.boltBack();
+            }
+            if (!this._boltSndFwd && t >= 0.40) {
+                this._boltSndFwd = true;
+                this._joltRelT = this._time;
+                if (this.audio) this.audio.boltForward();
+            }
+        }
+        bolt.position.z = this._boltHome.z + off;
     }
 
     /* ---- 2.3 换弹时间轴（事件挂绝对秒点，prev<x<=t 触发一次） ---- */
@@ -457,11 +820,11 @@ export class GunView {
             if (this.audio) this.audio.magOut();
         }
 
-        /* magSeat 末尾：弹药回满（弹匣永远回满 30）+ 拍合 jolt（挂全局时钟） */
+        /* magSeat 末尾：弹药回满（弹匣回满当前枪 mag）+ 拍合 jolt（挂全局时钟） */
         if (prev < tl.ammoAt && t >= tl.ammoAt) {
-            const take = Math.min(this.reserve, RIFLE.mag - this._reloadStartAmmo);
+            const take = Math.min(this.reserve, this._g.mag - this._reloadStartAmmo);
             this.reserve = Math.max(0, this.reserve - take);
-            this.ammo = RIFLE.mag;
+            this.ammo = this._g.mag;
             this._grabMag.visible = false;
             mag.visible = true;
             mag.position.copy(this._magHome);
@@ -526,33 +889,35 @@ export class GunView {
             gm.visible = false;
             this.reloadProgress = 1;
             this.leftHand.visible = false;             // 左手出画、右手回握把
-            this._poseHand(this.rightHand, RH_GRIP);
+            this._poseHand(this.rightHand, this._P.RH_GRIP);
         }
     }
 
     /* ---- 2.3b 换弹双手时间轴（写实度评审 #2，秒点挂现有 tl 事件） ---- */
     _updateHands(t, tl) {
-        /* 左手：藏位 → 抓旧匣(随匣下滑) → 带离出画 → 随新匣骑乘入井 → 回握护木 */
+        /* 左手：藏位 → 抓旧匣(随匣下滑) → 带离出画 → 随新匣骑乘入井 → 回握护木
+         * （关键位取 this._P——按当前枪 userData.hands 实例化） */
         const L = this.leftHand;
+        const P = this._P;
         L.visible = true;
         const tmp = GunView._hp;
         if (t < tl.slideStart) {
-            this._lerpPose(LH_HIDE, LH_WELL, easeOutQuad(t / tl.slideStart), tmp);
+            this._lerpPose(P.LH_HIDE, P.LH_WELL, easeOutQuad(t / tl.slideStart), tmp);
         } else if (t < tl.magOutAt) {
-            tmp.p.copy(LH_WELL.p);
+            tmp.p.copy(P.LH_WELL.p);
             tmp.p.y += this.parts.mag.position.y - this._magHome.y;   // 跟随旧匣下滑
-            tmp.r = LH_WELL.r;
+            tmp.r = P.LH_WELL.r;
         } else if (t < tl.grabStart) {
-            this._lerpPose(LH_WELL, LH_EXIT, easeInOutQuad((t - tl.magOutAt) / (tl.grabStart - tl.magOutAt)), tmp);
+            this._lerpPose(P.LH_WELL, P.LH_EXIT, easeInOutQuad((t - tl.magOutAt) / (tl.grabStart - tl.magOutAt)), tmp);
         } else if (t < tl.seatEnd) {
             /* 骑在新匣上（_grabMag 的位置/缓动由上方现有逻辑驱动，手只挂偏移） */
             tmp.p.copy(this._grabMag.position).add(LH_GRAB_OFF);
-            tmp.r = LH_WELL.r;
+            tmp.r = P.LH_WELL.r;
         } else if (t < tl.fireUnlock) {
-            this._lerpPose(LH_WELL, LH_GUARD, easeInOutQuad((t - tl.seatEnd) / (tl.fireUnlock - tl.seatEnd)), tmp);
+            this._lerpPose(P.LH_WELL, P.LH_GUARD, easeInOutQuad((t - tl.seatEnd) / (tl.fireUnlock - tl.seatEnd)), tmp);
         } else {
-            tmp.p.copy(LH_GUARD.p);
-            tmp.r = LH_GUARD.r;
+            tmp.p.copy(P.LH_GUARD.p);
+            tmp.r = P.LH_GUARD.r;
         }
         this._poseHand(L, tmp);
 
@@ -561,47 +926,55 @@ export class GunView {
             const inT = Math.max(tl.boltStart - 0.12, tl.seatEnd);
             if (t >= inT && t <= tl.boltRelEnd) {
                 const k = clamp((t - inT) / 0.12, 0, 1);
-                this._lerpPose(RH_GRIP, RH_BOLT, easeInOutQuad(k), tmp);
+                this._lerpPose(P.RH_GRIP, P.RH_BOLT, easeInOutQuad(k), tmp);
                 tmp.p.z += this.parts.bolt.position.z - this._boltHome.z;   // 随拉栓后移
                 this._poseHand(this.rightHand, tmp);
                 return;
             }
             if (t > tl.boltRelEnd && t < tl.boltRelEnd + 0.15) {
                 const k = (t - tl.boltRelEnd) / 0.15;
-                this._lerpPose(RH_BOLT, RH_GRIP, easeInOutQuad(k), tmp);
+                this._lerpPose(P.RH_BOLT, P.RH_GRIP, easeInOutQuad(k), tmp);
                 this._poseHand(this.rightHand, tmp);
                 return;
             }
         }
-        this._poseHand(this.rightHand, RH_GRIP);
+        this._poseHand(this.rightHand, P.RH_GRIP);
     }
 
     _lerpPose(a, b, k, out) {
         out.p.lerpVectors(a.p, b.p, k);
         const ra = a.r, rb = b.r;
-        out.r[0] = ra[0] + (rb[0] - ra[0]) * k;
-        out.r[1] = ra[1] + (rb[1] - ra[1]) * k;
-        out.r[2] = ra[2] + (rb[2] - ra[2]) * k;
+        /* r 赋新数组而非写槽位——防止 tmp.r 曾别名到关键位常量时误写源数组 */
+        out.r = [
+            ra[0] + (rb[0] - ra[0]) * k,
+            ra[1] + (rb[1] - ra[1]) * k,
+            ra[2] + (rb[2] - ra[2]) * k,
+        ];
         return out;
     }
 
-    /* ---- 2.4 开镜（换弹锁定段 6/s 强制回 0；解锁点同开火） ---- */
+    /* ---- 2.4 开镜（换弹/切枪锁定段 6/s 强制回 0；解锁点同开火） ---- */
 
     _updateAds(dt) {
         let target = this._adsHold ? 1 : 0;
-        let rate = RIFLE.adsSpeed;
+        let rate = this._g.adsSpeed;
         if (this.reloading && this._tl && this._reloadT < this._tl.fireUnlock) {
+            target = 0;
+            rate = 6;
+        }
+        if (this._switchT >= 0) {
             target = 0;
             rate = 6;
         }
         this.adsAmount = moveToward(this.adsAmount, target, rate * dt);
     }
 
-    /* ---- 2.5 后坐自衰减（onfoot.gd:772-775：0.25s 后 45°/s 回落，yaw 10°/s 归零） ---- */
+    /* ---- 2.5 后坐自衰减（onfoot.gd:772-775：0.25s 后 45°/s 回落，yaw 10°/s 归零；
+     *       延时/速率已随枪参数化——recoilRecoverDelay / recoilRecoverDegPerSec） ---- */
 
     _updateRecoil(dt) {
-        if (this._time - this._lastShotT > RIFLE.recoilRecoverDelay) {
-            this.recoilPitch = Math.max(0, this.recoilPitch - RIFLE.recoilRecoverDegPerSec * DEG * dt);
+        if (this._time - this._lastShotT > this._g.recoilRecoverDelay) {
+            this.recoilPitch = Math.max(0, this.recoilPitch - this._g.recoilRecoverDegPerSec * DEG * dt);
             this.recoilYaw = moveToward(this.recoilYaw, 0, 10 * DEG * dt);
         }
     }
@@ -647,11 +1020,12 @@ export class GunView {
         let rx = HIP_ROT.x * (1 - adsE);
         let ry = HIP_ROT.y * (1 - adsE);
         let rz = HIP_ROT.z * (1 - adsE);
-        /* sway */
-        ry += this._swayYaw;
-        rx += this._swayPitch;
-        p.x += -this._swayYaw * 0.35;
-        p.y += this._swayPitch * 0.3;
+        /* sway（高倍镜持枪更稳：按倍率折减） */
+        const steady = this._zoom > 1 ? 1 / Math.sqrt(this._zoom) : 1;
+        ry += this._swayYaw * steady;
+        rx += this._swayPitch * steady;
+        p.x += -this._swayYaw * 0.35 * steady;
+        p.y += this._swayPitch * 0.3 * steady;
         /* bob */
         p.x += this._bobX;
         p.y += this._bobY;
@@ -663,6 +1037,14 @@ export class GunView {
             p.z += 0.04 * this._rollK;
             rz += -tl.rollDeg * DEG * this._rollK;
             rx += -1.5 * DEG * this._tiltK;
+        }
+        /* 切枪：收枪下摆 → 换模 → 抬枪（0.45s 正弦沉浮） */
+        if (this._switchT >= 0) {
+            const k = Math.min(this._switchT / SWITCH_TIME, 1);
+            const dip = Math.sin(Math.PI * k);
+            p.y -= 0.24 * dip;
+            p.z += 0.06 * dip;
+            rz += 0.55 * dip;
         }
         /* 拍合 jolt：pitch 2°、y 1cm，指数阻尼 λ=18 */
         if (this._joltSeatT >= 0) {
@@ -683,11 +1065,14 @@ export class GunView {
         this.holder.rotation.set(rx, ry, rz);
     }
 
-    /* ---- 2.8 相机同步：主相机 FOV 75→55 随 adsAmount；vmCamera 宽高比跟随 ---- */
+    /* ---- 2.8 相机同步：FOV=baseFov/zoom 随 adsAmount（onfoot.gd:780 开镜公式；
+     *       倍率 1 的机瞄保底收到旧版 55）；vmCamera 宽高比跟随 ---- */
 
     _syncCameras() {
         if (!this.camera) return;
-        const targetFov = this._baseFov + (55 - this._baseFov) * this.adsAmount;
+        const zoom = this._zoom > 1 ? this._zoom : this._baseFov / 55;
+        const adsFov = this._baseFov / Math.max(zoom, 1e-4);
+        const targetFov = this._baseFov + (adsFov - this._baseFov) * this.adsAmount;
         if (Math.abs(this.camera.fov - targetFov) > 0.01) {
             this.camera.fov = targetFov;
             this.camera.updateProjectionMatrix();
@@ -1212,5 +1597,6 @@ export class GunView {
         for (const q of this._muzzleSmokes) this.scene.remove(q.m);
         if (this._light && this._light.parent) this._light.parent.remove(this._light);
         this._light = null;
+        this.overlay.dispose();          // 高倍镜 DOM 分划覆盖层
     }
 }
