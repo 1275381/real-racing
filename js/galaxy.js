@@ -97,12 +97,13 @@ void main() {
 const FRAG = `
 uniform sampler2D uMap;
 uniform float uBrightness;
+uniform float uFade;
 varying vec3 vColor;
 varying float vTw;
 void main() {
     vec4 tex = texture2D(uMap, gl_PointCoord);
     if (tex.a < 0.02) discard;
-    gl_FragColor = vec4(vColor * uBrightness * (0.8 + 0.2 * vTw), tex.a);
+    gl_FragColor = vec4(vColor * uBrightness * uFade * (0.8 + 0.2 * vTw), tex.a);
 }`;
 function makeGalaxyMaterial(pointMax) {
     const m = new THREE.ShaderMaterial({
@@ -113,6 +114,7 @@ function makeGalaxyMaterial(pointMax) {
             uPixelRatio: { value: renderer.getPixelRatio() },
             uTwinkle: { value: params.twinkle ? 1 : 0 },
             uBrightness: { value: params.brightness },
+            uFade: { value: 1 },
             uMap: { value: starTex },
         },
         vertexShader: VERT,
@@ -124,10 +126,17 @@ function makeGalaxyMaterial(pointMax) {
     });
     return m;
 }
-const galaxyMat = makeGalaxyMaterial(90);
+const galaxyMat = makeGalaxyMaterial(48); // 近距离光斑上限压低，避免贴脸恒星变巨块
 const namedMat = makeGalaxyMaterial(26);
 namedMat.uniforms.uSize.value = 1.2;
 const spinMats = [galaxyMat, namedMat]; // 联动 uniform 用
+
+/* 太阳系「真实夜空」分层淡入淡出：
+   skyFade: 0 = 银河场景（近场银盘可见），1 = 太阳系场景（远近只剩夜空星点+银河暗带） */
+let solarSky = null;
+let skyFade = 0;
+const skyFadeMats = [];    // 随 skyFade 淡入（夜空层）
+const galaxyFadeMats = []; // 随 skyFade 淡出（银心辉光等银河层材质）
 
 /* ================= 5. 银河构建 ================= */
 const GALAXY_R = 100;
@@ -231,12 +240,14 @@ function buildGalaxy() {
 
 function buildCoreGlow() {
     const mk = (scale, opacity) => {
-        const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        const mat = new THREE.SpriteMaterial({
             map: glowTex, transparent: true, opacity,
             blending: THREE.AdditiveBlending, depthWrite: false,
-        }));
+        });
+        const sp = new THREE.Sprite(mat);
         sp.scale.setScalar(scale);
         scene.add(sp);
+        galaxyFadeMats.push({ m: mat, base: opacity }); // 进太阳系时随银盘一起淡出
     };
     mk(150, 0.32); // 大范围暖雾
     mk(60, 0.85);  // 银心主体
@@ -579,6 +590,72 @@ function updateSolar(dt) {
     }
 }
 
+/* 太阳系内看到的「真实夜空」：其他恒星都在成千上万倍太阳系宽度之外，
+   只呈现为固定的小点；银河是一条横跨天空的暗带，银心方向（人马座方向）更亮。
+   半径 420 ≈ 太阳系宽度的 140 倍（真实为 ~9000 倍，此为单场景可行的最远层）。 */
+function buildSolarSky() {
+    solarSky = new THREE.Group();
+    solarSky.position.copy(sunPos);
+    solarSky.visible = false;
+    scene.add(solarSky);
+
+    const R = 420;
+    const CORE_DIR = Math.atan2(-sunPos.z, -sunPos.x); // 银心方向的天球经度
+    const c = new THREE.Color();
+
+    const mkLayer = (n, size, opacity, band) => {
+        const pos = new Float32Array(n * 3);
+        const col = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+            let lon, lat;
+            if (band) {
+                // 银河带：集中在银道面附近，银心方向加密
+                lon = Math.random() < 0.45 ? CORE_DIR + gauss() * 0.9 : Math.random() * Math.PI * 2;
+                lat = gauss() * 0.13;
+            } else {
+                lon = Math.random() * Math.PI * 2;
+                lat = Math.asin(Math.random() * 2 - 1);
+            }
+            const cl = Math.cos(lat);
+            pos[i * 3] = Math.cos(lon) * cl * R;
+            pos[i * 3 + 1] = Math.sin(lat) * R;
+            pos[i * 3 + 2] = Math.sin(lon) * cl * R;
+            // 银心方向与带核心处更暖更亮，远离则偏蓝偏暗
+            const coreBias = band
+                ? Math.max(0, Math.cos(lon - CORE_DIR)) * Math.exp(-Math.abs(lat) * 2.2)
+                : 0;
+            const l = (band ? 0.5 : 0.62) + coreBias * 0.28 + Math.random() * 0.14;
+            c.setHSL(0.62 - coreBias * 0.45, 0.18 + coreBias * 0.3, Math.min(0.9, l));
+            col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 1.1);
+        const m = new THREE.PointsMaterial({
+            size, map: starTex, transparent: true, opacity,
+            vertexColors: true, sizeAttenuation: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        solarSky.add(new THREE.Points(g, m));
+        skyFadeMats.push({ m, base: opacity });
+    };
+    mkLayer(2600, 1.4, 0.9, false); // 全天星点
+    mkLayer(2800, 1.9, 0.85, true); // 银河带恒星
+    mkLayer(1500, 3.8, 0.2, true);  // 银河雾状辉光
+
+    // 银心方向的暗淡亮区（人马座方向的银河最亮段）
+    const coreMat = new THREE.SpriteMaterial({
+        map: glowTex, transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const core = new THREE.Sprite(coreMat);
+    core.position.set(Math.cos(CORE_DIR) * 400, 0, Math.sin(CORE_DIR) * 400);
+    core.scale.setScalar(130);
+    solarSky.add(core);
+    skyFadeMats.push({ m: coreMat, base: 0.5 });
+}
+
 /* ================= 7. 相机控制（自实现，含惯性/触摸/双指） ================= */
 const ctrl = {
     mode: 'outside', // outside | inside | solar | cruise
@@ -853,7 +930,7 @@ const raycaster = new THREE.Raycaster();
 raycaster.params.Points.threshold = 3.2;
 
 function pickNamed() {
-    if (!namedPoints || !mouseActive) return -1;
+    if (!namedPoints || !mouseActive || skyFade > 0.5) return -1; // 已淡出的亮星不可拾取
     raycaster.setFromCamera(mouseNDC, camera);
     const hits = raycaster.intersectObject(namedPoints, false);
     return hits.length ? hits[0].index : -1;
@@ -940,6 +1017,7 @@ buildBackground();
 buildSatellites();
 buildNamedStars();
 buildSolarSystem();
+buildSolarSky();
 camera.position.copy(sphToVec(ctrl.sph));
 camera.lookAt(0, 0, 0);
 updateModeButtons();
@@ -960,6 +1038,18 @@ function loop() {
     galaxyMat.uniforms.uTime.value += dt;
     namedMat.uniforms.uTime.value = galaxyMat.uniforms.uTime.value;
     updateSolar(dt);
+
+    // 银河场景 ↔ 太阳系夜空 的交叉淡入淡出（由相机到太阳的距离驱动）
+    let k = ctrl.mode === 'solar'
+        ? clamp((40 - camera.position.distanceTo(sunPos)) / 30, 0, 1)
+        : 0;
+    k = k * k * (3 - 2 * k); // smoothstep
+    skyFade += (k - skyFade) * Math.min(1, dt * 5);
+    galaxyMat.uniforms.uFade.value = 1 - skyFade;
+    namedMat.uniforms.uFade.value = 1 - skyFade;
+    for (const f of galaxyFadeMats) f.m.opacity = f.base * (1 - skyFade);
+    solarSky.visible = skyFade > 0.01;
+    if (solarSky.visible) for (const f of skyFadeMats) f.m.opacity = f.base * skyFade;
 
     if (tween) stepTween(dt);
     else if (ctrl.mode === 'outside' || ctrl.mode === 'solar') applyOutside(dt);
