@@ -22,13 +22,18 @@
      之后会把非步枪主枪备弹虚标 150；
    · 结算：mission._end 一次给全结算页（main 不再 showResult），onEnd 只做
      经济入账：win → depositItems+情报奖金+recordRaid；败/放弃 → 仅 recordRaid；
+   · 靶馆氛围：靶场=全封闭室内靶馆（rangeHall.js 建馆，zones.rangeLanes 指入
+     馆内）。进出模式经 setRangeAtmosphere 统一切换：env.setIndoor（太阳/
+     天光/雾/环境反射/曝光）+ rangeHall.setActive（馆内点光）+ vm 灯换顶灯；
+     出发/回大厅整组还原，行动模式数值与几何零改动；
    · 敌兵首部署在装配期 spawnPatrol(zones.patrol)：enemies.resetAll 只重铺
      「最近一次非空部署」（enemies.js _deployRoutes），装配期不铺则首局
      mission.restart→resetAll 是空操作——首局满编敌兵由此保证。
    ===================================================================== */
 import * as THREE from 'three';
-import { Environment, SUN_DIR } from './env.js';
+import { Environment, SUN_DIR, INDOOR_KEY_DIR } from './env.js';
 import { loadProps, BattleMap } from './layout.js';
+import { RangeHall } from './rangeHall.js';
 import { Player } from './player.js';
 import { EnemyManager } from './enemies.js';
 import { TargetRange } from './targets.js';
@@ -70,6 +75,11 @@ const battleMap = new BattleMap(scene, props);
 await battleMap.build();
 const collision = battleMap.collision;   // CollisionWorld：pushOut/groundHeight/rayWall
 const zones = battleMap.zones;           // playerSpawn/patrol/intelPos/extractPos×2/danger/containerSpots/rangeLanes×3
+
+/* 全封闭室内靶馆（独立建筑，馆心 (120,130)：静态壳体+射击位+灯板，常驻场景；
+ * 碰撞/馆内地坪注册进同一 CollisionWorld，行动玩家进不去、也无感） */
+const rangeHall = new RangeHall(scene, collision, props);
+rangeHall.build();
 
 /* ==== 3. 模块实例 ==== */
 const gunAudio = new GunAudio();
@@ -165,10 +175,21 @@ function currentLoadoutPayload() {
     };
 }
 
+/* 室内/室外氛围总开关：靶馆进场 true，出发/回大厅 false。
+ * 主场景灯光/雾/环境反射（env.setIndoor）+ 馆内点光（rangeHall.setActive）
+ * + vm 主灯（顶灯 vs 太阳）三处一起切，保证「进馆即换氛围、出馆整组还原」 */
+function setRangeAtmosphere(on) {
+    env.setIndoor(on);
+    rangeHall.setActive(on);
+    gunview.setEnvironment(on ? env.indoorEnv : env.duskEnv,
+        on ? INDOOR_KEY_DIR : SUN_DIR);
+}
+
 /* 出发/重开行动：装配双枪（满匣 + mag×5 备弹各自保账）→ 行动状态机启动。
  * 大厅 onDeploy 已先行 hide()（释放 uiBlocked/显示层）再回调本函数。 */
 function deploy() {
     stash.raidActive = true;                   // 对局中禁写档（Stash 纪律）
+    setRangeAtmosphere(false);                 // 若从靶场菜单转出发：先还原室外氛围
     hud.hideResult();
     hud.hideRangeStats();
     hud.hideMenu();
@@ -203,16 +224,18 @@ function handleMissionEnd({ win, stats, items, intelBonus }) {
 }
 
 /* 大厅 G / 暂停菜单 2 → 靶场：清场敌兵（部署记录保留，回行动满编复活），
+ * 切室内氛围（关太阳/天光、雾改冷灰、馆内点光点亮、vm 顶灯），
  * 按大厅配置装配（改枪台瞄具在靶场同样生效），备弹由 rangeMode 回满 120 */
 function startRange() {
     hud.hideResult();
     hud.hideMenu();
     hud.showMarker(null);
+    setRangeAtmosphere(true);                  // 进馆：全封闭室内氛围
     enemies.spawnPatrol([]);                   // 空路线 = 清空全部敌兵（靶场无交战）
     gunview.setLoadout(currentLoadoutPayload());
     if (!rangeMode) rangeMode = new RangeMode({ hud, targets, gunview });
     rangeMode.start();                         // 备弹回满 120 + 靶场 HUD 文案
-    /* 玩家站中间射位后退一步半，面向 +X 靶道 */
+    /* 玩家站中间射位后退一步半，面向 +X 靶道（lane.origin 已是馆内地坪高） */
     const lane = zones.rangeLanes[1] || zones.rangeLanes[0];
     player.respawn(lane.origin.clone().addScaledVector(lane.dir, -1.5));
     faceTo(lane.origin.clone().addScaledVector(lane.dir, 10));
@@ -224,6 +247,7 @@ function startRange() {
 function toLobby() {
     state.mode = 'lobby';
     state.paused = false;
+    setRangeAtmosphere(false);                 // 若从靶场回大厅：还原室外氛围
     hud.hideResult();
     hud.hideRangeStats();
     hud.hideMenu();
@@ -414,6 +438,8 @@ function tp(a, b) {
         else if (a === 'center') p = { x: zones.danger.cx, z: zones.danger.cz };
         else if (a === 'wild') p = { x: -120, z: -120 };       // 荒野角（d>112，zoneAt='wild'）
         else if (a === 'extract') p = zones.extractPos[0];     // 主撤离点 (128,24)
+        else if (a === 'range') p = zones.rangeLanes[1]        // 靶馆中间射位（室内地坪贴地）
+            ? { x: zones.rangeLanes[1].origin.x - 1.5, z: zones.rangeLanes[1].origin.z } : null;
         if (!p) return false;
         x = p.x; z = p.z;
     } else if (typeof a === 'number' && typeof b === 'number') {
@@ -450,7 +476,7 @@ if (veil) {
 window.__fps = {
     renderer, scene, camera, player, enemies, targets, combat,
     gunview, gunAudio, hud, battleMap, state,
-    stash,
+    stash, env, rangeHall,          // env.indoor / rangeHall.setActive：实测员断言「在靶馆」用
     /* __fps.loot：extractFlow 契约句柄 —— .containers() 可调用（战利品组 notes）。
      * 注意不能在实例上直接覆盖 containers（内部 _updateSearch/_cullTick 迭代该数组），
      * 故用闭包包一层的句柄对象；完整实例另挂 __fps.lootRef 供深度调试。 */

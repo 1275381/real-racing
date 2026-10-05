@@ -1,8 +1,9 @@
 /* ============================================================
- * js/fps/rangeMode.js —— 靶场会话（照 missionSpec 靶场模式规格）
- * 无限备弹（reserve<30 自动回满 120）、命中音「叮」+倒靶闷响、
- * 连击（miss 清零）、命中率、最佳分持久化 localStorage fps_range_best
- * （targets.best 字段优先，缺失时本地兜底）。长按 R 0.5s 重置全场。
+ * js/fps/rangeMode.js —— 靶场会话（照 missionSpec 靶场模式规格；场地为
+ * rangeHall.js 全封闭室内靶馆）· 无限备弹（reserve<30 自动回满 120）、
+ * 命中音「叮」+倒靶闷响、连击（miss 清零）、命中率、最佳分持久化
+ * localStorage fps_range_best（targets.best 字段优先，缺失时本地兜底）。
+ * 长按 R 0.5s 重置全场。
  * ============================================================ */
 
 const RESERVE_REFILL = 120;   // 自动回满的备弹数
@@ -44,17 +45,18 @@ export class RangeMode {
         hud.showMarker(null);
         hud.setExtractProgress(null);
         hud.setIntelProgress(null);
-        hud.setPhase('靶场', '固定靶 ×8 · 摆动靶 ×4 · 长按 R 重置');
+        hud.setPhase('室内靶馆', '固定靶 ×8 · 摆动靶 ×4 · 长按 R 重置');
         hud.setObjectiveDetail([
-            '靶场说明',
+            '靶馆说明（全封闭室内靶道）',
             '· 10 / 15 / 25m 人形环靶，命中倒下 0.9s 后自动立起',
             '· 15m 摆动靶 ±30° 正弦，倒下不自动复位',
             '· 环 10/9 = 100 分 · 8/7 = 50 分 · 其余 25 分',
             '· 备弹无限（自动回满 120）',
             '· 长按 R 0.5 秒：重置全场靶与计分',
+            '· 枪口始终朝向靶道，越过黄线前退弹（告示牌守则）',
             '按住 Tab 查看本详情',
         ].join('\n'));
-        hud.toast('靶场模式 —— 自由开火');
+        hud.toast('室内靶馆 —— 自由开火');
         hud.ui.ensure();
     }
 

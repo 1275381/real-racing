@@ -145,6 +145,42 @@ const SKY = {
     fog: 0xd8a276,                      // 距离雾同地平线色
 };
 
+/* ==== 室内/室外氛围预设（靶馆 setIndoor 切换，成对还原） ====
+ * indoor：太阳/天光近乎归零（馆内由 rangeHall 灯板+点光照明）、雾改冷灰
+ * 短距、曝光微降——进馆即换氛围；vm 主灯方向给顶灯（gunview.setEnvironment 用） */
+export const INDOOR_KEY_DIR = new THREE.Vector3(0.18, 1, 0.14).normalize();
+const LIGHT_PRESETS = {
+    outdoor: { sun: 2.5, hemi: 0.55, hemiSky: 0x93a2cc, hemiGround: 0x9a7b52,
+               amb: 0.25, ambColor: 0x4a4438, fog: SKY.fog, fogNear: 100, fogFar: 620,
+               exposure: 1.02 },
+    indoor:  { sun: 0.05, hemi: 0.32, hemiSky: 0x9fb0be, hemiGround: 0x3e4247,
+               amb: 0.10, ambColor: 0x707a84, fog: 0x23282c, fogNear: 36, fogFar: 160,
+               exposure: 0.94 },
+};
+
+/* 室内环境反射球：冷灰棚（顶亮地暗）——馆内金属枪身反射顶灯而非黄昏天光 */
+function hallEnvMaterial() {
+    return new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        vertexShader: `
+            varying vec3 vDir;
+            void main() {
+                vDir = normalize(position);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`,
+        fragmentShader: `
+            varying vec3 vDir;
+            void main() {
+                float h = normalize(vDir).y;
+                vec3 col = mix(vec3(0.10, 0.11, 0.12), vec3(0.42, 0.47, 0.52), smoothstep(-0.5, 0.75, h));
+                col += vec3(0.85, 0.92, 1.0) * smoothstep(0.72, 0.95, h);   // 顶部灯带更亮
+                gl_FragColor = vec4(col, 1.0);
+                #include <tonemapping_fragment>
+                #include <colorspace_fragment>
+            }`,
+    });
+}
+
 function duskSkyMaterial() {
     return new THREE.ShaderMaterial({
         side: THREE.BackSide,
@@ -218,6 +254,7 @@ export class Environment {
         this.scene = scene;
         this.renderer = renderer;
         this._disposables = [];
+        this.indoor = false;               // 当前是否室内氛围（setIndoor 切换）
 
         // ---- 天空穹（背景 + PMREM 环境反射，game.js:35-41 同款流程） ----
         const skyMat = duskSkyMaterial();
@@ -226,15 +263,26 @@ export class Environment {
         const pmrem = new THREE.PMREMGenerator(renderer);
         const envScene = new THREE.Scene();
         envScene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), duskSkyMaterial()));
-        scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+        this.duskEnv = pmrem.fromScene(envScene, 0.04).texture;
+        scene.environment = this.duskEnv;
+        // 室内环境反射：冷灰棚 + 顶灯光带（馆内金属不再反射黄昏天光）
+        const hallScene = new THREE.Scene();
+        hallScene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), hallEnvMaterial()));
+        const strip = new THREE.Mesh(new THREE.PlaneGeometry(30, 3.5),
+            new THREE.MeshBasicMaterial({ color: 0xffffff }));
+        strip.position.set(0, 16, 0);
+        strip.rotation.x = Math.PI / 2;
+        hallScene.add(strip);
+        this.indoorEnv = pmrem.fromScene(hallScene, 0.04).texture;
         pmrem.dispose();
         this._track(dome.geometry, skyMat);
 
         // ---- 距离雾（同地平线暖色；随扩图推远，mask 340m 场内视距） ----
-        scene.fog = new THREE.Fog(SKY.fog, 100, 620);
+        const op = LIGHT_PRESETS.outdoor;
+        scene.fog = new THREE.Fog(op.fog, op.fogNear, op.fogFar);
 
         // ---- 太阳：傍晚低角度暖光，唯一投影源，阴影相机随玩家平移 ----
-        const sun = new THREE.DirectionalLight(0xffcf9c, 2.5);
+        const sun = new THREE.DirectionalLight(0xffcf9c, op.sun);
         sun.castShadow = true;
         sun.shadow.mapSize.set(2048, 2048);
         const sc = sun.shadow.camera;
@@ -249,8 +297,10 @@ export class Environment {
         this.update(0, new THREE.Vector3(0, 0, 150));
 
         // ---- 半球光（暮天天光偏蓝、地面反光偏暖）+ 一点环境补光 ----
-        scene.add(new THREE.HemisphereLight(0x93a2cc, 0x9a7b52, 0.55));
-        scene.add(new THREE.AmbientLight(0x4a4438, 0.25));
+        this.hemi = new THREE.HemisphereLight(op.hemiSky, op.hemiGround, op.hemi);
+        scene.add(this.hemi);
+        this.amb = new THREE.AmbientLight(op.ambColor, op.amb);
+        scene.add(this.amb);
 
         // ---- 地表：340×340m 起伏网格（200×200 段，与 terrainHeight 同源） ----
         const gGeo = new THREE.PlaneGeometry(ARENA * 2, ARENA * 2, 200, 200);
@@ -315,6 +365,25 @@ export class Environment {
         const tz = Math.round(playerPos.z * 2) / 2;
         this.sun.target.position.set(tx, 0, tz);
         this.sun.position.set(tx, 0, tz).addScaledVector(SUN_DIR, 110);
+    }
+
+    /* ==== 室内/室外氛围切换（靶馆进场 true；出发/回大厅 false） ====
+     * 只动灯光/雾/环境反射/曝光，几何零改动；行动模式数值由 outdoor
+     * 预设整组还原（与构造值一致），实现「进馆即换氛围」 */
+    setIndoor(on) {
+        const p = on ? LIGHT_PRESETS.indoor : LIGHT_PRESETS.outdoor;
+        this.sun.intensity = p.sun;
+        this.hemi.intensity = p.hemi;
+        this.hemi.color.setHex(p.hemiSky);
+        this.hemi.groundColor.setHex(p.hemiGround);
+        this.amb.intensity = p.amb;
+        this.amb.color.setHex(p.ambColor);
+        this.scene.fog.color.setHex(p.fog);
+        this.scene.fog.near = p.fogNear;
+        this.scene.fog.far = p.fogFar;
+        this.scene.environment = on ? this.indoorEnv : this.duskEnv;
+        this.renderer.toneMappingExposure = p.exposure;
+        this.indoor = !!on;
     }
 
     dispose() {

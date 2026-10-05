@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { boundaryBoxes, terrainHeight } from './env.js';
+import { RANGE_HALL } from './rangeHall.js';
 import { weaveHeight, speckleHeight, grainHeight, normalFromCanvas, toNormalTexture } from './normalmap.js';
 
 /* =====================================================================
@@ -206,6 +207,7 @@ function rayOBB(from, dir, b, maxD) {
 export class CollisionWorld {
     constructor() {
         this.boxes = [];   // {cx,cz,hx,hz,c,s,base,top}，base 贴地
+        this._floors = []; // 室内地坪区（靶馆专用；行动区不注册，行为不变）
     }
 
     /* 注册一个贴地 OBB：cx/cz 中心、hx/hz 半宽、rotY 朝向、h 离地高度 */
@@ -214,7 +216,22 @@ export class CollisionWorld {
         this.boxes.push({ cx, cz, hx, hz, c: Math.cos(rotY), s: Math.sin(rotY), base, top: base + h });
     }
 
+    /* 注册一块室内平地坪：矩形内 groundHeight 返回固定 y（rangeHall 靶馆用）。
+     * additive：行动区从未注册地板区，室外贴地逻辑完全不受影响 */
+    addFloor(cx, cz, hx, hz, y) {
+        this._floors.push({ cx, cz, hx, hz, y });
+    }
+
+    /* 注册一块以给定基座标高起算的 OBB（室内用：addBox 的盒顶按地形起算，
+     * 馆内挡墙/台面须从地坪起算，弹道高度判定才准；行动区不使用） */
+    addFloorBox(cx, cz, hx, hz, rotY, h, baseY) {
+        this.boxes.push({ cx, cz, hx, hz, c: Math.cos(rotY), s: Math.sin(rotY), base: baseY, top: baseY + h });
+    }
+
     groundHeight(x, z) {
+        for (const f of this._floors) {
+            if (Math.abs(x - f.cx) <= f.hx && Math.abs(z - f.cz) <= f.hz) return f.y;
+        }
         return terrainHeight(x, z);
     }
 
@@ -579,7 +596,13 @@ const PATROL_ROUTES = [
 // 撤离点 / 情报点 / 靶道（构建期锚点，zones 同源输出）
 const EXTRACT_MAIN = [128, 24];
 const EXTRACT_BACK = [-136, 96];
-const RANGE_LANES = [[-57, 122], [-57, 134], [-57, 146]];   // 射位（向 +X 射击，x=−27 集装箱档弹）
+// 靶道射位：全封闭室内靶馆（rangeHall.js 建馆，馆心 (120,130)，向 +X 射击；
+// 三条射位 x=射击线、z=馆心 ±12，y=馆内平地坪——旧露天靶道 (-57,122..146) 退役）
+const RANGE_LANES = [
+    [RANGE_HALL.cx + RANGE_HALL.fireX, RANGE_HALL.cz - RANGE_HALL.laneOff],
+    [RANGE_HALL.cx + RANGE_HALL.fireX, RANGE_HALL.cz],
+    [RANGE_HALL.cx + RANGE_HALL.fireX, RANGE_HALL.cz + RANGE_HALL.laneOff],
+];
 
 /* ==== 7. 程序化小件贴图：烟团 / 撤离地标线 / 土路 ==== */
 
@@ -838,11 +861,11 @@ export class BattleMap {
         this._buildWatchtower(62, -6);
         this._buildWatchtower(-108, -84);
 
-        // —— 情报箱（呼吸灯） + 撤离点 ×2（绿烟 + 信标 + 地面标线） + 靶道射位标线 ——
+        // —— 情报箱（呼吸灯） + 撤离点 ×2（绿烟 + 信标 + 地面标线）；靶道标线
+        //    归 rangeHall 靶馆（黄黑警示带/距离牌），露天版 _buildRangeMarks 撤除 ——
         this._buildIntel(32.9, -28.2, 0.35);
         this._buildExtract(EXTRACT_MAIN[0], EXTRACT_MAIN[1]);
         this._buildExtract(EXTRACT_BACK[0], EXTRACT_BACK[1]);
-        this._buildRangeMarks();
 
         // —— 交给任务/AI/战利品的锚点 ——
         this.zones = {
@@ -860,7 +883,8 @@ export class BattleMap {
             extractR: 3.2,
             danger: { cx: DANGER.cx, cz: DANGER.cz, r: DANGER.r },     // HUD 入区警示用
             rangeLanes: RANGE_LANES.map(([x, z]) => ({
-                origin: this._v(x, z), dir: new THREE.Vector3(1, 0, 0),
+                origin: new THREE.Vector3(x, RANGE_HALL.floorY, z),   // 馆内平地坪（非地形高）
+                dir: new THREE.Vector3(1, 0, 0),
             })),
             containerSpots: CONTAINER_SPOTS,
         };
@@ -1013,29 +1037,6 @@ export class BattleMap {
         this._roots.push(g);
         for (const sx of [-1.1, 1.1]) for (const sz of [-1.1, 1.1]) {
             this.collision.addBox(x + sx, z + sz, 0.16, 0.16, 0, 5.4);
-        }
-    }
-
-    // 靶道射位标线（黄色横条 + 立柱一对）
-    _buildRangeMarks() {
-        const stripeMat = new THREE.MeshBasicMaterial({ color: 0xd8c874, transparent: true, opacity: 0.75, depthWrite: false });
-        const postMat = new THREE.MeshStandardMaterial({ color: 0x8a6f3a, roughness: 0.9 });
-        for (const [x, z] of RANGE_LANES) {
-            const y = terrainHeight(x, z);
-            const stripe = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.45), stripeMat);
-            stripe.rotation.x = -Math.PI / 2;
-            stripe.rotation.z = -Math.PI / 2;
-            stripe.position.set(x, y + 0.04, z);
-            stripe.renderOrder = 1;
-            this.scene.add(stripe);
-            this._roots.push(stripe);
-            for (const dz of [-1.6, 1.6]) {
-                const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.75, 0.09), postMat);
-                post.position.set(x - 1.3, y + 0.37, z + dz);
-                post.castShadow = true;
-                this.scene.add(post);
-                this._roots.push(post);
-            }
         }
     }
 
