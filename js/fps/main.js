@@ -54,7 +54,48 @@ const canvas = document.getElementById('gameCanvas');
 const renderer = new THREE.WebGLRenderer({
     canvas, antialias: true, powerPreference: 'high-performance',
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+/* 性能自适应分辨率：Retina dpr=2 全速渲染 = 4× 像素量（低帧首因）。上限压到 1.5×
+ * （AA 仍在，观感几乎无损）；帧率不足时调速器再逐步降到 1.0×，富余则回升（见 perfTick） */
+const PERF = {
+    cap: Math.min(window.devicePixelRatio || 1, 1.5),
+    min: 1.0,
+    cur: Math.min(window.devicePixelRatio || 1, 1.5),
+    acc: 0, n: 0, last: 0, goodMs: 0,
+};
+renderer.setPixelRatio(PERF.cur);
+
+/* 帧率角标：右上角小字实时显示 fps 与当前渲染档（优化效果用户可直读） */
+const fpsBadge = document.createElement('div');
+fpsBadge.style.cssText = 'position:fixed;right:10px;top:8px;z-index:95;font:11px/1.5 Menlo,Consolas,monospace;' +
+    'letter-spacing:.08em;color:rgba(216,222,210,.7);background:rgba(8,11,9,.4);' +
+    'padding:2px 9px;border-radius:5px;pointer-events:none;white-space:pre';
+fpsBadge.textContent = '测速中…';
+document.body.appendChild(fpsBadge);
+
+/* 每 ~1.5s 评估一次平均帧时长：<45fps 降 0.25 档（至 1.0），>57fps 持续 4s 才升一档（防抖动） */
+function perfTick(now) {
+    if (!PERF.last) { PERF.last = now; return; }
+    const dt = Math.min(100, now - PERF.last);   // 切标签页的时间大跳不毒化统计
+    PERF.last = now; PERF.acc += dt; PERF.n++;
+    if (PERF.acc < 1500) return;
+    const fps = 1000 / (PERF.acc / PERF.n);
+    if (fps < 45 && PERF.cur > PERF.min) {
+        PERF.cur = Math.max(PERF.min, PERF.cur - 0.25);
+        renderer.setPixelRatio(PERF.cur);
+        PERF.goodMs = 0;
+    } else if (fps > 57 && PERF.cur < PERF.cap) {
+        PERF.goodMs += PERF.acc;
+        if (PERF.goodMs >= 4000) {
+            PERF.cur = Math.min(PERF.cap, PERF.cur + 0.25);
+            renderer.setPixelRatio(PERF.cur);
+            PERF.goodMs = 0;
+        }
+    } else {
+        PERF.goodMs = Math.max(0, PERF.goodMs - PERF.acc);
+    }
+    fpsBadge.textContent = `${Math.round(fps)} FPS · 渲染 ${PERF.cur.toFixed(2)}×`;
+    PERF.acc = 0; PERF.n = 0;
+}
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -371,9 +412,10 @@ window.addEventListener('resize', () => {
 
 /* ==== 9. 主循环：逻辑步进 + 双 pass 渲染（主场景 → 清深度 → viewmodel） ==== */
 const clock = new THREE.Clock();
-function frame() {
+function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min(clock.getDelta(), 0.05);
+    perfTick(typeof now === 'number' ? now : performance.now());
     try {
         step(dt);
     } catch (err) {
@@ -400,13 +442,24 @@ function step(dt) {
     hud.compass(player.yaw);
     hud.setHealth(player.health);
     hud.update(dt);                              // 环境风/低血心跳（可选调用）
-    /* 双 pass 渲染：viewmodel 只进 vmScene/vmCamera（枪械组约定） */
+    /* 双 pass 渲染：viewmodel 只进 vmScene/vmCamera（枪械组约定）。
+     * 大厅/结算盖场时背景只是 93% 遮罩下的氛围透出——降到 ~9fps 渲染，
+     * 省下首屏大半 GPU；对局内每帧全速。 */
+    if ((lobby && lobby.visible) || hud.resultVisible) {
+        bgAcc += dt * 1000;
+        if (bgAcc < 110) return;
+        bgAcc = 0;
+    } else {
+        bgAcc = 0;
+    }
     renderer.render(scene, camera);
     renderer.clearDepth();
     renderer.autoClear = false;
     renderer.render(gunview.vmScene, gunview.vmCamera);
     renderer.autoClear = true;
 }
+
+let bgAcc = 0;
 
 /* ==== 10. 运行时错误屏显（js/main.js 同款；加载期错误由 fps.html 内联兜底） ==== */
 const errBox = document.createElement('div');
