@@ -89,6 +89,47 @@ function dotSprite(colorHex, x, y, z) {
     return sp;
 }
 
+/* 圆角矩形轮廓（红点镜大方形圆角镜窗的框与玻璃用；中心在原点，XY 平面） */
+function roundedRectShape(w, h, r) {
+    const s = new THREE.Shape();
+    const x = -w / 2, y = -h / 2;
+    s.moveTo(x + r, y);
+    s.lineTo(x + w - r, y);
+    s.quadraticCurveTo(x + w, y, x + w, y + r);
+    s.lineTo(x + w, y + h - r);
+    s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    s.lineTo(x + r, y + h);
+    s.quadraticCurveTo(x, y + h, x, y + h - r);
+    s.lineTo(x, y + r);
+    s.quadraticCurveTo(x, y, x + r, y);
+    return s;
+}
+
+/* 红点镜护翼（参考图特征件）：单侧前弯弧形金属杆——样条管件根部埋入
+ * 镜座后角，沿镜窗外侧爬升越过窗顶，再向镜口方向前弯收梢；两端球头封口
+ * （TubeGeometry 端面开口朝斜前下，ADS 视角可见，必须封）。
+ * side=±1 左右镜像；API 已在 lib/three.module.js 核对
+ * （CatmullRomCurve3:35166 / TubeGeometry:40149）。 */
+function scopeWing(M, side) {
+    const pts = [
+        new THREE.Vector3(side * 0.030, 0.034, 0.014),   // 根（埋进镜座）
+        new THREE.Vector3(side * 0.036, 0.064, 0.012),   // 沿窗外侧爬升
+        new THREE.Vector3(side * 0.038, 0.090, 0.003),   // 窗顶角外缘
+        new THREE.Vector3(side * 0.036, 0.101, -0.012),  // 越过窗顶
+        new THREE.Vector3(side * 0.030, 0.096, -0.027),  // 前弯端梢（镜口前方）
+    ];
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.0035, 8, false),
+        M.barrelMat));
+    for (const p of [pts[0], pts[pts.length - 1]]) {
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(0.0035, 8, 6), M.barrelMat);
+        cap.position.copy(p);
+        g.add(cap);
+    }
+    return g;
+}
+
 /* ==== 2. buildScopeMesh(kind)：镜身模型 ====
  * 组原点 = 导轨接口面中心（gun.userData.opticAnchor 处），镜身向 −Z 伸出。
  * userData.sight = 瞄准线锚点 {y,z}（组本地）：GunView 据此重算 ADS 对准位。
@@ -133,18 +174,46 @@ export function buildScopeMesh(kind) {
     };
 
     if (kind === 'reddot') {
-        /* 红点镜：开口短筒 + 前后玻璃 + 屏幕空间红点（sizeAttenuation:false
-         * 恒定像素尺寸 + AdditiveBlending，任何分辨率下都是醒目瞄准点；
-         * 原 0.0022 实心小球被封在实心筒里完全不可见——写实度评审 #03i） */
-        root.add(clampBase(0.042));
-        root.add(cylZ(0.017, 0.052, M.receiverMat, 0, 0.030, 0, 18, true));   // 筒身开口
-        root.add(cylZ(0.019, 0.006, M.boltMat, 0, 0.030, -0.024, 18, true));  // 物镜圈（开口）
-        root.add(cylZ(0.019, 0.006, M.boltMat, 0, 0.030, 0.024, 18, true));   // 目镜圈（开口）
-        root.add(glassDisc(0.0165, 0, 0.030, -0.024, 0.14));                  // 物镜玻璃
-        root.add(glassDisc(0.0165, 0, 0.030, 0.024, 0.10));                   // 目镜玻璃
-        root.add(dotSprite('#ff2418', 0, 0.030, 0.004));
-        root.add(box(0.006, 0.010, 0.014, M.boltMat, 0.020, 0.014, 0.012)); // 亮度旋钮
-        root.userData.sight = { y: 0.030, z: 0.0 };
+        /* 红点镜 v2（照参考图重做）：
+         * ① 增高架——导轨卡扣上加一级深色金属垫块，镜体明显架高：镜片中心
+         *    y=0.072（高出导轨面 7.2cm，≈ 真实 0.5" riser + 高镜座比例），
+         *    开镜视线（GunView._scopeLine）正好从镜片中心穿过，不贴机匣平视；
+         * ② 大方形圆角镜窗——带真实镂空的环形拉伸框（沿用上轮 openEnded
+         *    思路：框内无任何端盖封堵）+ 近全透淡色玻璃，透窗看靶道全干净；
+         * ③ 左右前弯弧形金属护翼——scopeWing 样条管件（参考图最显眼特征）；
+         * ④ 瞄准点 = 镜窗中心屏幕空间红点（sizeAttenuation:false 恒定像素
+         *    尺寸 + AdditiveBlending，任何分辨率下 4-6px 饱和红点）；
+         * ⑤ 装镜即隐机瞄——机瞄件可见性由 GunView._mountScope 统一处理。 */
+        root.add(clampBase(0.052));                                          // 导轨卡扣
+        root.add(box(0.038, 0.020, 0.050, M.barrelMat, 0, 0.016, 0.004));    // 增高架
+        for (const sx of [-0.0195, 0.0195]) {                                // 架侧内六角螺栓
+            for (const sz of [-0.013, 0.014]) {
+                root.add(box(0.005, 0.009, 0.009, M.boltMat, sx, 0.016, sz));
+            }
+        }
+        root.add(box(0.068, 0.028, 0.038, M.barrelMat, 0, 0.038, 0.002));    // 镜座（厚深色金属块）
+        root.add(box(0.008, 0.012, 0.014, M.boltMat, 0.034, 0.038, 0.013));  // 亮度旋钮（右侧）
+        /* 大方形圆角镜窗：外框环形拉伸体（真实镂空）+ 近全透淡色玻璃 */
+        const winShape = roundedRectShape(0.070, 0.052, 0.013);
+        winShape.holes.push(roundedRectShape(0.056, 0.040, 0.010));
+        const winFrame = new THREE.Mesh(
+            new THREE.ExtrudeGeometry(winShape, { depth: 0.010, bevelEnabled: false }),
+            M.barrelMat);
+        winFrame.position.set(0, 0.072, -0.009);                             // 框体 z −9..+1mm
+        root.add(winFrame);
+        const winGlass = new THREE.Mesh(
+            new THREE.ShapeGeometry(roundedRectShape(0.056, 0.040, 0.010)),
+            new THREE.MeshBasicMaterial({
+                color: 0xaad0e2, transparent: true, opacity: 0.07,           // 淡色微反光近全透
+                side: THREE.DoubleSide, depthWrite: false,                   // 不写深度：不挡红点
+            }));
+        winGlass.position.set(0, 0.072, -0.0075);
+        winGlass.renderOrder = 8;
+        root.add(winGlass);
+        root.add(scopeWing(M, -1));                                          // 左护翼
+        root.add(scopeWing(M, 1));                                           // 右护翼
+        root.add(dotSprite('#ff2418', 0, 0.072, -0.002));                    // 镜窗中心红点
+        root.userData.sight = { y: 0.072, z: -0.008 };                       // 瞄准线 = 镜片中心
     } else if (kind === 'holo') {
         /* 全息镜：方形视窗框 + 屏幕空间绿点 + 下部电池仓（红点镜同款处理） */
         root.add(clampBase(0.048));

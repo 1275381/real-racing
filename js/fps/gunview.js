@@ -435,7 +435,8 @@ export class GunView {
     }
 
     /* 该枪生效瞄具：改枪台装配 > 枪自带（狙击原厂 6×）> 机瞄。
-     * 挂镜身模型到导轨接口面，并按镜的瞄准线重算 ADS 位。 */
+     * 挂镜身模型到导轨接口面，并按镜的瞄准线重算 ADS 位；
+     * 兼管机瞄可见性（装镜即隐机瞄，见下方 ironVisible 段）。 */
     _mountScope() {
         if (this._scopeMesh && this._scopeMesh.parent) {
             this._scopeMesh.parent.remove(this._scopeMesh);
@@ -450,6 +451,19 @@ export class GunView {
         this._scope = sc;
         this._zoom = sc.zoom || 1;
         this._scopeKind = sc.kind || 'iron';
+        /* 装镜即隐机瞄（参考图硬性要求：装红点后开镜视野零准星/照门）：
+         * 非 iron 档一律隐藏前后机瞄件，卸镜/切回机瞄档时恢复。
+         * 机瞄件名盘点（gun.js）：rifle/smg/sniper = parts.sightFront +
+         * parts.sightRear；pistol/shotgun = parts.sights（霰弹枪整组含肋条
+         * 与前珠）。_installGun 每次换枪、大厅换镜后每次 setLoadout 都走本
+         * 函数 → 可见性永远按当前瞄具重派生，建模缓存复用不残留隐藏态。
+         * 范围：reddot/holo/optic/sniper/thermal 全生效（狙击原厂 6× 同为
+         * 装镜态，backup 机瞄视为收起）。 */
+        const ironVisible = this._scopeKind === 'iron';
+        for (const name of ['sightFront', 'sightRear', 'sights']) {
+            const part = this.parts[name];
+            if (part) part.visible = ironVisible;
+        }
         if (this._scopeKind !== 'iron') {
             const mesh = buildScopeMesh(this._scopeKind);
             if (mesh) {
