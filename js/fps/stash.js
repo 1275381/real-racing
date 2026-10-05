@@ -2,7 +2,7 @@
  * js/fps/stash.js —— 大厅经济/仓库/持久化（【大厅】组）
  * localStorage 键 'fps_dt_save_v1'（与 rangeMode 的 fps_range_best 无关）：
  *   { v:1, cash, items[], guns:{owned[],scopes{gunId:scopeId|null},scopesOwned[]},
- *     loadout:{primary,secondary}, stats:{raids,extracts,deaths,kills} }
+ *     loadout:{primary,secondary}, stats:{raids,extracts,deaths,kills}, daily:{last} }
  * 读写全 try/catch（隐私模式降级内存档，rangeMode.js:23 先例）；v 不符即 wipe。
  * 纪律：对局进行中绝不写档 —— main 出发时置 stash.raidActive = true；
  * 结算入库/记战绩后调 recordRaid()（内部先复位 raidActive 再落盘）。
@@ -16,6 +16,9 @@ import { RARITY } from './loot.js';
 
 const SAVE_KEY = 'fps_dt_save_v1';
 const SAVE_VERSION = 1;
+
+/* 每日签到：每个自然日（本机时区）可领一次，金额固定 */
+export const DAILY_REWARD = 1500;
 
 /* ==== 跨组数据防御适配器：字段名/容器形态不冻结，这里统一收敛 ==== */
 
@@ -78,6 +81,7 @@ export class Stash {
             guns: { owned, scopes: {}, scopesOwned: [] },
             loadout: { primary: 'rifle', secondary: 'pistol' },
             stats: { raids: 0, extracts: 0, deaths: 0, kills: 0 },
+            daily: { last: '' },    // 签到：last = 最近一次领取的日期键（YYYY-M-D）
         };
     }
 
@@ -127,6 +131,8 @@ export class Stash {
                 deaths: Math.max(0, Number(st.deaths) || 0),
                 kills: Math.max(0, Number(st.kills) || 0),
             };
+            const dl = d.daily || {};   // 旧档无 daily 字段 → {last:''} 视为今日未签
+            this.daily = { last: typeof dl.last === 'string' ? dl.last : '' };
         } catch (e) {
             this._memOnly = true;   // 隐私模式 / 配额异常：内存档照常玩
         }
@@ -140,6 +146,7 @@ export class Stash {
                 scopesOwned: this.guns.scopesOwned,
             },
             loadout: this.loadout, stats: this.stats,
+            daily: this.daily,
         };
     }
 
@@ -257,6 +264,27 @@ export class Stash {
     // 仅解除写档禁令（结算路径外的回大厅兜底）
     endRaid() {
         this.raidActive = false;
+    }
+
+    /* ---------- 每日签到 ---------- */
+    _todayKey() {
+        const d = new Date();
+        return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    }
+
+    // 今日（自然日，本机时区）尚未签到 = 可领
+    canCheckIn() {
+        return this.daily.last !== this._todayKey();
+    }
+
+    // 领取：成功返回金额并走 save/emit（顶栏现金滚动）；已领过返回 0
+    checkIn() {
+        if (!this.canCheckIn()) return 0;
+        this.daily.last = this._todayKey();
+        this.cash += DAILY_REWARD;
+        this.save();
+        this._emit();
+        return DAILY_REWARD;
     }
 
     /* ---------- 调试句柄（__fps.stash 用） ---------- */

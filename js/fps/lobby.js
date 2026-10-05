@@ -3,14 +3,14 @@
  * 自注入 DOM：#fps-lobby（fps.html 预留占位；缺失则自建），z-index 30，
  * 盖场时置 hud.uiBlocked = true（屏蔽 H/Tab 全局键，M 静音保留），
  * hide() 时 display:none 释放（点击不落到 canvas，不触发指针锁定）。
- * 页签：1 出发 / 2 仓库 / 3 改枪台；G 任意页签直接去靶场。
+ * 页签：1 出发 / 2 仓库 / 3 改枪台；G 任意页签直接去靶场；C 每日签到 +₵1,500。
  * 出发页光标模型：←/→ 单轴扫 [主槽|副槽|候选枪×N|▶出发]，回车执行：
  *   槽 = 聚焦装入目标槽 · 枪 = 装入聚焦槽（主副不可同枪）· 出发 = onDeploy。
  * 数据来源（只读）：stash（自有资产）、gunsData（枪表，经 stash 适配器）、
  * loot.RARITY（品质色，经 stash 适配器）。
  * 样式：全部 .lobby-* 类（js 内注入兜底样式表，集成者可整段搬进 css/fps.css）。
  * ============================================================ */
-import { rarInfo, gunIds, gunInfo, scopeList, scopeById } from './stash.js';
+import { rarInfo, gunIds, gunInfo, scopeList, scopeById, DAILY_REWARD } from './stash.js';
 import { itemIconUrl } from './loot.js';
 
 const GUN_IDS = gunIds();   // 出发页候选枪顺序（与 gunsData 表序一致）
@@ -33,6 +33,14 @@ const LOBBY_CSS = `
 .lobby-cash{font-size:22px;color:#7ee2a8;font-variant-numeric:tabular-nums;min-width:150px;text-align:right}
 .lobby-cash-flash{animation:lobbyCashFlash .6s ease-out}
 @keyframes lobbyCashFlash{0%{color:#ff5941;transform:scale(1.12)}100%{}}
+/* -- 每日签到按钮（顶栏，现金左侧） -- */
+.lobby-daily{padding:8px 18px;border:1px solid rgba(216,222,210,.25);border-radius:6px;
+  font-size:13px;letter-spacing:.18em;color:#9fb3a0;background:rgba(20,26,20,.7);
+  cursor:pointer;user-select:none;white-space:nowrap}
+.lobby-daily-yes{border-color:rgba(255,179,92,.75);color:#ffd9a3;
+  background:rgba(60,48,24,.5);animation:dailyPulse 2.2s ease-in-out infinite}
+@keyframes dailyPulse{0%,100%{box-shadow:0 0 6px rgba(255,179,92,.22)}50%{box-shadow:0 0 16px rgba(255,179,92,.5)}}
+.lobby-daily-no{opacity:.45;cursor:default}
 .lobby-body{flex:1;display:flex;align-items:center;justify-content:center;min-height:0}
 .lobby-panel{width:min(1020px,92vw);max-height:78vh;display:flex;flex-direction:column;
   background:rgba(10,14,11,.72);border:1px solid rgba(216,222,210,.22);
@@ -262,13 +270,16 @@ export class Lobby {
         root.style.display = 'none';
         this._root = root;
 
-        // 顶栏：LOGO / 战绩 / 现金
+        // 顶栏：LOGO / 战绩 / 每日签到 / 现金
         const top = _div('lobby-topbar');
         const logo = _div('lobby-logo', '烽火地带');
         logo.appendChild(_span('lobby-logo-sub', 'TACTICAL OPERATION · 战术行动'));
         top.appendChild(logo);
         this._recordEl = _div('lobby-record');
         top.appendChild(this._recordEl);
+        this._dailyEl = _div('lobby-daily', '每日签到');
+        this._dailyEl.dataset.act = 'daily';
+        top.appendChild(this._dailyEl);
         this._cashEl = _div('lobby-cash');
         top.appendChild(this._cashEl);
         root.appendChild(top);
@@ -304,6 +315,7 @@ export class Lobby {
             const act = t.dataset.act, i = Number(t.dataset.i || 0);
             if (act === 'tab') this.setTab(i);
             else if (act === 'range') this._fireRange();
+            else if (act === 'daily') this._checkIn();
             else if (act === 'entry') this._clickEntry(i);
             else if (act === 'cell') this._clickCell(i);
             else if (act === 'sellall') this._sellAll();
@@ -321,6 +333,7 @@ export class Lobby {
             if (c === 'Digit2' || c === 'Numpad2') { this.setTab(1); return; }
             if (c === 'Digit3' || c === 'Numpad3') { this.setTab(2); return; }
             if (c === 'KeyG') { this._fireRange(); return; }
+            if (c === 'KeyC') { this._checkIn(); return; }   // C · 每日签到
             if (c === 'ArrowLeft') { this._move(-1, 0); e.preventDefault(); return; }
             if (c === 'ArrowRight') { this._move(1, 0); e.preventDefault(); return; }
             if (c === 'ArrowUp') { this._move(0, -1); e.preventDefault(); return; }
@@ -392,6 +405,10 @@ export class Lobby {
         const s = this.stash.stats;
         this._recordEl.textContent =
             `出击 ${s.raids} · 撤离 ${s.extracts} · 阵亡 ${s.deaths} · 击杀 ${s.kills}`;
+        // 每日签到按钮：可领琥珀呼吸高亮，已领灰化（日期键变化次日自动恢复）
+        const can = this.stash.canCheckIn();
+        this._dailyEl.className = 'lobby-daily ' + (can ? 'lobby-daily-yes' : 'lobby-daily-no');
+        this._dailyEl.textContent = can ? `C · 每日签到 +₵${DAILY_REWARD.toLocaleString('en-US')}` : '今日已签到 ✓';
         this._tweenCash(Math.max(0, Math.round(this.stash.cash || 0)));
     }
 
@@ -416,6 +433,17 @@ export class Lobby {
         this._cashEl.classList.remove('lobby-cash-flash');
         void this._cashEl.offsetWidth;   // 重排重播动画
         this._cashEl.classList.add('lobby-cash-flash');
+    }
+
+    /* ---------- 每日签到 ---------- */
+    _checkIn() {
+        const got = this.stash.checkIn();
+        if (got > 0) {
+            this._toast(`签到成功 +${_fmt(got)} —— 明天再来`, 3200, '#ffd9a3');
+            this._cashFlash();
+        } else {
+            this._toast('今天已经签到过了 —— 明天再来', 2600);
+        }
     }
 
     _toast(text, dur, color) {
