@@ -289,12 +289,21 @@ func switch_slot() -> void:
 
 
 ## 汇聚命中取最近：墙 / 士兵（可选，未注入则跳过）/ 靶子（同），
-## 返回统一契约 {"type","i","d","point"}；type=="" = 全落空（point=远端点）
+## 返回统一契约 {"type","i","d","point"}；type=="" = 全落空（point=远端点）。
+## world.wall_hit 鸭子类型：HDWorld 返回命中距离（float，无墙 = max_d），
+## 兼容直接返回命中字典的实现
 func raycast_all(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	var best := {"type": "", "i": -1, "d": max_d, "point": from + dir * max_d}
 	var cands: Array = []
 	if world != null:
-		cands.append(world.wall_hit(from, dir, max_d))
+		var wres: Variant = world.wall_hit(from, dir, max_d)
+		if wres is float or wres is int:
+			var wd := float(wres)
+			if wd < max_d:
+				cands.append({"type": "wall", "i": -1, "d": wd,
+						"point": from + dir * wd})
+		elif wres is Dictionary:
+			cands.append(wres)
 	if soldiers != null:
 		cands.append(soldiers.raycast(from, dir, max_d))
 	if targets != null:

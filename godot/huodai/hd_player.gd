@@ -142,8 +142,10 @@ func hit(dmg: float) -> void:
 		died.emit()
 
 
-## 楼房/掩体 OBB 推出（照抄 onfoot：半径 0.5，含 top/bot 高度过滤——
-## 高处栏杆等带 bot 的障碍只在其高度区间生效，脚下可正常通行）
+## 障碍推出（onfoot 的 OBB push_out：半径 0.5，含 top/bot 高度过滤——
+## 高处栏杆等带 bot 的障碍只在其高度区间生效，脚下可正常通行）。
+## 障碍字典鸭子类型：HDWorld 给 {cx,cz,hx,hz,top,bot}（轴对齐无旋转），
+## 兼容 onfoot 式 {c:Vector2, rot}——缺 rot 按轴对齐（ca=1/sa=0 退化）
 func _push_out_obstacles() -> void:
 	for ob in _world.obstacles_near(pos.x, pos.z):
 		if ob.get("off", false):
@@ -152,12 +154,15 @@ func _push_out_obstacles() -> void:
 			continue
 		if ob.has("bot") and pos.y + 1.6 < float(ob["bot"]):
 			continue
-		var dx: float = pos.x - ob["c"].x
-		var dz: float = pos.z - ob["c"].y
+		var ox: float = ob["c"].x if ob.has("c") else float(ob["cx"])
+		var oz: float = ob["c"].y if ob.has("c") else float(ob["cz"])
+		var rot: float = float(ob["rot"]) if ob.has("rot") else 0.0
+		var dx: float = pos.x - ox
+		var dz: float = pos.z - oz
 		if dx * dx + dz * dz > 40.0 * 40.0:
 			continue
-		var ca: float = cos(ob["rot"])
-		var sa: float = sin(ob["rot"])
+		var ca: float = cos(rot)
+		var sa: float = sin(rot)
 		var lx: float = ca * dx + sa * dz
 		var lz: float = -sa * dx + ca * dz
 		var cx := clampf(lx, -ob["hx"], ob["hx"])
