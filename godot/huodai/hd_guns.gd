@@ -43,7 +43,7 @@ var scope_provider: Callable   # main 注入 func(gun_id)->Dictionary{"kind","zo
 var cur_id: String = ""
 var ammo: int = 0
 var reserve: int = 0
-var reloading: float := 0.0
+var reloading: float = 0.0
 
 var _slots := {}        # "primary"/"secondary" -> {"id","ammo","reserve"}
 var _cur_slot := ""
@@ -240,8 +240,8 @@ func try_fire() -> void:
 	var pellets: int = int(_g.get("pellets", 1))
 	var max_r: float = float(_g.get("range", 250.0))
 	var dmg: float = float(_g.get("dmg", 20.0))
-	var right := player.cam.global_transform.basis.x
-	var up := player.cam.global_transform.basis.y
+	var right: Vector3 = player.cam.global_transform.basis.x
+	var up: Vector3 = player.cam.global_transform.basis.y
 	for p in pellets:
 		var jitter := Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * spread * 2.0
 		var pdir := (base_dir + right * jitter.x + up * jitter.y).normalized()

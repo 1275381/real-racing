@@ -312,7 +312,7 @@ func _build_env() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.tonemap_exposure = 1.0
 	env.fog_enabled = true
-	env.fog_mode = Environment.FOG_MODE_EXP
+	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_density = OUTDOOR_FOG
 	env.fog_light_color = Color(0.72, 0.56, 0.46)
 	env.fog_sky_affect = 0.12
