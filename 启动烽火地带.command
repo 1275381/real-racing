@@ -8,4 +8,4 @@ if [ ! -x "$GODOT" ]; then
 	exit 1
 fi
 echo "🔥 正在启动 烽火地带（Godot 版）..."
-"$GODOT" --path godot res://huodai/main.tscn
+"$GODOT" --path huodai
