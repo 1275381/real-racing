@@ -50,13 +50,19 @@ const HALL_WALL_T := 0.5          # 墙厚
 const HALL_DOOR_W := 4.0          # +Z 墙门洞宽（射击线后方进出）
 const HALL_FIRE_DZ := 11.0        # 射击线距馆心（+Z 侧）
 const HALL_TRAP_T := 0.6          # 尽端挡弹墙厚度（-Z 端）
+const HALL_FLOOR_Y := 0.06        # 馆内地坪高度：与大地 y=0 错开 6cm，根治共面 z-fighting 乱闪
 
 ## 撤离信标（绿色发光柱 + 地面绿环）
 const EXTRACT_BEACON_H := 2.6
 
 ## set_indoor 前后对比（进靶馆：雾拉近/环境光压暗/漏进来的夕阳压弱）
-const OUTDOOR_FOG := 0.006
-const INDOOR_FOG := 0.02
+## 雾密度红线：指数雾 exp(-d·dist)，0.003 时 200m 处雾感仅 ~45%、150m ~36%——
+## 150-200m 外士兵剪影必须可辨（问题②"远处看不见人"），宁淡勿糊，任何上调先过这条线
+const FOG_MAX := 0.003              # 远景可见性红线
+const OUTDOOR_FOG := 0.002          # 200m 处雾感 ~33%，地平线保留空气透视层次
+## INDOOR_FOG 刻意压在红线内一格：fog_density 引擎侧按 float32 存储，
+## 0.003 会舍入成 0.003000000026… 反超 double 红线（回归 15 踩过）；0.0029 双保险
+const INDOOR_FOG := 0.0029          # 靶馆 22m 靶道只留薄雾感（原 0.02 把靶子糊成剪影）
 const OUTDOOR_AMB := 0.9
 const INDOOR_AMB := 0.55
 const OUTDOOR_SUN := 1.05
@@ -256,9 +262,11 @@ func in_hall(x: float, z: float) -> bool:
 	return absf(x - c.x) <= HALL_HX and absf(z - c.z) <= HALL_HZ
 
 
-## 平地 0.0（靶馆地坪也 0，简单一致）
-func ground_height(_x: float, _z: float) -> float:
-	return 0.0
+## 馆内地坪 HALL_FLOOR_Y（0.06）/ 馆外大地 0.0：两层地面错开 6cm，
+## 根治馆内地板与大地面 y=0 共面 z-fighting 乱闪（问题⑦）；
+## 门洞处 6cm 台阶保留（第一人称感知极小）
+func ground_height(x: float, z: float) -> float:
+	return HALL_FLOOR_Y if in_hall(x, z) else 0.0
 
 
 ## 附近障碍子集（onfoot push_out 每帧调用，线性扫 + 外扩矩形快筛）
@@ -314,7 +322,9 @@ func _build_env() -> void:
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_density = OUTDOOR_FOG
-	env.fog_light_color = Color(0.72, 0.56, 0.46)
+	# 雾色调冷灰：暖雾(0.72,0.56,0.46)与士兵赭红军装(0.7,0.5,0.4)几乎同色，
+	# 远处人形会直接溶进雾里（问题②）；冷灰雾顺带把暖色目标衬托出来
+	env.fog_light_color = Color(0.58, 0.62, 0.68)
 	env.fog_sky_affect = 0.12
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.52, 0.44, 0.4)
@@ -509,28 +519,31 @@ func _build_hall() -> void:
 	mat_trap.albedo_color = Color(0.18, 0.19, 0.2)   # 尽端挡弹墙：深色橡胶缓弹板
 	mat_trap.roughness = 0.9
 
-	# 地坪 / 吊顶（地坪顶面 = y 0，与 ground_height 一致）
-	_hall_box(cx, -0.15, cz, HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
-	_hall_box(cx, HALL_H + 0.15, cz, HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
-	# -Z 尽端挡弹墙（整面，靶道最深 22m + 缓冲）
-	_hall_box(cx, HALL_H * 0.5, cz - HALL_HZ + HALL_TRAP_T * 0.5,
+	# 地坪 / 吊顶：地坪顶面 = HALL_FLOOR_Y（0.06，与 ground_height 一致），
+	# 与大地 y=0 错层根治共面闪烁；吊顶跟抬保持馆内净高 HALL_H
+	_hall_box(cx, HALL_FLOOR_Y - 0.15, cz, HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H + 0.15, cz,
+			HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
+	# -Z 尽端挡弹墙（整面，靶道最深 22m + 缓冲；底部落在地坪上）
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz - HALL_HZ + HALL_TRAP_T * 0.5,
 			HALL_HX * 2.0, HALL_H, HALL_TRAP_T, mat_trap)
-	_add_obstacle(cx, cz - HALL_HZ + HALL_TRAP_T * 0.5, HALL_HX, HALL_TRAP_T * 0.5, HALL_H)
+	_add_obstacle(cx, cz - HALL_HZ + HALL_TRAP_T * 0.5, HALL_HX, HALL_TRAP_T * 0.5,
+			HALL_FLOOR_Y + HALL_H)
 	# +Z 墙（射击线后方）：中央留 HALL_DOOR_W 门洞，两段各 20m
 	var seg := (HALL_HX * 2.0 - HALL_DOOR_W) * 0.5
 	for side in [-1.0, 1.0]:
 		var wx: float = cx + side * (HALL_HX - seg * 0.5)
-		_hall_box(wx, HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
+		_hall_box(wx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
 				seg, HALL_H, HALL_WALL_T, mat_concrete)
 		_add_obstacle(wx, cz + HALL_HZ - HALL_WALL_T * 0.5, seg * 0.5,
-				HALL_WALL_T * 0.5, HALL_H)
+				HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H)
 	# 西墙 / 东墙
 	for side in [-1.0, 1.0]:
 		var wz := cz
-		_hall_box(cx + side * (HALL_HX - HALL_WALL_T * 0.5), HALL_H * 0.5, wz,
-				HALL_WALL_T, HALL_H, HALL_HZ * 2.0, mat_concrete)
+		_hall_box(cx + side * (HALL_HX - HALL_WALL_T * 0.5), HALL_FLOOR_Y + HALL_H * 0.5,
+				wz, HALL_WALL_T, HALL_H, HALL_HZ * 2.0, mat_concrete)
 		_add_obstacle(cx + side * (HALL_HX - HALL_WALL_T * 0.5), wz,
-				HALL_WALL_T * 0.5, HALL_HZ, HALL_H)
+				HALL_WALL_T * 0.5, HALL_HZ, HALL_FLOOR_Y + HALL_H)
 
 	# 顶部成排发光灯板（3 排 ×5 列）+ 3 盏暖白点光（室内人工照明）
 	var lamp_mat := StandardMaterial3D.new()
@@ -541,9 +554,10 @@ func _build_hall() -> void:
 	for pz in [cz - 8.0, cz, cz + 8.0]:
 		for k in 5:
 			var px := cx - 15.0 + float(k) * 7.5
-			_hall_box(px, HALL_H - 0.1, pz, 4.2, 0.1, 0.62, lamp_mat)
-	for lp in [Vector3(cx - 8.0, HALL_H - 0.6, cz), Vector3(cx + 8.0, HALL_H - 0.6, cz),
-			Vector3(cx, HALL_H - 0.6, cz - 8.0)]:
+			_hall_box(px, HALL_FLOOR_Y + HALL_H - 0.1, pz, 4.2, 0.1, 0.62, lamp_mat)
+	for lp in [Vector3(cx - 8.0, HALL_FLOOR_Y + HALL_H - 0.6, cz),
+			Vector3(cx + 8.0, HALL_FLOOR_Y + HALL_H - 0.6, cz),
+			Vector3(cx, HALL_FLOOR_Y + HALL_H - 0.6, cz - 8.0)]:
 		var l := OmniLight3D.new()
 		l.light_color = Color(1.0, 0.96, 0.88)
 		l.light_energy = 1.2
@@ -551,14 +565,14 @@ func _build_hall() -> void:
 		l.position = lp
 		add_child(l)
 
-	# 射击位隔断墙 ×3（射击线两侧分道 + 西端封头），下实混凝土 1.2m 高
+	# 射击位隔断墙 ×3（射击线两侧分道 + 西端封头），下实混凝土 1.2m 高（底部落在地坪上）
 	for dx in [-3.0, -1.0, 1.0]:
 		var dxz: float = cx + dx
-		_hall_box(dxz, 0.6, cz + HALL_FIRE_DZ, 0.12, 1.2, 6.0, mat_concrete)
-		_add_obstacle(dxz, cz + HALL_FIRE_DZ, 0.1, 3.0, 1.2)
+		_hall_box(dxz, HALL_FLOOR_Y + 0.6, cz + HALL_FIRE_DZ, 0.12, 1.2, 6.0, mat_concrete)
+		_add_obstacle(dxz, cz + HALL_FIRE_DZ, 0.1, 3.0, HALL_FLOOR_Y + 1.2)
 
-	# 射击线黄黑警示条（双色交替 BoxMesh 拼一条横带，铺在射击线朝靶一侧）
-	var hy := 0.02
+	# 射击线黄黑警示条（双色交替 BoxMesh 拼一条横带，铺在地坪上方 2cm 防共面闪烁）
+	var hy := HALL_FLOOR_Y + 0.02
 	for k in 20:
 		var sx := cx - 19.0 + float(k) * 2.0
 		var bm := StandardMaterial3D.new()
@@ -574,7 +588,8 @@ func _build_hall() -> void:
 		num.pixel_size = 0.004
 		num.modulate = Color(0.93, 0.9, 0.8)
 		num.outline_size = 16
-		num.position = Vector3(cx - 2.0 + float(i) * 2.0, 3.2, cz - HALL_HZ + HALL_TRAP_T + 0.05)
+		num.position = Vector3(cx - 2.0 + float(i) * 2.0, HALL_FLOOR_Y + 3.2,
+				cz - HALL_HZ + HALL_TRAP_T + 0.05)
 		add_child(num)
 
 

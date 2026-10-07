@@ -1,7 +1,8 @@
 class_name HDHud
 extends CanvasLayer
 ## 烽火地带 —— 对局内 HUD / 开镜覆盖 / 暂停菜单 / 结算页（移植 js/fps/hud.js 大厅组分区）。
-## 全 Control + 自定义 _draw，零外部资源：默认字体 + 字号/颜色 override，军事暗色调。
+## 全 Control + 自定义 _draw，零外部资源：HDData.ui_theme 系统中文字体链 + 字号/颜色 override，
+## 军事暗色调。按 1440×810 设计，_apply_ui_scale 按视口高度整体缩放（全屏大屏不缩字）。
 ## 结构：_raid（对局层，set_raid_visible 开关）→ toast → 暂停菜单 → 结算页。
 ## 暂停菜单/结算页按键自处理（_input），通过 menu_* / result_* 信号通知 main；
 ## process_mode=ALWAYS：main 若用 get_tree().paused 暂停，菜单键仍可响应。
@@ -20,6 +21,7 @@ const COL_LOSE := Color(1.0, 0.35, 0.25)
 const SEG_N := 10                   # 血条段数
 const TOAST_MAX := 3                # toast 队列上限
 const TOAST_LIFE := 3.2
+const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
 
 var menu_visible: bool = false
 var result_visible: bool = false
@@ -70,6 +72,7 @@ func setup() -> void:
 	_base = Control.new()
 	_base.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_base.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_base.theme = HDData.ui_theme()   # 中文字体链设为 default_font，全部 Label/Button 继承
 	add_child(_base)
 
 	# ---- 对局层（默认隐藏） ----
@@ -198,7 +201,7 @@ func setup() -> void:
 	_danger_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_danger_panel.visible = false
 	_raid.add_child(_danger_panel)
-	var db := _mk_label("⚠ 高危战区", 15, Color(1.0, 0.6, 0.42))
+	var db := _mk_label("! 高危战区", 15, Color(1.0, 0.6, 0.42))
 	_danger_panel.add_child(db)
 
 	# 中心层：准星 / 命中标记 / 交互提示
@@ -285,6 +288,28 @@ func setup() -> void:
 	rhint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rv.add_child(rhint)
 	_base.add_child(_result)
+
+	# ---- 分辨率自适应：按视口高度整体缩放，窗口尺寸变化实时跟进 ----
+	var vp := get_viewport()
+	if vp != null and not vp.size_changed.is_connected(_apply_ui_scale):
+		vp.size_changed.connect(_apply_ui_scale)
+	_apply_ui_scale()
+
+
+## 全屏/大屏自适应（问题③）：UI 全按 1440×810 设计，缩放 = 视口高 / DESIGN_H。
+## CanvasLayer.scale 缩放后布局空间变为 视口/scale：根 Control 用 offset 把自身
+## 补到 视口/scale 尺寸，缩放回屏幕恰好铺满 —— 居中/贴边锚点照常正确。
+func _apply_ui_scale() -> void:
+	var vp := get_viewport()
+	if vp == null or _base == null:
+		return
+	var vs := vp.get_visible_rect().size
+	if vs.y <= 0.0:
+		return
+	var s := clampf(vs.y / DESIGN_H, 0.5, 4.0)
+	scale = Vector2(s, s)
+	_base.offset_right = vs.x / s - vs.x
+	_base.offset_bottom = vs.y / s - vs.y
 
 
 # ================= 对局 HUD 状态 =================
@@ -381,7 +406,7 @@ func toast(text: String, color: Color = Color(1, 1, 1)) -> void:
 		oldn.queue_free()
 
 
-## 「⚠ 高危战区」红横幅 + 屏幕红边渐晕
+## 「! 高危战区」红横幅 + 屏幕红边渐晕（警示符用「!」：默认字体链对 ⚠ 类符号不保稳）
 func set_danger(on: bool) -> void:
 	if _danger_panel == null:
 		setup()

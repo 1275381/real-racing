@@ -3,9 +3,11 @@ extends CanvasLayer
 ## 烽火地带 —— 大厅（移植 js/fps/lobby.js）：顶栏 LOGO/战绩/每日签到/现金，
 ## 底部「1 出发 / 2 仓库 / 3 改枪台」三页签 +「G 去靶场」。
 ## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）。
-## 出发页光标模型（单轴）：[主槽0 | 副槽1 | 候选枪2..N+1 | ▶出发 N+2]，
+## 鼠标路径：行点击=选中光标，再点已选行=确认（与回车等价），购买/换装全程可点。
+## 出发页光标模型（单轴）：[主槽0 | 副槽1 | 候选枪2..N+1 | 出发 N+2]，
 ## 回车：槽=设装入目标 · 枪=装入聚焦槽 · 出发钮=出发。
-## 操作失败（钱不足等）用底部 show_hint() 提示（不用 HUD toast）。
+## 操作失败（钱不足等）用底部 show_hint() 提示（不用 HUD toast），提示带金额明细。
+## 按 1440×810 设计，_apply_ui_scale 按视口高度整体缩放（全屏大屏不缩字）。
 
 signal deploy_requested(loadout: Dictionary)
 signal range_requested
@@ -16,6 +18,7 @@ const COL_ACCENT := Color(1, 0.7, 0.36)
 const COL_OK := Color(0.49, 0.89, 0.66)
 const TAB_TITLES := ["1 · 出发", "2 · 仓库", "3 · 改枪台"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
+const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
 
 var lobby_visible: bool = false
 
@@ -127,6 +130,7 @@ func _build() -> void:
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_root.theme = HDData.ui_theme()   # 中文字体链设为 default_font，全部 Label/Button 继承
 	_root.visible = false
 	add_child(_root)
 
@@ -222,6 +226,59 @@ func _build() -> void:
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_root.add_child(_hint_label)
 
+	# ---- 分辨率自适应：按视口高度整体缩放，窗口尺寸变化实时跟进 ----
+	var vp := get_viewport()
+	if vp != null and not vp.size_changed.is_connected(_apply_ui_scale):
+		vp.size_changed.connect(_apply_ui_scale)
+	_apply_ui_scale()
+
+
+## 全屏/大屏自适应（问题③）：UI 全按 1440×810 设计，缩放 = 视口高 / DESIGN_H。
+## CanvasLayer.scale 缩放后布局空间变为 视口/scale：根 Control 用 offset 把自身
+## 补到 视口/scale 尺寸，缩放回屏幕恰好铺满 —— 居中/贴边锚点照常正确。
+func _apply_ui_scale() -> void:
+	var vp := get_viewport()
+	if vp == null or _root == null:
+		return
+	var vs := vp.get_visible_rect().size
+	if vs.y <= 0.0:
+		return
+	var s := clampf(vs.y / DESIGN_H, 0.5, 4.0)
+	scale = Vector2(s, s)
+	_root.offset_right = vs.x / s - vs.x
+	_root.offset_bottom = vs.y / s - vs.y
+
+
+## 行点击统一入口（鼠标购买链）：未选中=选中该行（光标跟着走）；
+## 已选中=确认（与回车等价：槽=设装入目标 · 枪=装入 · 镜=购买/换装/卸下）
+## 参数序：gui_input 信号实参在前，bind 实参在后（同 city_editor._on_field_changed 约定）
+func _on_deploy_row_input(event: InputEvent, idx: int) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			if _cur0 == idx:
+				_confirm_deploy()
+			else:
+				_cur0 = idx
+				_refresh_all()
+
+
+## 改枪台行点击：col=0 左列选枪 / col=1 右列瞄具；再点已选行=确认（同回车）
+func _on_bench_row_input(event: InputEvent, col: int, idx: int) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			var cur: int = _gun_idx if col == 0 else _scope_idx
+			if _bench_col == col and cur == idx:
+				_bench_confirm()
+			else:
+				_bench_col = col
+				if col == 0:
+					_gun_idx = idx
+				else:
+					_scope_idx = idx
+				_refresh_all()
+
 
 # ================= 刷新 =================
 
@@ -250,7 +307,7 @@ func _render_top() -> void:
 		maxi(0, int(st.get("raids", 0))), maxi(0, int(st.get("extracts", 0))),
 		maxi(0, int(st.get("deaths", 0))), maxi(0, int(st.get("kills", 0)))]
 	var can: bool = _stash.can_check_in()
-	_daily_btn.text = ("C · 每日签到 +₵%s" % _fmt(HDData.DAILY_REWARD)) if can else "今日已签到 ✓"
+	_daily_btn.text = ("C · 每日签到 +₵%s" % _fmt(HDData.DAILY_REWARD)) if can else "今日已签到"
 	_style_btn(_daily_btn, can, COL_ACCENT if can else _dim(0.35))
 	if not can:
 		_daily_btn.add_theme_color_override("font_color", _dim(0.45))
@@ -290,10 +347,12 @@ func _render_deploy(pg: VBoxContainer) -> void:
 				_panel_style(sel, COL_ACCENT if sel else _dim(0.25)))
 		var vb := VBoxContainer.new()
 		vb.add_theme_constant_override("separation", 2)
+		vb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到卡片本身
 		card.add_child(vb)
 		var focus_here := _slot_focus == key
-		vb.add_child(_mk_label(("◀ 装入此槽 · " if focus_here else "") + str(slot_defs[i][1]),
+		vb.add_child(_mk_label(("「装入此槽」· " if focus_here else "") + str(slot_defs[i][1]),
 				11, COL_OK))
+		card.gui_input.connect(_on_deploy_row_input.bind(i))
 		vb.add_child(_mk_label(String(g.get("name", gid)), 18, COL_ACCENT))
 		vb.add_child(_mk_label(String(g.get("desc", "")), 12, _dim(0.6)))
 		slots.add_child(card)
@@ -314,6 +373,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 				_panel_style(sel2, COL_ACCENT if sel2 else _dim(0.22)))
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 14)
+		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
 		row.add_child(hb)
 		hb.add_child(_mk_label(String(g2.get("name", id2)), 15, COL_TEXT if owned else _dim(0.55)))
 		var desc := _mk_label(String(g2.get("desc", "")), 12, _dim(0.6))
@@ -322,18 +382,19 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		var price := _to_int(g2.get("price", 0))
 		hb.add_child(_mk_label("已拥有" if owned else "₵ " + _fmt(price),
 				13, COL_OK if owned else COL_ACCENT))
+		row.gui_input.connect(_on_deploy_row_input.bind(2 + gi))
 		main.add_child(row)
 
 	# 出发钮
 	var di := 2 + guns.size()
 	var dsel := _cur0 == di
-	var btn := _mk_btn("▶ 出 发", 17)
+	var btn := _mk_btn("出  发", 17)
 	_style_btn(btn, dsel, COL_ACCENT if dsel else _dim(0.5), 60)
 	btn.pressed.connect(_fire_deploy)
 	var bwrap := CenterContainer.new()
 	bwrap.add_child(btn)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · 回车 确认/出发 · G 靶场 · 1/2/3 切页签", 12, _dim(0.5))
+	var hint := _mk_label("←/→ 选择 · 回车/点击行 确认 · G 靶场 · 1/2/3 切页签", 12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
 
@@ -470,7 +531,7 @@ func _loot_cell(it: Dictionary) -> PanelContainer:
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
 	vb.add_theme_constant_override("separation", 2)
 	cell.add_child(vb)
-	var icon := _mk_label(String(it.get("icon", "📦")), 22, rcol)
+	var icon := _mk_label(HDData.norm_icon(String(it.get("icon", ""))), 22, rcol)
 	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(icon)
 	var nm := _mk_label(String(it.get("name", "战利品")), 11, rcol)
@@ -536,20 +597,24 @@ func _render_bench(pg: VBoxContainer) -> void:
 				_panel_style(sel, COL_ACCENT if sel else _dim(0.22)))
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 10)
+		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
 		row.add_child(hb)
 		hb.add_child(_mk_label(String(g.get("name", id2)), 14, COL_TEXT))
 		var sp := Control.new()
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 弹性占位不截胡点击
 		hb.add_child(sp)
 		hb.add_child(_mk_label(tag, 12, COL_OK))
+		row.gui_input.connect(_on_bench_row_input.bind(0, i))
 		left.add_child(row)
 
-	# 右列：瞄具列表（机瞄/五镜）
+	# 右列：瞄具列表（机瞄/五镜），现金常显在标题，钱不足一眼可见
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 6)
 	cols.add_child(right)
-	var title := "瞄具 —— 为「%s」选配" % String(gun.get("name", gun_id))
+	var title := "瞄具 —— 为「%s」选配（现金 ₵%s）" % [
+			String(gun.get("name", gun_id)), _fmt(maxi(0, _stash.cash))]
 	if gun.has("builtin_scope"):
 		title += "（自带 6× 密位镜）"
 	right.add_child(_mk_label(title, 12, COL_OK))
@@ -562,15 +627,17 @@ func _render_bench(pg: VBoxContainer) -> void:
 				_panel_style(sel2, COL_ACCENT if sel2 else _dim(0.22)))
 		var hb2 := HBoxContainer.new()
 		hb2.add_theme_constant_override("separation", 10)
+		hb2.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
 		row2.add_child(hb2)
 		hb2.add_child(_mk_label(String(e.get("name", sid)), 14, COL_TEXT))
 		var desc := _mk_label(String(e.get("desc", "")), 12, _dim(0.6))
 		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		hb2.add_child(desc)
 		hb2.add_child(_mk_label(_scope_tag(gun_id, sid, e), 12, _scope_tag_col(gun_id, sid)))
+		row2.gui_input.connect(_on_bench_row_input.bind(1, i))
 		right.add_child(row2)
 
-	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车 购买/换装/卸下（瞄具单持：同镜装他枪自动卸下）",
+	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/点击行 购买·换装·卸下（瞄具单持：同镜装他枪自动卸下）",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
@@ -628,10 +695,13 @@ func _bench_confirm() -> void:
 		return
 	if not _stash.owns_scope(sid):
 		if not _stash.buy_scope(sid):
-			show_hint("资金不足 —— 先回仓库变卖战利品")
+			show_hint("现金不足：%s 需 ₵%s，现有 ₵%s —— 回仓库变卖战利品或明日签到" % [
+					String(entry.get("name", sid)),
+					_fmt(_to_int(entry.get("price", 0))), _fmt(maxi(0, _stash.cash))])
 			return
 		_stash.equip_scope(gun_id, sid)
-		show_hint("已购买并装配：%s" % String(entry.get("name", sid)))
+		show_hint("已购买并装配：%s（余 ₵%s）" % [
+				String(entry.get("name", sid)), _fmt(maxi(0, _stash.cash))])
 		return
 	_stash.equip_scope(gun_id, sid)
 	show_hint("已换装：%s" % String(entry.get("name", sid)))

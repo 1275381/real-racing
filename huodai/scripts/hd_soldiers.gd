@@ -17,9 +17,11 @@ const TracerPool := preload("res://scripts/tracer_pool.gd")
 ## 士兵模型与大战场共用；load 而非 preload：模型走 Git LFS，另一台电脑没拉到真文件
 ## 时 preload 会让脚本编译失败（battlefield.gd:43-46 同款兜底），失败退化胶囊人
 const SOLDIER_PATH := "res://assets/battle/soldier.glb"
-const SOLDIER_SCALE := 1.5                 # 模型/命中球统一放大倍率（battlefield 同款）
+const SOLDIER_SCALE := 1.1                 # 模型/命中球统一放大倍率：1.95m 略压玩家（1.55m 眼高）
+                                           # 有压迫感但不畸形；1.5 是大战场遗产（AI 2.65m vs 玩家 1.55m）
 const UNIFORM_COL := Color(0.7, 0.5, 0.4)  # 敌军赭红：军装（battlefield._apply_team_colors）
 const GEAR_COL := Color(0.48, 0.41, 0.33)  # 敌军赭红：装具
+const UNIFORM_EMISSION := 0.18             # 军装/装具微自发光：远景从雾里提对比（问题②，宁少勿假）
 
 const AI_TICK := 1.0 / 60.0     # AI 定步（battlefield.gd:22，与渲染帧解耦）
 const ENEMY_HP := 100.0
@@ -52,7 +54,9 @@ const AI_DMG_MUL := 0.55        # AI 削弱（对齐网页版 -45%）
 const HIT_R := 0.5              # 玩家命中球半径
 const EYE_H := 1.5              # 敌弹出发点/视线高度（pos + 1.5）
 const CHEST_Y := 1.05           # 玩家胸口：瞄准点 + 命中球心
-const MUZZLE_LOCAL := Vector3(-0.12, 1.5, 0.95)  # 枪口（模型局部，battlefield.gd:48）
+# 枪口（GLB 模型单位）：battlefield.gd:48 的 1.5× 实测值 ÷1.5 换算回模型单位，
+# 使用处乘 SOLDIER_SCALE——改比例常量枪口曳光不脱靶
+const MUZZLE_LOCAL := Vector3(-0.08, 1.0, 0.633)
 
 const SEP_DIST := 2.2           # 同队推挤（battlefield.gd:559-560）
 const SEP_PUSH := 2.5
@@ -495,7 +499,8 @@ func _try_fire(s: Dictionary, dt: float, dist: float) -> void:
 		var wd2: float = _world.wall_hit(eye, dir, end_d)
 		if wd2 < end_d:
 			end_d = wd2
-	var muzzle: Vector3 = s["pos"] + Basis(Vector3.UP, float(s["yaw"])) * MUZZLE_LOCAL
+	var muzzle: Vector3 = s["pos"] + Basis(Vector3.UP, float(s["yaw"])) \
+			* (MUZZLE_LOCAL * SOLDIER_SCALE)
 	_tracers.spawn(muzzle, eye + dir * end_d, hit)
 	_audio.play_shot("rifle")
 	if hit:
@@ -506,7 +511,7 @@ func _try_fire(s: Dictionary, dt: float, dist: float) -> void:
 
 # ================= 渲染：士兵模型（骨骼动画 / 胶囊兜底） =================
 
-## 单兵模型槽：GLB 实例化（scale 1.5）；材质逐兵 duplicate 上敌军赭红——
+## 单兵模型槽：GLB 实例化（scale = SOLDIER_SCALE）；材质逐兵 duplicate 上敌军赭红——
 ## 死亡淡出只影响自己（网页版每兵独立加载 GLB 的材质天然隔离，这里用 duplicate 等价）
 func _make_body(scene: PackedScene) -> Dictionary:
 	var node: Node3D
@@ -543,18 +548,29 @@ func _make_body(scene: PackedScene) -> Dictionary:
 				var t: StandardMaterial3D = m.duplicate()
 				if t.resource_name == "Uniform":
 					t.albedo_color = UNIFORM_COL
+					_emissive(t)   # 远景可见性：暖雾里赭红会隐身，微自发光提对比
 				elif t.resource_name == "Gear":
 					t.albedo_color = GEAR_COL
+					_emissive(t)
 				mi.set_surface_override_material(si, t)
 				mats.append(t)
 	if mats.is_empty():
 		# 胶囊人替身：整体赭红
 		var fb := StandardMaterial3D.new()
 		fb.albedo_color = UNIFORM_COL
+		_emissive(fb)
 		mi.material_override = fb
 		mats.append(fb)
 	return {"node": node, "ap": ap, "mesh": mi, "mats": mats, "anim": "",
 			"fading": false, "faded": false}
+
+
+## 军装/装具微自发光（UNIFORM_EMISSION）：远景把人形从雾与暗部里提出来；
+## emission 跟随 albedo 同色，只加能量不加色相（问题②，宁少勿假）
+func _emissive(m: StandardMaterial3D) -> void:
+	m.emission_enabled = true
+	m.emission = m.albedo_color
+	m.emission_energy_multiplier = UNIFORM_EMISSION
 
 
 ## 同步模型位置朝向 + 按状态切动画：death / 移动交火 walk / 移动 run / 原地交火 aim / idle

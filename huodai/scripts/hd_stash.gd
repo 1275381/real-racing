@@ -272,6 +272,7 @@ func wipe() -> void:
 
 
 ## 归一化一件变卖物：{uid,name,icon,rarity,value}
+## icon 走 HDData.norm_icon：空 → 默认徽标；旧档 emoji → 中文徽标（默认字体无 emoji 字形）
 func _norm_item(it: Dictionary) -> Dictionary:
 	var uid := _to_s(it.get("uid", ""))
 	var nm := _to_s(it.get("name", ""))
@@ -279,7 +280,7 @@ func _norm_item(it: Dictionary) -> Dictionary:
 	return {
 		"uid": uid,
 		"name": nm if nm != "" else "战利品",
-		"icon": icon if icon != "" else "📦",
+		"icon": HDData.norm_icon(icon),
 		"rarity": clampi(_to_i(it.get("rarity", 0)), 0, 6),
 		"value": maxi(0, _to_i(it.get("value", 0))),
 	}

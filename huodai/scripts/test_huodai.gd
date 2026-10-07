@@ -1,4 +1,5 @@
 # 回归：烽火地带（Godot 版）核心链路——签到/开箱/命中/换弹掉匣/搜刮/撤离/死亡/靶场/经济
+#       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s huodai/test_huodai.gd
 extends SceneTree
 
@@ -123,6 +124,42 @@ func _run() -> void:
 		check("装配后倍率 1.5", absf(main.stash.scope_zoom("rifle") - 1.5) < 0.01)
 	else:
 		check("买红点镜（现金不足跳过）", true)
+
+	# 12. 开镜倍率语义（问题①回归）：突击步枪不自带倍率——装配镜生效/
+	# 未装镜=机瞄 iron 1.0 / 狙击原厂镜恒 6.0
+	main.stash.buy_scope("reddot")   # 幂等：已拥有直接 true，不依赖第 11 步分支
+	main.stash.equip_scope("rifle", "reddot")
+	var sc_rd: Dictionary = main._scope_for("rifle")
+	check("装红点后 _scope_for 1.5", str(sc_rd.get("kind", "")) == "reddot"
+		and absf(float(sc_rd.get("zoom", 0.0)) - 1.5) < 0.01,
+		"kind=%s zoom=%.2f" % [str(sc_rd.get("kind")), float(sc_rd.get("zoom", 0.0))])
+	main.stash.equip_scope("rifle", "iron")
+	var sc_ir: Dictionary = main._scope_for("rifle")
+	check("卸镜回机瞄 iron 1.0", str(sc_ir.get("kind", "")) == "iron"
+		and absf(float(sc_ir.get("zoom", 0.0)) - 1.0) < 0.01,
+		"kind=%s zoom=%.2f" % [str(sc_ir.get("kind")), float(sc_ir.get("zoom", 0.0))])
+	var sc_sn: Dictionary = main._scope_for("sniper")
+	check("狙击自带恒 6.0", str(sc_sn.get("kind", "")) == "sniper"
+		and absf(float(sc_sn.get("zoom", 0.0)) - 6.0) < 0.01,
+		"kind=%s zoom=%.2f" % [str(sc_sn.get("kind")), float(sc_sn.get("zoom", 0.0))])
+
+	# 13. 靶馆地坪分层（问题⑦回归）：馆内 0.06 / 馆外 0，玩家出生贴地坪
+	check("馆内地坪 0.06", absf(main.world.ground_height(
+		HDData.HALL_CENTER.x, HDData.HALL_CENTER.z) - 0.06) < 0.001)
+	check("馆外大地 0.0", absf(main.world.ground_height(0.0, 0.0)) < 0.001)
+	check("射位出生贴地坪", absf(main.player.pos.y
+		- main.world.ground_height(main.player.pos.x, main.player.pos.z)) < 0.001,
+		"pos.y=%.3f" % main.player.pos.y)
+
+	# 14. 士兵比例（问题④回归）：大战场遗产 1.5 已收敛，防回退
+	check("士兵 scale 常量 ≤ 1.2", HDSoldiers.SOLDIER_SCALE <= 1.2,
+		"SOLDIER_SCALE=%.2f" % HDSoldiers.SOLDIER_SCALE)
+
+	# 15. 雾密度红线（问题②回归）：FOG_MAX 注释"远景可见性红线"，室内外都不得越线
+	check("雾常量 ≤ 远景可见性红线", HDWorld.OUTDOOR_FOG <= HDWorld.FOG_MAX
+		and HDWorld.INDOOR_FOG <= HDWorld.FOG_MAX)
+	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
+		"density=%.4f" % main.world._env.fog_density)
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

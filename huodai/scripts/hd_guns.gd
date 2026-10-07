@@ -322,7 +322,8 @@ func raycast_all(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	return best
 
 
-## 当前开镜倍率：没按右键 = 1.0（FOV 不变）；机瞄 1.0；装镜取镜 zoom
+## 当前开镜倍率：没按右键 = 1.0（FOV 不变）；机瞄恒 1.0（问题①：突击步枪
+## 等非狙击枪不自带倍率）；倍率只来自改枪台装配的瞄具或狙击原厂镜
 func current_zoom() -> float:
 	if not _aiming or cur_id == "":
 		return 1.0
@@ -664,7 +665,8 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 
 
 ## 当前枪的瞄具信息：main 的 scope_provider 优先；未装镜回退枪自带
-## builtin_scope（狙击原厂镜），再没有 = 机瞄
+## builtin_scope（狙击原厂镜）；都没有 = 显式机瞄 iron/1.0——
+## 非狙击枪绝不自带倍率（问题①：FOV 与分划只在装了镜时才允许缩放）
 func _scope_info_for(gun_id: String) -> Dictionary:
 	var sc := {}
 	if scope_provider != null and scope_provider.is_valid():
@@ -673,6 +675,8 @@ func _scope_info_for(gun_id: String) -> Dictionary:
 		var gi: Dictionary = Guns.gun_by_id(gun_id)
 		if gi.has("builtin_scope"):
 			sc = gi["builtin_scope"]
+	if sc.is_empty():
+		sc = {"kind": "iron", "zoom": 1.0}   # 机瞄兜底：无镜无倍率
 	return sc
 
 

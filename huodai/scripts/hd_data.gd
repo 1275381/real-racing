@@ -21,16 +21,43 @@ const RARITY_W := {
 	"center": [18, 24, 24, 17, 12, 4, 1],
 }
 
-## 各档变卖物例表（图标 + 名称池，roll 时随机取名）
-const LOOT_NAMES := [
-	[["绷带", "🩹"], ["润滑油罐", "🛢"], ["废料零件", "🔩"], ["旧手表", "⌚"]],
-	[["止痛药", "💊"], ["战术护目镜", "🥽"], ["工具组", "🧰"], ["罐头食品", "🥫"]],
-	[["精密零件", "⚙"], ["急救包", "🧰"], ["军用电池", "🔋"], ["夜视仪", "👓"]],
-	[["军用电路板", "📡"], ["防弹插板", "🛡"], ["加密硬盘", "💾"], ["狙击镜片", "🔭"]],
-	[["金条", "🪙"], ["名贵腕表", "⌚"], ["显卡", "🎰"], ["机密文件", "🗂"]],
-	[["机械外骨骼", "🦾"], ["原型芯片", "💠"], ["卫星通讯机", "📶"]],
-	[["至臻黑箱", "🏆"], ["龙标藏品", "🐉"]],
+## UI 中文字体链：Godot 默认字体缺大量中文字形（乱码方框根因），改用系统字体兜底；
+## 不用 "PingFang SC"——Godot 把它解析到 PingFang.ttc 首个字面（PingFang HK，繁体），
+## 缺 杀(U+6740) 等简体独有字（「击杀」成方框，回归⑤），且 font_names 只取首个命中、
+## 不向链后位逐字回退；macOS 首位 Hiragino Sans GB（杀/击/撤/亡 全有），Windows 命中微软雅黑
+## （链序与 godot/scripts/ui_font.gd 同源，两路统一）
+const UI_FONT_NAMES := [
+	"Hiragino Sans GB", "Heiti SC", "STHeiti",                        # macOS
+	"Microsoft YaHei UI", "Microsoft YaHei", "SimHei", "SimSun",      # Windows
+	"Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",  # Linux
+	"sans-serif",
 ]
+## 逐字回退（Font.fallbacks，主字体缺该字形才查）：补 ₵(U+20B5) 等符号——
+## Hiragino/STHeiti/PingFang 全系都无 ₵（现金/签到/结算到处在用），由 Helvetica 供给
+const UI_FONT_FALLBACK := ["Helvetica"]
+const UI_FONT_SIZE := 14          # 未显式指定字号的控件兜底字号（设计基准 1440×810）
+
+## 各档变卖物例表（两字中文徽标 + 名称池，roll 时随机取名）；
+## 徽标不用 emoji：Godot 默认字体无 emoji 字形（渲染成方框），中文字徽标必可渲
+const LOOT_NAMES := [
+	[["绷带", "医疗"], ["润滑油罐", "物资"], ["废料零件", "零件"], ["旧手表", "钟表"]],
+	[["止痛药", "医疗"], ["战术护目镜", "装具"], ["工具组", "工具"], ["罐头食品", "食品"]],
+	[["精密零件", "零件"], ["急救包", "医疗"], ["军用电池", "电源"], ["夜视仪", "光学"]],
+	[["军用电路板", "电子"], ["防弹插板", "防具"], ["加密硬盘", "数据"], ["狙击镜片", "光学"]],
+	[["金条", "贵金属"], ["名贵腕表", "钟表"], ["显卡", "电子"], ["机密文件", "机密"]],
+	[["机械外骨骼", "机甲"], ["原型芯片", "芯片"], ["卫星通讯机", "通讯"]],
+	[["至臻黑箱", "至臻"], ["龙标藏品", "藏品"]],
+]
+
+## 旧档 emoji 图标 → 中文徽标映射（修复前存档里残留的 emoji 读档时一并归一化）
+const LEGACY_ICONS := {
+	"🩹": "医疗", "🛢": "物资", "🔩": "零件", "⌚": "钟表", "📦": "杂物",
+	"💊": "医疗", "🥽": "装具", "🧰": "工具", "🥫": "食品", "⚙": "零件",
+	"🔋": "电源", "👓": "光学", "📡": "电子", "🛡": "防具", "💾": "数据",
+	"🔭": "光学", "🪙": "贵金属", "🎰": "电子", "🗂": "机密",
+	"🦾": "机甲", "💠": "芯片", "📶": "通讯", "🏆": "至臻", "🐉": "藏品",
+}
+const ICON_DEFAULT := "杂物"      # 空/未知图标兜底徽标
 
 ## 每把枪的备弹（弹匣外储备；pistol/smg/shotgun/sniper 对齐网页版实测值）
 const RESERVE := {
@@ -75,3 +102,27 @@ static func roll_loot(zone: String) -> Dictionary:
 		"name": String(pick[0]), "icon": String(pick[1]),
 		"rarity": rid, "value": value,
 	}
+
+
+## 图标归一化：空 → 默认徽标；旧档 emoji → 中文徽标；其余原样放行（已是徽标文字）
+static func norm_icon(icon: String) -> String:
+	var ic := icon.strip_edges()
+	if ic == "":
+		return ICON_DEFAULT
+	return String(LEGACY_ICONS.get(ic, ic))
+
+
+## 大厅/HUD 共用 UI 主题：中文字体链设为 default_font（default_font_size 一并给出），
+## 挂到各自 UI 根 Control 的 theme 上，全部 Label/Button 继承；
+## fallbacks 挂逐字回退链，主字体缺 ₵ 等符号字形时按序补
+static func ui_theme() -> Theme:
+	var sf := SystemFont.new()
+	sf.font_names = PackedStringArray(UI_FONT_NAMES)
+	var fb := SystemFont.new()
+	fb.font_names = PackedStringArray(UI_FONT_FALLBACK)
+	var fbs: Array[Font] = [fb]
+	sf.fallbacks = fbs
+	var th := Theme.new()
+	th.default_font = sf
+	th.default_font_size = UI_FONT_SIZE
+	return th

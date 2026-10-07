@@ -115,11 +115,13 @@ func _register_inputs() -> void:
 	InputMap.action_add_event("hd_scope", scope_ev)
 
 ## ---- 瞄具注入链（对齐 onfoot.scope_provider 约定） ----
+## 语义（问题①）：狙击枪自带 6× 原厂镜；其余枪倍率只来自改枪台装配的瞄具，
+## 未装镜（""/iron/旧存档脏值）一律回机瞄 1.0×——分划与 FOV 都不得自带缩放
 func _scope_for(gun_id: String) -> Dictionary:
 	if gun_id == "sniper":
 		return {"kind": "sniper", "zoom": 6.0}
 	var fit: String = str(stash.scope_fit.get(gun_id, "iron"))
-	if fit != "iron" and stash.owns_scope(fit):
+	if fit != "iron" and fit != "" and stash.owns_scope(fit):
 		var sc: Dictionary = Guns.scope_by_id(fit)
 		if not sc.is_empty():
 			return {"kind": str(sc.get("kind", "iron")), "zoom": float(sc.get("zoom", 1.0))}
@@ -160,6 +162,8 @@ func _enter_range() -> void:
 	loot.reset_all()
 	targets.reset_all()
 	var lane := HDData.HALL_CENTER + Vector3(0.0, 0.0, 11.0)   # 中间射位（馆内射击线，-Z 朝靶道）
+	# 出生 y 贴馆内地坪（0.06）：地面已与大地错层根治 z-fighting，出生点同步对齐（问题⑦）
+	lane.y = world.ground_height(lane.x, lane.z)
 	player.enter(lane)
 	player.yaw = PI          # 面朝 -Z 靶道
 	player.pitch = 0.0
