@@ -413,9 +413,16 @@ window.addEventListener('resize', () => {
 
 /* ==== 9. 主循环：逻辑步进 + 双 pass 渲染（主场景 → 清深度 → viewmodel） ==== */
 const clock = new THREE.Clock();
+let uiW = window.innerWidth, uiH = window.innerHeight;
 function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min(clock.getDelta(), 0.05);
+    /* 每帧核对视口尺寸：resize 事件/ResizeObserver 在部分环境不可靠（实测漏触发），
+     * 两次属性读取的成本换缩放永远跟随窗口 */
+    if (window.innerWidth !== uiW || window.innerHeight !== uiH) {
+        uiW = window.innerWidth; uiH = window.innerHeight;
+        applyUiZoom();
+    }
     perfTick(typeof now === 'number' ? now : performance.now());
     try {
         step(dt);
