@@ -679,9 +679,12 @@ class ScopeOverlay extends Control:
 	const COL_RETICLE := Color(0.92, 0.96, 0.86, 0.95)
 	const COL_RED := Color(1.0, 0.3, 0.2)
 	const COL_GREEN := Color(0.4, 1.0, 0.62)
+	const VIG_CLEAR := 0.6      # 渐晕内侧全透明半径（UV 比）：镜内圆域分划不压暗
+	const VIG_TEX := 256        # 渐晕渐变贴图边长（平滑渐变足够）
 
 	var kind := "iron"
 	var zoom := 1.0
+	var _vig_tex: GradientTexture2D   # 径向渐晕贴图（懒生成一次，全 kind 共用）
 
 	func _init() -> void:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -738,18 +741,33 @@ class ScopeOverlay extends Control:
 			draw_line(c + Vector2(d, -4), c + Vector2(d, 4), col, 1.3)
 			draw_line(c + Vector2(-d, -4), c + Vector2(-d, 4), col, 1.3)
 
-	## 无渐变贴图的暗角近似：由外向内叠 8 圈边带，逐圈加深
+	## 径向渐晕（单次绘制，修「开镜黑边四角叠加更黑」）：预生成 FILL_RADIAL
+	## 渐变贴图（中心透明 → 边缘最暗），draw_texture_rect 全屏只画一次。
+	## 旧版四条边带分开绘制，相邻两条在四角互相叠加 → 角部透明度翻倍；
+	## 贴图 alpha 在屏边中点即到最暗档，四角半径 1.41 超界被钳回同一档 →
+	## 边上与角上暗度严格一致。镜内圆形区域落在全透明段，分划不受影响。
 	func _vignette(strength: float) -> void:
-		var s := size
-		var th := 30.0
-		for i in 8:
-			var a: float = strength * (0.06 + 0.05 * float(i))
-			var off := float(i) * th
-			var inner := float(i + 1) * th
-			draw_rect(Rect2(0, off, s.x, th), Color(0, 0, 0, a))
-			draw_rect(Rect2(0, s.y - inner, s.x, th), Color(0, 0, 0, a))
-			draw_rect(Rect2(off, 0, th, s.y), Color(0, 0, 0, a))
-			draw_rect(Rect2(s.x - inner, 0, th, s.y), Color(0, 0, 0, a))
+		if _vig_tex == null:
+			_vig_tex = _build_vig_tex()
+		draw_texture_rect(_vig_tex, Rect2(Vector2.ZERO, size), false,
+				Color(1.0, 1.0, 1.0, strength))
+
+	## 渐晕贴图：黑色 alpha 渐变，0→VIG_CLEAR 全透明（镜内通透），
+	## VIG_CLEAR→1 线性加深到 1（屏四边中点触底）；各 kind 的强度差异由
+	## 绘制色 alpha 整体缩放，同一张贴图全 kind 共用
+	func _build_vig_tex() -> GradientTexture2D:
+		var gr := Gradient.new()
+		gr.offsets = PackedFloat32Array([0.0, VIG_CLEAR, 1.0])
+		gr.colors = PackedColorArray([Color(0, 0, 0, 0), Color(0, 0, 0, 0),
+				Color(0, 0, 0, 1)])
+		var tex := GradientTexture2D.new()
+		tex.gradient = gr
+		tex.fill = GradientTexture2D.FILL_RADIAL
+		tex.fill_from = Vector2(0.5, 0.5)   # 圆心 = 屏中心
+		tex.fill_to = Vector2(0.5, 0.0)     # 半径 0.5 UV：屏边中点 = 最暗档
+		tex.width = VIG_TEX
+		tex.height = VIG_TEX
+		return tex
 
 
 ## 屏幕边缘红渐晕（危险区警示；可见性由宿主控制）

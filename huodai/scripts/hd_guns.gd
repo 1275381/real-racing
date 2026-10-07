@@ -1,8 +1,8 @@
 class_name HDGuns
 extends Node3D
-## 烽火地带枪械：双槽（primary/secondary）程序化拼枪 + ADS + 换弹（含弹匣
-## 掉落三段动画）+ hitscan 结算。母本 onfoot.gd：枪模挂相机（no_depth_test
-## 材质防车身吞枪）、mount 用枪模 AABB 把瞄准位对到准星正下方、曳光+火花池。
+## 烽火地带枪械：双槽（primary/secondary）程序化拼枪 + ADS + 换弹（弹匣三段
+## 掉落动画 + 程序化手套拔匣/插匣跟随）+ hitscan 结算。母本 onfoot.gd：枪模挂
+## 相机（no_depth_test 材质防车身吞枪）、mount 用枪模 AABB 对准星正下方、曳光池。
 ## 输入动作名由 main 注册，本模块只读："hd_fire"/"hd_scope"/"hd_slot1"/
 ## "hd_slot2"/"hd_reload"。
 
@@ -21,6 +21,21 @@ const ADS_SPREAD := 0.1                            # 开镜散布倍率（onfoot
 const ADS_SPEED := 5.0
 const MAG_REST_T := 4.0                            # 落地弹匣停留秒数（之后渐隐回收）
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
+
+## 换弹手部动画（reload 进度 prog 关键帧，照 _reload_off/_reload_rot 的插值
+## 模式，不引入新状态机）：0.15-0.30 手入画伸匣 → 0.30-0.55 握匣下拉拔出
+## → 0.55-0.75 托新匣上抬 → 0.75-0.85 对准插入拍合 → 0.85-0.97 离场回位。
+## 偏移均为枪架局部（锚定枪上弹匣节点，to_global 转世界跟随枪体倾斜）
+const HAND_IN_T := 0.15                            # 手开始入画伸向弹匣
+const HAND_GRIP_T := 0.30                          # 到达弹匣（开始握匣下拉）
+const HAND_OUT_T := 0.55                           # 旧匣拔出脱手（与掉落窗口对齐）
+const HAND_NEW_T := 0.75                           # 新匣托举到弹匣井正下
+const HAND_SEAT_T := 0.85                          # 插入拍合（与新匣滑入终点同步）
+const HAND_HIDE_T := 0.97                          # 末段提前隐手（先于换弹结束）
+const HAND_ENTRY_OFF := Vector3(0.06, -0.30, 0.14) # 入画起点（弹匣位右下、画面外）
+const HAND_GRIP_OFF := Vector3(0.0, -0.055, 0.03)  # 握匣点（匣中偏下偏后）
+const HAND_PULL_OFF := Vector3(0.015, -0.24, 0.10) # 拔出终点（向下抽出再甩开）
+const HAND_HOLD_OFF := Vector3(0.0, -0.095, 0.03)  # 托新匣掌心（匣底正下）
 
 ## 每发后坐力（度）：[基础上抬, 连发累增系数, 水平漂移幅度]（onfoot 同表）
 const RECOIL := {
@@ -55,6 +70,7 @@ var _ads := 0.0
 var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
 var _reload_rot := Vector3.ZERO
 var _falling_mag: MeshInstance3D    # 掉落弹匣替身（世界空间，落地后 queue_free 惰性重建）
+var _hand: Node3D                   # 换弹手部替身（相机子节点，与枪架同级，仅换弹可见）
 var _falling_vel := Vector3.ZERO
 var _falling := false
 var _mag_landed := false
@@ -94,6 +110,7 @@ func enter(loadout: Dictionary) -> void:
 	_reload_rot = Vector3.ZERO
 	_falling = false
 	_mag_landed = false
+	_hide_hand()
 	if tracers != null:
 		tracers.hide_all()
 	for s in _im_pool:
@@ -158,7 +175,8 @@ func update(dt: float) -> void:
 			try_fire()
 		else:
 			start_reload()
-	# 换弹动画：枪体下倾 → 0.25~0.55 旧匣脱落坠地 → 0.55~0.85 新匣滑入 → 回位
+	# 换弹动画：枪体下倾 → 0.25~0.55 旧匣脱落坠地（手跟到脱离点甩开）
+	# → 0.55~0.85 新匣滑入（0.55~0.75 手托匣上抬 / 0.75~0.85 手压拍合）→ 手离场
 	var mag: MeshInstance3D = g["mag"]
 	var show_mag: bool = g["show_mag"]
 	if reloading > 0.0:
@@ -190,8 +208,12 @@ func update(dt: float) -> void:
 			reserve -= taken
 			mag.visible = show_mag
 			mag.position = MAG_POS
+			_hide_hand()
 			reloaded.emit()
+		else:
+			_update_reload_hand(prog)
 	else:
+		_hide_hand()
 		_reload_off = Vector3.ZERO
 		_reload_rot = Vector3.ZERO
 		mag.visible = show_mag
@@ -372,6 +394,7 @@ func _equip(slot: String) -> void:
 	reloading = 0.0
 	_falling = false
 	_mag_landed = false
+	_hide_hand()
 	if _falling_mag != null:
 		_falling_mag.visible = false
 	# 只显示当前槽位枪模
@@ -417,7 +440,7 @@ func _mount_slot(slot: String) -> void:
 	mag.mesh = mag_box
 	mag.position = MAG_POS
 	holder.add_child(mag)
-	var show_mag := gid != "rifle"   # GLB 步枪自带弹匣：程序化块不显示（否则悬空）
+	var show_mag := true   # 全程序化拼枪：弹匣块一律显示（拔匣/插匣动画各枪可见）
 	mag.visible = show_mag
 	# 枪口火光：小发光片 + 瞬时点光
 	var fm := SphereMesh.new()
@@ -443,28 +466,9 @@ func _mount_slot(slot: String) -> void:
 			"flash": flash, "flash_mesh": flash_mesh, "top": top, "cx": cx}
 
 
-## 程序化低多边形枪模（rifle 用 SCAR GLB，其余按种类拼装、外形互相可辨）
+## 程序化低多边形枪模（五把全程序化拼装、外形互相可辨；rifle=M7 战斗步枪 /
+## smg=汤姆逊 M1A1 按 2026-10 联网考证的真实外观特征重拼，见各分支注释）
 func _build_gun_visual(gun_id: String) -> Node3D:
-	if gun_id == "rifle":
-		# 存在性检查后加载真步枪 GLB（照 onfoot：转 180° + 材质复制关深度测试）
-		var res: Resource = load("res://assets/cars/gun_rifle.glb")
-		if res is PackedScene:
-			var glb: Node3D = (res as PackedScene).instantiate()
-			# SCAR 模型枪头朝本地 +Z：转 180° 让枪口对准屏幕前方
-			glb.rotation.y = PI
-			for mi in glb.find_children("*", "MeshInstance3D", true, false):
-				var m := mi as MeshInstance3D
-				for s in m.mesh.get_surface_count():
-					var bm2 := m.mesh.surface_get_material(s)
-					if bm2 is StandardMaterial3D:
-						var dup: StandardMaterial3D = bm2.duplicate()
-						dup.no_depth_test = true
-						dup.render_priority = 10
-						m.set_surface_override_material(s, dup)
-			var sc_r: Dictionary = _scope_info_for(gun_id)
-			_scope_visual(glb, str(sc_r.get("kind", "iron")), 0.085, 0.1, -0.5)
-			return glb
-		# GLB 缺失也不返回空：落到下面的程序化拼装，保证 5 把必可建
 	var root := Node3D.new()
 	# 视模型材质一律关深度测试（贴墙时枪模不被吞）；微自发光保暗处可读
 	var dark := StandardMaterial3D.new()
@@ -488,6 +492,21 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	steel.emission_enabled = true
 	steel.emission = Color(0.4, 0.44, 0.5)
 	steel.emission_energy_multiplier = 0.55
+	var fde := StandardMaterial3D.new()   # M7 沙色 FDE/coyote tan 涂装（XM7 辨识色）
+	fde.albedo_color = Color(0.56, 0.46, 0.32)
+	fde.no_depth_test = true
+	fde.render_priority = 10
+	fde.emission_enabled = true
+	fde.emission = Color(0.42, 0.35, 0.24)
+	fde.emission_energy_multiplier = 0.55
+	var walnut := StandardMaterial3D.new()   # 汤姆逊胡桃木（棕木 albedo + 哑光粗糙）
+	walnut.albedo_color = Color(0.42, 0.26, 0.14)
+	walnut.roughness = 0.85
+	walnut.no_depth_test = true
+	walnut.render_priority = 10
+	walnut.emission_enabled = true
+	walnut.emission = Color(0.3, 0.19, 0.1)
+	walnut.emission_energy_multiplier = 0.55
 	var add_box := func(size: Vector3, pos: Vector3, rot_deg: Vector3,
 			mat: Material) -> MeshInstance3D:
 		var bm := BoxMesh.new()
@@ -521,21 +540,57 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 			add_box.call(Vector3(0.05, 0.11, 0.07), Vector3(0, -0.05, 0.05), Vector3(8, 0, 0), dark)
 			add_box.call(Vector3(0.03, 0.03, 0.04), Vector3(0, 0.09, 0.07), Vector3(-14, 0, 0), steel)
 		"smg":
-			# 微冲：短机匣 + 消音器 + 侧折托 + 下垂弹匣 + 顶部导轨
-			add_box.call(Vector3(0.07, 0.10, 0.40), Vector3(0, 0, -0.05), Vector3.ZERO, dark)
-			_cyl.call(Vector3(0.022, 0.022, 0.22), Vector3(0, 0.012, -0.34), Vector3(90, 0, 0), steel)
-			add_box.call(Vector3(0.045, 0.03, 0.16), Vector3(0, 0.068, -0.05), Vector3.ZERO, steel)
-			add_box.call(Vector3(0.045, 0.17, 0.05), Vector3(0, -0.12, 0.0), Vector3(6, 0, 0), dark)
-			add_box.call(Vector3(0.05, 0.06, 0.18), Vector3(0, -0.02, 0.16), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.02, 0.05, 0.05), Vector3(0, -0.07, -0.16), Vector3.ZERO, steel)
+			# 汤姆逊 M1A1（考证特征）：蓝钢机匣 + 木质固定枪托（握腕下斜+托底板）
+			# + 木质横向护木 + 前竖握把 + .45 盒式弹匣 + 右侧拉机柄
+			# + 平直枪口（M1A1 无 Cutts 补偿器/无消音器）+ 固定觇孔照门
+			add_box.call(Vector3(0.06, 0.085, 0.36), Vector3(0, 0.025, -0.01), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.05, 0.16), Vector3(0, -0.055, 0.03), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.052, 0.05, 0.09), Vector3(0, -0.04, -0.155), Vector3.ZERO, dark)
+			_cyl.call(Vector3(0.017, 0.017, 0.26), Vector3(0, 0.03, -0.31), Vector3(90, 0, 0), steel)
+			add_box.call(Vector3(0.024, 0.024, 0.03), Vector3(0, 0.03, -0.45), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.008, 0.03, 0.01), Vector3(0, 0.062, -0.42), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.028, 0.022, 0.02), Vector3(0, 0.078, 0.06), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.016, 0.018, 0.05), Vector3(0.038, 0.03, 0.05), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.012, 0.012, 0.025), Vector3(-0.036, -0.005, 0.07), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.058, 0.062, 0.24), Vector3(0, -0.005, -0.27), Vector3.ZERO, walnut)
+			add_box.call(Vector3(0.034, 0.095, 0.048), Vector3(0, -0.09, -0.31), Vector3.ZERO, walnut)
+			add_box.call(Vector3(0.012, 0.01, 0.065), Vector3(0, -0.083, 0.03), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.008, 0.028, 0.008), Vector3(0, -0.07, 0.045), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.046, 0.115, 0.11), Vector3(0, -0.095, 0.15), Vector3(18, 0, 0), walnut)
+			add_box.call(Vector3(0.052, 0.095, 0.21), Vector3(0, -0.095, 0.30), Vector3(-5, 0, 0), walnut)
+			add_box.call(Vector3(0.056, 0.1, 0.014), Vector3(0, -0.115, 0.405), Vector3.ZERO, dark)
 		"rifle":
-			# 备用突击步枪（GLB 缺失时）：长机匣 + 护木 + 直弹匣 + 枪托
-			add_box.call(Vector3(0.06, 0.09, 0.55), Vector3(0, 0.02, -0.08), Vector3.ZERO, dark)
-			_cyl.call(Vector3(0.02, 0.02, 0.30), Vector3(0, 0.03, -0.48), Vector3(90, 0, 0), steel)
-			add_box.call(Vector3(0.05, 0.05, 0.22), Vector3(0, 0.015, -0.38), Vector3.ZERO, dark)
-			add_box.call(Vector3(0.045, 0.16, 0.07), Vector3(0, -0.11, -0.04), Vector3(12, 0, 0), steel)
-			add_box.call(Vector3(0.05, 0.10, 0.24), Vector3(0, -0.04, 0.24), Vector3(-4, 0, 0), dark)
-			add_box.call(Vector3(0.04, 0.07, 0.05), Vector3(0, -0.07, 0.08), Vector3.ZERO, steel)
+			# M7 战斗步枪（XM7 / SIG MCX Spear 体系，考证特征）：FDE 涂装大机匣
+			# + 全长顶部皮轨（横向楔齿）+ M-LOK 开槽长护木 + 左侧折叠拉机柄
+			# + 大尺寸消焰器筒（双挡环）+ Magpul SL-M 式伸缩枪托（贴腮板+调节柄）
+			add_box.call(Vector3(0.062, 0.075, 0.3), Vector3(0, 0.035, -0.01), Vector3.ZERO, fde)
+			add_box.call(Vector3(0.055, 0.055, 0.17), Vector3(0, -0.02, 0.015), Vector3.ZERO, fde)
+			add_box.call(Vector3(0.05, 0.045, 0.09), Vector3(0, -0.045, -0.15), Vector3.ZERO, fde)
+			add_box.call(Vector3(0.028, 0.016, 0.56), Vector3(0, 0.078, -0.13), Vector3.ZERO, dark)
+			for i in 6:
+				add_box.call(Vector3(0.031, 0.006, 0.014),
+						Vector3(0, 0.089, 0.1 - float(i) * 0.08), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.056, 0.072, 0.3), Vector3(0, 0.02, -0.31), Vector3.ZERO, fde)
+			for i in 4:
+				add_box.call(Vector3(0.006, 0.022, 0.05),
+						Vector3(-0.0295, 0.02, -0.2 - float(i) * 0.07), Vector3.ZERO, dark)
+				add_box.call(Vector3(0.006, 0.022, 0.05),
+						Vector3(0.0295, 0.02, -0.2 - float(i) * 0.07), Vector3.ZERO, dark)
+			_cyl.call(Vector3(0.015, 0.015, 0.2), Vector3(0, 0.03, -0.56), Vector3(90, 0, 0), dark)
+			_cyl.call(Vector3(0.024, 0.024, 0.09), Vector3(0, 0.03, -0.705), Vector3(90, 0, 0), dark)
+			_cyl.call(Vector3(0.027, 0.027, 0.016), Vector3(0, 0.03, -0.68), Vector3(90, 0, 0), steel)
+			_cyl.call(Vector3(0.027, 0.027, 0.016), Vector3(0, 0.03, -0.73), Vector3(90, 0, 0), steel)
+			add_box.call(Vector3(0.022, 0.03, 0.035), Vector3(0, 0.055, -0.475), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.016, 0.02, 0.055), Vector3(-0.039, 0.045, 0.03), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.004, 0.02, 0.06), Vector3(0.032, 0.04, -0.03), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.038, 0.095, 0.052), Vector3(0, -0.075, 0.085), Vector3(22, 0, 0), dark)
+			add_box.call(Vector3(0.012, 0.008, 0.06), Vector3(0, -0.052, 0.02), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.008, 0.024, 0.008), Vector3(0, -0.043, 0.03), Vector3.ZERO, steel)
+			add_box.call(Vector3(0.048, 0.065, 0.05), Vector3(0, 0.015, 0.165), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.042, 0.055, 0.15), Vector3(0, 0.01, 0.26), Vector3.ZERO, fde)
+			add_box.call(Vector3(0.03, 0.018, 0.1), Vector3(0, 0.048, 0.27), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.05, 0.09, 0.028), Vector3(0, 0.002, 0.345), Vector3.ZERO, dark)
+			add_box.call(Vector3(0.028, 0.018, 0.04), Vector3(0, -0.03, 0.3), Vector3.ZERO, dark)
 		"shotgun":
 			# 泵动霰弹：木托 + 双管感 + 泵动前托 + 弹管
 			add_box.call(Vector3(0.07, 0.09, 0.80), Vector3(0, 0.025, -0.16), Vector3.ZERO, wood)
@@ -570,8 +625,8 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 		var fz := -0.5
 		match gun_id:
 			"pistol": my = 0.10; mz = -0.04; fz = -0.2
-			"smg": my = 0.075; mz = -0.05; fz = -0.2
-			"rifle": my = 0.09; mz = -0.1; fz = -0.45
+			"smg": my = 0.06; mz = -0.04; fz = -0.4
+			"rifle": my = 0.085; mz = -0.1; fz = -0.42
 			"shotgun": my = 0.095; mz = -0.16; fz = -0.38
 		_scope_visual(root, s_kind, my, mz, fz)
 	return root
@@ -736,10 +791,17 @@ func _spawn_impact(p: Vector3) -> void:
 	slot["t"] = 0.24
 
 
-## 旧弹匣脱匣：从枪身弹匣位落到世界空间，初速 = 枪前向 0.8 + 向下 0.4
+## 旧弹匣脱匣：从枪身弹匣井（手部拔匣的脱离点）转入世界空间下坠，
+## 初速 = 枪前向 0.8 + 向下 0.4
 func _drop_mag() -> void:
 	_ensure_falling_mag()
-	_falling_mag.global_position = player.cam.to_global(Vector3(0.02, -0.16, -0.3))
+	var g := _cur_gun()
+	if not g.is_empty():
+		# 弹匣井下方一点脱手：与世界空间掉落替身衔接手部拔匣动画
+		_falling_mag.global_position = (g["holder"] as Node3D).to_global(
+				MAG_POS + Vector3(0.0, -0.06, 0.0))
+	else:
+		_falling_mag.global_position = player.cam.to_global(Vector3(0.02, -0.16, -0.3))
 	# 相机 -Z = 枪口方向（basis.z 朝身后，取负才是前抛）
 	_falling_vel = -player.cam.global_transform.basis.z * 0.8 + Vector3(0, -0.4, 0)
 	_falling_mag.scale = Vector3.ONE
@@ -760,6 +822,120 @@ func _ensure_falling_mag() -> void:
 	_falling_mag.mesh = box
 	_falling_mag.visible = false
 	add_child(_falling_mag)
+
+
+## 换弹手部替身：暗色战术手套低模（护腕 + 掌 + 四指各两节 + 拇指两节，
+## BoxMesh 拼装），挂相机下与枪架同级；材质关深度测试同枪模；
+## 懒重建（同掉落弹匣思路），仅换弹期间可见
+func _ensure_hand() -> void:
+	if _hand != null or player == null or player.cam == null:
+		return
+	var hand := Node3D.new()
+	player.cam.add_child(hand)
+	var glove := StandardMaterial3D.new()
+	glove.albedo_color = Color(0.15, 0.16, 0.18)
+	glove.roughness = 0.85
+	glove.no_depth_test = true
+	glove.render_priority = 10
+	glove.emission_enabled = true
+	glove.emission = Color(0.19, 0.2, 0.22)
+	glove.emission_energy_multiplier = 0.55
+	var cuff := StandardMaterial3D.new()
+	cuff.albedo_color = Color(0.1, 0.11, 0.13)
+	cuff.roughness = 0.9
+	cuff.no_depth_test = true
+	cuff.render_priority = 10
+	cuff.emission_enabled = true
+	cuff.emission = Color(0.13, 0.14, 0.16)
+	cuff.emission_energy_multiplier = 0.55
+	var add := func(sz: Vector3, pos: Vector3, rot_deg: Vector3,
+			mat: Material) -> void:
+		var bm := BoxMesh.new()
+		bm.size = sz
+		bm.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.position = pos
+		mi.rotation_degrees = rot_deg
+		hand.add_child(mi)
+	# 手部局部坐标：四指朝 -Z 伸展、拇指在 +X 侧；握匣姿态的整体转角
+	# 由 _update_reload_hand 按 prog 控制
+	add.call(Vector3(0.085, 0.05, 0.055), Vector3(0, -0.006, 0.095), Vector3.ZERO, cuff)
+	add.call(Vector3(0.07, 0.04, 0.05), Vector3(0, 0.0, 0.05), Vector3.ZERO, glove)
+	add.call(Vector3(0.072, 0.026, 0.09), Vector3(0, 0.0, -0.012), Vector3.ZERO, glove)
+	# 四指：食指到小指各两节 [x 偏移, 近节长, 末节长]，指节微勾（握匣姿态）
+	var fingers: Array = [[0.027, 0.043, 0.03], [0.009, 0.045, 0.032],
+			[-0.009, 0.042, 0.03], [-0.027, 0.034, 0.026]]
+	for f in fingers:
+		var fx: float = float(f[0])
+		var l1: float = float(f[1])
+		var l2: float = float(f[2])
+		add.call(Vector3(0.016, 0.02, l1), Vector3(fx, -0.002, -0.057 - l1 * 0.5),
+				Vector3(12, 0, 0), glove)
+		add.call(Vector3(0.0145, 0.018, l2), Vector3(fx, 0.01, -0.055 - l1 - l2 * 0.5),
+				Vector3(34, 0, 0), glove)
+	# 拇指：自掌侧斜前包扣两节
+	add.call(Vector3(0.019, 0.02, 0.048), Vector3(0.043, 0.008, -0.03),
+			Vector3(0, 25, 12), glove)
+	add.call(Vector3(0.016, 0.018, 0.032), Vector3(0.026, 0.018, -0.068),
+			Vector3(0, 48, 20), glove)
+	hand.visible = false
+	_hand = hand
+
+
+func _hide_hand() -> void:
+	if _hand != null:
+		_hand.visible = false
+
+
+## 换弹手部动画：按换弹进度 prog 分五段插值（照 _reload_off/_reload_rot 的
+## 关键帧模式，不引入新状态机）。锚点取枪上弹匣节点（to_global 转世界坐标，
+## 位移偏移为枪架局部），枪体换弹下探/倾斜时手自动跟随；
+## ≥3× 开镜到位藏枪时手同步隐藏（不悬空）
+func _update_reload_hand(prog: float) -> void:
+	_ensure_hand()
+	if _hand == null:
+		return
+	var g := _cur_gun()
+	if g.is_empty():
+		_hide_hand()
+		return
+	var holder: Node3D = g["holder"]
+	if not holder.visible:
+		_hide_hand()
+		return
+	var mag: MeshInstance3D = g["mag"]
+	var hand_off: Vector3
+	var hand_rot: Vector3
+	if prog < HAND_GRIP_T:
+		# 入画：从画面右下伸向弹匣（0.15 前保持隐藏，只在画面外摆位）
+		var k := clampf((prog - HAND_IN_T) / (HAND_GRIP_T - HAND_IN_T), 0.0, 1.0)
+		hand_off = HAND_ENTRY_OFF.lerp(HAND_GRIP_OFF, k)
+		hand_rot = Vector3(8.0, -10.0, 6.0).lerp(Vector3(2.0, 0.0, 2.0), k)
+	elif prog < HAND_OUT_T:
+		# 握匣下拉拔出：跟旧匣一起向下抽（旧匣 0.25 起转世界空间坠地），
+		# 末段手腕外翻甩开
+		var k := clampf((prog - HAND_GRIP_T) / (HAND_OUT_T - HAND_GRIP_T), 0.0, 1.0)
+		hand_off = HAND_GRIP_OFF.lerp(HAND_PULL_OFF, k)
+		hand_rot = Vector3(2.0, 0.0, 2.0).lerp(Vector3(-14.0, 0.0, -12.0), k)
+	elif prog < HAND_NEW_T:
+		# 弃旧取新：从画面下方把新匣托举上抬到弹匣井正下（与新匣滑入同步）
+		var k := clampf((prog - HAND_OUT_T) / (HAND_NEW_T - HAND_OUT_T), 0.0, 1.0)
+		hand_off = HAND_PULL_OFF.lerp(HAND_HOLD_OFF, k)
+		hand_rot = Vector3(-14.0, 0.0, -12.0).lerp(Vector3(4.0, 0.0, 2.0), k)
+	elif prog < HAND_SEAT_T:
+		# 对准弹匣井插入拍合：掌心贴匣底跟压到位
+		var k := clampf((prog - HAND_NEW_T) / (HAND_SEAT_T - HAND_NEW_T), 0.0, 1.0)
+		hand_off = HAND_HOLD_OFF.lerp(HAND_GRIP_OFF + Vector3(0.0, -0.015, 0.01), k)
+		hand_rot = Vector3(4.0, 0.0, 2.0)
+	else:
+		# 离场回位：向下收回画面外（0.97 提前隐手，先于换弹结束）
+		var k := clampf((prog - HAND_SEAT_T) / (HAND_HIDE_T - HAND_SEAT_T), 0.0, 1.0)
+		hand_off = (HAND_GRIP_OFF + Vector3(0.0, -0.015, 0.01)).lerp(HAND_ENTRY_OFF, k)
+		hand_rot = Vector3(4.0, 0.0, 2.0).lerp(Vector3(8.0, -10.0, 6.0), k)
+	_hand.visible = prog >= HAND_IN_T and prog < HAND_HIDE_T
+	_hand.global_position = mag.to_global(hand_off)
+	_hand.rotation_degrees = hand_rot
 
 
 func _tick_fx(dt: float) -> void:
@@ -795,3 +971,7 @@ func _tick_fx(dt: float) -> void:
 				_falling_mag = null
 				_mag_landed = false
 				_falling = false
+	# 手部兜底：非换弹帧（死亡/切枪/进场重置）强制隐藏，防手套悬空残留
+	if _hand != null and _hand.visible:
+		if reloading <= 0.0 or player == null or player.dead:
+			_hand.visible = false
