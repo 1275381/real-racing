@@ -402,12 +402,13 @@ const ensureGunAudio = () => gunAudio.ensure();
 window.addEventListener('pointerdown', ensureGunAudio, { once: true });
 window.addEventListener('keydown', ensureGunAudio, { once: true });
 
-/* 窗口 resize：主相机改宽高比（fov 归 GunView 管），vmCamera 随 update 自同步 */
+/* 窗口 resize：主相机改宽高比（fov 归 GunView 管），vmCamera 随 update 自同步；UI 缩放重算 */
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     gunview.update(0);
+    applyUiZoom();
 });
 
 /* ==== 9. 主循环：逻辑步进 + 双 pass 渲染（主场景 → 清深度 → viewmodel） ==== */
@@ -479,6 +480,29 @@ function reportErr(e) {
 }
 window.addEventListener('error', (e) => reportErr(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => reportErr(e.reason));
+
+/* ==== 10.5 UI 缩放：DOM 界面全是固定 px，全屏/大屏上字太小——按窗口尺寸整体 zoom。
+ * 基准 1280×760（小窗保持 1.0 不变），大屏线性放大，封顶 2.2；
+ * 3D 画布分辨率归渲染器管不受影响，只放大界面层。
+ * 世界标记（hud.showMarker）按真实屏幕像素定位，读 window.__uiZoom 做除法补偿。 ==== */
+window.__uiZoom = 1;
+function applyUiZoom() {
+    const s = Math.min(2.2, Math.max(1, Math.min(window.innerWidth / 1280, window.innerHeight / 760)));
+    window.__uiZoom = s;
+    for (const id of ['hud-root', 'hud-menu-root', 'hud-result-root', 'hud-help-overlay', 'deployVeil', 'fps-lobby']) {
+        const el = document.getElementById(id);
+        if (el) el.style.zoom = String(s);
+    }
+    errBox.style.zoom = String(s);
+    fpsBadge.style.zoom = String(s);
+    return s;
+}
+applyUiZoom();
+/* resize 事件之外兜一层 ResizeObserver：全屏切换/开发工具开合等不走 window resize
+ * 的视口变化也能触发重算（观察 documentElement 尺寸即视口尺寸） */
+if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(applyUiZoom).observe(document.documentElement);
+}
 
 /* ==== 11. 调试句柄（extractFlow 契约） ==== */
 

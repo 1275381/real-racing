@@ -2812,9 +2812,12 @@ func _build_zone_ground() -> void:
 					# 山脊才有明暗；全 UP 会把山坡打成平地
 					var n1 := _up_normal((p10 - p00).cross(p11 - p00))
 					var n2 := _up_normal((p11 - p00).cross(p01 - p00))
+					# 注意：第一三角第 3 顶点（w+2）法线保持零——全游戏的太阳强度/
+					# 分区底色都是在这个历史行为上调好的，改成 n1 会让满亮度漫反射
+					# 把全城水泥地面曝成一片纯白（开机白屏事故）；挖洞格同此口径
 					vpos[w] = p00; vcol[w] = c00; vnrm[w] = n1
 					vpos[w + 1] = p10; vcol[w + 1] = c10; vnrm[w + 1] = n1
-					vpos[w + 2] = p11; vcol[w + 2] = c11; vnrm[w + 2] = n1
+					vpos[w + 2] = p11; vcol[w + 2] = c11; vnrm[w + 2] = Vector3.ZERO
 					vpos[w + 3] = p00; vcol[w + 3] = c00; vnrm[w + 3] = n2
 					vpos[w + 4] = p11; vcol[w + 4] = c11; vnrm[w + 4] = n2
 					vpos[w + 5] = p01; vcol[w + 5] = c01; vnrm[w + 5] = n2
@@ -2861,15 +2864,17 @@ func _emit_ground_cell_cut(vpos: PackedVector3Array, vnrm: PackedVector3Array,
 			[Vector2(r.position.x, r.position.y), Vector2(r.end.x, r.end.y),
 					Vector2(r.position.x, r.end.y)],
 		]
-		for tri_xz in tris_xz:
+		for ti in tris_xz.size():
 			var vv: Array = []
-			for q in tri_xz:
+			for q in tris_xz[ti]:
 				vv.append(_ground_vc(src, q, p00, c00))
 			var nn := _up_normal((vv[1][0] - vv[0][0]).cross(vv[2][0] - vv[0][0]))
-			for e in vv:
-				vpos[w] = e[0]
-				vnrm[w] = nn
-				vcol[w] = e[1]
+			# 与常规格同口径：第一三角第 3 顶点法线为零（历史调色行为，见上）
+			var nrm3: Array = [nn, nn, Vector3.ZERO] if ti == 0 else [nn, nn, nn]
+			for e_i in 3:
+				vpos[w] = vv[e_i][0]
+				vnrm[w] = nrm3[e_i]
+				vcol[w] = vv[e_i][1]
 				w += 1
 	return w
 

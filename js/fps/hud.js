@@ -670,8 +670,11 @@ export class HUD {
             this._label = label;
             this._markerLabel.textContent = label || '';
         }
-        D.worldMarker.style.left = `${x}px`;
-        D.worldMarker.style.top = `${y}px`;
+        /* UI 缩放补偿：标记按真实屏幕像素算的，挂在 zoom 过的 hud-root 里要除回去，
+         * 否则全屏时标记会飞出屏幕（main.js applyUiZoom 维护 __uiZoom） */
+        const uz = window.__uiZoom || 1;
+        D.worldMarker.style.left = `${x / uz}px`;
+        D.worldMarker.style.top = `${y / uz}px`;
         D.worldMarker.style.opacity = '1';
     }
 
