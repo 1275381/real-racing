@@ -1,5 +1,6 @@
 # 画面探针（窗口模式，非 headless）：大厅 → 行动出生点 → 远景士兵 → 中心危险区 → 靶馆
-# 五张基础截图 + 三张附加验收：开镜渐晕边/角一致性 → 换弹手部 → 汤姆逊腰射
+# 五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 → 汤姆逊腰射 → 七把新枪逐把腰射
+# （shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh.png，共 15 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 extends SceneTree
 
@@ -114,7 +115,21 @@ func _initialize() -> void:
 	await frames(2)
 	root.get_texture().get_image().save_png("res://out/shot_smg.png")
 
-	print("[probe] 8 张截图完成 → res://out/  （断言 %d 项 / 失败 %d）" % [checks, fails])
+	# ---- 附加验收 9~15：七把新枪逐把腰射（shot_gun_<id>.png）——
+	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
+	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh"]:
+		if not main.stash.guns_owned.has(gid):
+			main.stash.guns_owned.append(gid)
+		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
+		main._enter_range()
+		await frames(40)
+		main.player.recoil_pitch = 0.0
+		main.player.recoil_yaw = 0.0
+		await frames(2)
+		root.get_texture().get_image().save_png("res://out/shot_gun_%s.png" % gid)
+
+	print("[probe] 15 张截图完成 → res://out/  （断言 %d 项 / 失败 %d）" % [checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

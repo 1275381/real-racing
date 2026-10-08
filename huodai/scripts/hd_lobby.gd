@@ -4,8 +4,9 @@ extends CanvasLayer
 ## 底部「1 出发 / 2 仓库 / 3 改枪台」三页签 +「G 去靶场」。
 ## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）。
 ## 鼠标路径：行点击=选中光标，再点已选行=确认（与回车等价），购买/换装全程可点。
-## 出发页光标模型（单轴）：[主槽0 | 副槽1 | 候选枪2..N+1 | 出发 N+2]，
-## 回车：槽=设装入目标 · 枪=装入聚焦槽 · 出发钮=出发。
+## 出发页光标模型（单轴，候选枪按 DEPLOY_PAGE 分页）：[主槽0 | 副槽1 | 当页枪行 | 出发钮]，
+## ←/→ 页内回绕移动；↑/↓ 端点跨页（↓ 越过出发钮=翻下页回槽位0，↑ 在槽位0=翻上页落到出发钮）。
+## 回车：槽=设装入目标 · 枪=未拥有先购后装/已拥有直接装 · 出发钮=出发。
 ## 操作失败（钱不足等）用底部 show_hint() 提示（不用 HUD toast），提示带金额明细。
 ## 按 1440×810 设计，_apply_ui_scale 按视口高度整体缩放（全屏大屏不缩字）。
 
@@ -19,12 +20,14 @@ const COL_OK := Color(0.49, 0.89, 0.66)
 const TAB_TITLES := ["1 · 出发", "2 · 仓库", "3 · 改枪台"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
 const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
+const DEPLOY_PAGE := 6              # 出发页候选枪每页行数（12 枪=2 页，光标域随页收缩）
 
 var lobby_visible: bool = false
 
 var _stash: HDStash
 var _tab := 0                       # 0 出发 / 1 仓库 / 2 改枪台
-var _cur0 := 0                      # 出发页光标
+var _cur0 := 0                      # 出发页光标（当页行数域：2 槽位 + 当页枪行 + 出发钮）
+var _deploy_page := 0               # 出发页候选枪分页索引
 var _slot_focus := "primary"        # 出发页「装入目标槽」
 var _gun_idx := 0                   # 改枪台左列选中枪
 var _scope_idx := 0                 # 改枪台右列选中瞄具（0=机瞄）
@@ -250,13 +253,18 @@ func _apply_ui_scale() -> void:
 
 
 ## 行点击统一入口（鼠标购买链）：未选中=选中该行（光标跟着走）；
-## 已选中=确认（与回车等价：槽=设装入目标 · 枪=装入 · 镜=购买/换装/卸下）
+## 已选中=确认（与回车等价：槽=设装入目标 · 枪=未拥有先购后装 · 出发钮=出发）。
+## page = 候选枪所在分页（槽位卡片绑 -1：不随翻页）；点他页行先翻页再选中。
 ## 参数序：gui_input 信号实参在前，bind 实参在后（同 city_editor._on_field_changed 约定）
-func _on_deploy_row_input(event: InputEvent, idx: int) -> void:
+func _on_deploy_row_input(event: InputEvent, page: int, idx: int) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			if _cur0 == idx:
+			if page >= 0 and page != _deploy_page:
+				_deploy_page = page   # 点的是他页行：先翻到该页，光标落该行
+				_cur0 = idx
+				_refresh_all()
+			elif _cur0 == idx:
 				_confirm_deploy()
 			else:
 				_cur0 = idx
@@ -316,9 +324,20 @@ func _render_top() -> void:
 
 # ================= 出发页 =================
 
+## 候选枪总页数（12 枪 / 每页 DEPLOY_PAGE = 2 页）
+func _deploy_pages() -> int:
+	return int(ceil(float(Guns.GUNS.size()) / float(DEPLOY_PAGE)))
+
+
+## 当前页候选枪行数（末页不满页取余数）
+func _deploy_rows() -> int:
+	return mini(DEPLOY_PAGE, Guns.GUNS.size() - _deploy_page * DEPLOY_PAGE)
+
 func _render_deploy(pg: VBoxContainer) -> void:
 	var guns: Array = Guns.GUNS
-	var n := 3 + guns.size()
+	_deploy_page = clampi(_deploy_page, 0, _deploy_pages() - 1)
+	var rows := _deploy_rows()
+	var n := 3 + rows          # 光标域：2 槽位 + 当页枪行 + 出发钮
 	_cur0 = posmod(_cur0, n)
 
 	var cols := HBoxContainer.new()
@@ -352,22 +371,24 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		var focus_here := _slot_focus == key
 		vb.add_child(_mk_label(("「装入此槽」· " if focus_here else "") + str(slot_defs[i][1]),
 				11, COL_OK))
-		card.gui_input.connect(_on_deploy_row_input.bind(i))
+		card.gui_input.connect(_on_deploy_row_input.bind(-1, i))
 		vb.add_child(_mk_label(String(g.get("name", gid)), 18, COL_ACCENT))
 		vb.add_child(_mk_label(String(g.get("desc", "")), 12, _dim(0.6)))
 		slots.add_child(card)
 
-	# 候选枪列表（未拥有显示价格；默认五枪全有）
+	# 候选枪列表（只画当前页；未拥有显示价格，回车/再点行即购买）
 	var owned_n := 0
 	for g0 in guns:
 		if _stash.guns_owned.has(str(g0["id"])):
 			owned_n += 1
-	main.add_child(_mk_label("候选枪（已拥有 %d/%d）" % [owned_n, guns.size()], 11, COL_OK))
-	for gi in guns.size():
-		var g2: Dictionary = guns[gi]
+	main.add_child(_mk_label("候选枪（已拥有 %d/%d）· 第 %d/%d 页" % [
+			owned_n, guns.size(), _deploy_page + 1, _deploy_pages()], 11, COL_OK))
+	var first: int = _deploy_page * DEPLOY_PAGE
+	for r in rows:
+		var g2: Dictionary = guns[first + r]
 		var id2 := str(g2["id"])
 		var owned: bool = _stash.guns_owned.has(id2)
-		var sel2 := _cur0 == 2 + gi
+		var sel2 := _cur0 == 2 + r
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel",
 				_panel_style(sel2, COL_ACCENT if sel2 else _dim(0.22)))
@@ -382,11 +403,11 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		var price := _to_int(g2.get("price", 0))
 		hb.add_child(_mk_label("已拥有" if owned else "₵ " + _fmt(price),
 				13, COL_OK if owned else COL_ACCENT))
-		row.gui_input.connect(_on_deploy_row_input.bind(2 + gi))
+		row.gui_input.connect(_on_deploy_row_input.bind(_deploy_page, 2 + r))
 		main.add_child(row)
 
 	# 出发钮
-	var di := 2 + guns.size()
+	var di := 2 + rows
 	var dsel := _cur0 == di
 	var btn := _mk_btn("出  发", 17)
 	_style_btn(btn, dsel, COL_ACCENT if dsel else _dim(0.5), 60)
@@ -394,16 +415,20 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	var bwrap := CenterContainer.new()
 	bwrap.add_child(btn)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · 回车/点击行 确认 · G 靶场 · 1/2/3 切页签", 12, _dim(0.5))
+	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 回车/点击行 确认（未拥有枪直接购买） · G 靶场 · 1/2/3 切页签",
+			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
 
-	# 右侧：光标所指武器速览
+	# 右侧：光标所指武器速览（枪行光标要换算回全局枪表下标）
 	var sel_id := str(_stash.loadout.get("primary", "rifle"))
 	if _cur0 == 1:
 		sel_id = str(_stash.loadout.get("secondary", "pistol"))
-	elif _cur0 >= 2 and _cur0 < 2 + guns.size():
-		sel_id = str(guns[_cur0 - 2]["id"])
+	elif _cur0 >= 2 and _cur0 < 2 + rows:
+		# 光标在当页枪行才换算（出发钮位回退显示主武器——越界会翻到他页枪）
+		var gidx: int = _deploy_page * DEPLOY_PAGE + (_cur0 - 2)
+		if gidx < guns.size():
+			sel_id = str(guns[gidx]["id"])
 	var sg := Guns.gun_by_id(sel_id)
 	var owned_sel: bool = _stash.guns_owned.has(sel_id)
 	var side := VBoxContainer.new()
@@ -429,15 +454,29 @@ func _render_deploy(pg: VBoxContainer) -> void:
 			12, COL_OK))
 
 
+## 出发页确认（键盘回车与鼠标再点已选行同收敛于此）：
+## 槽=设装入目标 · 枪行=未拥有先 buy_gun 再装入（钱不够拦截不扣款）· 出发钮=出发
 func _confirm_deploy() -> void:
 	var guns: Array = Guns.GUNS
+	var rows := _deploy_rows()
 	if _cur0 <= 1:
 		_slot_focus = "primary" if _cur0 == 0 else "secondary"
 		_refresh_all()
 		return
-	var gi := _cur0 - 2
-	if gi < guns.size():
-		_load_gun(str(guns[gi]["id"]))
+	if _cur0 >= 2 and _cur0 < 2 + rows:
+		var gi: int = _deploy_page * DEPLOY_PAGE + (_cur0 - 2)
+		var gid := str(guns[gi]["id"])
+		if not _stash.guns_owned.has(gid):
+			var g := Guns.shop_gun_by_id(gid)
+			var price := _to_int(g.get("price", 0))
+			if not _stash.buy_gun(gid):
+				show_hint("现金不足：%s 需 ₵%s，现有 ₵%s —— 回仓库变卖战利品或明日签到" % [
+						String(g.get("name", gid)), _fmt(price),
+						_fmt(maxi(0, _stash.cash))])
+				return
+			show_hint("已购买：%s（余 ₵%s）" % [
+					String(g.get("name", gid)), _fmt(maxi(0, _stash.cash))])
+		_load_gun(gid)
 		return
 	_fire_deploy()
 
@@ -712,8 +751,24 @@ func _bench_confirm() -> void:
 func _move(dh: int, dv: int) -> void:
 	match _tab:
 		0:
-			var n := 3 + Guns.GUNS.size()
-			_cur0 = posmod(_cur0 + dh, n)
+			# ←/→ 页内回绕；↑/↓ 单步行进、端点跨页：↓ 越过出发钮翻下页回槽位0，
+			# ↑ 在槽位0 翻上页落到出发钮位（回绕成环）
+			var rows := _deploy_rows()
+			var n := 3 + rows
+			if dv > 0:
+				if _cur0 + 1 >= n:
+					_deploy_page = posmod(_deploy_page + 1, _deploy_pages())
+					_cur0 = 0
+				else:
+					_cur0 += 1
+			elif dv < 0:
+				if _cur0 - 1 < 0:
+					_deploy_page = posmod(_deploy_page - 1, _deploy_pages())
+					_cur0 = 2 + _deploy_rows()
+				else:
+					_cur0 -= 1
+			else:
+				_cur0 = posmod(_cur0 + dh, n)
 		1:
 			return                  # 仓库页无网格光标
 		2:

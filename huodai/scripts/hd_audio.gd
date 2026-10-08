@@ -10,13 +10,21 @@ const MIX_RATE := 22050
 const PLAYERS := 4      # 轮换播放器数
 const POLYPHONY := 4    # 每个播放器复音数
 
-## 按 gun_id 微调枪声：dur 时长(秒) / decay 衰减速度 / gain 音量
+## 按 gun_id 微调枪声：dur 时长(秒) / decay 衰减速度 / gain 音量。
+## 2026-10 扩充七枪：射速越快单发越短促；7.62 重弹更长更响（未知 id 仍兜底 rifle）
 const SHOT_TUNE := {
 	"pistol": {"dur": 0.12, "decay": 36.0, "gain": 0.7},
 	"smg": {"dur": 0.13, "decay": 32.0, "gain": 0.65},
 	"rifle": {"dur": 0.18, "decay": 24.0, "gain": 0.85},
 	"shotgun": {"dur": 0.26, "decay": 16.0, "gain": 0.95},
 	"sniper": {"dur": 0.34, "decay": 11.0, "gain": 1.0},
+	"uzi": {"dur": 0.14, "decay": 30.0, "gain": 0.66},
+	"mp5": {"dur": 0.13, "decay": 32.0, "gain": 0.65},
+	"p90": {"dur": 0.12, "decay": 34.0, "gain": 0.62},
+	"vector": {"dur": 0.11, "decay": 36.0, "gain": 0.6},
+	"m4a1": {"dur": 0.18, "decay": 24.0, "gain": 0.85},
+	"akm": {"dur": 0.2, "decay": 22.0, "gain": 0.88},
+	"scarh": {"dur": 0.24, "decay": 18.0, "gain": 0.92},
 }
 
 var _pool: Array[AudioStreamPlayer] = []

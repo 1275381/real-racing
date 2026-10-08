@@ -12,6 +12,10 @@ signal changed
 
 const SAVE_VERSION := 1
 
+## 默认拥有集：恰旧五枪（新枪默认不拥有、只走现金购买）。
+## GUNS 扩充后绝不能再「遍历 GUNS 全送」——那是经济白送事故点
+const DEFAULT_GUNS := ["pistol", "smg", "rifle", "shotgun", "sniper"]
+
 var cash: int = 0
 var items: Array = []                 # [{uid,name,icon,rarity,value}]
 var guns_owned: Array = []            # 枪械 id 列表（默认五枪全有）
@@ -79,7 +83,7 @@ func _load() -> void:
 				continue
 			items.append(norm)
 
-	# 枪械拥有（无效 id 过滤；清空回默认五枪）
+	# 枪械拥有（无效 id 过滤；清空回默认五枪——不再回退 GUNS 全集）
 	var valid_guns: Array = []
 	for g in Guns.GUNS:
 		valid_guns.append(str(g["id"]))
@@ -90,7 +94,7 @@ func _load() -> void:
 			var gid := str(id)
 			if valid_guns.has(gid) and not owned.has(gid):
 				owned.append(gid)
-	guns_owned = owned if not owned.is_empty() else valid_guns.duplicate()
+	guns_owned = owned if not owned.is_empty() else DEFAULT_GUNS.duplicate()
 
 	# 瞄具拥有 / 装配（"iron"/"" 归一化为 "iron"，未知 id 丢弃）
 	var valid_scopes: Array = []
@@ -139,13 +143,11 @@ func _load() -> void:
 	daily_last = _to_s(d.get("daily_last", ""))
 
 
-## 默认资产：五枪全有 / 现金 0 / 仓库空 / rifle+pistol
+## 默认资产：恰旧五枪全有 / 现金 0 / 仓库空 / rifle+pistol
 func _apply_defaults() -> void:
 	cash = 0
 	items = []
-	guns_owned = []
-	for g in Guns.GUNS:
-		guns_owned.append(str(g["id"]))
+	guns_owned = DEFAULT_GUNS.duplicate()
 	scopes_owned = []
 	scope_fit = {}
 	loadout = {"primary": "rifle", "secondary": "pistol"}
@@ -189,6 +191,30 @@ func buy_scope(id: String) -> bool:
 		return false
 	cash -= price
 	scopes_owned.append(id)
+	save()
+	changed.emit()
+	return true
+
+
+## 是否拥有该枪（枪械店 id；新枪默认不在拥有集里）
+func owns_gun(id: String) -> bool:
+	return guns_owned.has(id)
+
+
+## 购买枪械：已拥有直接 true（幂等不重复扣款）；只在枪械店目录
+## （Guns.shop_gun_by_id，不含大战场配发枪）里卖，未知 id 拒绝；
+## 现金不足 false 不扣款；成交即扣款入拥有集并存盘（照 buy_scope 同款容错）
+func buy_gun(id: String) -> bool:
+	if guns_owned.has(id):
+		return true
+	var g := Guns.shop_gun_by_id(id)
+	if g.is_empty():
+		return false
+	var price := maxi(0, _to_i(g.get("price", 0)))
+	if cash < price:
+		return false
+	cash -= price
+	guns_owned.append(id)
 	save()
 	changed.emit()
 	return true

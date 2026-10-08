@@ -59,9 +59,12 @@ const LEGACY_ICONS := {
 }
 const ICON_DEFAULT := "杂物"      # 空/未知图标兜底徽标
 
-## 每把枪的备弹（弹匣外储备；pistol/smg/shotgun/sniper 对齐网页版实测值）
+## 每把枪的备弹（弹匣外储备；pistol/smg/shotgun/sniper 对齐网页版实测值；
+## 2026-10 扩充七枪——漏加则 enter() 备弹 0、大厅速览也显 0）
 const RESERVE := {
 	"pistol": 60, "smg": 175, "rifle": 150, "shotgun": 30, "sniper": 25,
+	"uzi": 175, "mp5": 150, "p90": 150, "vector": 125,
+	"akm": 150, "m4a1": 150, "scarh": 100,
 }
 
 const DAILY_REWARD := 1500   # 每日签到金额（₵）

@@ -161,6 +161,48 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
+	# 16. 新枪账本：七把新枪逐把出发进场——满弹满备弹 + 后坐表落位
+	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；备弹缺键 enter() 为 0）
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh"]:
+		var gi: Dictionary = Guns.gun_by_id(gid)
+		main._start_mission({"primary": gid, "secondary": "pistol"})
+		await frames(8)
+		check("新枪 %s 满弹满备" % gid,
+			main.guns.ammo == int(gi.get("mag", 0))
+				and main.guns.reserve == int(HDData.RESERVE.get(gid, -1)),
+			"ammo=%d reserve=%d" % [main.guns.ammo, main.guns.reserve])
+		check("新枪 %s 后坐表落位" % gid, (HDGuns.RECOIL as Dictionary).has(gid))
+
+	# 17. 默认拥有集：恰旧五枪（新枪不白送——GUNS 扩到 12 后的经济红线）
+	check("默认拥有恰旧五枪",
+		main.stash.guns_owned == ["pistol", "smg", "rifle", "shotgun", "sniper"],
+		str(main.stash.guns_owned))
+
+	# 18. 购买与拦截：现金不足不扣款；足额扣款入拥有集；存档往返；已拥有幂等
+	main.stash.cash = 100
+	check("现金不足购枪拦截", main.stash.buy_gun("vector") == false
+		and main.stash.cash == 100 and not main.stash.owns_gun("vector"))
+	main.stash.cash = 1800
+	check("足额购枪扣款", main.stash.buy_gun("vector") == true
+		and main.stash.cash == 0 and main.stash.owns_gun("vector"))
+	var st2 := HDStash.new()
+	check("购枪存档往返", st2.guns_owned.has("vector"))
+	check("已拥有购枪幂等不扣款", main.stash.buy_gun("vector") == true
+		and main.stash.cash == 0)
+
+	# 19. 未拥有不可装备：大厅 _load_gun 拦截；买后可装（键盘与点击共用此路径）
+	main.stash.guns_owned.erase("scarh")
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main.lobby._slot_focus = "primary"
+	main.lobby._load_gun("scarh")
+	check("未拥有装备拦截", str(main.stash.loadout.get("primary")) == "rifle",
+		"primary=%s" % str(main.stash.loadout.get("primary")))
+	main.stash.cash = 2400
+	main.stash.buy_gun("scarh")
+	main.lobby._load_gun("scarh")
+	check("买后可装备", str(main.stash.loadout.get("primary")) == "scarh",
+		"primary=%s" % str(main.stash.loadout.get("primary")))
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)

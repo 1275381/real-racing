@@ -22,6 +22,29 @@ const GUNS := [
 		"spread": 0.0, "range": 400.0,
 		"builtin_scope": {"id": "builtin_sniper", "name": "原厂 6× 镜", "zoom": 6.0,
 			"kind": "sniper"}},
+	# ---- 枪械店扩充（2026-10）：七把新枪默认不拥有、现金购买；无 builtin_scope，
+	# 开镜倍率只认装配瞄具（工程纪律：非狙击枪绝不自带倍率）----
+	{"id": "uzi", "name": "乌兹冲锋枪", "desc": "伤害 14 · 全自动 · 32 发 · 9mm · 弹匣入握把/折叠托", "price": 900,
+		"dmg": 14.0, "cd": 0.10, "mag": 32, "reload": 1.5, "pellets": 1,
+		"spread": 0.024, "range": 130.0},
+	{"id": "mp5", "name": "MP5 冲锋枪", "desc": "伤害 13 · 全自动 · 30 发 · 9mm · 弯月弹匣/圆护木/固定托", "price": 1200,
+		"dmg": 13.0, "cd": 0.075, "mag": 30, "reload": 1.7, "pellets": 1,
+		"spread": 0.016, "range": 160.0},
+	{"id": "p90", "name": "P90 冲锋枪", "desc": "伤害 11 · 全自动 · 50 发 · 5.7mm · 无托/顶置弹匣", "price": 1600,
+		"dmg": 11.0, "cd": 0.066, "mag": 50, "reload": 2.0, "pellets": 1,
+		"spread": 0.022, "range": 170.0},
+	{"id": "vector", "name": "维克托冲锋枪", "desc": "伤害 10 · 全自动 · 25 发 · .45 ACP · 超高射速/后坐柔和", "price": 1800,
+		"dmg": 10.0, "cd": 0.05, "mag": 25, "reload": 1.6, "pellets": 1,
+		"spread": 0.021, "range": 140.0},
+	{"id": "akm", "name": "AKM 突击步枪", "desc": "伤害 22 · 全自动 · 30 发 · 7.62mm · 木托/弯月匣/斜切口", "price": 1700,
+		"dmg": 22.0, "cd": 0.11, "mag": 30, "reload": 2.1, "pellets": 1,
+		"spread": 0.018, "range": 200.0},
+	{"id": "m4a1", "name": "M4A1 突击步枪", "desc": "伤害 15 · 全自动 · 30 发 · 5.56mm · 提把/伸缩托/全黑", "price": 1800,
+		"dmg": 15.0, "cd": 0.08, "mag": 30, "reload": 1.7, "pellets": 1,
+		"spread": 0.013, "range": 240.0},
+	{"id": "scarh", "name": "SCAR-H 战斗步枪", "desc": "伤害 26 · 全自动 · 20 发 · 7.62 NATO · 沙色/长护木/侧折托", "price": 2400,
+		"dmg": 26.0, "cd": 0.14, "mag": 20, "reload": 2.0, "pellets": 1,
+		"spread": 0.016, "range": 280.0},
 ]
 
 
@@ -41,6 +64,16 @@ static func gun_by_id(id: String) -> Dictionary:
 		if g["id"] == id:
 			return g
 	return GUNS[0]
+
+
+## 只在枪械店目录（GUNS，不含大战场配发 BATTLE_GUNS）里精确找 id；
+## 找不到返回 {}——gun_by_id 有 GUNS[0] 兜底无法区分未知 id，
+## 购枪路径（HDStash.buy_gun）需要这个防御
+static func shop_gun_by_id(id: String) -> Dictionary:
+	for g in GUNS:
+		if g["id"] == id:
+			return g
+	return {}
 
 
 # 弹药类型：装备后影响所有枪械的伤害与曳光/火花颜色
