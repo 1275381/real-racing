@@ -1,6 +1,6 @@
 # 画面探针（窗口模式，非 headless）：大厅 → 行动出生点 → 远景士兵 → 中心危险区 → 靶馆
 # 五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 → 汤姆逊腰射 → 七把新枪逐把腰射
-# （shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh.png，共 15 张）
+# （shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh.png）→ 大厅弹药行特写（共 16 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 extends SceneTree
 
@@ -129,7 +129,20 @@ func _initialize() -> void:
 		await frames(2)
 		root.get_texture().get_image().save_png("res://out/shot_gun_%s.png" % gid)
 
-	print("[probe] 15 张截图完成 → res://out/  （断言 %d 项 / 失败 %d）" % [checks, fails])
+	# ---- 附加验收 16：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
+	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」行与
+	# 购买挡位按钮（B 换挡 / 购 30 发·₵X）同框可见
+	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
+	check("弹药经济首读送满额礼物", main.stash.ammo_of("mp5") == int(HDData.RESERVE["mp5"]),
+		"mp5=%d" % main.stash.ammo_of("mp5"))
+	main.lobby.set_tab(0)
+	main.lobby._cur0 = 2   # 光标落当页第一把候选枪行（速览随动显示该枪弹药行）
+	main.lobby.show_lobby()
+	await frames(8)
+	root.get_texture().get_image().save_png("res://out/shot_ammo_shop.png")
+	main.lobby.hide_lobby()
+
+	print("[probe] 16 张截图完成 → res://out/  （断言 %d 项 / 失败 %d）" % [checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

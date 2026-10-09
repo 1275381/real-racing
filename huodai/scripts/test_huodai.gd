@@ -48,13 +48,16 @@ func _run() -> void:
 			roll_ok = false
 	check("roll_loot 150 次档位与价值合法", roll_ok)
 
-	# 4. 出发进行动：装 primary/secondary、满弹满备弹
+	# 4. 出发进行动：装 primary/secondary、满弹 + 备弹按 stash 装填（首局=满额礼物 150）
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(30)
 	check("进入 MISSION", main.mode == main.Mode.MISSION)
 	check("大厅已隐藏", not main.lobby.lobby_visible)
-	check("步枪满弹", main.guns.ammo == 30 and main.guns.reserve == 150,
-		"ammo=%d reserve=%d" % [main.guns.ammo, main.guns.reserve])
+	check("步枪满弹·备弹=stash（首局礼物 150）",
+		main.guns.ammo == 30 and main.guns.reserve == 150
+			and main.guns.reserve == main.stash.ammo_of("rifle"),
+		"ammo=%d reserve=%d stash=%d" % [main.guns.ammo, main.guns.reserve,
+			main.stash.ammo_of("rifle")])
 	check("出生点在地图内", absf(main.player.pos.x) <= HDData.MAP_HALF
 		and absf(main.player.pos.z) <= HDData.MAP_HALF)
 
@@ -74,6 +77,7 @@ func _run() -> void:
 	check("200 伤害击倒", bool(res.get("killed", false)))
 
 	# 6. 换弹：先打空几发（满弹时拒绝换弹是正确行为），进度推进 + 弹匣回满扣备弹
+	#    （备弹语义已改极致备弹经济：stash 库存 150 → 换弹取 min(缺口,备弹)）
 	main.guns.ammo = 10
 	main.guns.start_reload()
 	var had_progress: bool = main.guns.reloading > 0.0
@@ -81,7 +85,19 @@ func _run() -> void:
 		main.guns.update(0.016)
 	check("换弹进度启动", had_progress)
 	check("换弹完成回满扣备弹", main.guns.ammo == 30 and main.guns.reserve == 130,
-		"ammo=%d reserve=%d（补缺口 20 发，150-20=130，网页版同款语义）" % [main.guns.ammo, main.guns.reserve])
+		"ammo=%d reserve=%d（补缺口 20 发，150-20=130，局内 reserve 不再免费）" % [main.guns.ammo, main.guns.reserve])
+
+	# 6b. 极致备弹账目：实打 5 发 → 换弹 → reserve 精确 -5（买多少用多少的核心语义）
+	for i in 5:
+		main.guns.try_fire()
+		main.guns.fire_cd = 0.0   # 绕射速间隔：账目回归不考手感
+	check("实打 5 发余弹 25", main.guns.ammo == 25,
+		"ammo=%d" % main.guns.ammo)
+	main.guns.start_reload()
+	for i in 140:
+		main.guns.update(0.016)
+	check("换弹后备弹精确 -5", main.guns.ammo == 30 and main.guns.reserve == 125,
+		"ammo=%d reserve=%d（130-5=125）" % [main.guns.ammo, main.guns.reserve])
 
 	# 7. 搜刮：站在容器上按住 F 1.8s 入包
 	var spot: Dictionary = main.world.container_spots[0]
@@ -99,13 +115,22 @@ func _run() -> void:
 	await frames(10)
 	check("撤离结算 WIN", main.hud.result_visible and main.stash.stats["extracts"] == 1)
 	check("战利品入库", main.stash.items.size() >= 1 and main.loot.backpack.is_empty())
+	check("撤离回收备弹入 stash（=局末 reserve）",
+		main.stash.ammo_of("rifle") == 125 and main.stash.ammo_of("pistol") == 60
+			and main.stash.ammo_of("rifle") == main.guns.reserve,
+		"rifle=%d pistol=%d guns.reserve=%d" % [main.stash.ammo_of("rifle"),
+			main.stash.ammo_of("pistol"), main.guns.reserve])
 
-	# 9. 死亡：重开一局后打空血 → LOSE + 丢包
+	# 9. 死亡：重开一局后打空血 → LOSE + 丢包（备弹不丢——弹药非战利品）
 	main._restart_current()
 	await frames(10)
 	main.player.hit(9999.0)
 	check("阵亡结算 LOSE", main.hud.result_visible and main.stash.stats["deaths"] == 1)
 	check("死亡丢背包", main.loot.backpack.is_empty())
+	check("死亡备弹照常保留", main.stash.ammo_of("rifle") == 125
+			and main.stash.ammo_of("pistol") == 60,
+		"rifle=%d pistol=%d" % [main.stash.ammo_of("rifle"),
+			main.stash.ammo_of("pistol")])
 
 	# 10. 靶场：进场 + 计分
 	main._enter_range()
@@ -161,16 +186,19 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：七把新枪逐把出发进场——满弹满备弹 + 后坐表落位
-	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；备弹缺键 enter() 为 0）
+	# 16. 新枪账本：七把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
+	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
-		check("新枪 %s 满弹满备" % gid,
+		check("新枪 %s 满弹·备弹=stash 礼物满额" % gid,
 			main.guns.ammo == int(gi.get("mag", 0))
-				and main.guns.reserve == int(HDData.RESERVE.get(gid, -1)),
-			"ammo=%d reserve=%d" % [main.guns.ammo, main.guns.reserve])
+				and main.guns.reserve == int(HDData.RESERVE.get(gid, -1))
+				and main.guns.reserve == main.stash.ammo_of(gid),
+			"ammo=%d reserve=%d stash=%d" % [main.guns.ammo, main.guns.reserve,
+				main.stash.ammo_of(gid)])
 		check("新枪 %s 后坐表落位" % gid, (HDGuns.RECOIL as Dictionary).has(gid))
 
 	# 17. 默认拥有集：恰旧五枪（新枪不白送——GUNS 扩到 12 后的经济红线）
@@ -202,6 +230,35 @@ func _run() -> void:
 	main.lobby._load_gun("scarh")
 	check("买后可装备", str(main.stash.loadout.get("primary")) == "scarh",
 		"primary=%s" % str(main.stash.loadout.get("primary")))
+
+	# 20. 极致备弹经济：买弹扣款/不足拦截 + 存档往返（rifle 单价 ₵6/发）
+	main.stash.cash = 100
+	check("现金不足购弹拦截", main.stash.buy_ammo("rifle", 30) == false
+		and main.stash.cash == 100 and main.stash.ammo_of("rifle") == 125)
+	main.stash.cash = 200
+	check("足额购弹扣款加弹", main.stash.buy_ammo("rifle", 30) == true
+		and main.stash.cash == 20 and main.stash.ammo_of("rifle") == 155,
+		"cash=%d ammo=%d（125+30=155）" % [main.stash.cash, main.stash.ammo_of("rifle")])
+	var st3 := HDStash.new()
+	check("购弹存档往返", st3.ammo_inv.get("rifle", -1) == 155)
+
+	# 21. 首次礼物只送一次：抹键后首读=满额礼物；改小再读不再回礼
+	main.stash.ammo_inv.erase("vector")
+	check("首次入账送满额礼物", main.stash.ammo_of("vector") == 125)
+	main.stash.set_ammo("vector", 10)
+	check("礼物只送一次", main.stash.ammo_of("vector") == 10)
+
+	# 22. 弹尽拒换弹：备弹 0 出发 → reserve==stash(0)，start_reload 不进换弹动画
+	main.stash.set_ammo("vector", 0)
+	main._start_mission({"primary": "vector", "secondary": "pistol"})
+	await frames(8)
+	check("出发 reserve==stash（0）", main.guns.reserve == 0
+			and main.guns.reserve == main.stash.ammo_of("vector"),
+		"reserve=%d stash=%d" % [main.guns.reserve, main.stash.ammo_of("vector")])
+	main.guns.ammo = 5
+	main.guns.start_reload()
+	check("reserve=0 换弹被拒", main.guns.reloading == 0.0,
+		"reloading=%.2f" % main.guns.reloading)
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

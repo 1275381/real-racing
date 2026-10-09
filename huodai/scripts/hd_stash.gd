@@ -21,6 +21,7 @@ var items: Array = []                 # [{uid,name,icon,rarity,value}]
 var guns_owned: Array = []            # 枪械 id 列表（默认五枪全有）
 var scopes_owned: Array = []          # 已购瞄具 id 列表
 var scope_fit: Dictionary = {}        # gun_id -> scope_id 或 "iron"
+var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
 var daily_last: String = ""          # 最近一次签到的日期键（YYYY-MM-DD）
@@ -47,6 +48,7 @@ func _serialize() -> Dictionary:
 		"guns_owned": guns_owned,
 		"scopes_owned": scopes_owned,
 		"scope_fit": scope_fit,
+		"ammo_inv": ammo_inv,
 		"loadout": loadout,
 		"stats": stats,
 		"daily_last": daily_last,
@@ -95,6 +97,15 @@ func _load() -> void:
 			if valid_guns.has(gid) and not owned.has(gid):
 				owned.append(gid)
 	guns_owned = owned if not owned.is_empty() else DEFAULT_GUNS.duplicate()
+
+	# 极致备弹库存（老档缺字段 → 空表：各枪首读按「首次礼物」规则送满额，见 ammo_of）
+	ammo_inv = {}
+	var raw_ammo: Variant = d.get("ammo_inv", null)
+	if typeof(raw_ammo) == TYPE_DICTIONARY:
+		for akey in raw_ammo.keys():
+			var agid := str(akey)
+			if valid_guns.has(agid):
+				ammo_inv[agid] = maxi(0, _to_i(raw_ammo[akey]))
 
 	# 瞄具拥有 / 装配（"iron"/"" 归一化为 "iron"，未知 id 丢弃）
 	var valid_scopes: Array = []
@@ -150,6 +161,7 @@ func _apply_defaults() -> void:
 	guns_owned = DEFAULT_GUNS.duplicate()
 	scopes_owned = []
 	scope_fit = {}
+	ammo_inv = {}
 	loadout = {"primary": "rifle", "secondary": "pistol"}
 	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
 	daily_last = ""
@@ -218,6 +230,42 @@ func buy_gun(id: String) -> bool:
 	save()
 	changed.emit()
 	return true
+
+
+## ---- 极致备弹经济：库存读取（含首次礼物）/ 购买 / 局终回收 ----
+
+## 读某枪备弹余量：缺键 = 该枪第一次进弹药经济 → 一次性赠送满额备弹
+## （HDData.RESERVE 该枪值；老档缺字段同此初始化），只送一次、之后只买不送。
+## 礼物立即落盘但不发 changed——渲染路径（大厅速览）会调到这里，
+## 发信号会触发 _refresh_all 回流重入
+func ammo_of(gun_id: String) -> int:
+	if not ammo_inv.has(gun_id):
+		ammo_inv[gun_id] = maxi(0, _to_i(HDData.RESERVE.get(gun_id, 0)))
+		save()
+	return maxi(0, _to_i(ammo_inv.get(gun_id, 0)))
+
+
+## 购买极致备弹：n<=0 或不在单价表（如大战场配发枪）拒绝 false；
+## 现金不足 false 不扣款；足额扣 n×单价、加弹（首买顺带入账礼物）、存盘、changed
+func buy_ammo(gun_id: String, n: int) -> bool:
+	if n <= 0 or not (HDData.AMMO_PRICE as Dictionary).has(gun_id):
+		return false
+	var total := maxi(0, _to_i(HDData.AMMO_PRICE.get(gun_id, 0))) * n
+	if cash < total:
+		return false
+	cash -= total
+	ammo_inv[gun_id] = ammo_of(gun_id) + n
+	save()
+	changed.emit()
+	return true
+
+
+## 局终回收：把局内剩余备弹写回库存（撤离/死亡/放弃回大厅同收敛于此；
+## 弹药不属于战利品——死亡也保留）
+func set_ammo(gun_id: String, n: int) -> void:
+	ammo_inv[gun_id] = maxi(0, n)
+	save()
+	changed.emit()
 
 
 ## 装配（单持强制）：同瞄具自动从他枪卸下；"iron"/"" = 卸下回机瞄

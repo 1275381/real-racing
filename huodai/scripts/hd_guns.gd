@@ -63,6 +63,7 @@ var tracers          # TracerPool 实例（main 创建传入，本模块 setup+t
 var soldiers = null  # HDSoldiers 实例（main 注入）：raycast 用它的 battlefield 契约
 var targets = null   # HDTargets 实例（main 注入）：命中时直接调 targets.on_hit(i) 倒靶计分
 var scope_provider: Callable   # main 注入 func(gun_id)->Dictionary{"kind","zoom"}
+var reserve_provider: Callable # main 注入 func(gun_id)->int：备弹弹药源（极致备弹经济，stash 库存）
 
 var cur_id: String = ""
 var ammo: int = 0
@@ -102,8 +103,9 @@ func setup(player, world, audio, tracers) -> void:
 	_ensure_falling_mag()
 
 
-## 进场：按 loadout 建两把枪模（常驻相机下，切枪只切可见性不重建）、
-## 装 primary、满弹满备弹
+## 进场：按 loadout 建两把枪模（常驻相机下，切枪只切可见性不重建）、装 primary。
+## 弹匣仍免费给满；备弹不再免费送——改由弹药源（main 注入 reserve_provider →
+## stash 极致备弹库存）提供，未注入回 0；局终 main 用 slot_snapshots() 回收
 func enter(loadout: Dictionary) -> void:
 	_save_cur()
 	_slots = {}
@@ -134,7 +136,7 @@ func enter(loadout: Dictionary) -> void:
 			continue
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		_slots[slot] = {"id": gid, "ammo": int(gi.get("mag", 12)),
-				"reserve": int(HDData.RESERVE.get(gid, 0))}
+				"reserve": _reserve_for_gun(gid)}
 		# 同槽换了枪才重建枪模；同枪复用已有 holder（重复进场不堆积）
 		if _guns.has(slot) and str(_guns[slot]["id"]) != gid:
 			var old: Dictionary = _guns[slot]
@@ -302,7 +304,8 @@ func try_fire() -> void:
 		audio.play_shot(cur_id)
 
 
-## R 键手动换弹（弹匣未满、有备弹、不在换弹中才生效）
+## R 键手动换弹（弹匣未满、有备弹、不在换弹中才生效；极致备弹经济下
+## reserve=0 即弹尽粮绝——拒绝换弹不进动画）
 func start_reload() -> void:
 	if cur_id == "" or reloading > 0.0:
 		return
@@ -311,6 +314,26 @@ func start_reload() -> void:
 	reloading = float(_g.get("reload", 1.5))
 	if audio != null:
 		audio.play_reload()
+
+
+## 备弹弹药源：main 注入的 reserve_provider（stash 极致备弹库存）；
+## 未注入（探针/测试裸调 enter）回 0——备弹不再免费给
+func _reserve_for_gun(gid: String) -> int:
+	if reserve_provider != null and reserve_provider.is_valid():
+		return maxi(0, int(reserve_provider.call(gid)))
+	return 0
+
+
+## 各槽余弹快照 {slot: {"id","ammo","reserve"}}（先回写当前槽——换弹中/结束都
+## 取最新值）——main 局终（撤离/死亡/放弃）按此把剩余备弹回收进 stash
+func slot_snapshots() -> Dictionary:
+	_save_cur()
+	var out := {}
+	for slot in _slots.keys():
+		var s: Dictionary = _slots[slot]
+		out[slot] = {"id": str(s["id"]), "ammo": int(s["ammo"]),
+				"reserve": int(s["reserve"])}
+	return out
 
 
 ## 切到另一槽位（Digit1/Digit2 直选走 _equip）

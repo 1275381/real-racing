@@ -55,6 +55,7 @@ func _ready() -> void:
 	guns.soldiers = null      # 士兵 build 后注入（避免 build 前引用空转）
 	guns.targets = targets
 	guns.scope_provider = _scope_for
+	guns.reserve_provider = _reserve_for
 	guns.hit_enemy.connect(_on_hit_enemy)
 
 	soldiers = HDSoldiers.new()
@@ -127,6 +128,19 @@ func _scope_for(gun_id: String) -> Dictionary:
 			return {"kind": str(sc.get("kind", "iron")), "zoom": float(sc.get("zoom", 1.0))}
 	return {"kind": "iron", "zoom": 1.0}
 
+## ---- 极致备弹弹药源（对齐 scope_provider 注入约定）----
+## 出发（行动/靶场）装填时 guns.enter 按枪取库存；首读缺键 = 一次性送满额礼物
+func _reserve_for(gun_id: String) -> int:
+	return stash.ammo_of(gun_id)
+
+## 局终回收：把两把枪剩余备弹写回库存并存档——撤离/死亡/放弃回大厅三路同收敛；
+## 弹药不属于战利品，死亡也保留（「买多少就用多少」）
+func _reclaim_ammo() -> void:
+	var snap := guns.slot_snapshots()
+	for slot in snap.keys():
+		var s: Dictionary = snap[slot]
+		stash.set_ammo(str(s["id"]), int(s["reserve"]))
+
 ## ---- 模式流转 ----
 func _start_mission(loadout: Dictionary) -> void:
 	mode = Mode.MISSION
@@ -179,6 +193,7 @@ func _enter_range() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _back_to_lobby() -> void:
+	_reclaim_ammo()   # 放弃/结算回大厅：剩余备弹先入库（撤离·死亡路径已回收，此处幂等）
 	mode = Mode.LOBBY
 	paused = false
 	hud.set_raid_visible(false)
@@ -191,6 +206,7 @@ func _back_to_lobby() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func _restart_current() -> void:
+	_reclaim_ammo()   # 重开=放弃当局：剩余备弹先入库再重装（防「重开退款」漏洞）
 	if mode == Mode.RANGE:
 		_enter_range()
 	else:
@@ -207,6 +223,7 @@ func _on_player_died() -> void:
 	if mode != Mode.MISSION:
 		return
 	var lost := loot.drain()
+	_reclaim_ammo()   # 死亡丢包但不丢弹药：剩余备弹照常写回库存
 	stash.record_raid(false, _kills)
 	hud.set_raid_visible(false)
 	hud.show_result(false, {
@@ -219,6 +236,7 @@ func _on_player_died() -> void:
 func _win_raid() -> void:
 	var bag := loot.drain()
 	var n := stash.deposit(bag)
+	_reclaim_ammo()   # 撤离：战利品入库 + 剩余备弹写回库存
 	stash.record_raid(true, _kills)
 	hud.set_raid_visible(false)
 	hud.show_result(true, {

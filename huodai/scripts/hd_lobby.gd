@@ -7,6 +7,8 @@ extends CanvasLayer
 ## 出发页光标模型（单轴，候选枪按 DEPLOY_PAGE 分页）：[主槽0 | 副槽1 | 当页枪行 | 出发钮]，
 ## ←/→ 页内回绕移动；↑/↓ 端点跨页（↓ 越过出发钮=翻下页回槽位0，↑ 在槽位0=翻上页落到出发钮）。
 ## 回车：槽=设装入目标 · 枪=未拥有先购后装/已拥有直接装 · 出发钮=出发。
+## 极致备弹（金色行）：B 循环购买挡位 30/90/300 发 · 空格按挡位购买（余量=stash 库存，
+## 首读送满额礼物）；鼠标路径同款两按钮（B 换挡 / 购 N 发）。
 ## 操作失败（钱不足等）用底部 show_hint() 提示（不用 HUD toast），提示带金额明细。
 ## 按 1440×810 设计，_apply_ui_scale 按视口高度整体缩放（全屏大屏不缩字）。
 
@@ -32,6 +34,7 @@ var _slot_focus := "primary"        # 出发页「装入目标槽」
 var _gun_idx := 0                   # 改枪台左列选中枪
 var _scope_idx := 0                 # 改枪台右列选中瞄具（0=机瞄）
 var _bench_col := 0                 # 改枪台列：0=枪 1=瞄具
+var _ammo_tier := 0                 # 出发页购弹挡位索引（HDData.AMMO_TIERS，B 键循环）
 var _hint_t := 0.0
 
 var _root: Control
@@ -90,6 +93,18 @@ func handle_key(code: int) -> bool:
 			_check_in()
 		KEY_G:
 			_fire_range()
+		KEY_B:
+			# 出发页专用：循环极致备弹购买挡位（鼠标点「B 换挡」钮同款）
+			if _tab == 0:
+				_cycle_ammo_tier()
+			else:
+				return false
+		KEY_SPACE:
+			# 出发页专用：按当前挡位给选中枪购极致备弹（鼠标点「购 N 发」钮同款）
+			if _tab == 0:
+				_buy_ammo_sel()
+			else:
+				return false
 		KEY_ENTER, KEY_KP_ENTER:
 			_confirm()
 		KEY_LEFT:
@@ -415,20 +430,13 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	var bwrap := CenterContainer.new()
 	bwrap.add_child(btn)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 回车/点击行 确认（未拥有枪直接购买） · G 靶场 · 1/2/3 切页签",
+	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 回车/点击行 确认（未拥有枪直接购买） · B 换挡 空格 购极致备弹 · G 靶场 · 1/2/3 切页签",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
 
 	# 右侧：光标所指武器速览（枪行光标要换算回全局枪表下标）
-	var sel_id := str(_stash.loadout.get("primary", "rifle"))
-	if _cur0 == 1:
-		sel_id = str(_stash.loadout.get("secondary", "pistol"))
-	elif _cur0 >= 2 and _cur0 < 2 + rows:
-		# 光标在当页枪行才换算（出发钮位回退显示主武器——越界会翻到他页枪）
-		var gidx: int = _deploy_page * DEPLOY_PAGE + (_cur0 - 2)
-		if gidx < guns.size():
-			sel_id = str(guns[gidx]["id"])
+	var sel_id := _deploy_sel_id()
 	var sg := Guns.gun_by_id(sel_id)
 	var owned_sel: bool = _stash.guns_owned.has(sel_id)
 	var side := VBoxContainer.new()
@@ -446,12 +454,70 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	var rate := (1.0 / cd) if cd > 0.0 else 0.0
 	iv.add_child(_mk_label("伤害 %s · 射速 %.1f/s" % [str(sg.get("dmg", "--")), rate],
 			12, COL_TEXT))
-	iv.add_child(_mk_label("弹匣 %s · 射程 %sm · 备弹 %s" % [
+	iv.add_child(_mk_label("弹匣 %s · 射程 %sm · 单价 ₵%d/发" % [
 			str(sg.get("mag", "--")), str(sg.get("range", "--")),
-			str(HDData.RESERVE.get(sel_id, 0))], 12, COL_TEXT))
+			_to_int(HDData.AMMO_PRICE.get(sel_id, 0))], 12, COL_TEXT))
 	var price2 := _to_int(sg.get("price", 0))
 	iv.add_child(_mk_label("身价：" + ("已拥有" if owned_sel else "₵ " + _fmt(price2)),
 			12, COL_OK))
+	# 极致备弹行（金色标识）：余量来自 stash 库存（首读缺键即送满额礼物）；
+	# 购买挡位 B 键循环 / 空格购买（键盘），「B 换挡」「购 N 发」按钮（鼠标）
+	var ammo_n: int = _stash.ammo_of(sel_id)
+	iv.add_child(_mk_label("%s 余 %d 发 / 满额 %d 发" % [HDData.AMMO_NAME, ammo_n,
+			_to_int(HDData.RESERVE.get(sel_id, 0))], 13, HDData.AMMO_COLOR))
+	var tier_n: int = _ammo_tier_n()
+	var ammo_row := HBoxContainer.new()
+	ammo_row.add_theme_constant_override("separation", 6)
+	iv.add_child(ammo_row)
+	var cyc := _mk_btn("B 换挡", 12)
+	_style_btn(cyc, false, _dim(0.6), 10)
+	cyc.pressed.connect(_cycle_ammo_tier)
+	ammo_row.add_child(cyc)
+	var buy := _mk_btn("购 %d 发 · ₵%s" % [tier_n, _fmt(tier_n * _to_int(
+			HDData.AMMO_PRICE.get(sel_id, 0)))], 12)
+	_style_btn(buy, true, HDData.AMMO_COLOR, 12)
+	buy.pressed.connect(_buy_ammo_sel)
+	ammo_row.add_child(buy)
+
+
+## 出发页当前选中枪 id（速览与购弹共用）：槽位=loadout 对应枪 · 枪行=该行枪
+## （出发钮位回退主武器——越界会翻到他页枪）
+func _deploy_sel_id() -> String:
+	var guns: Array = Guns.GUNS
+	var rows := _deploy_rows()
+	var sel_id := str(_stash.loadout.get("primary", "rifle"))
+	if _cur0 == 1:
+		sel_id = str(_stash.loadout.get("secondary", "pistol"))
+	elif _cur0 >= 2 and _cur0 < 2 + rows:
+		var gidx: int = _deploy_page * DEPLOY_PAGE + (_cur0 - 2)
+		if gidx < guns.size():
+			sel_id = str(guns[gidx]["id"])
+	return sel_id
+
+
+## 当前购买挡位发数（索引越界防御回绕）
+func _ammo_tier_n() -> int:
+	return int(HDData.AMMO_TIERS[posmod(_ammo_tier, HDData.AMMO_TIERS.size())])
+
+
+## B 键 /「B 换挡」钮：购买挡位 30→90→300 循环（总价随行实时刷新）
+func _cycle_ammo_tier() -> void:
+	_ammo_tier = posmod(_ammo_tier + 1, HDData.AMMO_TIERS.size())
+	_refresh_all()
+
+
+## 空格 /「购 N 发」钮：按当前挡位给选中枪买极致备弹（现金不足拦截提示，照购枪款）
+func _buy_ammo_sel() -> void:
+	var sel_id := _deploy_sel_id()
+	var n := _ammo_tier_n()
+	var each := _to_int(HDData.AMMO_PRICE.get(sel_id, 0))
+	var total := n * each
+	if not _stash.buy_ammo(sel_id, n):
+		show_hint("现金不足：%s ×%d 发需 ₵%s，现有 ₵%s —— 回仓库变卖战利品或明日签到" % [
+				HDData.AMMO_NAME, n, _fmt(total), _fmt(maxi(0, _stash.cash))])
+		return
+	show_hint("已购 %s ×%d 发 −₵%s（余 ₵%s）" % [
+			HDData.AMMO_NAME, n, _fmt(total), _fmt(maxi(0, _stash.cash))])
 
 
 ## 出发页确认（键盘回车与鼠标再点已选行同收敛于此）：
