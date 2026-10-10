@@ -1,7 +1,9 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 → 汤姆逊腰射
 # → 八把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4.png）→
-# 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（共 18 张）
+# 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
+# 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
+# 交易行未拥有枪购买特写（shot_market_buy.png）（共 21 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
@@ -165,8 +167,8 @@ func _initialize() -> void:
 	shot("res://out/shot_slot_switch.png")
 
 	# ---- 附加验收 18：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
-	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」行与
-	# 购买挡位按钮（B 换挡 / 购 30 发·₵X）同框可见
+	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」只读行
+	# （购买入口已迁交易行③区：B 换挡 / 空格 /「购 N 发」钮在页签 4 生效，见下两张）
 	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
 	check("弹药经济首读送满额礼物", main.stash.ammo_of("mp5") == int(HDData.RESERVE["mp5"]),
 		"mp5=%d" % main.stash.ammo_of("mp5"))
@@ -177,7 +179,39 @@ func _initialize() -> void:
 	shot("res://out/shot_ammo_shop.png")
 	main.lobby.hide_lobby()
 
-	print("[probe] 探针完成：实存 %d/18 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	# ---- 附加验收 19：shot_bench —— 改枪台页全景（购买入口回收图证）：
+	# 选中 M7（表序 2，非自带镜枪），右列 6 档瞄具逐行核对——未拥有者
+	# （全息/3.5×/5×/热成像）只有置灰「交易行有售」标签、无任何钮；已拥有且已装
+	# 的红点镜=「已装」置灰、机瞄=「卸下」（装配功能保留，非购买）；顶栏现金
+	# ₵20,000 同框——有钱也无购买入口可点
+	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
+	main.lobby.set_tab(2)
+	main.lobby._gun_idx = 2   # M7 战斗步枪（附加验收 6 已给 rifle 装红点）
+	main.lobby.show_lobby()
+	await frames(8)
+	shot("res://out/shot_bench.png")
+	main.lobby.hide_lobby()
+
+	# ---- 附加验收 20：shot_market —— 交易行页全景（全游戏唯一购买入口）：
+	# 三段分区同框——① 枪械全表（未拥有「₵N+购买」/已拥有置灰）· ② 瞄具 6 档
+	# · ③ 极致备弹（选枪 + B 换挡 + 购 N 发）+ 顶栏现金 ₵20,000
+	if main.stash.guns_owned.has("mp5"):
+		main.stash.guns_owned.erase("mp5")   # 摆拍未拥有态（前面枪照段落已把 MP5 直拥）
+	main.lobby.set_tab(3)
+	main.lobby.show_lobby()
+	await frames(8)
+	shot("res://out/shot_market.png")
+
+	# ---- 附加验收 21：shot_market_buy —— 特写：光标选中未拥有枪（MP5 ₵1,200），
+	# 行高亮 + 行内「购买」钮高亮；只选中不确认，不实际成交
+	main.lobby._market_sec = 0
+	main.lobby._market_gun = 6   # GUNS 表序 6 = MP5
+	main.lobby.set_tab(3)        # 同页签重刷，光标落 MP5 行
+	await frames(8)
+	shot("res://out/shot_market_buy.png")
+	main.lobby.hide_lobby()
+
+	print("[probe] 探针完成：实存 %d/21 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

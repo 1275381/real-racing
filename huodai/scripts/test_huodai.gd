@@ -1,5 +1,6 @@
 # 回归：烽火地带（Godot 版）核心链路——签到/开箱/命中/换弹掉匣/搜刮/撤离/死亡/靶场/经济
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
+#       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s huodai/test_huodai.gd
 extends SceneTree
 
@@ -259,6 +260,65 @@ func _run() -> void:
 	main.guns.start_reload()
 	check("reserve=0 换弹被拒", main.guns.reloading == 0.0,
 		"reloading=%.2f" % main.guns.reloading)
+
+	# 23. 交易行页签（唯一购买入口）：键盘 4 切入 · ←/→ 跨段回绕 · 段内 ↑↓ 选条目
+	#    （headless 无法点击，购买入口回收用「确认链状态」断言：见 24/25）
+	main.lobby.show_lobby()
+	check("键盘 4 切交易行页", main.lobby.handle_key(KEY_4)
+		and main.lobby._tab == 3)
+	check("页签四枚·交易行就位", main.lobby._tab_btns.size() == 4
+		and str(main.lobby.TAB_TITLES[3]) == "4 · 交易行")
+	main.lobby._market_sec = 0
+	main.lobby.handle_key(KEY_RIGHT)
+	check("→ 跨段 0→1", main.lobby._market_sec == 1)
+	main.lobby.handle_key(KEY_LEFT)
+	check("← 跨段 1→0", main.lobby._market_sec == 0)
+	main.lobby.handle_key(KEY_LEFT)
+	check("← 回绕跨段到 2", main.lobby._market_sec == 2)
+	main.lobby.handle_key(KEY_RIGHT)
+	check("→ 回绕跨段回 0", main.lobby._market_sec == 0)
+	main.lobby._market_gun = 0
+	main.lobby.handle_key(KEY_DOWN)
+	check("↓ 段内选下把枪", main.lobby._market_gun == 1)
+	main.lobby.handle_key(KEY_UP)
+	check("↑ 段内选回", main.lobby._market_gun == 0)
+
+	# 24. 出发页购买入口回收：未拥有枪行回车不购不装（现金足额也拦）、B/空格不再消费
+	main.stash.cash = 99999
+	main.lobby.set_tab(0)
+	check("出发页不再消费 B/空格", not main.lobby.handle_key(KEY_B)
+		and not main.lobby.handle_key(KEY_SPACE))
+	main.lobby._deploy_page = 1
+	main.lobby._cur0 = 2   # 第 2 页首行 = MP5（未拥有：18/19 步只购过 vector/scarh）
+	main.lobby.handle_key(KEY_ENTER)
+	check("出发页回车不购未拥有枪", not main.stash.owns_gun("mp5")
+		and main.stash.cash == 99999
+		and str(main.stash.loadout.get("primary")) != "mp5")
+
+	# 25. 交易行成交链：回车购枪/购镜 · B 换挡 · 空格按挡位购弹（changed 联动刷新现金）
+	main.lobby.handle_key(KEY_4)
+	main.lobby._market_sec = 0
+	main.lobby._market_gun = 6   # GUNS 表序 6 = MP5 ₵1200（未拥有）
+	var cash0: int = main.stash.cash
+	main.lobby.handle_key(KEY_ENTER)
+	check("交易行回车购枪", main.stash.owns_gun("mp5")
+		and main.stash.cash == cash0 - 1200, "cash=%d" % main.stash.cash)
+	main.lobby._market_sec = 1
+	main.lobby._market_scope = 3   # 交易行②区条目序 3 = 3.5× 光学镜 ₵1800（未拥有）
+	cash0 = main.stash.cash
+	main.lobby.handle_key(KEY_ENTER)
+	check("交易行回车购镜", main.stash.owns_scope("optic35")
+		and main.stash.cash == cash0 - 1800, "cash=%d" % main.stash.cash)
+	main.lobby.handle_key(KEY_B)   # 购弹挡位 30→90
+	check("B 换挡生效（交易行页）", main.lobby._ammo_tier == 1)
+	main.lobby._market_sec = 2
+	main.lobby._market_ammo_gun = 6   # 给 MP5 购弹（单价 ₵4/发 × 90 = ₵360）
+	cash0 = main.stash.cash
+	var mp5_ammo0: int = main.stash.ammo_of("mp5")
+	main.lobby.handle_key(KEY_SPACE)
+	check("空格按挡位购弹", main.stash.ammo_of("mp5") == mp5_ammo0 + 90
+		and main.stash.cash == cash0 - 360,
+		"ammo=%d cash=%d" % [main.stash.ammo_of("mp5"), main.stash.cash])
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

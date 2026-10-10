@@ -1,7 +1,7 @@
 class_name HuoDaiMain
 extends Node3D
 ## 烽火地带（Godot 版）主装配与模式状态机 —— 网页版 fps.html 的移植
-## 模式：LOBBY 大厅（出发/仓库/改枪台/签到）→ MISSION 行动（搜刮→撤离）→ RANGE 靶馆
+## 模式：LOBBY 大厅（出发/仓库/改枪台/交易行/签到）→ MISSION 行动（搜刮→撤离）→ RANGE 靶馆
 ## 全部节点代码装配（工程约定：无 .tscn 拼场景）；模块间鸭子类型注入，契约见 hd_data.gd
 
 enum Mode { LOBBY, MISSION, RANGE }
