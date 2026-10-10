@@ -3,7 +3,8 @@ extends CanvasLayer
 ## 烽火地带 —— 大厅（移植 js/fps/lobby.js）：顶栏 LOGO/战绩/每日签到/现金，
 ## 底部「1 出发 / 2 仓库 / 3 改枪台」三页签 +「G 去靶场」。
 ## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）。
-## 鼠标路径：行点击=选中光标，再点已选行=确认（与回车等价），购买/换装全程可点。
+## 鼠标路径：点击行=选中光标；装入/购买/换装统一走行内显式按钮（未拥有显示「购买 ₵N」，
+## 已拥有未装显示「装备/换装」，已装备/已装置灰），槽位卡片再点已选卡=设装入目标。
 ## 出发页光标模型（单轴，候选枪按 DEPLOY_PAGE 分页）：[主槽0 | 副槽1 | 当页枪行 | 出发钮]，
 ## ←/→ 页内回绕移动；↑/↓ 端点跨页（↓ 越过出发钮=翻下页回槽位0，↑ 在槽位0=翻上页落到出发钮）。
 ## 回车：槽=设装入目标 · 枪=未拥有先购后装/已拥有直接装 · 出发钮=出发。
@@ -267,40 +268,66 @@ func _apply_ui_scale() -> void:
 	_root.offset_bottom = vs.y / s - vs.y
 
 
-## 行点击统一入口（鼠标购买链）：未选中=选中该行（光标跟着走）；
-## 已选中=确认（与回车等价：槽=设装入目标 · 枪=未拥有先购后装 · 出发钮=出发）。
-## page = 候选枪所在分页（槽位卡片绑 -1：不随翻页）；点他页行先翻页再选中。
+## 行点击统一入口（鼠标）：一律只选中（他页行先翻页再选中）；装入/购买动作统一走行内
+## 「装备/购买」按钮；槽位卡片（page=-1）例外：再点已选卡=设为装入目标（与回车等价）。
 ## 参数序：gui_input 信号实参在前，bind 实参在后（同 city_editor._on_field_changed 约定）
 func _on_deploy_row_input(event: InputEvent, page: int, idx: int) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			if page >= 0 and page != _deploy_page:
-				_deploy_page = page   # 点的是他页行：先翻到该页，光标落该行
-				_cur0 = idx
-				_refresh_all()
-			elif _cur0 == idx:
-				_confirm_deploy()
-			else:
-				_cur0 = idx
-				_refresh_all()
+			if page < 0:
+				if _cur0 == idx:
+					_confirm_deploy()          # 槽位卡片：再点已选卡=设装入目标
+				else:
+					_deploy_select(-1, idx)
+			elif page != _deploy_page:
+				_deploy_select(page, idx)      # 点他页行：先翻到该页，光标落该行
+			elif _cur0 != idx:
+				_deploy_select(page, idx)      # 枪行：只选中，装备走行内「装备」钮
 
 
-## 改枪台行点击：col=0 左列选枪 / col=1 右列瞄具；再点已选行=确认（同回车）
+## 出发页选中某行（点击行 / 点「已装备」灰钮兜底）：翻到所在页、光标落行
+func _deploy_select(page: int, idx: int) -> void:
+	if page >= 0:
+		_deploy_page = page
+	_cur0 = idx
+	_refresh_all()
+
+
+## 行内「装备/购买」钮：先选中该行，再沿既有确认链 _confirm_deploy 收敛
+## （未拥有先 buy_gun 再装入聚焦槽 · 已拥有直接装入），不另起一套逻辑
+func _on_equip_pressed(page: int, idx: int) -> void:
+	_deploy_select(page, idx)
+	_confirm_deploy()
+
+
+## 改枪台行点击：一律只选中（col=0 左列选枪 / col=1 右列瞄具）；换装/购买统一走行内按钮
 func _on_bench_row_input(event: InputEvent, col: int, idx: int) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			var cur: int = _gun_idx if col == 0 else _scope_idx
-			if _bench_col == col and cur == idx:
-				_bench_confirm()
-			else:
+			if _bench_col != col or cur != idx:
 				_bench_col = col
 				if col == 0:
 					_gun_idx = idx
 				else:
 					_scope_idx = idx
 				_refresh_all()
+
+
+## 改枪台选中右列某行（点「已装」灰钮兜底）
+func _bench_select(idx: int) -> void:
+	_bench_col = 1
+	_scope_idx = idx
+	_refresh_all()
+
+
+## 改枪台行内「换装/卸下/购买」钮：先选中该行，再沿既有确认链 _bench_confirm 收敛
+## （未拥有先 buy_scope 再装 · 已拥有直接装 · 机瞄=卸下），不另起一套逻辑
+func _on_bench_equip_pressed(idx: int) -> void:
+	_bench_select(idx)
+	_bench_confirm()
 
 
 # ================= 刷新 =================
@@ -391,7 +418,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		vb.add_child(_mk_label(String(g.get("desc", "")), 12, _dim(0.6)))
 		slots.add_child(card)
 
-	# 候选枪列表（只画当前页；未拥有显示价格，回车/再点行即购买）
+	# 候选枪列表（只画当前页；未拥有显示价格；装入/购买走行内「装备/购买」显式按钮）
 	var owned_n := 0
 	for g0 in guns:
 		if _stash.guns_owned.has(str(g0["id"])):
@@ -418,6 +445,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		var price := _to_int(g2.get("price", 0))
 		hb.add_child(_mk_label("已拥有" if owned else "₵ " + _fmt(price),
 				13, COL_OK if owned else COL_ACCENT))
+		hb.add_child(_mk_equip_btn(id2, owned, price, _deploy_page, 2 + r))
 		row.gui_input.connect(_on_deploy_row_input.bind(_deploy_page, 2 + r))
 		main.add_child(row)
 
@@ -430,7 +458,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	var bwrap := CenterContainer.new()
 	bwrap.add_child(btn)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 回车/点击行 确认（未拥有枪直接购买） · B 换挡 空格 购极致备弹 · G 靶场 · 1/2/3 切页签",
+	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行选中 · 回车/「装备」钮 装入聚焦槽 · B 换挡 空格 购极致备弹 · G 靶场 · 1/2/3 切页签",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
@@ -478,6 +506,27 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	_style_btn(buy, true, HDData.AMMO_COLOR, 12)
 	buy.pressed.connect(_buy_ammo_sel)
 	ammo_row.add_child(buy)
+
+
+## 出发页行内「装备」键三态：未拥有=「购买 ₵N」（点了先购后装）· 已拥有未装=「装备」·
+## 已在主/副任一槽=「已装备」置灰（主副不可同枪，点击仅选中该行）。
+## 装入目标=当前聚焦槽（_slot_focus），动作收敛到 _confirm_deploy 既有链
+func _mk_equip_btn(gid: String, owned: bool, price: int, page: int, idx: int) -> Button:
+	var b := _mk_btn("装备", 12)
+	var in_loadout: bool = str(_stash.loadout.get("primary", "")) == gid \
+			or str(_stash.loadout.get("secondary", "")) == gid
+	if in_loadout:
+		b.text = "已装备"
+		_style_btn(b, false, _dim(0.35), 12)
+		b.pressed.connect(_deploy_select.bind(page, idx))
+	elif owned:
+		_style_btn(b, true, COL_ACCENT, 12)
+		b.pressed.connect(_on_equip_pressed.bind(page, idx))
+	else:
+		b.text = "购买 ₵" + _fmt(price)
+		_style_btn(b, true, COL_ACCENT, 12)
+		b.pressed.connect(_on_equip_pressed.bind(page, idx))
+	return b
 
 
 ## 出发页当前选中枪 id（速览与购弹共用）：槽位=loadout 对应枪 · 枪行=该行枪
@@ -739,13 +788,37 @@ func _render_bench(pg: VBoxContainer) -> void:
 		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		hb2.add_child(desc)
 		hb2.add_child(_mk_label(_scope_tag(gun_id, sid, e), 12, _scope_tag_col(gun_id, sid)))
+		hb2.add_child(_mk_bench_equip_btn(gun_id, e, i))
 		row2.gui_input.connect(_on_bench_row_input.bind(1, i))
 		right.add_child(row2)
 
-	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/点击行 购买·换装·卸下（瞄具单持：同镜装他枪自动卸下）",
+	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/行内按钮 购买·换装·卸下（瞄具单持：同镜装他枪自动卸下） · 点击行选中",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
+
+
+## 改枪台右列行内「换装」键四态：已装/已机瞄=置灰（点击仅选中该行）·
+## 机瞄=「卸下」· 已拥有（含装于他枪，单持自动卸下）=「换装」· 未拥有=「购买 ₵N」。
+## 动作收敛到 _bench_confirm 既有链（先选中该行再确认）
+func _mk_bench_equip_btn(gun_id: String, e: Dictionary, idx: int) -> Button:
+	var sid := str(e["id"])
+	var b := _mk_btn("换装", 12)
+	var fitted: bool = str(_stash.scope_fit.get(gun_id, "iron")) == sid
+	if sid == "iron":
+		fitted = str(_stash.scope_fit.get(gun_id, "iron")) == "iron"
+		b.text = "机瞄" if fitted else "卸下"
+	elif fitted:
+		b.text = "已装"
+	elif not _stash.owns_scope(sid):
+		b.text = "购买 ₵" + _fmt(_to_int(e.get("price", 0)))
+	if fitted:
+		_style_btn(b, false, _dim(0.35), 12)
+		b.pressed.connect(_bench_select.bind(idx))
+	else:
+		_style_btn(b, true, COL_ACCENT, 12)
+		b.pressed.connect(_on_bench_equip_pressed.bind(idx))
+	return b
 
 
 ## 瞄具条目右侧状态标签：默认 / 已装 / 装于他枪（单持提示）/ 已拥有 / 价格

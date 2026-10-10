@@ -45,6 +45,9 @@ const GUNS := [
 	{"id": "scarh", "name": "SCAR-H 战斗步枪", "desc": "伤害 26 · 全自动 · 20 发 · 7.62 NATO · 沙色/长护木/侧折托", "price": 2400,
 		"dmg": 26.0, "cd": 0.14, "mag": 20, "reload": 2.0, "pellets": 1,
 		"spread": 0.016, "range": 280.0},
+	{"id": "mk4", "name": "MK4 冲锋枪", "desc": "伤害 16 · 全自动 · 40 发 · 4.6×30mm", "price": 1200,
+		"dmg": 16.0, "cd": 0.075, "mag": 40, "reload": 1.7, "pellets": 1,
+		"spread": 0.018, "range": 160.0},
 ]
 
 

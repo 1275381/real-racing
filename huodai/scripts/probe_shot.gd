@@ -1,11 +1,14 @@
-# 画面探针（窗口模式，非 headless）：大厅 → 行动出生点 → 远景士兵 → 中心危险区 → 靶馆
-# 五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 → 汤姆逊腰射 → 七把新枪逐把腰射
-# （shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh.png）→ 大厅弹药行特写（共 16 张）
+# 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
+# → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 → 汤姆逊腰射
+# → 八把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4.png）→
+# 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（共 18 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
+# headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
 
 var checks: int = 0     # 附加验收断言计数（软断言：只记档打印，不中断后续截图）
 var fails: int = 0
+var shots_saved: int = 0   # 实存截图数（headless 下跳过保存，只跑断言链）
 var save_bak := ""      # 非空 = 探针前有真实存档，收尾还原（探针装瞄具会触发 save()）
 
 func frames(n: int) -> void:
@@ -28,6 +31,21 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 		await process_frame
 	return pred.call()
 
+## 截图统一出口：headless（无渲染目标）下 get_image() 返回 null——
+## 直接对 null 调 save_png 会抛脚本错误断掉 _initialize 协程，quit() 永远
+## 到不了 = 进程挂起（2026-10 门槛 124 排查根因）。此处跳过保存只打日志，
+## 窗口模式照常出图
+func shot(path: String) -> void:
+	if root.get_texture() == null:
+		print("[probe] 跳过截图 %s（headless 无渲染目标）" % path)
+		return
+	var img: Image = root.get_texture().get_image()
+	if img == null:
+		print("[probe] 跳过截图 %s（headless 渲染目标无图像）" % path)
+		return
+	img.save_png(path)
+	shots_saved += 1
+
 func _initialize() -> void:
 	var save := "user://huodai_save.json"
 	if FileAccess.file_exists(save):
@@ -39,11 +57,11 @@ func _initialize() -> void:
 	var main = load("res://main.tscn").instantiate()
 	root.add_child(main)
 	await frames(30)
-	root.get_texture().get_image().save_png("res://out/shot_lobby.png")
+	shot("res://out/shot_lobby.png")
 
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(50)
-	root.get_texture().get_image().save_png("res://out/shot_mission_spawn.png")
+	shot("res://out/shot_mission_spawn.png")
 
 	# 远景验收（问题②）：0 号兵瞬移到玩家前方 100m 面朝玩家——
 	# 轻雾下"远处可见人形"的证据图。state=combat + last_known=自身：
@@ -59,7 +77,7 @@ func _initialize() -> void:
 	s0["state"] = "combat"
 	main.soldiers._write_pose(0)
 	await frames(8)
-	root.get_texture().get_image().save_png("res://out/shot_far_soldier.png")
+	shot("res://out/shot_far_soldier.png")
 
 	# 中心危险区：站到 warehouse 附近朝建筑看
 	main.player.enter(Vector3(-10.0, 0.0, 30.0))
@@ -67,11 +85,11 @@ func _initialize() -> void:
 	main.player.pitch = 0.05
 	main.player.update(0.016)
 	await frames(20)
-	root.get_texture().get_image().save_png("res://out/shot_center.png")
+	shot("res://out/shot_center.png")
 
 	main._enter_range()
 	await frames(40)
-	root.get_texture().get_image().save_png("res://out/shot_range.png")
+	shot("res://out/shot_range.png")
 
 	# ---- 附加验收 6：shot_ads —— 靶场装红点镜开镜，专验渐晕「边上与四角
 	# 暗度一致、无重叠更黑」。开镜动作 hd_scope 实际绑定鼠标右键
@@ -82,7 +100,7 @@ func _initialize() -> void:
 	check("开镜过渡到位 ads=1", await wait_until(func(): return main.player.ads >= 1.0))
 	check("开镜覆盖层已显示", main.hud._scope_ov.visible)
 	await frames(4)
-	root.get_texture().get_image().save_png("res://out/shot_ads.png")
+	shot("res://out/shot_ads.png")
 	Input.action_release("hd_scope")
 	await wait_until(func(): return main.player.ads <= 0.4)   # 收镜，别污染下张
 
@@ -102,7 +120,7 @@ func _initialize() -> void:
 	main.player.recoil_pitch = 0.0   # 摆平两发后坐，画面聚焦手部
 	main.player.recoil_yaw = 0.0
 	await frames(1)
-	root.get_texture().get_image().save_png("res://out/shot_reload_hand.png")
+	shot("res://out/shot_reload_hand.png")
 	check("换弹正常收尾", await wait_until(func(): return main.guns.reloading <= 0.0))
 
 	# ---- 附加验收 8：shot_smg —— 主武器换冲锋枪再进靶场，腰射截汤姆逊
@@ -113,12 +131,12 @@ func _initialize() -> void:
 	main.player.recoil_pitch = 0.0
 	main.player.recoil_yaw = 0.0
 	await frames(2)
-	root.get_texture().get_image().save_png("res://out/shot_smg.png")
+	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~15：七把新枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~16：八把新枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型
-	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh"]:
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -127,9 +145,26 @@ func _initialize() -> void:
 		main.player.recoil_pitch = 0.0
 		main.player.recoil_yaw = 0.0
 		await frames(2)
-		root.get_texture().get_image().save_png("res://out/shot_gun_%s.png" % gid)
+		shot("res://out/shot_gun_%s.png" % gid)
 
-	# ---- 附加验收 16：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
+	# ---- 附加验收 17：shot_slot_switch —— 双槽串色验收（黄壳回归红线）：
+	# 主=MK4（全黑）+ 副=汤姆逊（蓝钢+木）两把异枪同局共存，切到副武器截
+	# 汤姆逊——配合上张 shot_gun_mk4.png 证明两把枪颜色/轮廓各自独立
+	main.stash.loadout = {"primary": "mk4", "secondary": "smg"}
+	main._enter_range()
+	await frames(40)
+	check("双槽枪模 id 独立", str(main.guns._guns["primary"]["id"]) == "mk4"
+		and str(main.guns._guns["secondary"]["id"]) == "smg")
+	main.guns._equip("secondary")
+	await frames(4)
+	check("切槽后 cur_id=smg", main.guns.cur_id == "smg",
+		"cur_id=%s" % main.guns.cur_id)
+	main.player.recoil_pitch = 0.0
+	main.player.recoil_yaw = 0.0
+	await frames(2)
+	shot("res://out/shot_slot_switch.png")
+
+	# ---- 附加验收 18：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
 	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」行与
 	# 购买挡位按钮（B 换挡 / 购 30 发·₵X）同框可见
 	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
@@ -139,10 +174,10 @@ func _initialize() -> void:
 	main.lobby._cur0 = 2   # 光标落当页第一把候选枪行（速览随动显示该枪弹药行）
 	main.lobby.show_lobby()
 	await frames(8)
-	root.get_texture().get_image().save_png("res://out/shot_ammo_shop.png")
+	shot("res://out/shot_ammo_shop.png")
 	main.lobby.hide_lobby()
 
-	print("[probe] 16 张截图完成 → res://out/  （断言 %d 项 / 失败 %d）" % [checks, fails])
+	print("[probe] 探针完成：实存 %d/18 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)
