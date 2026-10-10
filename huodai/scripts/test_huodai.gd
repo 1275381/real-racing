@@ -1,8 +1,12 @@
 # 回归：烽火地带（Godot 版）核心链路——签到/开箱/命中/换弹掉匣/搜刮/撤离/死亡/靶场/经济
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
+#       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪总顶点
+#         ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s huodai/test_huodai.gd
 extends SceneTree
+
+const GUN_LIB := preload("res://scripts/hd_gunlib.gd")   # 高模工具库（路径引用，不走全局类名缓存）
 
 var main
 var fails: int = 0
@@ -319,6 +323,67 @@ func _run() -> void:
 	check("空格按挡位购弹", main.stash.ammo_of("mp5") == mp5_ammo0 + 90
 		and main.stash.cash == cash0 - 360,
 		"ammo=%d cash=%d" % [main.stash.ammo_of("mp5"), main.stash.cash])
+
+	# 26. 高模顶点红线：HDGunLib 重建后的 MK4 枪身根总顶点 ≥ 8× 低模基线
+	#     （只数枪身 _smg_build 产物，不含 _finish_gun 镜体件；POLY_MIN 表
+	#     随每把枪高模改造逐把入表——后续枪的门槛都进这张表）
+	var mk4_root: Node3D = HDGuns._smg_build("mk4")
+	var mk4_verts: int = GUN_LIB.count_vertices(mk4_root)
+	check("MK4 高模顶点 ≥ POLY_MIN（8× 基线）",
+		mk4_verts >= int(GUN_LIB.POLY_MIN["mk4"]),
+		"verts=%d min=%d base=%d" % [mk4_verts, int(GUN_LIB.POLY_MIN["mk4"]),
+			int(GUN_LIB.POLY_BASE["mk4"])])
+	mk4_root.free()
+
+	# 27. 高模顶点红线：步枪册三枪（hd_gun_ar.gd 高模重建）逐把枪身根总顶点
+	#     ≥ 8× 低模基线（走 hd_guns._ar_build 分发入口，含 mag_stanag/
+	#     mag_banana/mag_wide 独立命名弹匣节点；POLY_MIN/POLY_BASE 见
+	#     HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
+	for gid in ["m4a1", "akm", "scarh"]:
+		var ar_root: Node3D = HDGuns._ar_build(gid)
+		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
+		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
+			ar_verts >= int(GUN_LIB.POLY_MIN[gid]),
+			"verts=%d min=%d base=%d" % [ar_verts, int(GUN_LIB.POLY_MIN[gid]),
+				int(GUN_LIB.POLY_BASE[gid])])
+		# 弹匣节点契约：三把枪的静置真匣必须是独立命名节点（换弹手沿
+		# mag_of 锚点跟随，匣形由枪身件表达——show=false 见 _ar_mag_of）
+		var mag_node: Node = ar_root.find_child("mag_*", true, false)
+		check("步枪 %s 独立命名弹匣节点在根下" % gid, mag_node != null,
+			"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
+		ar_root.free()
+
+	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
+	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
+	#     ≥ 8× 低模基线（走 _old5_build 分发入口，只数枪身、不含
+	#     _finish_gun 镜体件——口径同 #26/#27；弹匣走 hd_guns 缺省
+	#     动画匣契约，无 mag_of 覆盖，故无独立命名弹匣断言）
+	for gid in ["pistol", "smg", "rifle", "shotgun", "sniper"]:
+		var o5_root: Node3D = HDGuns._old5_build(gid)
+		var o5_verts: int = GUN_LIB.count_vertices(o5_root)
+		check("旧五枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
+			o5_verts >= int(GUN_LIB.POLY_MIN[gid]),
+			"verts=%d min=%d base=%d" % [o5_verts, int(GUN_LIB.POLY_MIN[gid]),
+				int(GUN_LIB.POLY_BASE[gid])])
+		o5_root.free()
+
+	# 29. 高模顶点红线：冲锋枪册四枪（mp5/p90/uzi/vector，HDGunLib 高模重建）
+	#     逐把枪身根总顶点 ≥ 8× 低模基线（走 _smg_build 分发入口，口径同
+	#     #26/#27/#28；mp5/p90 的静置真匣是独立命名弹匣节点（mag_curved/
+	#     mag_top，mag_of show=false）；uzi/vector 匣插握把、由动画匣表达
+	#     （show=true）故无静置建模件、无节点断言）
+	for gid in ["mp5", "p90", "uzi", "vector"]:
+		var smg_root: Node3D = HDGuns._smg_build(gid)
+		var smg_verts: int = GUN_LIB.count_vertices(smg_root)
+		check("冲锋枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
+			smg_verts >= int(GUN_LIB.POLY_MIN[gid]),
+			"verts=%d min=%d base=%d" % [smg_verts, int(GUN_LIB.POLY_MIN[gid]),
+				int(GUN_LIB.POLY_BASE[gid])])
+		if not bool(HDGuns._smg_mag_of(gid)["show"]):
+			var mag_node: Node = smg_root.find_child("mag_*", true, false)
+			check("冲锋枪 %s 独立命名弹匣节点在根下" % gid, mag_node != null,
+				"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
+		smg_root.free()
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
