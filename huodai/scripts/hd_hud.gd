@@ -674,17 +674,14 @@ class CenterLayer extends Control:
 						HORIZONTAL_ALIGNMENT_CENTER, 340, 14, COL_TEXT)
 
 
-## 开镜覆盖层：全屏暗角 + 按 kind 画分划
+## 开镜覆盖层：按 kind 画分划（渐晕已按用户要求整体移除）
 class ScopeOverlay extends Control:
 	const COL_RETICLE := Color(0.92, 0.96, 0.86, 0.95)
 	const COL_RED := Color(1.0, 0.3, 0.2)
 	const COL_GREEN := Color(0.4, 1.0, 0.62)
-	const VIG_CLEAR := 0.6      # 渐晕内侧全透明半径（UV 比）：镜内圆域分划不压暗
-	const VIG_TEX := 256        # 渐晕渐变贴图边长（平滑渐变足够）
 
 	var kind := "iron"
 	var zoom := 1.0
-	var _vig_tex: GradientTexture2D   # 径向渐晕贴图（懒生成一次，全 kind 共用）
 
 	func _init() -> void:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -699,28 +696,23 @@ class ScopeOverlay extends Control:
 		var c := size * 0.5
 		match kind:
 			"reddot":
-				_vignette(0.55)
 				draw_arc(c, 26.0, 0.0, TAU, 40, Color(COL_RED.r, COL_RED.g, COL_RED.b, 0.85), 1.5)
 				draw_circle(c, 2.6, COL_RED)
 			"holo":
-				_vignette(0.55)
 				draw_rect(Rect2(c - Vector2(48, 36), Vector2(96, 72)),
 						Color(COL_GREEN.r, COL_GREEN.g, COL_GREEN.b, 0.4), false, 1.6)
 				draw_circle(c, 2.2, COL_GREEN)
 				draw_line(c + Vector2(48, 0), c + Vector2(60, 0),
 						Color(COL_GREEN.r, COL_GREEN.g, COL_GREEN.b, 0.5), 1.2)
 			"optic":
-				_vignette(0.62)
 				_mil_cross(c, COL_RETICLE, 150.0, 34.0)
 			"sniper":
-				_vignette(0.85)
 				_mil_cross(c, COL_RETICLE, 220.0, 46.0)
 			"thermal":
 				draw_rect(Rect2(Vector2.ZERO, size), Color(0.3, 0.85, 0.45, 0.12))
-				_vignette(0.6)
 				_mil_cross(c, COL_RETICLE, 120.0, 28.0)
 			_:
-				_vignette(0.35)   # iron：只暗角轻微
+				pass   # iron：无覆盖层（渐晕已按用户要求移除）
 		if zoom > 1.51:
 			var f := get_theme_default_font()
 			if f != null:
@@ -741,33 +733,6 @@ class ScopeOverlay extends Control:
 			draw_line(c + Vector2(d, -4), c + Vector2(d, 4), col, 1.3)
 			draw_line(c + Vector2(-d, -4), c + Vector2(-d, 4), col, 1.3)
 
-	## 径向渐晕（单次绘制，修「开镜黑边四角叠加更黑」）：预生成 FILL_RADIAL
-	## 渐变贴图（中心透明 → 边缘最暗），draw_texture_rect 全屏只画一次。
-	## 旧版四条边带分开绘制，相邻两条在四角互相叠加 → 角部透明度翻倍；
-	## 贴图 alpha 在屏边中点即到最暗档，四角半径 1.41 超界被钳回同一档 →
-	## 边上与角上暗度严格一致。镜内圆形区域落在全透明段，分划不受影响。
-	func _vignette(strength: float) -> void:
-		if _vig_tex == null:
-			_vig_tex = _build_vig_tex()
-		draw_texture_rect(_vig_tex, Rect2(Vector2.ZERO, size), false,
-				Color(1.0, 1.0, 1.0, strength))
-
-	## 渐晕贴图：黑色 alpha 渐变，0→VIG_CLEAR 全透明（镜内通透），
-	## VIG_CLEAR→1 线性加深到 1（屏四边中点触底）；各 kind 的强度差异由
-	## 绘制色 alpha 整体缩放，同一张贴图全 kind 共用
-	func _build_vig_tex() -> GradientTexture2D:
-		var gr := Gradient.new()
-		gr.offsets = PackedFloat32Array([0.0, VIG_CLEAR, 1.0])
-		gr.colors = PackedColorArray([Color(0, 0, 0, 0), Color(0, 0, 0, 0),
-				Color(0, 0, 0, 1)])
-		var tex := GradientTexture2D.new()
-		tex.gradient = gr
-		tex.fill = GradientTexture2D.FILL_RADIAL
-		tex.fill_from = Vector2(0.5, 0.5)   # 圆心 = 屏中心
-		tex.fill_to = Vector2(0.5, 0.0)     # 半径 0.5 UV：屏边中点 = 最暗档
-		tex.width = VIG_TEX
-		tex.height = VIG_TEX
-		return tex
 
 
 ## 屏幕边缘红渐晕（危险区警示；可见性由宿主控制）
