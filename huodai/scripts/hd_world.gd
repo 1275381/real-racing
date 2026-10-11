@@ -66,7 +66,10 @@ const EXTRACT_BEACON_H := 2.6
 ## 150m 透射 ~55%（原 0.002 为 74%）、士兵赭红军装在浅暖霾中仍读作深色剪影
 ## （问题②结论复核仍守），>120m 才显著衰减换远山大气层次（评审 #9）
 const FOG_MAX := 0.005              # 远景可见性红线
-const OUTDOOR_FOG := 0.004          # 150m 处雾感 ~45%，远山 130-160m 变浅偏蓝紫
+## 对照优化第 5 轮教训：0.004 在 204m 对位机位上累积 ~80% 雾遮蔽，把扶壁垛/泄洪管
+## 全洗没（评审「缺扶壁垛」实为看不见）。目标图是晴朗白天——压到 0.0012：
+## 200m 处透射 ~79%，大坝剪影清晰可辨，120m 内几乎无感
+const OUTDOOR_FOG := 0.0012         # 晴天：200m 大坝剪影清晰（对照目标图）
 ## INDOOR_FOG 刻意压在红线内一格：fog_density 引擎侧按 float32 存储，
 ## 0.003 会舍入成 0.003000000026… 反超 double 红线（回归 15 踩过）；0.0029 双保险
 const INDOOR_FOG := 0.0029          # 靶馆 22m 靶道只留薄雾感（原 0.02 把靶子糊成剪影）
@@ -369,9 +372,10 @@ func _build_env() -> void:
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_density = OUTDOOR_FOG
-	# 暖霾色：远山变浅偏蓝紫靠密度（150m 透射 ~55%）+ 体积雾纵深共同实现
-	env.fog_light_color = Color(0.80, 0.74, 0.64)
-	env.fog_sky_affect = 0.08
+	# 冷蓝大气透视（对照目标图：远山偏蓝、天空保持蓝天不被雾染）——
+	# 原暖霾色 + fog_sky_affect 0.08 是第 5 轮「米色洗白」的元凶之一
+	env.fog_light_color = Color(0.72, 0.78, 0.88)
+	env.fog_sky_affect = 0.0
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.6, 0.57, 0.5)
 	env.ambient_light_energy = OUTDOOR_AMB
@@ -379,10 +383,10 @@ func _build_env() -> void:
 	env.ssao_intensity = 2.2
 	env.ssil_enabled = true          # 屏幕空间间接光：暗面暖沙色反弹（第 5 轮架构）
 	env.ssil_intensity = 0.6
-	# 体积雾（第 5 轮架构）：低密度暖色前向散射——坝脚雾霭与逆光发亮的大气纵深
+	# 体积雾：只留低密度冷白前向散射做坝脚纵深（0.012 暖沙色曾把全帧洗成米色）
 	env.volumetric_fog_enabled = true
-	env.volumetric_fog_density = 0.012
-	env.volumetric_fog_albedo = Color(1.0, 0.86, 0.72)
+	env.volumetric_fog_density = 0.004
+	env.volumetric_fog_albedo = Color(0.88, 0.92, 1.0)
 	env.volumetric_fog_anisotropy = 0.55
 	env.volumetric_fog_length = 160.0
 	# 调色分级（第 5 轮架构）：饱和/对比一键对位「暖沙色高饱和」（评审 #6 终解）

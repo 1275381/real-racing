@@ -16,6 +16,7 @@ var checks: int = 0     # 附加验收断言计数（软断言：只记档打印
 var fails: int = 0
 var shots_saved: int = 0   # 实存截图数（headless 下跳过保存，只跑断言链）
 var save_bak := ""      # 非空 = 探针前有真实存档，收尾还原（探针装瞄具会触发 save()）
+var _m                  # main 引用（shot() 收暂停菜单护栏用，_initialize 里赋值）
 
 func frames(n: int) -> void:
 	for i in n:
@@ -40,8 +41,11 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 ## 截图统一出口：headless（无渲染目标）下 get_image() 返回 null——
 ## 直接对 null 调 save_png 会抛脚本错误断掉 _initialize 协程，quit() 永远
 ## 到不了 = 进程挂起（2026-10 门槛 124 排查根因）。此处跳过保存只打日志，
-## 窗口模式照常出图
+## 窗口模式照常出图。另：窗口失焦会触发 main 的自动暂停菜单罩住画面——
+## 拍照前强制收菜单（2026-10 shot_gun_mk4 被暂停层糊住的事故）
 func shot(path: String) -> void:
+	if _m != null and _m.hud != null and _m.hud.menu_visible:
+		_m.hud.hide_menu()
 	if root.get_texture() == null:
 		print("[probe] 跳过截图 %s（headless 无渲染目标）" % path)
 		return
@@ -61,6 +65,7 @@ func _initialize() -> void:
 		DirAccess.rename_absolute(ProjectSettings.globalize_path(save), save_bak)
 	DirAccess.make_dir_recursive_absolute("res://out")
 	var main = load("res://main.tscn").instantiate()
+	_m = main
 	root.add_child(main)
 	await frames(30)
 	shot("res://out/shot_lobby.png")
@@ -148,23 +153,17 @@ func _initialize() -> void:
 	shot("res://out/shot_dam_graffiti.png")
 	main.player.dead = false
 
-	# ---- shot_dam_ref：对位相机主图（第 4 轮机位重定，python 视算扫参择优）——
-	# 后撤高机位 cam(20,48,80) 瞄 (0,18,-124)：yaw=atan2(-20,-204)≈-3.044、
-	# pitch=atan2(-30,204.6)≈-0.145、FOV 58。四层构图全对位目标图：上幅山脊
-	# （脊2/脊3 从坝顶后升起，屏x[0.19,0.53]）+ 坝顶门吊/塔吊/长臂吊完整剪影
-	# （塔吊顶屏 y-0.43 不裁）；中幅涂鸦坝面全长（屏x[-0.73,0.84]）+ 泄洪管群；
-	# 下幅（屏y+0.19~+0.38）右 2/3 厂房甲乙/白罐/黑烟柱/雨棚/卧罐、左 1/3 七组
-	# 集装箱堆、棕榈 6 株、服务街折线弯——python 视算 18/18 前景构件全入画。
-	# 纯净全景（评审 #2）：dead=true 冻结 update 后手动越权 cam，hud CanvasLayer
-	# 整层隐藏 + 双槽枪架 holder.visible=false（拍完逐项还原）；站位 (20,80)
-	# d=82.5∈mid 不触高危红罩
-	main.player.enter(Vector3(20.0, 0.0, 80.0))
-	main.player.yaw = -3.044
-	main.player.pitch = -0.145
+	# ---- shot_dam_ref：对位相机主图（第 6 轮机位回收：撤销第 5 轮的 204m 后撤——
+	# 雾 0.004×204m≈80% 遮蔽把四层构图全洗没了。回到近位 cam(16,26,6) 瞄
+	# (0,16,-110)：yaw=atan2(-16,-116)≈-2.995、pitch=atan2(-10,116.9)≈-0.0855、
+	# FOV 58，距离 ~117m，坝体（高 ~40m×宽 ~200m）占画面高约 80%、宽幅裁切同目标图）
+	main.player.enter(Vector3(16.0, 0.0, 6.0))
+	main.player.yaw = -2.995
+	main.player.pitch = -0.0855
 	main.player.update(0.016)
 	main.player.dead = true
-	main.player.cam.position = Vector3(20.0, 48.0, 80.0)
-	main.player.cam.rotation = Vector3(-0.145, -3.044 + PI, 0)
+	main.player.cam.position = Vector3(16.0, 26.0, 6.0)
+	main.player.cam.rotation = Vector3(-0.0855, -2.995 + PI, 0)
 	main.player.cam.fov = 58.0
 	var hud0: bool = main.hud.visible
 	main.hud.visible = false

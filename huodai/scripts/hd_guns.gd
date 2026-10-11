@@ -1442,8 +1442,12 @@ static func _smg_mk4() -> Node3D:
 				Vector3(0, 0.074, -0.50 + 0.075 * float(i)), Vector3.ZERO,
 				0.0012, 5)
 	# ③ M-LOK 开槽护木：圆管开筒（壁厚断面露 4mm）+ 左右各 4 条 + 底面 3 条暗槽
-	GUN_LIB.tube(root, polymer, 0.32, 0.056, Vector3(0, 0.022, -0.40),
+	#    尾端嵌入上机匣 4cm（z 至 -0.20，机匣前缘 -0.24）——原平口对接在 -0.24
+	#    露缝（用户反馈「前后段不重叠」）；接缝加过渡环盖截面突变
+	GUN_LIB.tube(root, polymer, 0.36, 0.056, Vector3(0, 0.022, -0.38),
 			Vector3(90, 0, 0), 0.004, 4, dark, 4, 48)
+	GUN_LIB.torus_ring(root, polymer, 0.006, 0.062,
+			Vector3(0, 0.024, -0.238), Vector3(90, 0, 0))
 	# ④ 前折叠准星（轨前：基座 + 护耳双柱 + 准星柱）
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.02, 0.012, 0.026),
 			Vector3(0, 0.074, -0.50), Vector3.ZERO, 0.001, 3)
