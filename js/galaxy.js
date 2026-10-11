@@ -486,6 +486,18 @@ let earthCityCtx = null;            // { group, cities }，buildSolarSystem 地�
 const cityPickables = [];           // 城市隐形代理（与 solarPickables 隔离 → pickSolar/双击逻辑零改动）
 let cityCardShown = false;          // 当前信息卡是否为城市卡（楼群隐藏时需一并收掉，防残留）
 
+/* ---------- 城市俯瞰（city 模式，谷歌地图式） ----------
+   地球轨道上再双击地球 → 沿弧线降到点选处最近的城市上空。
+   相机锁定城市本地切面坐标系（随地球自转同转 → 楼群在画面里静止），
+   拖拽环绕/俯仰，滚轮/双指在「楼顶之上」到「半个行星半径」间缩放，
+   双击另一城直接跳转，双击当前城/空处或 ESC 返回轨道。 */
+const CITY_EL_MIN = 0.22, CITY_EL_MAX = 1.5; // 俯仰角范围（0=贴地平线，π/2=正下方）
+const CITY_ALT_MIN_K = 0.045;       // 最低悬停高度 ×行星半径（≈1.4×最高楼顶，不穿楼）
+const CITY_ALT_MAX_K = 0.55;        // 最高拉升 ×行星半径
+const CITY_ALT_HOME_K = 0.16;       // 进入俯瞰的默认高度 ×行星半径
+let cityView = null;                // { city, az, el, alt, vaz, vel, up, east, north, wp }
+let cityAnim = null;                // 下降/换城飞行动画（进行中可被任意输入打断）
+
 /* 昼夜自发光调制（设计 §6）：世界空间「法线·太阳方向」平滑熄亮 emissive。
    同一函数引用打地球本体（emissiveMap 夜景灯光）与城市楼群（恒色窗光）→
    customProgramCacheKey（默认 = onBeforeCompile.toString()，r160 lib:9215）一致，
@@ -692,6 +704,7 @@ function buildSolarSystem() {
                     dist: `人口约 ${c.pop}`,
                     desc: c.desc,
                 };
+                cityProxy.userData.cityObj = c; // 城市俯瞰跳转用（原始数据含 pos/lat/lon）
                 cityR.group.add(cityProxy);
                 cityPickables.push(cityProxy);
             }
@@ -802,10 +815,23 @@ const easeInOut = (k) => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) /
 
 // 用户任何输入都可打断转场：取消 tween 并从相机当前姿态无缝接管
 function interruptTween() {
+    if (cityAnim) { // 城市俯瞰下降/换城途中被打断：就地定住当前姿态
+        cityAnim = null;
+        cityFrame(cityView);
+        _cvRel.copy(camera.position).sub(cityView.wp);
+        const r0 = planetR(EARTH_IDX);
+        // 高度只防穿楼、不向内硬拉（从轨道下降初期仍远超上限）
+        cityView.alt = Math.max(_cvRel.length(), r0 * CITY_ALT_MIN_K);
+        cityView.el = clamp(
+            Math.acos(clamp(_cvRel.dot(cityView.up) / (cityView.alt || 1), -1, 1)),
+            CITY_EL_MIN, CITY_EL_MAX);
+        cityView.az = Math.atan2(_cvRel.dot(cityView.north), _cvRel.dot(cityView.east));
+        cityView.vaz = cityView.vel = 0;
+    }
     if (!tween) return;
     tween = null;
-    // solar/planet 同属太阳系层级，打断后行星系不得消失
-    if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet') solarGroup.visible = false;
+    // solar/planet/city 同属太阳系层级，打断后行星系不得消失
+    if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet' && ctrl.mode !== 'city') solarGroup.visible = false;
     const rel = camera.position.clone().sub(ctrl.target);
     const r = rel.length();
     if (ctrl.mode === 'outside' || ctrl.mode === 'cruise' || ctrl.mode === 'solar' || ctrl.mode === 'planet') {
@@ -893,20 +919,150 @@ function applyCruise(dt) {
     camera.lookAt(0, 0, 0);
 }
 
+/* ---------- 城市俯瞰（city 模式） ---------- */
+const _cvRel = new THREE.Vector3(), _cvP1 = new THREE.Vector3();
+const _cvQ = new THREE.Quaternion(), _cvM = new THREE.Matrix4();
+const _cnC = new THREE.Vector3(), _cnP = new THREE.Vector3(),
+      _cnD = new THREE.Vector3(), _cnV = new THREE.Vector3();
+const _cnS = new THREE.Sphere(new THREE.Vector3(), 0);
+
+function cityWorldPos(city, out) { // 城市随地球自转，世界坐标逐帧经 mesh 矩阵取
+    const mesh = solarBodies[EARTH_IDX].mesh;
+    mesh.updateWorldMatrix(true, false);
+    return out.copy(city.pos).applyMatrix4(mesh.matrixWorld);
+}
+// 刷新城市本地切面系（east/north/up 随自转逐帧变），返回城市世界坐标
+function cityFrame(cv) {
+    cityWorldPos(cv.city, cv.wp);
+    planetWorldPos(EARTH_IDX, _cvRel);
+    cv.up.copy(cv.wp).sub(_cvRel).normalize();
+    cv.east.set(0, 1, 0).cross(cv.up);
+    if (cv.east.lengthSq() < 1e-12) cv.east.set(1, 0, 0).cross(cv.up); // 极点兜底
+    cv.east.normalize();
+    cv.north.crossVectors(cv.up, cv.east).normalize();
+    return cv.wp;
+}
+function updateCityNear() { // 近平面随悬停高度自适应（贴楼观看也要深度精度）
+    const near = clamp(cityView.alt * 0.05, 4e-6, 0.02);
+    if (Math.abs(camera.near - near) > near * 0.02) {
+        camera.near = near;
+        camera.updateProjectionMatrix();
+    }
+}
+// 双击点 → 球面命中方向最近的城市（点在盘外时取射线近点方向）
+function cityNearRay() {
+    if (!earthCityCtx) return null;
+    raycaster.setFromCamera(mouseNDC, camera);
+    planetWorldPos(EARTH_IDX, _cnC);
+    _cnS.center.copy(_cnC);
+    _cnS.radius = planetR(EARTH_IDX);
+    if (raycaster.ray.intersectSphere(_cnS, _cnP)) _cnD.copy(_cnP).sub(_cnC).normalize();
+    else {
+        raycaster.ray.closestPointToPoint(_cnC, _cnP);
+        _cnD.copy(_cnP).sub(_cnC).normalize();
+    }
+    let best = null, bestDot = -2;
+    for (const c of earthCityCtx.cities) {
+        cityWorldPos(c, _cnV).sub(_cnC).normalize();
+        const d = _cnV.dot(_cnD);
+        if (d > bestDot) { bestDot = d; best = c; }
+    }
+    return best;
+}
+function enterCity(city) { // 地球轨道/俯瞰中 → 降到指定城市上空
+    if (!earthCityCtx || (ctrl.mode !== 'planet' && ctrl.mode !== 'city')) return;
+    interruptTween();
+    hideCard();
+    const r = planetR(EARTH_IDX);
+    ctrl.mode = 'city'; // 先定模式，interruptTween/派发都能正确归类
+    planetIdx = EARTH_IDX;
+    solarGroup.visible = true;
+    cityView = {
+        city, az: 0, el: 0.95, alt: r * CITY_ALT_HOME_K, vaz: 0, vel: 0,
+        up: new THREE.Vector3(), east: new THREE.Vector3(),
+        north: new THREE.Vector3(), wp: new THREE.Vector3(),
+    };
+    cityFrame(cityView);
+    // 目标方位延续当前相机方向（自轨道下降/换城都视角连续）
+    _cvRel.copy(camera.position).sub(cityView.wp);
+    cityView.az = Math.atan2(_cvRel.dot(cityView.north), _cvRel.dot(cityView.east));
+    cityAnim = {
+        t: 0, dur: 1.7, az1: cityView.az, el1: 0.95, alt1: r * CITY_ALT_HOME_K,
+        p0: camera.position.clone(), q0: camera.quaternion.clone(),
+        bump: r * 0.25, // 途中抬升弧线：跨城跳转不犁地
+    };
+    $('planetLabel').textContent = `${city.name}（地球）· 城市俯瞰`;
+    $('backOrbit').style.display = '';
+    $('planetNav').classList.add('show');
+    $('planetNav').setAttribute('aria-hidden', 'false');
+    updateModeButtons();
+}
+function exitCity() { // ESC / 导航按钮 / 双击空处 → 回到地球轨道观光
+    if (ctrl.mode !== 'city') return;
+    cityAnim = null;
+    camera.up.set(0, 1, 0); // city 模式用本地 up，恢复世界 up 供后续 lookAt
+    $('backOrbit').style.display = 'none';
+    enterPlanet(EARTH_IDX); // 内部 flyTo 4r、重设 near、恢复行星标签
+}
+function applyCity(dt) {
+    if (!ctrl.dragging) {
+        cityView.az += cityView.vaz;
+        cityView.el = clamp(cityView.el + cityView.vel, CITY_EL_MIN, CITY_EL_MAX);
+        cityView.vaz *= 0.9; cityView.vel *= 0.9;
+    }
+    const wp = cityFrame(cityView);
+    ctrl.target.copy(wp);
+    const se = Math.sin(cityView.el), alt = cityView.alt;
+    camera.position.copy(wp)
+        .addScaledVector(cityView.east, Math.cos(cityView.az) * se * alt)
+        .addScaledVector(cityView.north, Math.sin(cityView.az) * se * alt)
+        .addScaledVector(cityView.up, Math.cos(cityView.el) * alt);
+    camera.up.copy(cityView.up);
+    camera.lookAt(wp);
+    updateCityNear();
+}
+function stepCityAnim(dt) {
+    cityAnim.t += dt;
+    const a = cityAnim;
+    const k = easeInOut(Math.min(1, a.t / a.dur));
+    const wp = cityFrame(cityView);
+    ctrl.target.copy(wp);
+    _cvP1.copy(wp)
+        .addScaledVector(cityView.east, Math.cos(a.az1) * Math.sin(a.el1) * a.alt1)
+        .addScaledVector(cityView.north, Math.sin(a.az1) * Math.sin(a.el1) * a.alt1)
+        .addScaledVector(cityView.up, Math.cos(a.el1) * a.alt1);
+    camera.position.lerpVectors(a.p0, _cvP1, k)
+        .addScaledVector(cityView.up, a.bump * Math.sin(Math.PI * k));
+    _cvM.lookAt(camera.position, wp, cityView.up); // 朝向逐帧重算（地球在自转）
+    _cvQ.setFromRotationMatrix(_cvM);
+    camera.quaternion.slerpQuaternions(a.q0, _cvQ, k);
+    updateCityNear();
+    if (a.t >= a.dur) cityAnim = null;
+}
+
 function setMode(next) {
     interruptTween();
     if (next === ctrl.mode && next !== 'cruise') return;
-    if (ctrl.mode === 'planet' && next !== 'planet') { // 从行星观光直接切其他模式：统一收尾
+    if ((ctrl.mode === 'planet' || ctrl.mode === 'city') && next !== 'planet' && next !== 'city') {
+        // 从行星观光/城市俯瞰直接切其他模式：统一收尾
         hidePlanetNav();
         planetIdx = -1;
+        cityView = null;
+        cityAnim = null;
+        camera.up.set(0, 1, 0);
+        $('backOrbit').style.display = 'none';
     }
     if (ctrl.mode === 'outside' || ctrl.mode === 'cruise') {
         ctrl.savedSph.copy(ctrl.sph);
     }
-    // 离开太阳系层级（solar/planet → 非 solar 且非 planet）时，
+    // 离开太阳系层级（solar/planet/city → 非 solar 且非 planet 且非 city）时，
     // 飞行结束后再隐藏行星系，避免眼前突然消失
-    const hideSolar = (ctrl.mode === 'solar' || ctrl.mode === 'planet') && next !== 'solar' && next !== 'planet'
-        ? () => { if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet') solarGroup.visible = false; }
+    const hideSolar = (ctrl.mode === 'solar' || ctrl.mode === 'planet' || ctrl.mode === 'city')
+        && next !== 'solar' && next !== 'planet' && next !== 'city'
+        ? () => {
+            if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet' && ctrl.mode !== 'city')
+                solarGroup.visible = false;
+        }
         : null;
     if (next === 'inside') {
         ctrl.target.copy(ORIGIN);
@@ -970,6 +1126,8 @@ function resetView() {
         ctrl.fovTarget = 60;
         flyTo(insideCamPos, new THREE.Quaternion().setFromEuler(
             new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')), 1.2);
+    } else if (ctrl.mode === 'city') {
+        exitCity(); // 复位键/双击空处：先回地球轨道
     } else if (ctrl.mode === 'planet') {
         ctrl.sph.radius = planetR(planetIdx) * PLANET_HOME; // 保留方位/俯仰，仅复位距离
         flyTo(sphToVec(ctrl.sph), null, 1.0, null,
@@ -1030,6 +1188,11 @@ canvas.addEventListener('pointermove', (e) => {
                 const hi = Math.max(rMax, ctrl.sph.radius);
                 ctrl.sph.radius = clamp(ctrl.sph.radius * s, rMin, hi);
             }
+            else if (ctrl.mode === 'city') { // 悬停高度：楼顶之上 ↔ 半个行星半径
+                const r0 = planetR(EARTH_IDX);
+                const hi = Math.max(r0 * CITY_ALT_MAX_K, cityView.alt); // 下降途中不向内硬拉
+                cityView.alt = clamp(cityView.alt * s, r0 * CITY_ALT_MIN_K, hi);
+            }
             else ctrl.sph.radius = clamp(ctrl.sph.radius * s, 26, 560);
         }
         pinchD = d;
@@ -1041,6 +1204,12 @@ canvas.addEventListener('pointermove', (e) => {
         ctrl.look.pitch = clamp(ctrl.look.pitch - dy * s, -1.45, 1.45);
         ctrl.look.vyaw = -dx * s;
         ctrl.look.vpitch = -dy * s;
+    } else if (ctrl.mode === 'city') { // 城市俯瞰：绕城环绕 + 俯仰（不越地平线）
+        const s = 0.0042;
+        cityView.az -= dx * s;
+        cityView.el = clamp(cityView.el + dy * s, CITY_EL_MIN, CITY_EL_MAX);
+        cityView.vaz = -dx * s;
+        cityView.vel = dy * s;
     } else {
         const s = 0.0045;
         ctrl.sph.theta -= dx * s;
@@ -1073,19 +1242,35 @@ canvas.addEventListener('wheel', (e) => {
         // 半径仍超上限（进入飞行途中/刚打断转场）时不向内硬拉瞬移，只阻止继续拉远
         const hi = Math.max(rMax, ctrl.sph.radius);
         ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), rMin, hi);
+    } else if (ctrl.mode === 'city') { // 悬停高度：楼顶之上 ↔ 半个行星半径
+        const r0 = planetR(EARTH_IDX);
+        const hi = Math.max(r0 * CITY_ALT_MAX_K, cityView.alt); // 下降途中不向内硬拉
+        cityView.alt = clamp(cityView.alt * Math.exp(e.deltaY * 0.0011), r0 * CITY_ALT_MIN_K, hi);
     } else {
         ctrl.sph.radius = clamp(ctrl.sph.radius * Math.exp(e.deltaY * 0.0011), 26, 560);
     }
 }, { passive: false });
 // 太阳系/行星环绕模式下双击行星 → 进入（切换到）该行星的环绕观光；
-// 双击太阳/空处维持原复位逻辑
+// 地球轨道上再双击地球 → 谷歌地图式城市俯瞰；双击太阳/空处维持原复位逻辑
 canvas.addEventListener('dblclick', () => {
     if (ctrl.mode === 'solar' || ctrl.mode === 'planet') {
         const hit = pickSolar();
         if (hit && hit.userData.planetIdx !== undefined) {
+            if (ctrl.mode === 'planet' && hit.userData.planetIdx === EARTH_IDX) {
+                const city = cityNearRay();
+                if (city) { enterCity(city); return; } // 内部会 hideCard()
+            }
             enterPlanet(hit.userData.planetIdx); // 内部会 hideCard() 收掉双击残留的信息卡
             return;
         }
+    } else if (ctrl.mode === 'city') {
+        const hit = pickCity();
+        if (hit && hit.userData.cityObj && hit.userData.cityObj !== cityView.city) {
+            enterCity(hit.userData.cityObj); // 双击另一城 → 直接跳转
+            return;
+        }
+        exitCity(); // 双击当前城/空处 → 返回轨道
+        return;
     }
     resetView();
 });
@@ -1094,7 +1279,11 @@ window.addEventListener('keydown', (e) => {
     // （ESC 不受影响：滑杆不响应 ESC，保留全局退出语义）
     if (e.target && e.target.closest && e.target.closest('#panel')
         && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
-    if (e.key === 'Escape') { ctrl.mode === 'planet' ? exitPlanet() : hideCard(); }
+    if (e.key === 'Escape') {
+        if (ctrl.mode === 'city') exitCity(); // 俯瞰 → 轨道 → 太阳系逐级退出
+        else if (ctrl.mode === 'planet') exitPlanet();
+        else hideCard();
+    }
     else if (ctrl.mode === 'planet' && e.key === 'ArrowLeft') switchPlanet(-1);
     else if (ctrl.mode === 'planet' && e.key === 'ArrowRight') switchPlanet(1);
 });
@@ -1204,16 +1393,20 @@ const CITY_SHOW_R = 8, CITY_HIDE_R = 8.6;   // ×行星半径，7.5% 滞回
 function updateEarthCities() {
     if (!earthCityCtx) return;
     const r = planetR(EARTH_IDX);
-    const visible = ctrl.mode === 'planet' && planetIdx === EARTH_IDX
-        && (earthCityCtx.group.visible
+    let visible;
+    if (ctrl.mode === 'city') visible = true; // 俯瞰模式必在地球上空，楼群常显
+    else if (ctrl.mode === 'planet' && planetIdx === EARTH_IDX) {
+        visible = earthCityCtx.group.visible
             ? ctrl.sph.radius < r * CITY_HIDE_R
-            : ctrl.sph.radius < r * CITY_SHOW_R);
+            : ctrl.sph.radius < r * CITY_SHOW_R;
+    } else visible = false;
     earthCityCtx.group.visible = visible;
     if (!visible && cityCardShown) hideCard(); // 城市卡随楼群隐藏收起，不留残卡
 }
 
 function enterPlanet(i) {
-    if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet') return;
+    if (ctrl.mode !== 'solar' && ctrl.mode !== 'planet' && ctrl.mode !== 'city') return;
+    $('backOrbit').style.display = 'none'; // 从城市俯瞰返回轨道时收起返回按钮
     interruptTween();
     hideCard(); // 双击会先触发两次单击弹卡，这里收掉
     planetIdx = clamp(i, 0, PLANETS.length - 1);
@@ -1263,12 +1456,13 @@ function hidePlanetNav() {
 $('prevPlanet').addEventListener('click', () => switchPlanet(-1));
 $('nextPlanet').addEventListener('click', () => switchPlanet(1));
 $('exitPlanet').addEventListener('click', exitPlanet);
+$('backOrbit').addEventListener('click', exitCity);
 
 /* ================= 9. UI 联动 ================= */
 const modeBtns = [...document.querySelectorAll('#modeBar .btn[data-mode]')];
 function updateModeButtons() {
     modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === ctrl.mode
-        || (ctrl.mode === 'planet' && b.dataset.mode === 'solar'))); // planet 无独立按钮，☀ 保持高亮
+        || ((ctrl.mode === 'planet' || ctrl.mode === 'city') && b.dataset.mode === 'solar'))); // planet/city 无独立按钮，☀ 保持高亮
     $('cruiseBtn').textContent = ctrl.mode === 'cruise' ? '⏸ 停止巡演' : '🎬 自动巡演';
 }
 modeBtns.forEach(b => b.addEventListener('click', () => {
@@ -1336,8 +1530,8 @@ function loop() {
     updateSolar(dt);
 
     // 银河场景 ↔ 太阳系夜空 的交叉淡入淡出（由相机到太阳的距离驱动）
-    // planet 模式相机距 sunPos ≈ 0.2~1.5，k 自动 = 1，夜空层全程保持
-    let k = (ctrl.mode === 'solar' || ctrl.mode === 'planet')
+    // planet/city 模式相机距 sunPos ≈ 0.2~1.5，k 自动 = 1，夜空层全程保持
+    let k = (ctrl.mode === 'solar' || ctrl.mode === 'planet' || ctrl.mode === 'city')
         ? clamp((40 - camera.position.distanceTo(sunPos)) / 30, 0, 1)
         : 0;
     k = k * k * (3 - 2 * k); // smoothstep
@@ -1351,13 +1545,15 @@ function loop() {
     syncPlanetCamera(); // planet 模式：target 逐帧锁定公转中的行星（先于转场与环绕派发）
     updateEarthCities(); // 地球城市楼群：按 模式+距离 滞回显隐（隐藏时城市卡一并收起）
     if (tween) stepTween(dt);
+    else if (cityAnim) stepCityAnim(dt); // 城市俯瞰下降/换城动画
     else if (ctrl.mode === 'outside' || ctrl.mode === 'solar' || ctrl.mode === 'planet') applyOutside(dt);
+    else if (ctrl.mode === 'city') applyCity(dt);
     else if (ctrl.mode === 'inside') applyInside();
     else applyCruise(dt);
 
-    // near 自愈守卫：离开 planet 模式且无转场、相机已拉远后才恢复默认近平面
-    // （覆盖 exitPlanet 飞行结束、飞行中被打断、planet 直接切其他模式三条路径）
-    if (ctrl.mode !== 'planet' && camera.near !== BASE_NEAR && !tween
+    // near 自愈守卫：离开 planet/city 模式且无转场、相机已拉远后才恢复默认近平面
+    // （覆盖 exitPlanet/exitCity 飞行结束、飞行中被打断、直接切其他模式多条路径）
+    if (ctrl.mode !== 'planet' && ctrl.mode !== 'city' && camera.near !== BASE_NEAR && !tween
         && camera.position.distanceTo(sunPos) > 0.8) {
         camera.near = BASE_NEAR;
         camera.updateProjectionMatrix();
