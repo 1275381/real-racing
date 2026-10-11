@@ -696,8 +696,9 @@ class ScopeOverlay extends Control:
 		var c := size * 0.5
 		match kind:
 			"reddot":
-				draw_arc(c, 26.0, 0.0, TAU, 40, Color(COL_RED.r, COL_RED.g, COL_RED.b, 0.85), 1.5)
-				draw_circle(c, 2.6, COL_RED)
+				# 无框红点镜：镜体已无环框 → 分划只留中心红点（旧 26px 红圈
+				# 是「镜环示形」，与无框窗冲突删除；点径 2.6→3.2 保开镜可见性）
+				draw_circle(c, 3.2, COL_RED)
 			"holo":
 				draw_rect(Rect2(c - Vector2(48, 36), Vector2(96, 72)),
 						Color(COL_GREEN.r, COL_GREEN.g, COL_GREEN.b, 0.4), false, 1.6)

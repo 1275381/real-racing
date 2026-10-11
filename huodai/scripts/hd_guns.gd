@@ -646,6 +646,13 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 	var dk: StandardMaterial3D = mk.call(Color(0.13, 0.14, 0.16))
 	var st: StandardMaterial3D = mk.call(Color(0.36, 0.39, 0.44))
 	var gm: StandardMaterial3D = mk.call(Color(0.15, 0.55, 0.75), 1.4)
+	# 无框红点镜专用：淡青透明玻璃（alpha 0.2 / 双面 / 近镜面反射）+ 自发光红点
+	var gl: StandardMaterial3D = mk.call(Color(0.7, 0.95, 0.95, 0.2))
+	gl.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gl.cull_mode = BaseMaterial3D.CULL_DISABLED
+	gl.roughness = 0.05
+	gl.metallic = 0.0
+	var rd: StandardMaterial3D = mk.call(Color(1.0, 0.16, 0.1), 5.0)
 	var box := func(sz: Vector3, pos: Vector3, m: StandardMaterial3D) -> void:
 		var bm := BoxMesh.new()
 		bm.size = sz
@@ -679,10 +686,45 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 			box.call(Vector3(0.05, 0.018, 0.05), Vector3(0, top_y + 0.02,
 					mid_z - 0.04), dk)
 		"reddot":
-			# 红点镜：短圆筒 + 底座
-			cyl.call(0.024, 0.07, Vector3(0, top_y + 0.05, mid_z - 0.06), dk)
-			box.call(Vector3(0.045, 0.03, 0.07), Vector3(0, top_y + 0.02,
-					mid_z - 0.04), dk)
+			# 红点镜：无框反射式（FastFire 形态）——导轨适配座（矮倒角盒）+
+			# 单片 30×24mm 平玻璃窗（淡青透明、无上框：两侧 ≤2mm 窄边夹持）+
+			# 玻璃后方内红点投射器 + 玻璃窗中心自发光红点（=瞄准线）。
+			# 窗顶=全镜最高点：_local_aabb 量测后 ADS 镜窗顶贴准星正下方、
+			# 窗中心与屏幕准星一线（旧裸圆筒+悬浮红点拼装已整体删除）
+			# 导轨适配座：矮盒两层叠出倒角（上层四向缩进），y 0~12mm
+			box.call(Vector3(0.046, 0.006, 0.062), Vector3(0, top_y + 0.003,
+					mid_z - 0.03), dk)
+			box.call(Vector3(0.038, 0.006, 0.052), Vector3(0, top_y + 0.009,
+					mid_z - 0.03), dk)
+			# 镜体底托：极薄下匣（玻璃下沿插入），y 12~20mm
+			box.call(Vector3(0.034, 0.008, 0.052), Vector3(0, top_y + 0.016,
+					mid_z - 0.03), dk)
+			# 内红点投射器：玻璃后方暗色小盒（底托上露头）+ 右侧风偏调节塔
+			box.call(Vector3(0.012, 0.009, 0.014), Vector3(0, top_y + 0.021,
+					mid_z - 0.028), dk)
+			box.call(Vector3(0.006, 0.006, 0.01), Vector3(0.019,
+					top_y + 0.016, mid_z - 0.018), dk)
+			# 两侧窄边：2mm 竖条夹持玻璃左右沿（「无框」仅存的框），y 20~44mm
+			box.call(Vector3(0.002, 0.024, 0.006), Vector3(-0.016,
+					top_y + 0.032, mid_z - 0.055), dk)
+			box.call(Vector3(0.002, 0.024, 0.006), Vector3(0.016,
+					top_y + 0.032, mid_z - 0.055), dk)
+			# 玻璃窗：单片平玻璃 30×24×1.5mm，淡青透明双面——窗顶 y=44mm
+			# 即 sight top（全镜无任何件高于玻璃）
+			box.call(Vector3(0.03, 0.024, 0.0015), Vector3(0, top_y + 0.032,
+					mid_z - 0.055), gl)
+			# 内投影红点：3.6mm 自发光红球嵌在玻璃面中心（窗中心=瞄准线，
+			# ADS 后与 HUD 分划点/屏幕准星三点一线）
+			var dot := SphereMesh.new()
+			dot.radius = 0.0018
+			dot.height = 0.0036
+			dot.radial_segments = 8
+			dot.rings = 4
+			dot.material = rd
+			var dot_mi := MeshInstance3D.new()
+			dot_mi.mesh = dot
+			dot_mi.position = Vector3(0, top_y + 0.032, mid_z - 0.055)
+			parent.add_child(dot_mi)
 		"optic":
 			# 3.5× 光学镜：镜身 + 大物镜 + 双固定座
 			cyl.call(0.03, 0.15, Vector3(0, top_y + 0.06, mid_z - 0.12), dk)

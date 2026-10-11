@@ -105,7 +105,7 @@ static func ammo_by_id(id: String) -> Dictionary:
 const SCOPES := [
 	{"id": "holo", "name": "全息镜", "desc": "1.5× · 全息方框绿点 · 视野宽", "price": 900,
 		"zoom": 1.5, "kind": "holo"},
-	{"id": "reddot", "name": "红点镜", "desc": "1.5× · 单圈红点 · 快速获取", "price": 700,
+	{"id": "reddot", "name": "红点镜", "desc": "1.5× · 无框红点 · 快速获取", "price": 700,
 		"zoom": 1.5, "kind": "reddot"},
 	{"id": "optic35", "name": "3.5× 光学镜", "desc": "3.5× · 密位十字 · 中距离精确", "price": 1800,
 		"zoom": 3.5, "kind": "optic"},

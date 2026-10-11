@@ -191,6 +191,18 @@ func _initialize() -> void:
 	# （main._register_inputs），探针用 action_press 直推动作层，不依赖物理键
 	main.stash.scopes_owned.append("reddot")   # 冷启动仓库无镜：先拥有再装配
 	main.stash.equip_scope("rifle", "reddot")
+	# 装镜不重挂：scope_provider 只在 _mount_slot 建枪模时读，enter() 同槽同枪
+	# 复用 holder（重建条件=换枪 id）——装配后手动拆旧挂新（照 enter 的重建
+	# 套路：先隐身防同帧叠影 → queue_free 枪模/火光 → 重挂 → 重装槽位），
+	# shot_ads.png 才真正拍得到红点镜 3D 镜体（玻璃窗/窗内红点/底座）
+	var old_rd: Dictionary = main.guns._guns["primary"]
+	var old_holder: Node3D = old_rd["holder"]
+	old_holder.visible = false
+	old_holder.queue_free()
+	(old_rd["flash"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.guns._mount_slot("primary")
+	main.guns._equip("primary")
 	Input.action_press("hd_scope")
 	check("开镜过渡到位 ads=1", await wait_until(func(): return main.player.ads >= 1.0))
 	check("开镜覆盖层已显示", main.hud._scope_ov.visible)
