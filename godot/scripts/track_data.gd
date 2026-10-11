@@ -146,9 +146,9 @@ const CAR_MODELS := [
 		"class": "combustion", "stats": {"top": 87.0, "power": 60.0, "accel": 11.1, "grip": 0.99, "brake": 18.0}},
 	{"id": "aicyan", "name": "青蓝超跑", "file": "res://assets/cars/car_tripo_f.glb", "desc": "竞技大尾翼 · 兰博风格", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "hybrid", "stats": {"top": 80.0, "power": 69.0, "accel": 14.0, "grip": 1.01, "brake": 19.0, "no_shift": true}},
-	# 双组别旗舰：燃油跑车 × 热芒耐力。modes 双模式（O 键切换）：
+	# 双组别旗舰：燃油跑车 × 热芒耐力。modes 双模式（X 键切换）：
 	# accel 加速模式（高牵引） / top 极速模式（高极速），sound 为对应引擎声纹组别
-	{"id": "aidual", "name": "赤焰双模", "file": "res://assets/cars/car_tripo_g.glb", "desc": "双组别旗舰 · O 键切换加速/极速 · 惯性漂移", "yaw_deg": -90.0, "scale": 4.6,
+	{"id": "aidual", "name": "赤焰双模", "file": "res://assets/cars/car_tripo_g.glb", "desc": "双组别旗舰 · X 键切换加速/极速 · 惯性漂移", "yaw_deg": -90.0, "scale": 4.6,
 		"class": "dual", "stats": {"top": 96.0, "power": 64.0, "accel": 11.8, "grip": 1.07, "brake": 19.2},
 		"modes": {
 			"accel": {"label": "加速模式", "top": 87.0, "power": 72.0, "accel": 14.2, "grip": 1.09, "brake": 20.0},
