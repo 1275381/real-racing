@@ -1,6 +1,5 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 →
-# 胸前提枪姿态（shot_carry 胸前横端+双手 / shot_carry_sway 横晃反相位错位）→
 # 汤姆逊腰射 → 八把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
@@ -8,8 +7,7 @@
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
 # +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）
-# （共 28 张；腰射/换弹手部/逐枪美照/切枪/探头各段用 guns.carry_override=0
-# 锁存肩射位摆拍（fire_pose），拍完恢复 -1——既有构图不被胸前姿态改变）
+# （共 28 张；腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
@@ -214,7 +212,6 @@ func _initialize() -> void:
 	# ---- 附加验收 7：shot_reload_hand —— 打两发按 R，换弹中段截图。
 	# rifle 换弹全长 1.5s：剩约 0.95~0.4s 处于「旧匣已落/新匣将入、枪体
 	# 下沉倾斜」的中段（换弹手部 + 弹匣动画都在画面里）
-	main.guns.carry_override = 0.0   # fire_pose 摆拍锁存：换弹手部构图与胸前姿态解耦（拍完恢复）
 	main.guns.try_fire()
 	await wait_until(func(): return main.guns.fire_cd <= 0.0)   # 等射速间隔
 	main.guns.try_fire()
@@ -230,33 +227,9 @@ func _initialize() -> void:
 	await frames(1)
 	shot("res://out/shot_reload_hand.png")
 	check("换弹正常收尾", await wait_until(func(): return main.guns.reloading <= 0.0))
-	main.guns.carry_override = -1.0   # 解除摆拍锁存——下面的胸前美照走真实姿态
-
-	# ---- 附加验收 7b：shot_carry / shot_carry_sway —— 胸前提枪（三角洲式
-	# 松弛持枪）：静置等 carry_w→1，枪横端胸前 + 双手可见（左手托护木/右手
-	# 握把）；再把 bob 相位拨到反侧截横晃另一相（与前者错位可见）。摆拍手段：
-	# 直接写 player._bob_t（横晃 sin 的相位源），不碰姿态系统本身
-	check("静置回胸前 carry_w≈1", await wait_until(
-			func(): return main.guns.carry_w >= 0.99))
-	check("胸前双手可见", main.guns._hand_l != null and main.guns._hand_l.visible
-		and main.guns._hand_r != null and main.guns._hand_r.visible)
-	var c_hold: Node3D = main.guns._guns["primary"]["holder"]
-	var rz: float = c_hold.rotation_degrees.z
-	check("胸前枪根滚转 70~90°（横置）", rz > 70.0 and rz < 90.0, "z=%.1f°" % rz)
-	main.player._bob_t = PI   # sin(π·0.5)=+1 → 横晃右极
-	await frames(3)
-	var cx1: float = c_hold.position.x
-	shot("res://out/shot_carry.png")
-	main.player._bob_t = PI * 3.0   # sin(3π·0.5)=-1 → 横晃左极（反相位）
-	await frames(3)
-	var cx2: float = c_hold.position.x
-	shot("res://out/shot_carry_sway.png")
-	check("横晃两相反向错位 |Δx|>0.01", absf(cx2 - cx1) > 0.01,
-		"x1=%.3f x2=%.3f" % [cx1, cx2])
 
 	# ---- 附加验收 8：shot_smg —— 主武器换冲锋枪再进靶场，腰射截汤姆逊
 	# 造型（木托/护木）；rifle 的 M7 侧面轮廓看 shot_mission_spawn.png 即可
-	main.guns.carry_override = 0.0   # fire_pose 摆拍：腰射造型照不引入胸前姿态（逐枪美照同）
 	main.stash.loadout = {"primary": "smg", "secondary": "pistol"}
 	main._enter_range()
 	await frames(40)
@@ -295,7 +268,6 @@ func _initialize() -> void:
 	main.player.recoil_yaw = 0.0
 	await frames(2)
 	shot("res://out/shot_slot_switch.png")
-	main.guns.carry_override = -1.0   # 逐枪美照段落结束，解除 fire_pose 摆拍锁存
 
 	# ---- 附加验收 18：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
 	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」只读行
@@ -345,7 +317,6 @@ func _initialize() -> void:
 	# ---- 附加验收 26：shot_lean —— 右探头（E）：地平线左高右低 + 相机右移
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(20)
-	main.guns.carry_override = 0.0   # fire_pose 摆拍：探头验收看相机偏移，枪位维持肩射
 	Input.action_press("hd_lean_right")
 	await frames(14)
 	check("探头截图帧 lean_cur>0.9", main.player.lean_cur > 0.9,
@@ -353,7 +324,6 @@ func _initialize() -> void:
 	shot("res://out/shot_lean.png")
 	Input.action_release("hd_lean_right")
 	await frames(4)
-	main.guns.carry_override = -1.0   # 解除摆拍锁存
 
 	print("[probe] 探针完成：实存 %d/28 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
