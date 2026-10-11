@@ -990,7 +990,10 @@ static func _smg_mag_of(id: String) -> Dictionary:
 			## 节点 + HDGunLib.curved_mag 三段 7° 微弧），动画匣隐（同 MP5/P90
 			## 「匣形由枪身件表达」先例）；pos/size 保留 = 换弹手锚与掉匣
 			## 替身缩放沿用原值（契约机制不变，只切 show）
-			return {"pos": Vector3(0.0, -0.135, -0.075),
+			## 2026-10 对位修正：匣顶中心 z -0.075→-0.115 前移 40mm 对中弹匣井
+			## （井心 z=-0.115，原匣顶后缘越井后缘 36.5mm、扳机埋匣），与
+			## mag_straight 建模件同步
+			return {"pos": Vector3(0.0, -0.135, -0.115),
 					"size": Vector3(0.042, 0.2, 0.068), "show": false}
 	return {}
 
@@ -1504,10 +1507,11 @@ static func _smg_mk4() -> Node3D:
 	GUN_LIB.chamfer_box(root, steel, Vector3(0.01, 0.008, 0.03),
 			Vector3(0.028, -0.03, -0.085), Vector3.ZERO, 0.0008, 3)
 	# ⑦ 直弹匣微弧（独立命名节点 mag_straight：原点=匣顶中心，动画匣锚
-	#    (0,-0.135,-0.075) 的匣顶 -0.035——7° 三段微弧，弧向前）
+	#    (0,-0.135,-0.115) 的匣顶 -0.035——7° 三段微弧，弧向前；
+	#    2026-10 前移 40mm 对中弹匣井（井心 z=-0.115），与动画匣锚同步）
 	var mag := Node3D.new()
 	mag.name = "mag_straight"
-	mag.position = Vector3(0, -0.035, -0.075)
+	mag.position = Vector3(0, -0.035, -0.115)
 	root.add_child(mag)
 	GUN_LIB.curved_mag(mag, maggrey, Vector3(0.042, 0.2, 0.068), 7.0, 3, 3)
 	# ⑧ 枪管（36 段高分段 + 螺纹环×3 紧贴消焰器后）+ 短消焰器
