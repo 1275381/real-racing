@@ -30,6 +30,7 @@ var drift_tire := 1.0             # 漂移胎滑移回收系数（1.0=无；越�
 var inertia_drift := false        # 惯性漂移：手刹只负责起漂，松开后漂移自持
 var _drift_hold := false          # 惯性漂移自持标志
 var drag_k2 := 7.5e-4             # 空气阻力二次项系数（按极速标定：极速处风阻=牵引上限）
+var downforce := 0.0              # 高速下压力抓地加成（0=无空力套件，零影响）
 
 var pos := Vector3.ZERO
 var heading := 0.0
@@ -90,6 +91,7 @@ func _init(trk, opts: Dictionary = {}) -> void:
 	accel_cap = opts.get("accel_cap", 11.0)
 	no_shift = opts.get("no_shift", false)
 	inertia_drift = opts.get("inertia_drift", false)
+	downforce = opts.get("downforce", 0.0)
 	_recalc_drag()
 
 
@@ -101,6 +103,7 @@ func apply_stats(st: Dictionary) -> void:
 	accel_cap = st.get("accel", accel_cap)
 	grip_scale = st.get("grip", grip_scale)
 	brake_power = st.get("brake", brake_power)
+	downforce = st.get("downforce", downforce)
 	_recalc_drag()
 
 
@@ -153,6 +156,12 @@ func step(dt: float) -> void:
 	var spd := absf(vf)
 	var surf_grip: float = {"road": 1.0, "curb": 0.92, "grass": 0.46}[surface]
 	var grip := surf_grip * grip_scale * Tuning.GRIP_MUL
+	# 空力下压力：带套件的车越快越贴地——抓地随车速平方律增长，
+	# 极速处加满 downforce 比例（0.14 ≈ 极速抓地 +14%，200km/h 处约 +4%）。
+	# 不进 _recalc_drag（风阻仍按原 grip 标定），极速不受影响
+	if downforce > 0.0:
+		grip += downforce * pow(minf(spd / maxf(top_speed, 1.0), 1.0), 2.0) \
+				* Tuning.GRIP_MUL
 	var drag_mul: float = {"road": 1.0, "curb": 1.08, "grass": 3.6}[surface]
 
 	# ---- 转向：运动学目标 + 漂移辅助 ----

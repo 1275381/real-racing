@@ -147,6 +147,7 @@ func _ready() -> void:
 			"accel_cap": st.get("accel", 11.0),
 			"no_shift": st.get("no_shift", false),
 			"inertia_drift": TrackData.model_by_id(model).get("inertia_drift", false),
+			"downforce": st.get("downforce", 0.0),
 		})
 		if i == 0:
 			veh.drift_tire = _player_drift_hold()
@@ -2445,6 +2446,7 @@ func set_car_model(id: String) -> void:
 		"accel_cap": st.get("accel", 11.0),
 		"no_shift": st.get("no_shift", false),
 		"inertia_drift": TrackData.model_by_id(id).get("inertia_drift", false),
+		"downforce": st.get("downforce", 0.0),
 	})
 	veh.drift_tire = _player_drift_hold()
 	veh.pos = old.pos

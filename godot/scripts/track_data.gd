@@ -185,6 +185,17 @@ const CAR_MODELS := [
 		"class": "combustion",
 		"stats": {"top": 125.0, "power": 62.0, "accel": 14.8, "grip": 1.08,
 				"brake": 19.6, "top_disp": 111.2}},
+	# 空气动力学超跑「风刃」：碳黑全套空力包围（程序化建件，见 car_visual._build_aero）
+	# + 高速自动升起的主动尾翼（aero 阈值：90 起升 / 200 全展开 / 60 急刹气动刹车）。
+	# downforce 0.14：极速抓地 +14%（平方律，不进 _recalc_drag 极速不变）。
+	# file 复用 car_tripo_g.glb（与闲置 car_tripo_j.glb 逐字节同源，按路径走预载去重）；
+	# price 仅作展示/未来扩展键——本仓库车库免费切换，不设购买门槛
+	{"id": "aiaero", "name": "风刃", "file": "res://assets/cars/car_tripo_g.glb",
+		"desc": "空气动力学超跑 · 高速尾翼自动升起 · 越快越贴地（碳黑全套空力包围）· 收藏价 12000 金币",
+		"yaw_deg": -90.0, "scale": 4.6, "class": "combustion", "price": 12000,
+		"stats": {"top": 102.0, "power": 67.0, "accel": 13.2, "grip": 1.04,
+				"brake": 19.5, "downforce": 0.14},
+		"aero": {"wing_kmh": 90.0, "full_kmh": 200.0, "brake_kmh": 60.0}},
 ]
 
 ## 漫游战机（非赛车）：车库可选，仅限自由漫游驾驶
