@@ -3,6 +3,8 @@
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪总顶点
 #         ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
+#       + 持枪姿态（胸前提枪）：出生静置 carry_w≈1+双手可见/枪根滚转横置/
+#         横晃相位差/开镜回肩射位/换弹后回胸前
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s huodai/test_huodai.gd
 extends SceneTree
 
@@ -476,6 +478,66 @@ func _run() -> void:
 			rad_to_deg(main.player.cam.rotation.z)])
 	Input.action_release("hd_lean_left")
 	main.player.update(0.05)
+
+	# §持枪姿态（胸前提枪）：出生静置即胸前横端 + 双手扶枪 → 枪根滚转横置
+	# → 横晃相位差 → 开镜抬枪回肩射位 → 换弹后回胸前
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(8)
+	var c_h: Node3D = main.guns._guns["primary"]["holder"]
+	check("出生静置 carry_w≈1（胸前提枪）", absf(main.guns.carry_w - 1.0) < 0.05,
+		"carry_w=%.2f" % main.guns.carry_w)
+	main.guns.update(0.016)
+	check("胸前双手可见（左手托护木/右手握把）", main.guns._hand_l != null
+		and main.guns._hand_l.visible and main.guns._hand_r != null
+		and main.guns._hand_r.visible)
+	check("枪根滚转 70~90°（横置）", c_h.rotation_degrees.z > 70.0
+		and c_h.rotation_degrees.z < 90.0,
+		"z=%.1f°" % c_h.rotation_degrees.z)
+	# 横晃：相位对齐到 sin(_bob_t*0.5) 过零上升段 → 采 x0 → 模拟移速推进
+	# 0.4s（摆拍移速只喂横晃系数，不改真实位移）→ x1
+	for i in 500:
+		main.player.update(0.02)
+		main.player._speed = 3.0
+		main.guns.update(0.02)
+		if absf(sin(main.player._bob_t * 0.5)) < 0.05 \
+				and cos(main.player._bob_t * 0.5) > 0.0:
+			break
+	var sx0: float = c_h.position.x
+	for i in 20:
+		main.player.update(0.02)
+		main.player._speed = 3.0
+		main.guns.update(0.02)
+	var sx1: float = c_h.position.x
+	check("胸前横晃 0.4s 相位差 >0.01m", absf(sx1 - sx0) > 0.01,
+		"dx=%.3f" % absf(sx1 - sx0))
+	# 开镜：carry_w→0 且枪回肩射位（枪顶 AABB 对准星正下方，onfoot 同款）
+	Input.action_press("hd_scope")
+	var ads_ok := false
+	for i in 150:
+		main.player.update(0.016)
+		main.guns.update(0.016)
+		if main.player.ads >= 0.99 and main.guns.carry_w <= 0.01:
+			ads_ok = true
+			break
+	Input.action_release("hd_scope")
+	var hip_expect := Vector3(
+			-HDGuns.GUN_SCALE * float(main.guns._guns["primary"]["cx"]),
+			-0.012 - HDGuns.GUN_SCALE * float(main.guns._guns["primary"]["top"]),
+			HDGuns.GUN_ADS_Z)
+	check("开镜后 carry_w→0 且枪回肩射位", ads_ok
+		and c_h.position.distance_to(hip_expect) < 0.01,
+		"carry=%.2f d=%.3f" % [main.guns.carry_w,
+			c_h.position.distance_to(hip_expect)])
+	# 换弹后回胸前：换弹期间时间轴手接管、右手留握把；换弹完双手归位
+	main.guns.ammo = 10
+	main.guns.start_reload()
+	for i in 140:
+		main.guns.update(0.016)
+	main.guns.update(0.016)
+	check("换弹后回胸前姿态（双手归位/时间轴手离场）", main.guns.carry_w > 0.95
+		and main.guns._hand_l.visible and main.guns._hand_r.visible
+		and not main.guns._hand.visible,
+		"carry=%.2f" % main.guns.carry_w)
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

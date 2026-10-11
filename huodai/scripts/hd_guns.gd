@@ -1,8 +1,10 @@
 class_name HDGuns
 extends Node3D
 ## 烽火地带枪械：双槽（primary/secondary）程序化拼枪 + ADS + 换弹（弹匣三段
-## 掉落动画 + 程序化手套拔匣/插匣跟随）+ hitscan 结算。母本 onfoot.gd：枪模挂
-## 相机（no_depth_test 材质防车身吞枪）、mount 用枪模 AABB 对准星正下方、曳光池。
+## 掉落动画 + 程序化手套拔匣/插匣跟随）+ 胸前提枪姿态（carry_w：未开镜且停火
+## 时枪横端胸前 + 双手扶枪，开镜/开火抬回肩射位）+ hitscan 结算。母本
+## onfoot.gd：枪模挂相机（no_depth_test 材质防车身吞枪）、mount 用枪模 AABB
+## 对准星正下方、曳光池。
 ## 输入动作名由 main 注册，本模块只读："hd_fire"/"hd_scope"/"hd_slot1"/
 ## "hd_slot2"/"hd_reload"。
 
@@ -37,6 +39,22 @@ const HAND_ENTRY_OFF := Vector3(0.06, -0.30, 0.14) # 入画起点（弹匣位右
 const HAND_GRIP_OFF := Vector3(0.0, -0.055, 0.03)  # 握匣点（匣中偏下偏后）
 const HAND_PULL_OFF := Vector3(0.015, -0.24, 0.10) # 拔出终点（向下抽出再甩开）
 const HAND_HOLD_OFF := Vector3(0.0, -0.095, 0.03)  # 托新匣掌心（匣底正下）
+
+## 胸前提枪姿态（carry_w=1，三角洲式松弛持枪——未开镜且停火时枪横端胸前，
+## 开镜/开火后 0.4s 内抬回肩射位）：绕枪管轴滚转 ≈82°（70~90° 横置带）、
+## 枪口斜下俯仰 ≈-25°、位置收到胸前正中偏下（比肩射位靠中靠下、离相机略近）
+const CARRY_POS := Vector3(0.07, -0.25, -0.5)
+const CARRY_ROT := Vector3(-25.0, 16.0, 82.0)
+const CARRY_SPEED := 4.0       # 姿态过渡速率（1/秒，≈0.25s 抬枪/收枪到位）
+const CARRY_HOLD_T := 0.4      # 开火后维持肩射时长（秒，期间不回胸前）
+const CARRY_SWAY_AMP := 0.045  # 胸前横晃幅度（米，满移速系数值；站立 ≈0.35 倍呼吸晃）
+
+## 胸前提枪双手摆位（枪架局部偏移 + 相对枪根的转角，逐帧随枪滚转/俯仰/横晃）：
+## 右手握把握把（指尖顺握把前缘下探）、左手托护木/弹匣处（指尖顺护木前伸）
+const CARRY_HAND_R_OFF := Vector3(0.0, -0.042, 0.01)
+const CARRY_HAND_R_ROT := Vector3(-38.0, -4.0, 0.0)
+const CARRY_HAND_L_OFF := Vector3(0.0, -0.03, -0.16)
+const CARRY_HAND_L_ROT := Vector3(-8.0, 4.0, 0.0)
 
 ## 每发后坐力（度）：[基础上抬, 连发累增系数, 水平漂移幅度]（onfoot 同表）。
 ## 2026-10 扩充七枪：vector 最柔（Super V 卖点）/ akm·scarh 大后坐（7.62 世界观）；
@@ -94,6 +112,11 @@ var _im_i := 0
 var _slot1_prev := false   # 切枪/换弹键边沿检测（只按 is_action_pressed）
 var _slot2_prev := false
 var _reload_prev := false
+var carry_w := 1.0          # 姿态权重：0=肩射位 / 1=胸前提枪位（平滑过渡，探针/测试可读）
+var carry_override := -1.0  # 姿态锁存（≥0：update 直接采用不当平滑——探针 fire_pose 摆拍用；游戏内恒 -1）
+var _fire_hold := 1.0       # 距上次开火秒数（≥CARRY_HOLD_T 且未开镜才回胸前；try_fire 清零）
+var _hand_l: Node3D         # 胸前提枪左手（托护木/弹匣处；换弹期间让位给时间轴手 _hand）
+var _hand_r: Node3D         # 胸前提枪右手（握把）
 
 
 func setup(player, world, audio, tracers) -> void:
@@ -124,7 +147,10 @@ func enter(loadout: Dictionary) -> void:
 	_reload_rot = Vector3.ZERO
 	_falling = false
 	_mag_landed = false
+	carry_w = 1.0               # 出生即胸前持枪（松弛态；开火/开镜才抬枪）
+	_fire_hold = CARRY_HOLD_T   # 无近期开火记录：允许立即回胸前
 	_hide_hand()
+	_hide_carry_hands()
 	if tracers != null:
 		tracers.hide_all()
 	for s in _im_pool:
@@ -163,6 +189,7 @@ func update(dt: float) -> void:
 	if player == null or player.dead or player.cam == null:
 		return
 	fire_cd = maxf(0.0, fire_cd - dt)
+	_fire_hold = minf(_fire_hold + dt, CARRY_HOLD_T)   # 停火计时（try_fire 清零）
 	var slot_before := _cur_slot
 	# R 换弹 / Digit1·Digit2 切枪：边沿检测（只按 is_action_pressed，onfoot 同款读法）
 	var r_now := Input.is_action_pressed("hd_reload")
@@ -238,14 +265,31 @@ func update(dt: float) -> void:
 		mag.visible = show_mag
 		mag.position = mag_pos
 		_falling = false
-	# 枪架摆位：腰射位 ↔ 瞄准位（枪顶 AABB 对准星正下方，onfoot 同款）；
-	# 3× 以上高倍镜开镜到位后隐藏枪模（镜筒贴脸挡屏，FOV 一缩还会放大数倍）
+	# 枪架摆位：胸前提枪 ↔ 肩射腰射位 ↔ 瞄准位。姿态目标：未开镜且停火
+	# ≥0.4s → 胸前横端（carry_w→1）；开镜（含 ads>0.1 过渡期）或开火后
+	# 0.4s 内 → 肩射（carry_w→0），≈4/s 平滑抬枪——开火门控不变（不加新锁）。
+	# 开镜 lerp 终点照旧（枪顶 AABB 对准星正下方，onfoot 同款）；3× 以上
+	# 高倍镜开镜到位后隐藏枪模（镜筒贴脸挡屏，FOV 一缩还会放大数倍）
 	var holder: Node3D = g["holder"]
 	holder.visible = not (_aiming and _ads > 0.9 and current_zoom() >= HIDE_ZOOM)
+	var carry_t := 0.0
+	if not _aiming and _ads <= 0.1 and _fire_hold >= CARRY_HOLD_T:
+		carry_t = 1.0
+	if carry_override >= 0.0:
+		carry_w = carry_override   # 摆拍锁存：跳过平滑（探针 fire_pose 摆拍用）
+	else:
+		carry_w = move_toward(carry_w, carry_t, CARRY_SPEED * dt)
+	var base_pos := GUN_HIP_POS.lerp(CARRY_POS, carry_w)
+	var base_rot := GUN_HIP_ROT.lerp(CARRY_ROT, carry_w)
 	var ads_pos := Vector3(-GUN_SCALE * float(g["cx"]),
 			-0.012 - GUN_SCALE * float(g["top"]), GUN_ADS_Z)
-	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off
-	holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
+	# 胸前横端左右横晃（肩射位/瞄准位不加）：sin 走 player._bob_t（行走点头
+	# 同相位源），幅度随移速放大、站立保留慢速呼吸晃；随 carry_w 进出姿态
+	var sway_k: float = clampf(0.35 + player._speed / 6.5, 0.35, 1.0)
+	var sway_x: float = sin(player._bob_t * 0.5) * CARRY_SWAY_AMP * sway_k * carry_w
+	holder.position = base_pos.lerp(ads_pos, _ads) + _reload_off \
+			+ Vector3(sway_x, 0.0, 0.0)
+	holder.rotation_degrees = base_rot.lerp(Vector3.ZERO, _ads) + _reload_rot
 	# 枪口火光衰减
 	if _flash_t > 0.0:
 		_flash_t -= dt
@@ -254,6 +298,21 @@ func update(dt: float) -> void:
 			var flash_mesh: MeshInstance3D = g["flash_mesh"]
 			flash.visible = false
 			flash_mesh.visible = false
+	# 胸前提枪双手（肩射位不摆手=既有行为原样）：左手托护木/弹匣处、右手
+	# 握把——挂相机下与枪架同级，逐帧按枪架局部偏移+枪架旋转摆位（随枪
+	# 滚转/俯仰/横晃）。换弹期间左手让位给拔插匣时间轴手 _hand（既有五段
+	# 时间轴零改动），右手留在握把——两手不穿模
+	if carry_w > 0.5 and holder.visible:
+		_ensure_carry_hands()
+		_hand_r.visible = true
+		_hand_r.global_position = holder.to_global(CARRY_HAND_R_OFF)
+		_hand_r.rotation_degrees = holder.rotation_degrees + CARRY_HAND_R_ROT
+		_hand_l.visible = reloading <= 0.0
+		if _hand_l.visible:
+			_hand_l.global_position = holder.to_global(CARRY_HAND_L_OFF)
+			_hand_l.rotation_degrees = holder.rotation_degrees + CARRY_HAND_L_ROT
+	else:
+		_hide_carry_hands()
 
 
 ## 开一发：弹数/射线/曳光/伤害结算/后坐力/火光/枪声（按住自动连发）
@@ -264,14 +323,17 @@ func try_fire() -> void:
 		return
 	ammo -= 1
 	fire_cd = float(_g.get("cd", 0.13))
+	_fire_hold = 0.0   # 刚开火：维持肩射 0.4s 再回胸前（carry 目标看 _fire_hold）
 	var g := _cur_gun()
 	if not g.is_empty():
-		# 枪口火光：发光片贴枪口 + 瞬时点光（onfoot 同款 0.05s）
+		# 枪口火光：发光片贴枪口 + 瞬时点光（onfoot 同款 0.05s）；点光同位：
+		# 枪架与点光同为相机子节点，holder.transform 把枪口点转到相机局部
+		# （胸前/肩射/开镜各姿态都与发光片同位）
 		var flash: OmniLight3D = g["flash"]
 		var flash_mesh: MeshInstance3D = g["flash_mesh"]
 		_flash_t = 0.05
 		flash.visible = true
-		flash.position = Vector3(0.2, -0.08, -0.85)
+		flash.position = (g["holder"] as Node3D).transform * MUZZLE_OFF
 		flash_mesh.visible = true
 		flash_mesh.position = MUZZLE_OFF
 	# 射线：相机 from、-Z 前向、右/上基向量抖动 spread（每颗弹丸独立判定）
@@ -771,8 +833,15 @@ func _ensure_falling_mag() -> void:
 func _ensure_hand() -> void:
 	if _hand != null or player == null or player.cam == null:
 		return
+	_hand = _build_hand()
+	player.cam.add_child(_hand)
+
+
+## 手套构造（不入树、默认隐身）：暗色战术手套低模（护腕 + 掌 + 四指各两节
+## + 拇指两节，BoxMesh 拼装），材质关深度测试同枪模——换弹手（_hand）与
+## 胸前提枪双手（_hand_l/_hand_r）共用同一副手套
+func _build_hand() -> Node3D:
 	var hand := Node3D.new()
-	player.cam.add_child(hand)
 	var glove := StandardMaterial3D.new()
 	glove.albedo_color = Color(0.15, 0.16, 0.18)
 	glove.roughness = 0.85
@@ -821,12 +890,32 @@ func _ensure_hand() -> void:
 	add.call(Vector3(0.016, 0.018, 0.032), Vector3(0.026, 0.018, -0.068),
 			Vector3(0, 48, 20), glove)
 	hand.visible = false
-	_hand = hand
+	return hand
 
 
 func _hide_hand() -> void:
 	if _hand != null:
 		_hand.visible = false
+
+
+## 胸前提枪双手懒建（同掉落弹匣/换弹手的惰性思路）：左手托护木/弹匣处、
+## 右手握把，挂相机下与枪架同级（位姿由 update 每帧按枪架摆）
+func _ensure_carry_hands() -> void:
+	if player == null or player.cam == null:
+		return
+	if _hand_l == null:
+		_hand_l = _build_hand()
+		player.cam.add_child(_hand_l)
+	if _hand_r == null:
+		_hand_r = _build_hand()
+		player.cam.add_child(_hand_r)
+
+
+func _hide_carry_hands() -> void:
+	if _hand_l != null:
+		_hand_l.visible = false
+	if _hand_r != null:
+		_hand_r.visible = false
 
 
 ## 换弹手部动画：按换弹进度 prog 分五段插值（照 _reload_off/_reload_rot 的
@@ -917,6 +1006,11 @@ func _tick_fx(dt: float) -> void:
 	if _hand != null and _hand.visible:
 		if reloading <= 0.0 or player == null or player.dead:
 			_hand.visible = false
+	# 胸前双手同款兜底：死亡/无玩家帧强制收手（update 早退帧也兜住）
+	if _hand_l != null and _hand_l.visible and (player == null or player.dead):
+		_hand_l.visible = false
+	if _hand_r != null and _hand_r.visible and (player == null or player.dead):
+		_hand_r.visible = false
 
 ## ================= 枪匠·七枪程序化模型（原独立文件并入） =================
 ## 原并行交付为 hd_gun_smg.gd / hd_gun_ar.gd 两份独立脚本，但回归门槛的执行
