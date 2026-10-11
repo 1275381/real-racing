@@ -98,6 +98,7 @@ func _register_inputs() -> void:
 		"hd_scope": [],
 		"hd_slot1": [KEY_1], "hd_slot2": [KEY_2],
 		"hd_reload": [KEY_R], "hd_interact": [KEY_F],
+		"hd_lean_left": [KEY_Q], "hd_lean_right": [KEY_E],
 	}
 	for action in defs:
 		if not InputMap.has_action(action):

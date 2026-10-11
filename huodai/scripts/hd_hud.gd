@@ -248,7 +248,7 @@ func setup() -> void:
 		var row := _mk_label(line, 17, COL_TEXT)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		mv.add_child(row)
-	var mesc := _mk_label("Esc 恢复战斗", 12, _dim(0.55))
+	var mesc := _mk_label("Esc 恢复战斗 · 游戏内 Q/E 左右探头", 12, _dim(0.55))
 	mesc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mv.add_child(mesc)
 	_base.add_child(_menu)

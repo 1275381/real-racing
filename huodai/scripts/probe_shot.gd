@@ -3,9 +3,10 @@
 # → 八把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
-# 交易行未拥有枪购买特写（shot_market_buy.png）→ 大坝分区三连拍
-# （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景）
-# （共 24 张）
+# 交易行未拥有枪购买特写（shot_market_buy.png）→ 大坝分区四连拍
+# （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
+# / shot_dam_ref 对位相机主图——高机位仿目标图取景：岩山+涂鸦坝面+坝顶门吊剪影）
+# （共 25 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
@@ -91,15 +92,25 @@ func _initialize() -> void:
 	await frames(20)
 	shot("res://out/shot_center.png")
 
-	# ---- 大坝分区三连拍（远景剪影 / 坝底工业区街景 / 涂鸦环近景） ----
+	# ---- 大坝分区四连拍（远景剪影 / 坝底工业区街景 / 涂鸦环近景 / 对位相机主图） ----
+	# 第 3 轮验收协议：center/dam 站位会触发「! 高危战区」红罩铺满全幅（base 图
+	# 满幅粉格纹污染色彩判断）——统一「冻结摆拍」法：dead=true 冻结玩家 update
+	# （hd_player.gd:79 死亡早退），相机手动定格原街景位，player.pos 搬到
+	# (90,0,-30)（d=95 zone=mid → main._step_mission 下一帧 set_danger(false)），
+	# 红罩熄灭后截图，拍完即恢复。四图色彩全部纯净。
 	# shot_dam_far：北区出生带 (0,40) 面北望坝全景——坝顶 y52 在 158m 外，
 	# 抬头 0.15 把 y13~52 坝体+坝顶门吊天际线收进画幅（剪影验收）
 	main.player.enter(Vector3(0.0, 0.0, 40.0))
 	main.player.yaw = PI          # 面朝 -Z（北）
 	main.player.pitch = 0.15
 	main.player.update(0.016)
-	await frames(20)
+	main.player.dead = true
+	main.player.cam.position = Vector3(0.0, 1.55, 40.0)
+	main.player.cam.rotation = Vector3(0.15, PI + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
 	shot("res://out/shot_dam_far.png")
+	main.player.dead = false
 
 	# shot_dam_base：坝底工业区街景——(10,-90) 站服务街条上、棕榈 (8,-86) 退到相机
 	# 背后（首版 (10,-82) 树干正卡开洞2 视线，实拍返工），正对廊道开洞2（x∈[2,18]）：
@@ -109,22 +120,54 @@ func _initialize() -> void:
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
-	await frames(20)
+	main.player.dead = true
+	main.player.cam.position = Vector3(10.0, 1.55, -90.0)
+	main.player.cam.rotation = Vector3(0.0, PI + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
 	shot("res://out/shot_dam_base.png")
+	main.player.dead = false
 
 	# shot_dam_graffiti：涂鸦环近景——(-24,0,-90) 站服务街、侧 20m 瞄准环心
 	# （yaw=atan2(20,-33.8)≈2.608，pitch=atan(28.4/39.3)≈0.625，正 pitch=抬头
 	# hd_player.gd:76 同号）。视线越廊道墙顶（y17.5>13.1）后环可见下界 y≈19.3：
 	# 斜杠全长（y21.5~38.5）+环中上弧+滴泪条（y19~23）全部入画，两根廊道柱
 	# （x=-20/-40）左右框景=参考图「环被竖条带打断」原样；丙泵站/棕榈全出画。
-	# 机位迭 代史：(-4,-100) 街面版下界 y≈24.2 环下弧被吞 → (-4,-84) 越泵站顶但
+	# 机位迭代史：(-4,-100) 街面版下界 y≈24.2 环下弧被吞 → (-4,-84) 越泵站顶但
 	# 泵站黄墙占满下幅 → 侧站此位（python3 视线复算三版择优）
 	main.player.enter(Vector3(-24.0, 0.0, -90.0))
 	main.player.yaw = 2.608
 	main.player.pitch = 0.625
 	main.player.update(0.016)
-	await frames(20)
+	main.player.dead = true
+	main.player.cam.position = Vector3(-24.0, 1.55, -90.0)
+	main.player.cam.rotation = Vector3(0.625, 2.608 + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
 	shot("res://out/shot_dam_graffiti.png")
+	main.player.dead = false
+
+	# ---- shot_dam_ref：对位相机主图（第 3 轮机位重定，python 视算扫参择优）——
+	# 高机位 cam(0,46,-70) 瞄 (-8,36,-124)：yaw=atan2(-8,-54)≈-2.995、
+	# pitch=atan2(36-46,129.5)≈-0.077、FOV 58。三层构图对位目标图：上幅大岩山
+	# (-18,-200 顶85) 从坝顶后升起（越 y53 遮挡线 5.5°~16.6° 仰角带）+ 坝顶门吊/
+	# 双塔吊/长臂吊剪影；中幅涂鸦坝面（环屏 x+0.23）+ 西段泄洪管群贴坡；
+	# 下幅坝基/廊道拱廊/梳齿。玩家 update 每帧把 pos.y 贴地并回摆相机
+	# （hd_player.gd:112/120），高机位 dead=true 冻结后手动越权 cam；站位 (0,-70)
+	# d=70∈center 高危区 → pos 搬 (90,-30) 关红罩（同四连拍协议），拍完即恢复
+	main.player.enter(Vector3(0.0, 0.0, -70.0))
+	main.player.yaw = -2.995
+	main.player.pitch = -0.077
+	main.player.update(0.016)
+	main.player.dead = true
+	main.player.cam.position = Vector3(0.0, 46.0, -70.0)
+	main.player.cam.rotation = Vector3(-0.077, -2.995 + PI, 0)
+	main.player.cam.fov = 58.0
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(6)
+	shot("res://out/shot_dam_ref.png")
+	main.player.dead = false
+	main.player.cam.fov = main.player.BASE_FOV
 
 	main._enter_range()
 	await frames(40)
@@ -248,7 +291,18 @@ func _initialize() -> void:
 	shot("res://out/shot_market_buy.png")
 	main.lobby.hide_lobby()
 
-	print("[probe] 探针完成：实存 %d/24 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	# ---- 附加验收 26：shot_lean —— 右探头（E）：地平线左高右低 + 相机右移
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(20)
+	Input.action_press("hd_lean_right")
+	await frames(14)
+	check("探头截图帧 lean_cur>0.9", main.player.lean_cur > 0.9,
+		"lean=%.2f" % main.player.lean_cur)
+	shot("res://out/shot_lean.png")
+	Input.action_release("hd_lean_right")
+	await frames(4)
+
+	print("[probe] 探针完成：实存 %d/26 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

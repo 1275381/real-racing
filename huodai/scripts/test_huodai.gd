@@ -448,6 +448,35 @@ func _run() -> void:
 		and main.stash.stats["extracts"] == 2,
 		"extracts=%d" % main.stash.stats["extracts"])
 
+	# §探头（Q/E 左右）：按住右探头 → 相机侧移+侧滚到位；松开回中；左同理对称
+	var cam0: Vector3 = main.player.cam.global_position
+	Input.action_press("hd_lean_right")
+	for i in 12:
+		main.player.update(0.05)
+	var dlean: Vector3 = main.player.cam.global_position - cam0
+	var lat_r: float = Vector2(dlean.x, dlean.z).length()
+	check("右探头到位（lean_cur≈+1，侧移 ≥0.35m）",
+		main.player.lean_cur > 0.9 and lat_r > 0.35,
+		"lean=%.2f lat=%.2fm" % [main.player.lean_cur, lat_r])
+	check("右探头侧滚（z≈-11°，头右歪）",
+		absf(rad_to_deg(main.player.cam.rotation.z) + 11.0) < 1.5,
+		"z=%.1f°" % rad_to_deg(main.player.cam.rotation.z))
+	Input.action_release("hd_lean_right")
+	for i in 12:
+		main.player.update(0.05)
+	check("松开探头回中", absf(main.player.lean_cur) < 0.05
+		and absf(main.player.cam.rotation.z) < 0.001,
+		"lean=%.2f" % main.player.lean_cur)
+	Input.action_press("hd_lean_left")
+	for i in 12:
+		main.player.update(0.05)
+	check("左探头对称（lean_cur≈-1，z≈+11°）",
+		main.player.lean_cur < -0.9 and rad_to_deg(main.player.cam.rotation.z) > 9.0,
+		"lean=%.2f z=%.1f°" % [main.player.lean_cur,
+			rad_to_deg(main.player.cam.rotation.z)])
+	Input.action_release("hd_lean_left")
+	main.player.update(0.05)
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)

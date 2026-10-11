@@ -17,6 +17,10 @@ const BASE_FOV := 75.0
 const RECOIL_FALL := 45.0       # 停火 0.25s 后每秒回落角度（度）
 const RECOIL_YAW_FALL := 10.0   # 水平漂移回落速度（度）
 const RECOIL_MAX := 6.0         # 后坐上顶上限（度，防打天花板）
+const LEAN_OFF := 0.42          # 探头侧移量（米：Q/E 左右探头）
+const LEAN_ROLL := 11.0         # 探头侧滚（度：头跟着歪，地平线反向倾斜）
+const LEAN_SPEED := 6.0         # 探头过渡速率（1/秒，≈0.17s 到位）
+const LEAN_EYE_DROP := 0.05     # 探头时眼高微降（米：侧身压肩）
 
 var cam: Camera3D
 var pos := Vector3.ZERO
@@ -31,6 +35,8 @@ var ads := 0.0            # HDGuns 每帧写入（开镜过渡 0..1）
 var zoom := 1.0           # HDGuns 每帧写入（当前倍率，FOV=75/zoom）
 var sprinting := false
 var crouching := false
+var lean := 0.0            # 探头目标（-1 左 / 0 中 / +1 右，Q/E 按住）
+var lean_cur := 0.0        # 探头平滑值（向 lean 过渡；相机侧移/侧滚都吃它）
 
 var _world                # 烽火地带世界（鸭子类型：obstacles_near/ground_height）
 var _eye_h := EYE_H
@@ -61,6 +67,8 @@ func enter(spawn: Vector3) -> void:
 	zoom = 1.0
 	sprinting = false
 	crouching = false
+	lean = 0.0
+	lean_cur = 0.0
 	pitch = 0.0
 	_eye_h = EYE_H
 	_speed = 0.0
@@ -95,6 +103,15 @@ func update(dt: float) -> void:
 	var moving := mf != 0.0 or ms != 0.0
 	sprinting = Input.is_physical_key_pressed(KEY_SHIFT) and moving \
 			and not crouching
+	# 探头（Q/E 按住，疾跑时收头）：目标 ±1，lean_cur 平滑过渡（≈0.17s）
+	var lean_t := 0.0
+	if not sprinting:
+		if Input.is_action_pressed("hd_lean_left"):
+			lean_t -= 1.0
+		if Input.is_action_pressed("hd_lean_right"):
+			lean_t += 1.0
+	lean = lean_t
+	lean_cur = move_toward(lean_cur, lean_t, LEAN_SPEED * dt)
 	if moving:
 		# 常态步行 3.0 / Shift 疾跑 6.5 / 蹲再乘 0.45；斜向不超速
 		var spd := (RUN if sprinting else WALK) \
@@ -117,14 +134,19 @@ func update(dt: float) -> void:
 	var eye_target := EYE_H_CROUCH if crouching else EYE_H
 	_eye_h = lerpf(_eye_h, eye_target, 1.0 - exp(-14.0 * dt))
 	var bob := sin(_bob_t) * 0.02 * minf(_speed, 1.0)
-	cam.position = pos + Vector3(0, _eye_h + bob, 0)
+	# 相机：眼高（蹲 0.95）+ 走动轻微点头 + 探头侧移/压肩（沿屏幕右向量）
+	var lean_right := Vector3(-cos(yaw), 0, sin(yaw))
+	cam.position = pos + Vector3(0, _eye_h + bob - absf(lean_cur) * LEAN_EYE_DROP, 0) \
+			+ lean_right * (lean_cur * LEAN_OFF)
 	# 后坐回落：停火 0.25s 后每秒 45° 压回，水平漂移同步归零，上限 6°
 	recoil_cool += dt
 	if recoil_cool > 0.25:
 		recoil_pitch = maxf(0.0, recoil_pitch - deg_to_rad(RECOIL_FALL) * dt)
 		recoil_yaw = move_toward(recoil_yaw, 0.0, deg_to_rad(RECOIL_YAW_FALL) * dt)
 	recoil_pitch = minf(recoil_pitch, deg_to_rad(RECOIL_MAX))
-	cam.rotation = Vector3(pitch + recoil_pitch, yaw + recoil_yaw + PI, 0)
+	# 侧滚符号：右探头头向右歪 = 绕 +Z 负转（+Y 倒向 +X），地平线在视野里左高右低
+	cam.rotation = Vector3(pitch + recoil_pitch, yaw + recoil_yaw + PI,
+			-deg_to_rad(LEAN_ROLL) * lean_cur)
 	cam.fov = lerpf(cam.fov, BASE_FOV / maxf(zoom, 1.0), 1.0 - exp(-14.0 * dt))
 
 
