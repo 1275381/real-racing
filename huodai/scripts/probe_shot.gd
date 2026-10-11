@@ -3,7 +3,9 @@
 # → 八把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
-# 交易行未拥有枪购买特写（shot_market_buy.png）（共 21 张）
+# 交易行未拥有枪购买特写（shot_market_buy.png）→ 大坝分区三连拍
+# （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景）
+# （共 24 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
@@ -88,6 +90,41 @@ func _initialize() -> void:
 	main.player.update(0.016)
 	await frames(20)
 	shot("res://out/shot_center.png")
+
+	# ---- 大坝分区三连拍（远景剪影 / 坝底工业区街景 / 涂鸦环近景） ----
+	# shot_dam_far：北区出生带 (0,40) 面北望坝全景——坝顶 y52 在 158m 外，
+	# 抬头 0.15 把 y13~52 坝体+坝顶门吊天际线收进画幅（剪影验收）
+	main.player.enter(Vector3(0.0, 0.0, 40.0))
+	main.player.yaw = PI          # 面朝 -Z（北）
+	main.player.pitch = 0.15
+	main.player.update(0.016)
+	await frames(20)
+	shot("res://out/shot_dam_far.png")
+
+	# shot_dam_base：坝底工业区街景——(10,-90) 站服务街条上、棕榈 (8,-86) 退到相机
+	# 背后（首版 (10,-82) 树干正卡开洞2 视线，实拍返工），正对廊道开洞2（x∈[2,18]）：
+	# 22m 外洞内 loot 容器②指示灯、柱廊、右前红门吊腿同框（视线 x=10 与丙泵站
+	# x≤-1/甲厂房 x≥15 全让位）
+	main.player.enter(Vector3(10.0, 0.0, -90.0))
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	await frames(20)
+	shot("res://out/shot_dam_base.png")
+
+	# shot_dam_graffiti：涂鸦环近景——(-24,0,-90) 站服务街、侧 20m 瞄准环心
+	# （yaw=atan2(20,-33.8)≈2.608，pitch=atan(28.4/39.3)≈0.625，正 pitch=抬头
+	# hd_player.gd:76 同号）。视线越廊道墙顶（y17.5>13.1）后环可见下界 y≈19.3：
+	# 斜杠全长（y21.5~38.5）+环中上弧+滴泪条（y19~23）全部入画，两根廊道柱
+	# （x=-20/-40）左右框景=参考图「环被竖条带打断」原样；丙泵站/棕榈全出画。
+	# 机位迭 代史：(-4,-100) 街面版下界 y≈24.2 环下弧被吞 → (-4,-84) 越泵站顶但
+	# 泵站黄墙占满下幅 → 侧站此位（python3 视线复算三版择优）
+	main.player.enter(Vector3(-24.0, 0.0, -90.0))
+	main.player.yaw = 2.608
+	main.player.pitch = 0.625
+	main.player.update(0.016)
+	await frames(20)
+	shot("res://out/shot_dam_graffiti.png")
 
 	main._enter_range()
 	await frames(40)
@@ -211,7 +248,7 @@ func _initialize() -> void:
 	shot("res://out/shot_market_buy.png")
 	main.lobby.hide_lobby()
 
-	print("[probe] 探针完成：实存 %d/21 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/24 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

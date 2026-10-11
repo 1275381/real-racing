@@ -10,6 +10,12 @@ extends Node3D
 ## AABB，top/bot 显式给出；wall_hit 的 2D 线段-AABB + 高度过滤同源）。
 
 const PROP_DIR := "res://assets/battle/props/"
+## 大坝两件走路径 preload 不走全局类名缓存：--headless -s 回归不刷新
+## global_script_class_cache.cfg，新 class_name（HDDam/HDDamBase）按名解析会
+## 报「Identifier not found」→ hd_world 编译失败 → 回归 _run 访问 null 挂死
+## （test_huodai.gd:9 GUN_LIB / main.gd:50 tracer_pool 同款先例）
+const HDDAM_SCRIPT := preload("res://scripts/hd_dam.gd")
+const HDDAM_BASE_SCRIPT := preload("res://scripts/hd_dam_base.gd")
 const GROUND_SIZE := 300.0        # 大地平面边长（隐形边界墙收在地面之内）
 const BOUND := 148.0              # 可行动边界半宽（地面 300 见方内收 2m）
 const WILD_R := 112.0             # 荒野带下限（网页版 layout.js ZONE_BANDS.wildR）
@@ -68,7 +74,8 @@ const INDOOR_AMB := 0.55
 const OUTDOOR_SUN := 1.05
 const INDOOR_SUN := 0.25
 
-## 可搜刮容器锚点（x/z 手工排布贴障碍摆：中心 18 / 过渡 14 / 荒野 12 = 44）
+## 可搜刮容器锚点（x/z 手工排布贴障碍摆：中心 18 / 过渡 11 / 荒野 9 + 坝区 13
+## 由 HDDamBase 追加 = 51；原 mid/wild 落在大坝矩形内的 6 点已迁入坝区表）
 const CONTAINER_XZ := {
 	"center": [
 		Vector2(-18, -32), Vector2(-30, -30), Vector2(-46, -44), Vector2(-24, -52),
@@ -79,18 +86,18 @@ const CONTAINER_XZ := {
 	],
 	"mid": [
 		Vector2(0, 92), Vector2(44, 84), Vector2(84, 44), Vector2(96, 0),
-		Vector2(84, -44), Vector2(44, -84), Vector2(0, -96), Vector2(-44, -84),
-		Vector2(-84, -44), Vector2(-96, 0), Vector2(-84, 44), Vector2(-44, 84),
-		Vector2(60, -66), Vector2(-60, 70),
+		Vector2(84, -44), Vector2(-84, -44), Vector2(-96, 0), Vector2(-84, 44),
+		Vector2(-44, 84), Vector2(60, -66), Vector2(-60, 70),
 	],
 	"wild": [
-		Vector2(-130, 60), Vector2(-144, -10), Vector2(-120, -80), Vector2(-60, -130),
-		Vector2(10, -140), Vector2(80, -130), Vector2(140, -70), Vector2(144, 10),
-		Vector2(60, 140), Vector2(0, 146), Vector2(-70, 130), Vector2(-140, 110),
+		Vector2(-130, 60), Vector2(-144, -10), Vector2(-120, -80),
+		Vector2(140, -70), Vector2(144, 10), Vector2(60, 140), Vector2(0, 146),
+		Vector2(-70, 130), Vector2(-140, 110),
 	],
 }
 
-## 巡逻点（中心 10 / 过渡 4 / 荒野 8；避开建筑与容器点位）
+## 巡逻点（中心 10 / 过渡 4 / 荒野 5 + 坝区 7 由 HDDamBase 追加 = 26；
+## 原荒野 3 点落在坝区带内已删，路线由 HDSoldiers 同 zone 过滤锁定分区内互连）
 const PATROL_XZ := {
 	"center": [
 		Vector2(-20, -30), Vector2(10, -40), Vector2(30, -10), Vector2(0, -13),
@@ -99,8 +106,8 @@ const PATROL_XZ := {
 	],
 	"mid": [Vector2(0, 100), Vector2(100, -20), Vector2(-95, 30), Vector2(-60, -80)],
 	"wild": [
-		Vector2(-140, 40), Vector2(-100, -110), Vector2(-20, -144), Vector2(90, -110),
-		Vector2(144, -30), Vector2(120, 60), Vector2(40, 144), Vector2(-140, 95),
+		Vector2(-140, 40), Vector2(144, -30), Vector2(120, 60), Vector2(40, 144),
+		Vector2(-140, 95),
 	],
 }
 
@@ -163,37 +170,33 @@ const CENTER_PROPS := [
 	{"n": "sandbags", "x": 2.0, "z": 34.0, "r": 0.2},
 ]
 
-## 过渡带散布（少量地标掩体）
+## 过渡带散布（少量地标掩体；原 (0,-105) 枯树落坝区带内迁至西端 (-118,-106)）
 const MID_PROPS := [
 	{"n": "dead_tree", "x": 90.0, "z": 60.0, "r": 1.8, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": -95.0, "z": -40.0, "r": 3.4, "chx": 0.35, "chz": 0.35},
-	{"n": "dead_tree", "x": 0.0, "z": -105.0, "r": 0.5, "chx": 0.35, "chz": 0.35},
+	{"n": "dead_tree", "x": -118.0, "z": -106.0, "r": 0.5, "chx": 0.35, "chz": 0.35},
 	{"n": "rocks", "x": 40.0, "z": 95.0, "r": 4.3},
 	{"n": "rocks", "x": -20.0, "z": 100.0, "r": 3.1},
 	{"n": "wreck", "x": 95.0, "z": -20.0, "r": 1.6},
 	{"n": "wreck", "x": -50.0, "z": 90.0, "r": 0.13},
 ]
 
-## 荒野环带 POI（枯树/乱石/帐篷/残骸稀疏散布，全部分布在 d>112）
+## 荒野环带 POI（枯树/乱石/帐篷/残骸稀疏散布，全部分布在 d>112；原 5 件落在
+## 坝区带/坝后山体内已删或外迁：dead_tree (-90,-120)→(-96,-76)、rocks (70,-120)→(118,-60)）
 const WILD_PROPS := [
 	{"n": "dead_tree", "x": -120.0, "z": 50.0, "r": 0.8, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": -135.0, "z": -30.0, "r": 0.3, "chx": 0.35, "chz": 0.35},
-	{"n": "dead_tree", "x": -90.0, "z": -120.0, "r": 2.6, "chx": 0.35, "chz": 0.35},
-	{"n": "dead_tree", "x": 30.0, "z": -130.0, "r": 1.1, "chx": 0.35, "chz": 0.35},
-	{"n": "dead_tree", "x": 100.0, "z": -90.0, "r": 3.7, "chx": 0.35, "chz": 0.35},
+	{"n": "dead_tree", "x": -96.0, "z": -76.0, "r": 2.6, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": 60.0, "z": 120.0, "r": 0.6, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": -60.0, "z": 140.0, "r": 1.4, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": 130.0, "z": -20.0, "r": 5.3, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": -30.0, "z": 120.0, "r": 2.9, "chx": 0.35, "chz": 0.35},
 	{"n": "dead_tree", "x": 110.0, "z": 40.0, "r": 0.25, "chx": 0.35, "chz": 0.35},
 	{"n": "rocks", "x": -110.0, "z": -60.0, "r": 5.3},
-	{"n": "rocks", "x": 70.0, "z": -120.0, "r": 0.5},
+	{"n": "rocks", "x": 118.0, "z": -60.0, "r": 0.5},
 	{"n": "rocks", "x": -70.0, "z": 110.0, "r": 2.6},
-	{"n": "tent", "x": -44.0, "z": -120.0, "r": 0.15},
-	{"n": "tent", "x": -30.0, "z": -128.0, "r": 1.2},
 	{"n": "wreck", "x": 120.0, "z": -60.0, "r": 1.5},
 	{"n": "wreck", "x": -125.0, "z": 20.0, "r": 0.2},
-	{"n": "wreck", "x": -36.0, "z": -112.0, "r": 1.1},
 	{"n": "wreck", "x": 135.0, "z": 35.0, "r": 1.35},
 ]
 
@@ -202,6 +205,9 @@ var container_spots: Array = []   # {pos: Vector3, zone: String}（HDLoot 据此
 var patrol_spots: Array = []      # {pos: Vector3, zone: String}（AI 巡逻锚点）
 var spawn_pos := Vector3(-138.0, 0.0, 138.0)   # 行动出生点（西南角，离中心远）
 var extract_pos: Vector3 = HDData.EXTRACT_POS  # 主撤离点（绿信标）
+var extract2_pos: Vector3 = HDData.DAM_EXTRACT_POS   # 第二撤离点（大坝撤离广场，信标同款）
+var dam: Node3D                   # 大坝硬结构（HDDam 实例：坝体/廊道/涂鸦/闸门排，视觉挂本类）
+var dam_base: Node3D              # 坝底工业区（HDDamBase 实例：厂房/堆场/工地 + 坝区点位）
 
 var _built := false
 var _prop_scenes := {}            # name -> PackedScene | null（load 缓存）
@@ -223,7 +229,6 @@ func build() -> void:
 		_place_prop(e)
 	for e in WILD_PROPS:
 		_place_prop(e)
-	_build_extract()
 	_build_hall()
 	for zone in CONTAINER_XZ:
 		for p in CONTAINER_XZ[zone]:
@@ -233,6 +238,19 @@ func build() -> void:
 		for p in PATROL_XZ[zone]:
 			var v: Vector2 = p
 			patrol_spots.append({"pos": Vector3(v.x, 0.0, v.y), "zone": zone})
+	# 大坝分区（北缘地标，坝轴线东西向）：硬结构 HDDam 先装配、坝底陈设 HDDamBase 后
+	# （建造计划契约 DAM 先 BASE 后）；两件自带 _built 幂等护栏，重复 build() 不翻倍。
+	# 视觉 add_child(self)，障碍/容器点/巡逻点由两件 append 进本类容器
+	# （hd_loot.gd:141-143 同款鸭子注入），随后 main.gd loot/soldiers build 消费
+	dam = HDDAM_SCRIPT.new()
+	add_child(dam)
+	dam.build(self)
+	dam_base = HDDAM_BASE_SCRIPT.new()
+	add_child(dam_base)
+	dam_base.build(self)
+	# 撤离信标 ×2：主撤离（东侧绿标）+ 大坝广场第二撤离（93,-94），参数化复用同一生成器
+	_build_extract(extract_pos)
+	_build_extract(extract2_pos)
 
 
 ## 进靶馆模式：雾拉近/环境光稍暗/夕阳压弱（室内氛围）；回大厅/行动恢复。
@@ -246,14 +264,23 @@ func set_indoor(on: bool) -> void:
 		_sun.light_energy = INDOOR_SUN if on else OUTDOOR_SUN
 
 
-## 分区：距原点 d<=80 中心危险区 / d>112 荒野 / 其间过渡（HDData.DANGER_R 同源）
+## 分区：距原点 d<=80 中心危险区 / d>112 荒野 / 其间过渡（HDData.DANGER_R 同源）；
+## 大坝矩形分支优先于 wild 裁决（矩形西北角距原点 >112 仍判 dam，防坝区点漏进荒野表）
 func zone_at(x: float, z: float) -> String:
 	var d := Vector2(x, z).length()
 	if d <= HDData.DANGER_R:
 		return "center"
+	if x >= -130.0 and x <= 105.0 and z >= -118.0 and z <= -84.0:
+		return "dam"
 	if d > WILD_R:
 		return "wild"
 	return "mid"
+
+
+## 撤离点列表（主撤离 + 大坝广场第二撤离）：main._step_mission 取最近点判定读条，
+## 开局/离场逻辑不改——圈内距离判定与单点语义一致（test 断言 size==2）
+func extract_list() -> Array:
+	return [extract_pos, extract2_pos]
 
 
 ## 是否在靶馆矩形内（含墙体）
@@ -465,9 +492,8 @@ func _fallback_mat(name: String) -> StandardMaterial3D:
 
 # ================= 撤离点 =================
 
-## 主撤离点：绿色发光信标柱 + 地面绿环 + 绿光点光（行动模式远看的目标地标）
-func _build_extract() -> void:
-	var p := extract_pos
+## 撤离信标（参数化点位，主撤离/大坝第二撤离复用）：绿色发光柱 + 地面绿环 + 绿光点光
+func _build_extract(p: Vector3) -> void:
 	var pole := MeshInstance3D.new()
 	var cm := CylinderMesh.new()
 	cm.top_radius = 0.12

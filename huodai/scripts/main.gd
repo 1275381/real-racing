@@ -297,8 +297,9 @@ func _step_mission(dt: float) -> void:
 	soldiers.update(dt, true)
 	loot.update(dt, player.pos, Input.is_action_pressed("hd_interact"))
 	targets.update(dt)
-	# 危险区横幅
-	hud.set_danger(world.zone_at(player.pos.x, player.pos.z) == "center")
+	# 危险区横幅（中心与大坝同为高危红区；坝兵横幅走玩家 zone_at 实时裁决）
+	var pz: String = world.zone_at(player.pos.x, player.pos.z)
+	hud.set_danger(pz == "center" or pz == "dam")
 	# 弹药/血量/背包同步
 	hud.set_ammo(guns.ammo, guns.reserve)
 	hud.set_health(player.health, 100.0)
@@ -306,8 +307,12 @@ func _step_mission(dt: float) -> void:
 	# 开镜分划
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
-	# 撤离读条
-	var d := player.pos.distance_to(world.extract_pos)
+	# 撤离读条：主撤离 + 大坝广场第二撤离（extract_list）取最近点，
+	# 圈内累计/离圈回退与单点语义一致（主撤离回归 test_huodai 步骤 8 不变）
+	var d := HDData.EXTRACT_R + 1.0
+	for ep_v in world.extract_list():
+		var ep: Vector3 = ep_v
+		d = minf(d, player.pos.distance_to(ep))
 	if d <= HDData.EXTRACT_R:
 		_extract_t += dt
 		if _extract_t >= HDData.EXTRACT_HOLD:

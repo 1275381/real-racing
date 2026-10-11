@@ -14,11 +14,14 @@ const RARITY := [
 	{"id": 6, "name": "至臻", "color": Color(0.35, 1.0, 0.85), "vmin": 300000.0, "vmax": 500000.0},
 ]
 
-## 分区开箱品质权重（荒野穷、中心富）：[白,绿,蓝,紫,金,红,彩]
+## 分区开箱品质权重（荒野穷、中心富；dam 坝区介于 mid/center）：[白,绿,蓝,紫,金,红,彩]
+## dam 权重和=100（roll_rarity 按和取模，hd_data.gd roll_rarity 消费；
+## zone 名由 HDWorld.zone_at 大坝矩形分支给出，两处缺一即静默回退 mid）
 const RARITY_W := {
 	"wild": [62, 26, 9, 3, 0, 0, 0],
 	"mid": [40, 30, 18, 9, 3, 0, 0],
 	"center": [18, 24, 24, 17, 12, 4, 1],
+	"dam": [30, 26, 20, 13, 8, 2, 1],
 }
 
 ## UI 中文字体链：Godot 默认字体缺大量中文字形（乱码方框根因），改用系统字体兜底；
@@ -92,6 +95,7 @@ const MAP_HALF := 170.0
 const DANGER_R := 80.0
 const HALL_CENTER := Vector3(120.0, 0.0, 130.0)   # 室内靶馆馆心（行动区东北角外沿）
 const EXTRACT_POS := Vector3(128.0, 0.0, 24.0)    # 主撤离点
+const DAM_EXTRACT_POS := Vector3(93.0, 0.0, -94.0)   # 第二撤离点（大坝撤离广场，与主撤离直线 122m）
 const EXTRACT_R := 3.0                            # 撤离判定半径
 const EXTRACT_HOLD := 5.0                         # 撤离读条秒数
 

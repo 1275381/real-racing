@@ -92,10 +92,14 @@ func build(world, player, audio) -> void:
 		var spot: Dictionary = spots[k]
 		var sp: Vector3 = spot["pos"]
 		var home := Vector3(sp.x, _ground_y(sp.x, sp.z), sp.z)
-		# 路线 = 家门口 + 最近的 2 个巡逻点（没有寻路，卡墙靠绕行兜底）
+		# 路线 = 家门口 + 同分区最近的 2 个巡逻点（没有寻路，卡墙靠绕行兜底）；
+		# 跨 zone 候选剔除：大坝 7 点锁坝底互连，mid/wild 各自内循环不外溢
+		# （mid 4/wild 5 点互连候选 ≥3，满足 route 家点+2 邻域）
 		var others: Array = []
 		for j in spots.size():
 			if j == k:
+				continue
+			if str(spots[j].get("zone", "mid")) != str(spot.get("zone", "mid")):
 				continue
 			var op: Vector3 = spots[j]["pos"]
 			others.append({"p": op, "d": Vector2(op.x - home.x, op.z - home.z).length_squared()})

@@ -385,6 +385,69 @@ func _run() -> void:
 				"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
 		smg_root.free()
 
+	# 30. 大坝分区（搜打撤第三区）：装配节点/容器点 13/巡逻点 7/品质权重/矩形分区/
+	#     坝体碰撞 wall_hit（前墙 12m·开洞抵背墙 18m·溢流段高位 24m）/幂等/第二撤离
+	check("大坝两装配节点挂在 world 下", main.world.dam != null
+		and main.world.dam_base != null
+		and main.world.dam.get_parent() == main.world
+		and main.world.dam_base.get_parent() == main.world)
+	var dam_box_n := 0
+	for s_v in main.world.container_spots:
+		var s: Dictionary = s_v
+		if str(s.get("zone")) == "dam":
+			dam_box_n += 1
+	check("坝区容器点位 13（红线 ∈[10,14]）", dam_box_n == 13, "n=%d" % dam_box_n)
+	var dam_pt_n := 0
+	for s_v in main.world.patrol_spots:
+		var s: Dictionary = s_v
+		if str(s.get("zone")) == "dam":
+			dam_pt_n += 1
+	check("坝区巡逻点 7（红线 ∈[6,8]）", dam_pt_n == 7, "n=%d" % dam_pt_n)
+	main.world.build()   # 重复 build 幂等（hd_world._built 护栏）：坝区点位不得翻倍
+	var dam_box_n2 := 0
+	for s_v in main.world.container_spots:
+		var s2: Dictionary = s_v
+		if str(s2.get("zone")) == "dam":
+			dam_box_n2 += 1
+	check("重复 build() 幂等（坝区容器点不翻倍）", dam_box_n2 == 13,
+		"n=%d" % dam_box_n2)
+	var dam_w: Array = HDData.RARITY_W["dam"]
+	var dam_w_sum := 0
+	for x in dam_w:
+		dam_w_sum += int(x)
+	check("坝区品质权重入表且和=100", dam_w_sum == 100, "sum=%d" % dam_w_sum)
+	check("zone_at 大坝矩形裁决（坝内 dam·中心/过渡不受蚀）",
+		main.world.zone_at(28.0, -95.0) == "dam"
+		and main.world.zone_at(93.0, -94.0) == "dam"
+		and main.world.zone_at(0.0, 0.0) == "center"
+		and main.world.zone_at(96.0, 0.0) == "mid")
+	var ex_l: Array = main.world.extract_list()
+	check("第二撤离点入列（93,-94）", ex_l.size() == 2
+		and (ex_l[1] as Vector3).distance_to(HDData.DAM_EXTRACT_POS) < 0.01,
+		"n=%d" % ex_l.size())
+	var wh_wall: float = main.world.wall_hit(Vector3(0.0, 2.0, -100.0),
+		Vector3(0.0, 0.0, -1.0), 300.0)
+	check("坝体碰撞 wall_hit·廊道前墙 12m", absf(wh_wall - 12.0) < 0.5,
+		"d=%.1f" % wh_wall)
+	var wh_hole: float = main.world.wall_hit(Vector3(10.0, 4.0, -100.0),
+		Vector3(0.0, 0.0, -1.0), 300.0)
+	check("坝体碰撞 wall_hit·开洞穿入抵坝基背墙 18m", absf(wh_hole - 18.0) < 0.5,
+		"d=%.1f" % wh_hole)
+	var wh_ov: float = main.world.wall_hit(Vector3(-4.0, 30.0, -100.0),
+		Vector3(0.0, 0.0, -1.0), 300.0)   # x=-4 避开 x=0 闸墩（墩盒 y30 处 22.2m 先挡）
+	check("坝体碰撞 wall_hit·溢流段高位 24m", absf(wh_ov - 24.0) < 0.5,
+		"d=%.1f" % wh_ov)
+	check("坝区障碍批量注册（全图 ≥140 条）", main.world.obstacles.size() >= 140,
+		"n=%d" % main.world.obstacles.size())
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	main.player.enter(main.world.extract2_pos)
+	main._bag_value = 100.0
+	main._extract_t = 4.95
+	await frames(10)
+	check("第二撤离点读条撤出 WIN（大坝广场）", main.hud.result_visible
+		and main.stash.stats["extracts"] == 2,
+		"extracts=%d" % main.stash.stats["extracts"])
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)
