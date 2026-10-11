@@ -5,7 +5,8 @@
 # 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
 # 交易行未拥有枪购买特写（shot_market_buy.png）→ 大坝分区四连拍
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
-# / shot_dam_ref 对位相机主图——高机位仿目标图取景：岩山+涂鸦坝面+坝顶门吊剪影）
+# / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
+# +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）
 # （共 25 张）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -147,27 +148,38 @@ func _initialize() -> void:
 	shot("res://out/shot_dam_graffiti.png")
 	main.player.dead = false
 
-	# ---- shot_dam_ref：对位相机主图（第 3 轮机位重定，python 视算扫参择优）——
-	# 高机位 cam(0,46,-70) 瞄 (-8,36,-124)：yaw=atan2(-8,-54)≈-2.995、
-	# pitch=atan2(36-46,129.5)≈-0.077、FOV 58。三层构图对位目标图：上幅大岩山
-	# (-18,-200 顶85) 从坝顶后升起（越 y53 遮挡线 5.5°~16.6° 仰角带）+ 坝顶门吊/
-	# 双塔吊/长臂吊剪影；中幅涂鸦坝面（环屏 x+0.23）+ 西段泄洪管群贴坡；
-	# 下幅坝基/廊道拱廊/梳齿。玩家 update 每帧把 pos.y 贴地并回摆相机
-	# （hd_player.gd:112/120），高机位 dead=true 冻结后手动越权 cam；站位 (0,-70)
-	# d=70∈center 高危区 → pos 搬 (90,-30) 关红罩（同四连拍协议），拍完即恢复
-	main.player.enter(Vector3(0.0, 0.0, -70.0))
-	main.player.yaw = -2.995
-	main.player.pitch = -0.077
+	# ---- shot_dam_ref：对位相机主图（第 4 轮机位重定，python 视算扫参择优）——
+	# 后撤高机位 cam(20,48,80) 瞄 (0,18,-124)：yaw=atan2(-20,-204)≈-3.044、
+	# pitch=atan2(-30,204.6)≈-0.145、FOV 58。四层构图全对位目标图：上幅山脊
+	# （脊2/脊3 从坝顶后升起，屏x[0.19,0.53]）+ 坝顶门吊/塔吊/长臂吊完整剪影
+	# （塔吊顶屏 y-0.43 不裁）；中幅涂鸦坝面全长（屏x[-0.73,0.84]）+ 泄洪管群；
+	# 下幅（屏y+0.19~+0.38）右 2/3 厂房甲乙/白罐/黑烟柱/雨棚/卧罐、左 1/3 七组
+	# 集装箱堆、棕榈 6 株、服务街折线弯——python 视算 18/18 前景构件全入画。
+	# 纯净全景（评审 #2）：dead=true 冻结 update 后手动越权 cam，hud CanvasLayer
+	# 整层隐藏 + 双槽枪架 holder.visible=false（拍完逐项还原）；站位 (20,80)
+	# d=82.5∈mid 不触高危红罩
+	main.player.enter(Vector3(20.0, 0.0, 80.0))
+	main.player.yaw = -3.044
+	main.player.pitch = -0.145
 	main.player.update(0.016)
 	main.player.dead = true
-	main.player.cam.position = Vector3(0.0, 46.0, -70.0)
-	main.player.cam.rotation = Vector3(-0.077, -2.995 + PI, 0)
+	main.player.cam.position = Vector3(20.0, 48.0, 80.0)
+	main.player.cam.rotation = Vector3(-0.145, -3.044 + PI, 0)
 	main.player.cam.fov = 58.0
-	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	var hud0: bool = main.hud.visible
+	main.hud.visible = false
+	var holder_vis := {}
+	for slot_v in main.guns._guns:
+		var g: Dictionary = main.guns._guns[slot_v]
+		holder_vis[slot_v] = g["holder"].visible
+		g["holder"].visible = false
 	await frames(6)
 	shot("res://out/shot_dam_ref.png")
 	main.player.dead = false
 	main.player.cam.fov = main.player.BASE_FOV
+	main.hud.visible = hud0
+	for slot_v in holder_vis:
+		main.guns._guns[slot_v]["holder"].visible = holder_vis[slot_v]
 
 	main._enter_range()
 	await frames(40)

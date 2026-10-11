@@ -62,16 +62,17 @@ const HALL_FLOOR_Y := 0.06        # 馆内地坪高度：与大地 y=0 错开 6c
 const EXTRACT_BEACON_H := 2.6
 
 ## set_indoor 前后对比（进靶馆：雾拉近/环境光压暗/漏进来的夕阳压弱）
-## 雾密度红线：指数雾 exp(-d·dist)，0.003 时 200m 处雾感仅 ~45%、150m ~36%——
-## 150-200m 外士兵剪影必须可辨（问题②"远处看不见人"），宁淡勿糊，任何上调先过这条线
-const FOG_MAX := 0.003              # 远景可见性红线
-const OUTDOOR_FOG := 0.002          # 200m 处雾感 ~33%，地平线保留空气透视层次
+## 雾密度红线：指数雾 exp(-d·dist)——第 3 轮 0.003→0.005：0.004 档下
+## 150m 透射 ~55%（原 0.002 为 74%）、士兵赭红军装在浅暖霾中仍读作深色剪影
+## （问题②结论复核仍守），>120m 才显著衰减换远山大气层次（评审 #9）
+const FOG_MAX := 0.005              # 远景可见性红线
+const OUTDOOR_FOG := 0.004          # 150m 处雾感 ~45%，远山 130-160m 变浅偏蓝紫
 ## INDOOR_FOG 刻意压在红线内一格：fog_density 引擎侧按 float32 存储，
 ## 0.003 会舍入成 0.003000000026… 反超 double 红线（回归 15 踩过）；0.0029 双保险
 const INDOOR_FOG := 0.0029          # 靶馆 22m 靶道只留薄雾感（原 0.02 把靶子糊成剪影）
-const OUTDOOR_AMB := 0.9
+const OUTDOOR_AMB := 0.45
 const INDOOR_AMB := 0.55
-const OUTDOOR_SUN := 1.05
+const OUTDOOR_SUN := 1.7
 const INDOOR_SUN := 0.25
 
 ## 可搜刮容器锚点（x/z 手工排布贴障碍摆：中心 18 / 过渡 11 / 荒野 9 + 坝区 13
@@ -320,42 +321,75 @@ func wall_hit(from: Vector3, dir: Vector3, max_d: float) -> float:
 
 # ================= 环境与大地 =================
 
-## 黄昏太阳 + ProceduralSkyMaterial 天穹 + 指数雾 + 暖环境光 + 轻辉光
+## 白天光照架构 v2（第 5 轮架构级重做）——四层渲染体系对位目标图实拍观感：
+## ① PhysicalSkyMaterial 物理大气散射天空（瑞利/米氏：天顶饱和蓝连续渐变到
+##    地平暖白、太阳方向自然光晕——替换三色渐变插值的 ProceduralSky 塑料感）；
+## ② 双色温打光：暖主阳 (-40,25) + 冷天光补光 (无阴影反向)——阴影偏冷蓝、
+##    受光面偏暖的电影级对比；
+## ③ 全局间接光 SSIL（暗面获得周围暖沙色反弹，混凝土读作实体而非平涂）+
+##    SSAO（垛间凹槽竖条纹）；
+## ④ 体积雾（低密度暖色前向散射：坝脚与远区大气纵深、逆光发亮）+ 普通指数雾
+##    （远山变浅）+ 调色分级（饱和 1.18/对比 1.06——评审「暖沙色调高饱和」直接解）
 func _build_env() -> void:
+	# —— 暖主阳（唯一投影光源，天空太阳绑定此节点方向） ——
 	_sun = DirectionalLight3D.new()
-	_sun.light_color = Color(1.0, 0.74, 0.52)   # 暖黄昏
+	_sun.light_color = Color(1.0, 0.96, 0.9)   # 正午偏暖白（强日照）
 	_sun.light_energy = OUTDOOR_SUN
-	_sun.rotation_degrees = Vector3(-21.0, -38.0, 0.0)   # 低角度夕照
+	_sun.rotation_degrees = Vector3(-40.0, 25.0, 0.0)   # 中午偏斜：阴影落画面左侧
 	_sun.shadow_enabled = true
-	_sun.directional_shadow_max_distance = 120.0
+	_sun.directional_shadow_max_distance = 300.0   # 坝距 ref 相机 130~280m，120 会全落阴影距离外
 	_sun.shadow_bias = 0.06
-	_sun.shadow_blur = 1.4
-	_sun.shadow_opacity = 0.78
+	_sun.shadow_blur = 1.0
+	_sun.shadow_opacity = 0.9
 	add_child(_sun)
+	# —— 冷天光补光（第 5 轮双色温架构）：从主阳反向的半空铺冷蓝天光，
+	#    阴影面偏蓝、受光面偏暖——无阴影、低能量，只做暗部染色
+	var fill := DirectionalLight3D.new()
+	fill.light_color = Color(0.62, 0.72, 0.92)
+	fill.light_energy = 0.32
+	fill.rotation_degrees = Vector3(-38.0, 155.0, 0.0)
+	fill.shadow_enabled = false
+	add_child(fill)
 
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.17, 0.13, 0.26)        # 黄昏紫顶
-	sky_mat.sky_horizon_color = Color(0.92, 0.5, 0.28)     # 地平线橙
-	sky_mat.ground_bottom_color = Color(0.13, 0.11, 0.1)
-	sky_mat.ground_horizon_color = Color(0.5, 0.34, 0.23)
-	sky_mat.sun_angle_max = 30.0
+	# —— 物理大气散射天空 ——
+	var sky_mat := PhysicalSkyMaterial.new()
+	sky_mat.rayleigh_coefficient = 2.0    # 瑞利散射：天顶饱和蓝→地平暖白的连续渐变
+	sky_mat.mie_coefficient = 0.008       # 米氏散射：太阳方向光晕
+	sky_mat.mie_eccentricity = 0.75
+	sky_mat.turbidity = 4.0               # 干燥霾天（沙漠大坝空气通透但非纯净）
+	sky_mat.ground_color = Color(0.5, 0.44, 0.35)   # 地平暖沙色衔接大地（物理天空单色地面）
+	sky_mat.energy_multiplier = 1.05
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.0
+	env.tonemap_exposure = 1.1
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_density = OUTDOOR_FOG
-	# 雾色调冷灰：暖雾(0.72,0.56,0.46)与士兵赭红军装(0.7,0.5,0.4)几乎同色，
-	# 远处人形会直接溶进雾里（问题②）；冷灰雾顺带把暖色目标衬托出来
-	env.fog_light_color = Color(0.58, 0.62, 0.68)
-	env.fog_sky_affect = 0.12
+	# 暖霾色：远山变浅偏蓝紫靠密度（150m 透射 ~55%）+ 体积雾纵深共同实现
+	env.fog_light_color = Color(0.80, 0.74, 0.64)
+	env.fog_sky_affect = 0.08
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.52, 0.44, 0.4)
+	env.ambient_light_color = Color(0.6, 0.57, 0.5)
 	env.ambient_light_energy = OUTDOOR_AMB
+	env.ssao_enabled = true          # 垛间凹槽/洞龛深色竖条纹（评审 #8）
+	env.ssao_intensity = 2.2
+	env.ssil_enabled = true          # 屏幕空间间接光：暗面暖沙色反弹（第 5 轮架构）
+	env.ssil_intensity = 0.6
+	# 体积雾（第 5 轮架构）：低密度暖色前向散射——坝脚雾霭与逆光发亮的大气纵深
+	env.volumetric_fog_enabled = true
+	env.volumetric_fog_density = 0.012
+	env.volumetric_fog_albedo = Color(1.0, 0.86, 0.72)
+	env.volumetric_fog_anisotropy = 0.55
+	env.volumetric_fog_length = 160.0
+	# 调色分级（第 5 轮架构）：饱和/对比一键对位「暖沙色高饱和」（评审 #6 终解）
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.0
+	env.adjustment_contrast = 1.06
+	env.adjustment_saturation = 1.18
 	env.glow_enabled = true          # 信标/灯板泛光
 	env.glow_intensity = 0.5
 	env.glow_hdr_threshold = 1.05
@@ -363,9 +397,54 @@ func _build_env() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	_build_clouds()
 
 
-## 大地平面：300×300 深色戈壁 + 程序化细噪点（battle_map.gd 同款 NoiseTexture2D）
+## 高空云带 ×3（评审 #7 丝缕白云的工程内替代：ProceduralSkyMaterial 无
+## sky_cover 属性——4.7 运行时报 Invalid assignment 曾致回归挂死，见上）。
+## unshaded 半透明噪声 PlaneMesh 平铺高空：cast_shadow OFF 不投地面影，
+## 距 ref 相机 250~350m 经暖霾（fog 0.004）衰减成淡丝缕，正对目标图
+## 左上/中上天区；远高于山脊顶 72 与塔吊顶 80，不遮挡
+const CLOUD_BANDS := [
+	{"y": 155.0, "x": 10.0, "z": -170.0, "w": 420.0, "d": 60.0},
+	{"y": 175.0, "x": -90.0, "z": -240.0, "w": 520.0, "d": 80.0},
+	{"y": 165.0, "x": 130.0, "z": -210.0, "w": 380.0, "d": 55.0},
+]
+
+func _build_clouds() -> void:
+	var cn := FastNoiseLite.new()
+	cn.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	cn.frequency = 0.008
+	cn.fractal_octaves = 4
+	cn.seed = 20261013
+	var ctex := NoiseTexture2D.new()
+	ctex.width = 512
+	ctex.height = 512
+	ctex.seamless = true
+	ctex.noise = cn
+	var cramp := Gradient.new()
+	cramp.set_color(0, Color(1.0, 1.0, 1.0, 0.0))
+	cramp.set_color(1, Color(1.0, 1.0, 1.0, 0.85))
+	ctex.color_ramp = cramp
+	var cm := StandardMaterial3D.new()
+	cm.albedo_texture = ctex
+	cm.albedo_color = Color(0.98, 0.98, 1.0, 0.9)
+	cm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	cm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	cm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for cb in CLOUD_BANDS:
+		var mi := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(cb["w"], cb["d"])
+		pm.material = cm
+		mi.mesh = pm
+		mi.position = Vector3(cb["x"], cb["y"], cb["z"])
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+
+
+## 大地平面：300×300 浅色戈壁滩 + 程序化细噪点（battle_map.gd 同款 NoiseTexture2D）
+## 白天对位提亮：目标图地面是日照下的浅沙色，albedo 乘噪点后约原色
 func _build_ground() -> void:
 	var n := FastNoiseLite.new()
 	n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -378,13 +457,13 @@ func _build_ground() -> void:
 	tex.seamless = true
 	tex.noise = n
 	var ramp := Gradient.new()
-	ramp.set_color(0, Color(0.6, 0.54, 0.44))
+	ramp.set_color(0, Color(0.68, 0.63, 0.53))
 	ramp.set_color(1, Color(1.0, 1.0, 1.0))
 	tex.color_ramp = ramp
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.36, 0.31, 0.24)   # 深色戈壁（乘噪点后约原色）
+	mat.albedo_color = Color(0.6, 0.52, 0.4)   # 浅沙色戈壁（乘噪点后约原色）
 	mat.albedo_texture = tex
-	mat.uv1_scale = Vector3(20.0, 20.0, 1.0)
+	mat.uv1_scale = Vector3(7.0, 7.0, 1.0)   # 低频大尺度斑块破纯色（第 2 轮 20→7）
 	mat.roughness = 1.0
 	mat.metallic_specular = 0.0   # 干燥地面不反射天空
 	var plane := PlaneMesh.new()
