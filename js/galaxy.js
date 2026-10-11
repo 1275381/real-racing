@@ -10,6 +10,9 @@ import { build as texJupiter } from './planets/jupiter.js';
 import { build as texSaturn }  from './planets/saturn.js';
 import { build as texUranus }  from './planets/uranus.js';
 import { build as texNeptune } from './planets/neptune.js';
+// 地球城市扩展（设计见 out/earth-cities-design.md）：夜景灯光贴图 + 城市楼群
+import { build as buildEarthLights } from './planets/earthLights.js';
+import { build as buildEarthCities } from './planets/earthCities.js';
 const PLANET_TEX = {
     mercury: texMercury, venus: texVenus, earth: texEarth, mars: texMars,
     jupiter: texJupiter, saturn: texSaturn, uranus: texUranus, neptune: texNeptune,
@@ -477,6 +480,47 @@ const planetZoom = (i) => [planetR(i) * 1.6, planetR(i) * 14];   // 环绕半径
 const PLANET_HOME = 4;              // 进入时默认环绕半径 = 4×行星半径
 const _flyTarget = new THREE.Vector3(); // tween 每帧取行星世界坐标（避免逐帧 new）
 
+/* ---------- 地球城市（夜景灯光 + 楼群，out/earth-cities-design.md §7.1） ---------- */
+const EARTH_IDX = PLANETS.findIndex(p => p.key === 'earth');
+let earthCityCtx = null;            // { group, cities }，buildSolarSystem 地球分支填充
+const cityPickables = [];           // 城市隐形代理（与 solarPickables 隔离 → pickSolar/双击逻辑零改动）
+let cityCardShown = false;          // 当前信息卡是否为城市卡（楼群隐藏时需一并收掉，防残留）
+
+/* 昼夜自发光调制（设计 §6）：世界空间「法线·太阳方向」平滑熄亮 emissive。
+   同一函数引用打地球本体（emissiveMap 夜景灯光）与城市楼群（恒色窗光）→
+   customProgramCacheKey（默认 = onBeforeCompile.toString()，r160 lib:9215）一致，
+   程序缓存只按 USE_EMISSIVEMAP / USE_INSTANCING 宏差各编一个变体，不炸缓存；
+   InstancedMesh 分支经 USE_INSTANCING 宏自动生效。太阳位置恒定（sunPos，
+   :332-334/:495），uniform 只初始化一次全局共享。 */
+const sunUniform = { value: sunPos.clone() };
+function nightEmissiveOnBeforeCompile(sh) {
+    sh.uniforms.uSunPos = sunUniform;
+    sh.vertexShader = sh.vertexShader
+        .replace('#include <common>',
+            '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
+        .replace('#include <project_vertex>', [
+            '#include <project_vertex>',
+            '#ifdef USE_INSTANCING',
+            '  vWPos = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xyz;',
+            '  vWNorm = normalize( mat3( modelMatrix ) * mat3( instanceMatrix ) * objectNormal );',
+            '#else',
+            '  vWPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;',
+            '  vWNorm = normalize( mat3( modelMatrix ) * objectNormal );',
+            '#endif',
+        ].join('\n'));
+    sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>',
+            '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\nuniform vec3 uSunPos;')
+        .replace('#include <emissivemap_fragment>', [
+            '#include <emissivemap_fragment>',
+            'float sDot = dot( normalize( vWNorm ), normalize( uSunPos - vWPos ) );',
+            'totalEmissiveRadiance *= 1.0 - smoothstep( -0.18, 0.12, sDot );',
+        ].join('\n'));
+}
+function patchNightEmissive(mat) {
+    mat.onBeforeCompile = nightEmissiveOnBeforeCompile; // 同一函数引用 → 缓存键一致
+}
+
 // 土星环 UV 重排：RingGeometry 默认 UV 是平面投影，径向条带贴图（x=半径方向）
 // 要求 u 沿半径线性、v 取条带中线
 function makeRingGeometry(inner, outer) {
@@ -576,7 +620,8 @@ function buildSolarSystem() {
         let cloud = null;
         if (tex.cloudMap) {
             cloud = new THREE.Mesh(
-                new THREE.SphereGeometry(sz * 1.015, 96, 64), // 略大于地表 +1.5%，差速自转
+                // 地球 +3%：城市楼顶最高 1.026r（T1 楼 3.2e-4 + 基座），1.015r 会顶穿云层
+                new THREE.SphereGeometry(p.key === 'earth' ? sz * 1.03 : sz * 1.015, 96, 64),
                 new THREE.MeshStandardMaterial({
                     map: tex.cloudMap, transparent: true, opacity: 0.85,
                     depthWrite: false, roughness: 1, metalness: 0,
@@ -608,6 +653,48 @@ function buildSolarSystem() {
                     ? new THREE.MeshStandardMaterial({ map: tex.moonMap, roughness: 1, metalness: 0 })
                     : new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 1 }));
             holder.add(moonPivot);
+        }
+
+        // 地球城市（夜景灯光 + 楼群，设计 §7.1-3）；tex.landAt 守卫：earth.js 契约回退时
+        // 全链路静默跳过，其他行星零感知
+        if (p.key === 'earth' && tex.landAt) {
+            // 夜景灯光：作为 emissiveMap 与 map 同 UV 同几何体 → 天然对位同转、无新增 draw call；
+            // solar 模式远眺夜半球亮灯是纯收益，不做距离门控
+            const lights = buildEarthLights({ landAt: tex.landAt, radius: sz });
+            lights.map.anisotropy = maxAniso;
+            mat.emissive = new THREE.Color(0xffc37a);
+            mat.emissiveIntensity = 1.2;
+            mat.emissiveMap = lights.map;
+            patchNightEmissive(mat); // 昼侧熄灭/夜侧点亮（裸 emissiveMap 会昼侧常亮）
+
+            // 楼群：必须挂 mesh（自转载体 mesh.rotation.y += dt*0.5），挂 holder 会在自转中脱靶；
+            // 初始隐藏，loop() 的 updateEarthCities() 按 模式+距离 滞回门控
+            const cityR = buildEarthCities({ landAt: tex.landAt, radius: sz });
+            cityR.group.visible = false;
+            mesh.add(cityR.group);
+            earthCityCtx = { group: cityR.group, cities: cityR.cities };
+
+            // 楼群材质统一打昼夜补丁（40 城共享 1 份材质，同一函数引用 → 程序缓存键一致）
+            cityR.group.traverse(o => { if (o.isInstancedMesh) patchNightEmissive(o.material); });
+
+            // 点击热区：每城一颗隐形代理球（复用行星代理「材质不可见仍可拾取」机制）。
+            // 只进 cityPickables、不进 solarPickables —— pickSolar/双击进环绕逻辑零冲突；
+            // 代理挂 cityR.group → 随楼群同转、随 group 显隐
+            const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+            for (const c of cityR.cities) {
+                console.assert(c.hitR > 0 && c.hitR < 0.001,
+                    `city ${c.name}: hitR 非法（SphereGeometry 缺参默认 radius=1，会生成覆盖太阳系的巨球）`);
+                const cityProxy = new THREE.Mesh(new THREE.SphereGeometry(c.hitR, 8, 6), hitMat);
+                cityProxy.position.copy(c.pos);
+                cityProxy.userData.card = {
+                    name: c.name,
+                    spec: `${c.country} · ${c.tier} 级城市`,
+                    dist: `人口约 ${c.pop}`,
+                    desc: c.desc,
+                };
+                cityR.group.add(cityProxy);
+                cityPickables.push(cityProxy);
+            }
         }
         solarBodies.push({ holder, mesh, cloud, orbitR: oR, speed: (Math.PI * 2) / p.period, angle: Math.random() * Math.PI * 2 });
     }
@@ -1028,7 +1115,40 @@ function pickSolar() {
     const hits = raycaster.intersectObjects(solarPickables, false);
     return hits.length ? hits[0].object : null;
 }
+const _cityOc = new THREE.Vector3(); // 城市遮挡裁决临时向量（悬停每帧调用，避免逐帧 new）
+// 城市代理拾取：只测 cityPickables（与 solarPickables 隔离），楼群隐藏时零开销短路。
+// 代理是完整球体且 intersectObject 不做可见性/遮挡测试 → 射线穿透星球仍会命中
+// 背面（不可见）城市，命中须过遮挡裁决：tSurf = min(地球解析 ray-sphere 入射距,
+// 月球 mesh 最近命中距)，仅采纳 t < tSurf 的代理（背面/被月球遮挡的城市剔除；
+// 点击与悬停光标同走本函数，裁决自动共用）
+function pickCity() {
+    if (!earthCityCtx || !earthCityCtx.group.visible || !mouseActive) return null;
+    raycaster.setFromCamera(mouseNDC, camera);
+    // 地球解析 ray-sphere：几何为标准球（SphereGeometry sz），弦高误差 ~7e-6 ≪ hitR
+    const R = planetR(EARTH_IDX);
+    planetWorldPos(EARTH_IDX, _cityOc);                 // 地球中心 = holder 世界位（mesh 无偏移）
+    _cityOc.sub(raycaster.ray.origin);                  // O→C
+    const tCA = _cityOc.dot(raycaster.ray.direction);   // 球心投影参数（direction 已归一化）
+    const d2 = _cityOc.lengthSq() - tCA * tCA;          // 射线到球心最近距²
+    let tSurf = d2 < R * R ? tCA - Math.sqrt(R * R - d2) : Infinity;
+    if (moonPivot) {                                    // 月球（轨道 1.96r）可挡住正面城市
+        const moonHits = raycaster.intersectObject(moonPivot, false);
+        if (moonHits.length && moonHits[0].distance < tSurf) tSurf = moonHits[0].distance;
+    }
+    const hits = raycaster.intersectObjects(cityPickables, false);
+    for (let i = 0; i < hits.length; i++) {
+        if (hits[i].distance < tSurf) return hits[i].object; // ascSort 升序 → 取最近未遮挡者
+    }
+    return null;
+}
 function handleClick() {
+    const city = pickCity(); // 城市优先：命中即出城市卡（无 planetIdx → 「进入环绕观光」自动隐藏）
+    if (city) {
+        cityCardShown = true;
+        showCardData(city.userData.card);
+        return;
+    }
+    cityCardShown = false;
     const body = pickSolar();
     if (body) { showCardData(body.userData.card, body.userData.planetIdx); return; }
     const idx = pickNamed();
@@ -1056,6 +1176,7 @@ function showCard(idx) {
 }
 function hideCard() {
     $('starCard').classList.remove('show');
+    cityCardShown = false;
 }
 $('cardClose').addEventListener('click', hideCard);
 // 行星卡内的环绕观光入口（触屏双击 dblclick 不可靠时的首次进入通道，非行星卡自动隐藏）
@@ -1073,6 +1194,22 @@ function planetWorldPos(i, out) {
 function syncPlanetCamera() {
     if (ctrl.mode !== 'planet' || planetIdx < 0) return;
     planetWorldPos(planetIdx, ctrl.target);
+}
+
+/* 地球城市楼群显隐（设计 §7.1-5）：planet 模式环绕地球且距离门控。
+   滞回（<8r 显示 / >8.6r 隐藏）防边界闪烁；enterPlanet 立即置 4r → 当帧可见；
+   ESC/切行星/回 solar 走模式条件自动隐藏，solarGroup.visible=false（:721/:821）
+   时整个子树再兜底消失。夜景灯光 emissiveMap 不门控（无额外 draw call）。 */
+const CITY_SHOW_R = 8, CITY_HIDE_R = 8.6;   // ×行星半径，7.5% 滞回
+function updateEarthCities() {
+    if (!earthCityCtx) return;
+    const r = planetR(EARTH_IDX);
+    const visible = ctrl.mode === 'planet' && planetIdx === EARTH_IDX
+        && (earthCityCtx.group.visible
+            ? ctrl.sph.radius < r * CITY_HIDE_R
+            : ctrl.sph.radius < r * CITY_SHOW_R);
+    earthCityCtx.group.visible = visible;
+    if (!visible && cityCardShown) hideCard(); // 城市卡随楼群隐藏收起，不留残卡
 }
 
 function enterPlanet(i) {
@@ -1212,6 +1349,7 @@ function loop() {
     if (solarSky.visible) for (const f of skyFadeMats) f.m.opacity = f.base * skyFade;
 
     syncPlanetCamera(); // planet 模式：target 逐帧锁定公转中的行星（先于转场与环绕派发）
+    updateEarthCities(); // 地球城市楼群：按 模式+距离 滞回显隐（隐藏时城市卡一并收起）
     if (tween) stepTween(dt);
     else if (ctrl.mode === 'outside' || ctrl.mode === 'solar' || ctrl.mode === 'planet') applyOutside(dt);
     else if (ctrl.mode === 'inside') applyInside();
@@ -1232,9 +1370,9 @@ function loop() {
         camera.updateProjectionMatrix();
     }
 
-    // 悬停亮星/行星 → 手型光标
+    // 悬停亮星/行星/城市 → 手型光标
     if (!ctrl.dragging && !tween && mouseActive) {
-        canvas.classList.toggle('hoverStar', pickNamed() >= 0 || !!pickSolar());
+        canvas.classList.toggle('hoverStar', pickNamed() >= 0 || !!pickSolar() || !!pickCity());
     }
 
     renderer.render(scene, camera);

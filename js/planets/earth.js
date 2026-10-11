@@ -6,6 +6,9 @@ import * as THREE from 'three';
  *   bumpMap  1024×512  高程灰度图（不设 colorSpace，保持线性）
  *   cloudMap 1024×512  RGBA 云层：暖白 RGB + alpha 覆盖率（ITCZ 赤道云带 / 中纬风暴带 / 副热带少云带）
  *   moonMap  512×256   月面：暗色月海、亮缘陨石坑、中央峰与辐射纹
+ *   landAt   (latDeg,lonDeg)=>boolean  陆地掩码双线性采样（契约见 out/earth-cities-design.md §1）：
+ *                      与 map 同一逐像素循环判定 e>SEA（海面浮冰/热带环礁不算陆地），
+ *                      采样口径与着色循环像素中心一致（经度 0 = 纹理最左列，北纬在上）
  *
  * 无缝策略：噪声晶格沿经度按整数周期取模（查表 + (x0+1)%w 环绕），像素按
  * u=(i+0.5)/W 采样；半分辨率粗场做周期化双线性上采样（x 向 (x0+1)%W2 环绕），
@@ -173,6 +176,7 @@ function drawSurface(S) {
     const img = ctx.createImageData(W, H), px = img.data;
     const bumpC = mkCanvas(W, H), bctx = bumpC.getContext('2d');
     const bimg = bctx.createImageData(W, H), bpx = bimg.data;
+    const landMask = new Uint8Array(W * H);   // 陆地掩码：255=陆（e>SEA），0=海（城市/灯光模块经 landAt 查询）
 
     for (let j = 0; j < H; j++) {
         const v = (j + 0.5) / H;
@@ -219,6 +223,7 @@ function drawSurface(S) {
             }
 
             const land = e > SEA;
+            landMask[j * W + i] = land ? 255 : 0;
             let r, gn, bl2, hgt;
 
             if (land) {
@@ -279,7 +284,30 @@ function drawSurface(S) {
     }
     ctx.putImageData(img, 0, 0);
     bctx.putImageData(bimg, 0, 0);
-    return { map: mapC, bump: bumpC };
+    return { map: mapC, bump: bumpC, landMask: landMask };
+}
+
+/* ========================= 陆地掩码采样（城市落点 / 夜景灯光的唯一陆地事实源） ========================= */
+
+/* 把 drawSurface 逐像素循环的 e>SEA 判定固化成掩码带出（浮冰/环礁在循环内属海洋分支，
+ * 掩码天然不算陆地）；采样口径与着色循环像素中心一致：经度 0 = 纹理最左列、
+ * 纬度 90 = 顶行。双线性采样 → 海岸线平滑过渡（>0.5 判陆），x 经度环绕、y 纬度钳制。
+ * 常驻内存 512KB（1024×512 × 1 字节）。 */
+function makeLandAt(mask, W, H) {
+    const s = (x, y) => {
+        const xi = ((x % W) + W) % W;
+        const yi = y < 0 ? 0 : y > H - 1 ? H - 1 : y;
+        return mask[yi * W + xi] / 255;
+    };
+    return function landAt(latDeg, lonDeg) {
+        if (!isFinite(latDeg) || !isFinite(lonDeg) || Math.abs(latDeg) >= 90) return false;
+        const u = ((lonDeg % 360) + 360) % 360 / 360;      // [0,1)，经度环绕
+        const x = u * W - 0.5, y = (90 - latDeg) / 180 * H - 0.5;
+        const x0 = Math.floor(x), y0 = Math.floor(y);
+        const fx = x - x0, fy = y - y0;
+        const a = s(x0, y0), b = s(x0 + 1, y0), c = s(x0, y0 + 1), d = s(x0 + 1, y0 + 1);
+        return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy > 0.5;
+    };
 }
 
 /* ========================= 云层（RGBA，alpha=覆盖率） ========================= */
@@ -465,5 +493,6 @@ export function build() {
         bumpMap: bumpTex,
         cloudMap: srgb(cloud),
         moonMap: srgb(moon),
+        landAt: makeLandAt(surf.landMask, 1024, 512),
     };
 }
