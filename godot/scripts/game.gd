@@ -385,6 +385,8 @@ func _car_preload_worker() -> void:
 	# 步枪排第一：它是步行时唯一的 GLB 枪模，下车切枪要用；车型按表序在后
 	var files: Array[String] = ["res://assets/cars/gun_rifle.glb"]
 	for m in TrackData.CAR_MODELS:
+		if m.has("proc_body"):
+			continue   # 程序化车身（风刃）零 GLB，无文件可预载，防空路径 load 报错
 		if not files.has(m["file"]):
 			files.append(m["file"])
 	for f in files:

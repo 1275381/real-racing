@@ -80,6 +80,27 @@ func _initialize() -> void:
 	check(not mat.clearcoat_enabled and absf(mat.roughness - 0.55) < 0.01,
 			"碳黑件保持哑光（clearcoat 关 / roughness 0.55）")
 
+	# ---- ⑦ 换身护栏：程序化专属车身（防再指回任何 GLB 复现与赤焰双模撞脸）----
+	check(CarVisual.available_model_ids().has("aiaero"),
+			"aiaero 在车库列表（file 键删除后 proc_body 短路不丢车）")
+	check(vis.using_glb == false, "风刃 using_glb=false（100% 程序化壳，零 GLB）")
+	var wb_shell: Node3D = vis.find_child("WBShell", true, false)
+	check(wb_shell != null, "WBShell 壳根可寻址")
+	if wb_shell != null:
+		# 挂载后口径：壳以 −枢轴y 挂入 BodyPivot，_tree_aabb 含自身 transform，
+		# 底面断言须加回 vis.body_pivot.position.y（探针实证 −0.399+0.459=0.06）
+		var wb_aabb: AABB = vis._tree_aabb(wb_shell)
+		var wb_bottom: float = wb_aabb.position.y + vis.body_pivot.position.y
+		check(absf(wb_aabb.size.x - 2.02) < 0.005 and absf(wb_aabb.size.y - 1.02) < 0.01
+				and absf(wb_aabb.size.z - 4.60) < 0.01,
+				"壳体外廓 2.02×1.02×4.60（实测 %s）" % wb_aabb.size)
+		check(absf(wb_bottom - 0.06) < 0.005 and absf(wb_aabb.position.x + 1.01) < 0.005
+				and absf(wb_aabb.position.z + 2.30) < 0.005,
+				"壳体底面离地 6cm / x·z 贴件表（实测 pos=%s 补枢轴底=%.3f）"
+				% [wb_aabb.position, wb_bottom])
+	var wb_verts: int = CarVisual._count_verts(vis)
+	check(wb_verts >= 3488, "顶点红线 ≥3488（实测 %d，实测 4360×0.8 回填，防退化回直角方块车）" % wb_verts)
+
 	# ---- ② 静止 + 低速（<80km/h）：尾翼贴平收敛 ----
 	vis.animate(1.0 / 60.0, 0.0, 0.0, false)
 	for i in 30:

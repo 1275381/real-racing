@@ -32,7 +32,8 @@ var _aero_mats: Array = []          # 碳黑空力件材质名单：_apply_paint
 static func available_model_ids() -> Array:
 	var out: Array = []
 	for m in TrackData.CAR_MODELS:
-		if ResourceLoader.exists(m["file"]):
+		# proc_body：程序化专属车身（零 GLB），无 file 键也不能从车库列表消失
+		if m.has("proc_body") or ResourceLoader.exists(m.get("file", "")):
 			out.append(m["id"])
 	return out
 
@@ -41,7 +42,10 @@ static func create(model_id: String, color: Color, accent: Color) -> CarVisual:
 	var cv := CarVisual.new()
 	var def: Dictionary = TrackData.model_by_id(model_id)
 	var built := false
-	if ResourceLoader.exists(def["file"]):
+	if def.has("proc_body"):
+		cv._build_windblade(def, color, accent)
+		built = true
+	elif ResourceLoader.exists(def.get("file", "")):
 		built = cv._build_from_glb(def, color, accent)
 	if not built:
 		cv._build_fallback(color, accent)
@@ -325,6 +329,284 @@ func animate(dt: float, vf: float, steer_vis: float, braking: bool) -> void:
 				1.0 if braking and kmh > _wing_brake_kmh else 0.0, dt / 0.12)
 		wing_pivot.position.y = _wing_rest_y + _wing_t * 0.13 + _wing_ab * 0.02
 		wing_blade.rotation.x = _wing_rest_rx + _wing_t * 0.56 + _wing_ab * 0.50
+
+
+# ---------------- 倒角件引擎（移植自 huodai hd_gunlib 的 7 符号闭包） ----------------
+# 跨工程不可 preload（新文件 + class_name 曾两次挂回归，见 hd_gunlib.gd:4-6 头注释），
+# 故整套闭包原样复制进本文件并按车级域改私有名：SEG_CHAMFER / _FACE_AXES /
+# _count_verts / _mesh_verts_local / _chamfer_box / _axis_half / _push_tri。
+# 六外表面严格保原盒面（面网格点 = 内收盒 clamp + 径向推回，平面区恰落 ±half 面，
+# 仅棱角内收）→ 盒占位探针即倒角件 AABB，风刃件表标定可直接复用。
+
+## 倒角盒每面网格分段（顶点 = 6·seg²+2 / 件，与 chamfer 半径无关）
+const SEG_CHAMFER := 6
+
+## 六面基架：n=外法线 / t1·t2=面内两轴（t1×t2=n）。Godot 正面=顺时针环绕，
+## 三角形按 p00→p01→p11 / p00→p11→p10 出（t1 右 t2 上视角的顺时针）
+const _FACE_AXES := [
+	[Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0)],
+	[Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 1, 0)],
+	[Vector3(0, 1, 0), Vector3(1, 0, 0), Vector3(0, 0, -1)],
+	[Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 0, 1)],
+	[Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(0, 1, 0)],
+	[Vector3(0, 0, -1), Vector3(-1, 0, 0), Vector3(0, 1, 0)],
+]
+
+
+## 统计 root（含自身）子树所有 MeshInstance3D 的 0 号面顶点和——
+## test_aero 顶点红线断言共用（防退化回直角方块车）
+static func _count_verts(root: Node) -> int:
+	var total := 0
+	if root is MeshInstance3D:
+		total += _mesh_verts_local((root as MeshInstance3D).mesh)
+	for mi in root.find_children("*", "MeshInstance3D", true, false):
+		total += _mesh_verts_local((mi as MeshInstance3D).mesh)
+	return total
+
+
+## 单 mesh 顶点数（无面/无顶点数组 = 0）
+static func _mesh_verts_local(m: Mesh) -> int:
+	if m == null or m.get_surface_count() == 0:
+		return 0
+	var arrs: Array = m.surface_get_arrays(0)
+	if arrs.is_empty():
+		return 0
+	var v: Variant = arrs[Mesh.ARRAY_VERTEX]
+	if v == null:
+		return 0
+	return (v as PackedVector3Array).size()
+
+
+## 倒角方块：外盒表面每面 seg×seg 网格采样（cosine 间距向四边棱线加密），
+## 每点先向内盒（半边长各收 chamfer）收拢、再沿径向推出 chamfer——
+## 平面区严格贴原盒面、12 条棱变四分之一圆柱、8 角变球面：直角棱线消除、
+## 法线全平滑。顶点 = 6·seg²+2 / 三角 = 12·seg²。
+## 与枪械版唯一差异：chamfer<0 的自动值按车级钳 15~60mm（枪械版是 0.8~4mm，
+## 对米级车身等于没倒角；平面区贴盒面的几何性质与该值无关，AABB 结论不受影响）
+static func _chamfer_box(parent: Node3D, mat: Material, size: Vector3,
+		pos: Vector3 = Vector3.ZERO, rot_deg: Vector3 = Vector3.ZERO,
+		chamfer: float = -1.0, seg: int = SEG_CHAMFER) -> MeshInstance3D:
+	var half := size * 0.5
+	var c := chamfer
+	if c < 0.0:
+		c = clampf(minf(size.x, minf(size.y, size.z)) * 0.18, 0.015, 0.06)
+	var hi := Vector3(maxf(half.x - c, 0.0004), maxf(half.y - c, 0.0004),
+			maxf(half.z - c, 0.0004))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for axes in _FACE_AXES:
+		var n: Vector3 = axes[0]
+		var t1: Vector3 = axes[1]
+		var t2: Vector3 = axes[2]
+		var hn := _axis_half(n, half)   # 面沿法线的半边长
+		var h1 := _axis_half(t1, half)  # 面沿 t1 的半边长
+		var h2 := _axis_half(t2, half)  # 面沿 t2 的半边长
+		var grid: Array = []
+		for i in seg + 1:
+			var u: float = -cos(PI * float(i) / float(seg))
+			var col: Array = []
+			for j in seg + 1:
+				var v: float = -cos(PI * float(j) / float(seg))
+				var q: Vector3 = n * hn + t1 * (u * h1) + t2 * (v * h2)
+				var inn := Vector3(clampf(q.x, -hi.x, hi.x),
+						clampf(q.y, -hi.y, hi.y), clampf(q.z, -hi.z, hi.z))
+				var dn := (q - inn).normalized()
+				col.append([inn + dn * c, dn])
+			grid.append(col)
+		for i in seg:
+			for j in seg:
+				_push_tri(st, grid[i][j], grid[i][j + 1], grid[i + 1][j + 1])
+				_push_tri(st, grid[i][j], grid[i + 1][j + 1], grid[i + 1][j])
+	st.index()
+	var mesh := st.commit()
+	mesh.surface_set_material(0, mat)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = pos
+	mi.rotation_degrees = rot_deg
+	parent.add_child(mi)
+	return mi
+
+
+## 单轴单位向量的半边长取值（axis 是 ±单轴单位向量）
+static func _axis_half(axis: Vector3, half: Vector3) -> float:
+	return absf(axis.x) * half.x + absf(axis.y) * half.y + absf(axis.z) * half.z
+
+
+## 推一个三角形（各顶点 [位置, 法线]；Godot 正面 = 顺时针环绕）
+static func _push_tri(st: SurfaceTool, a: Array, b: Array, c2: Array) -> void:
+	for p in [a, b, c2]:
+		st.set_normal(p[1])
+		st.add_vertex(p[0])
+
+
+# ---------------- 风刃·刃形 speedform 专属车身（aiaero，100% 程序化零 GLB） ----------------
+
+## 件表（米制、地面 y=0、车头 +Z；除 NoseDeck 前低后高 4° 外零旋转）——
+## 外廓 4.60×2.02×1.08m，实测 AABB position=(−1.01,0.06,−2.30) size=(2.02,1.02,4.60)：
+## ①KeelNose 龙骨船艏 PrismMesh(1.30,0.30,1.10)@(0,0.30,+1.75)（棱线沿 Z 居中置顶，
+##   正投影 V 形船艏，探针实证 AABB 严格=占位盒）②NoseDeck 楔形甲板 倒角
+##   (1.30,0.10,1.10)@(0,0.50,+1.75) 前低后高 4°（rotation.x=+4°：前缘 −0.038/后缘
+##   +0.038 补出侧面楔形接 Tub 顶）③Tub 主舱 倒角(2.02,0.36,2.30)@(0,0.44,+0.05)
+##   全车最宽 ±1.01 ④CanopyF/M 烟熏舱罩 ⑤CanopyR 引擎舱甲板+Periscope 潜望进气口
+##   固定碳黑 ⑥BoatTail 船尾+TailDeck 尾甲板 z∈[−2.30,−1.10] 无缝接 Tub ⑦Floorboard
+##   底板底 0.06 全车最低 ⑧轮眉浮筒×4 顶 0.68 恰盖胎顶 ⑨刃青饰条/白青刃灯/尾灯带。
+## 涂装四层：队色亮漆上壳 / 烟熏舱罩 / 固定碳黑下盘（_aero_mats 保哑光不吃亮漆）/
+## 刃青 #39d7d0 + 白青发光签名色（不进队色）——任何队色下都是亮漆+碳黑+青刃三层拼色。
+func _build_windblade(def: Dictionary, color: Color, accent: Color) -> void:
+	using_glb = false
+
+	# ---- 材质段（_build_fallback:336-354 同口径，烟熏/碳黑/刃青为风刃专属）----
+	var paint := StandardMaterial3D.new()
+	paint.albedo_color = color
+	paint.metallic = 0.68
+	paint.roughness = 0.32
+	var glass := StandardMaterial3D.new()
+	glass.albedo_color = Color(0.047, 0.067, 0.086, 0.90)   # #0c1116 烟熏
+	glass.metallic = 0.35
+	glass.roughness = 0.08
+	glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var carbon := StandardMaterial3D.new()
+	carbon.albedo_color = Color("#16181c")
+	carbon.metallic = 0.35
+	carbon.roughness = 0.55
+	_aero_mats.append(carbon)   # 登记保哑光：_apply_paint_gloss 跳过（:72-73 同口径）
+	var blade_glow := StandardMaterial3D.new()
+	blade_glow.albedo_color = Color("#39d7d0")
+	blade_glow.emission_enabled = true
+	blade_glow.emission = Color("#39d7d0")
+	blade_glow.emission_energy_multiplier = 0.7
+	var lamp_glow := StandardMaterial3D.new()
+	lamp_glow.albedo_color = Color("#cfeef2")
+	lamp_glow.emission_enabled = true
+	lamp_glow.emission = Color("#cfeef2")
+	lamp_glow.emission_energy_multiplier = 2.2
+	tail_mat = StandardMaterial3D.new()
+	tail_mat.albedo_color = Color("#300505")
+	tail_mat.emission_enabled = true
+	tail_mat.emission = Color(1.0, 0.1, 0.1)
+	tail_mat.emission_energy_multiplier = 0.42
+	var rim_mat := StandardMaterial3D.new()
+	rim_mat.albedo_color = Color("#d8dde4")
+	rim_mat.metallic = 1.0
+	rim_mat.roughness = 0.28
+	var tire_mat := StandardMaterial3D.new()
+	tire_mat.albedo_color = Color("#17181a")
+	tire_mat.roughness = 0.96
+
+	# 壳先建在游离节点（_tree_aabb 只遍历 transform 不依赖进主树），自检后再挂 BodyPivot
+	var shell := Node3D.new()
+	shell.name = "WBShell"   # test_aero 壳体几何红线的寻址名
+	var cb := func(name: String, size: Vector3, pos: Vector3,
+			mat: Material, rot_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
+		var mi := _chamfer_box(shell, mat, size, pos, rot_deg)
+		mi.name = name
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		return mi
+	var bx := func(name: String, size: Vector3, pos: Vector3, mat: Material) -> MeshInstance3D:
+		var mi := MeshInstance3D.new()
+		mi.name = name
+		var mesh := BoxMesh.new()
+		mesh.size = size
+		mesh.material = mat
+		mi.mesh = mesh
+		mi.position = pos
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		shell.add_child(mi)
+		return mi
+
+	# ---- 件表（地面绝对坐标）----
+	# 龙骨船艏：PrismMesh 三角截面在 X-Y、棱线沿 Z 居中置顶（探针实证）→ V 形正投影
+	var keel := MeshInstance3D.new()
+	keel.name = "KeelNose"
+	var keel_mesh := PrismMesh.new()
+	keel_mesh.size = Vector3(1.30, 0.30, 1.10)
+	keel_mesh.material = paint
+	keel.mesh = keel_mesh
+	keel.position = Vector3(0, 0.30, 1.75)
+	keel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	shell.add_child(keel)
+	# 楔形甲板前低后高（rotation.x=+4°：前缘 −0.038/后缘 +0.038，探针实证符号）
+	cb.call("NoseDeck", Vector3(1.30, 0.10, 1.10), Vector3(0, 0.50, 1.75),
+			paint, Vector3(4.0, 0, 0))
+	cb.call("Tub", Vector3(2.02, 0.36, 2.30), Vector3(0, 0.44, 0.05), paint)
+	cb.call("CanopyF", Vector3(1.30, 0.26, 0.85), Vector3(0, 0.75, 0.02), glass)
+	cb.call("CanopyM", Vector3(1.12, 0.16, 0.85), Vector3(0, 0.90, -0.28), glass)
+	cb.call("CanopyR", Vector3(0.92, 0.12, 0.65), Vector3(0, 0.97, -0.83), carbon)
+	cb.call("Periscope", Vector3(0.42, 0.14, 0.55), Vector3(0, 1.01, -0.95), carbon)
+	cb.call("BoatTail", Vector3(1.40, 0.26, 1.20), Vector3(0, 0.42, -1.70), paint)
+	cb.call("TailDeck", Vector3(1.16, 0.18, 1.00), Vector3(0, 0.62, -1.60), paint)
+	bx.call("Floorboard", Vector3(1.80, 0.05, 4.40), Vector3(0, 0.085, -0.05), carbon)
+	for k4 in ["FL", "FR", "RL", "RR"]:
+		var fx: float = 0.84 if k4.ends_with("L") else -0.84
+		var fz: float = 1.52 if k4.begins_with("F") else -1.44
+		cb.call("Fender" + k4, Vector3(0.34, 0.16, 0.78), Vector3(fx, 0.60, fz), paint)
+	bx.call("BladeLineL", Vector3(0.03, 0.03, 3.20), Vector3(0.995, 0.52, -0.10), blade_glow)
+	bx.call("BladeLineR", Vector3(0.03, 0.03, 3.20), Vector3(-0.995, 0.52, -0.10), blade_glow)
+	bx.call("TailBand", Vector3(1.10, 0.05, 0.04), Vector3(0, 0.50, -2.28), tail_mat)
+	bx.call("BladeLightL", Vector3(0.34, 0.045, 0.06), Vector3(0.50, 0.40, 2.27), lamp_glow)
+	bx.call("BladeLightR", Vector3(0.34, 0.045, 0.06), Vector3(-0.50, 0.40, 2.27), lamp_glow)
+
+	# ---- 壳体 AABB 自检（件表红线；不符即 push_error，探针口径见函数头注释）----
+	var aabb := _tree_aabb(shell)
+	if absf(aabb.size.x - 2.02) > 0.005 or absf(aabb.size.y - 1.02) > 0.01 \
+			or absf(aabb.size.z - 4.60) > 0.01 or absf(aabb.position.y - 0.06) > 0.005 \
+			or absf(aabb.position.z + 2.30) > 0.005:
+		push_error("[风刃] 壳体 AABB 超出件表标定：position=%s size=%s"
+				% [aabb.position, aabb.size])
+
+	# 重组进 BodyPivot（:161 同口径：枢轴在车高中面偏上，姿态动画围绕它俯仰/侧倾）
+	var body := Node3D.new()
+	body.name = "BodyPivot"
+	body.position = Vector3(0, aabb.size.y * 0.45, 0)
+	add_child(body)
+	shell.position.y -= body.position.y
+	body.add_child(shell)
+	body_pivot = body
+	body_pivot_rest = body_pivot.rotation
+	body_pivot_rest_pos = body_pivot.position
+	_cache_rest(shell)
+
+	# ---- 四轮（挂 CarVisual 根、不进壳树：aabb 传壳不含轮，套件贴身；滚动/转向动画走 Hub/Wheel 契约）----
+	var tire := CylinderMesh.new()
+	tire.top_radius = TIRE_R
+	tire.bottom_radius = TIRE_R
+	tire.height = 0.28
+	tire.radial_segments = 20
+	tire.material = tire_mat
+	var rim := CylinderMesh.new()
+	rim.top_radius = 0.21
+	rim.bottom_radius = 0.21
+	rim.height = 0.30
+	rim.radial_segments = 14
+	rim.material = rim_mat
+	for key in ["FL", "FR", "RL", "RR"]:
+		var front: bool = key.begins_with("F")
+		var pivot := Node3D.new()
+		pivot.name = "Hub" + key
+		var spin := Node3D.new()
+		spin.name = "Wheel" + key
+		pivot.add_child(spin)
+		var tire_mi := MeshInstance3D.new()
+		tire_mi.mesh = tire
+		tire_mi.rotation.z = PI / 2.0
+		tire_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		spin.add_child(tire_mi)
+		var rim_mi := MeshInstance3D.new()
+		rim_mi.mesh = rim
+		rim_mi.rotation.z = PI / 2.0
+		rim_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		spin.add_child(rim_mi)
+		pivot.position = Vector3(0.84 if key.ends_with("L") else -0.84,
+				TIRE_R, 1.52 if front else -1.44)
+		add_child(pivot)
+		wheels[key] = {"pivot": pivot, "spin": spin}
+		_rest_euler[pivot] = Vector3.ZERO
+		_rest_euler[spin] = Vector3.ZERO
+
+	# 空力套件 + 主动尾翼按实测壳 AABB 落位（与 GLB 整块网格车同一调用；
+	# def.aero 驱动 90/200/60 三阈值，系数零改动）
+	_build_aero(def, aabb, body)
 
 
 # ---------------- 程序化回退车型（简化版 GT 跑车） ----------------
