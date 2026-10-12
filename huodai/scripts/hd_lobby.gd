@@ -1,16 +1,23 @@
 class_name HDLobby
 extends CanvasLayer
 ## 烽火地带 —— 大厅（移植 js/fps/lobby.js）：顶栏 LOGO/战绩/每日签到/现金，
-## 底部「1 出发 / 2 仓库 / 3 改枪台 / 4 交易行」四页签 +「G 去靶场」。
-## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）。
+## 底部「出发大厅 / 改枪台 / 交易行」三页签 +「G 去靶场」。
+## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）；
+## 数字键 1/2/3 直切页签（页签钮与全部指路文案统一「按 N 进」口径，无「页签 N」字样）。
 ## 鼠标路径：点击行=选中光标；装入/换装统一走行内显式按钮（已拥有未装显示「装备/换装」，
 ## 已装备/已装置灰），槽位卡片再点已选卡=设装入目标。
 ## 出发页光标模型（单轴，候选枪按 DEPLOY_PAGE 分页）：[主槽0 | 副槽1 | 当页枪行 | 出发钮]，
 ## ←/→ 页内回绕移动；↑/↓ 端点跨页（↓ 越过出发钮=翻下页回槽位0，↑ 在槽位0=翻上页落到出发钮）。
-## 回车：槽=设装入目标 · 枪=已拥有直接装（未拥有提示「交易行有售」）· 出发钮=出发。
-## 交易行（页签 4）= 全游戏唯一购买入口，三段分区（① 枪械 ② 瞄具 ③ 极致备弹）：
-## ←/→ 跨段 · 段内 ↑↓ 选条目 · 回车/「购买」钮成交（buy_gun/buy_scope/buy_ammo 既有链）；
-## B 循环购弹挡位 30/90/300 · 空格按挡位购弹（自出发页迁入，出发页右栏只读显示余量）。
+## 回车：槽=设装入目标 · 枪=已拥有直接装（未拥有提示「按 3 进交易行」）· 出发钮=出发。
+## 交易行（页签 3）= 全游戏唯一购买入口 + 仓库去向，四段分区：
+## ① 枪械 ② 瞄具 ③ 极致备弹 ④ 仓库·战利品（原仓库页并入，变卖在此成交）：
+## ←/→ 跨段 · 段内 ↑↓ 选条目（④段无条目 no-op）· 回车/「购买」钮成交
+## （buy_gun/buy_scope/buy_ammo/sell_all 既有链）；B 循环购弹挡位 30/90/300 ·
+## 空格按挡位购弹——分级守卫：只在③区内消费；交易行他段弹指路 hint 后不消费
+## （←/→ 可达③区，指路不误导）；出发/改枪台页静默不消费（那两页到不了③区）。
+## 改枪台：左列枪/右列瞄具两列——左列回车=一步预安装（自动跳右列选中「第一个已拥有
+## 且未装」的镜）；自带 6× 原厂镜的枪（狙击）守卫拦截换装（局内 builtin 优先，
+## 预装镜会被静默覆盖=装了白装）；未拥有镜行内「去购买」一键跳交易行②区对应行。
 ## 操作失败（钱不足等）用底部 show_hint() 提示（不用 HUD toast），提示带金额明细。
 ## 按 1440×810 设计，_apply_ui_scale 按视口高度整体缩放（全屏大屏不缩字）。
 
@@ -21,16 +28,16 @@ const COL_BG := Color(0.03, 0.05, 0.04, 0.95)
 const COL_TEXT := Color(0.85, 0.87, 0.82)
 const COL_ACCENT := Color(1, 0.7, 0.36)
 const COL_OK := Color(0.49, 0.89, 0.66)
-const TAB_TITLES := ["1 · 出发", "2 · 仓库", "3 · 改枪台", "4 · 交易行"]
+const TAB_TITLES := ["出发大厅", "改枪台", "交易行"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
 const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
 const DEPLOY_PAGE := 6              # 出发页候选枪每页行数（14 枪=3 页，光标域随页收缩）
-const MARKET_SECS := 3              # 交易行段数：0 枪械 / 1 瞄具 / 2 极致备弹
+const MARKET_SECS := 4              # 交易行段数：0 枪械 / 1 瞄具 / 2 极致备弹 / 3 仓库·战利品
 
 var lobby_visible: bool = false
 
 var _stash: HDStash
-var _tab := 0                       # 0 出发 / 1 仓库 / 2 改枪台 / 3 交易行
+var _tab := 0                       # 0 出发大厅 / 1 改枪台 / 2 交易行
 var _cur0 := 0                      # 出发页光标（当页行数域：2 槽位 + 当页枪行 + 出发钮）
 var _deploy_page := 0               # 出发页候选枪分页索引
 var _slot_focus := "primary"        # 出发页「装入目标槽」
@@ -38,14 +45,14 @@ var _gun_idx := 0                   # 改枪台左列选中枪
 var _scope_idx := 0                 # 改枪台右列选中瞄具（0=机瞄）
 var _bench_col := 0                 # 改枪台列：0=枪 1=瞄具
 var _ammo_tier := 0                 # 交易行③区购弹挡位索引（HDData.AMMO_TIERS，B 键循环）
-var _market_sec := 0                # 交易行当前段：0 枪械 / 1 瞄具 / 2 极致备弹
+var _market_sec := 0                # 交易行当前段：0 枪械 / 1 瞄具 / 2 极致备弹 / 3 仓库·战利品
 var _market_gun := 0                # 交易行①区选中枪
 var _market_scope := 0              # 交易行②区选中瞄具（0=机瞄行）
 var _market_ammo_gun := 0           # 交易行③区购弹对象枪
 var _hint_t := 0.0
 
 var _root: Control
-var _pages: Array = []              # 四个页 VBoxContainer
+var _pages: Array = []              # 三个页 VBoxContainer（随 TAB_TITLES 自动生成）
 var _tab_btns: Array = []
 var _record_label: Label
 var _daily_btn: Button
@@ -96,24 +103,29 @@ func handle_key(code: int) -> bool:
 			set_tab(1)
 		KEY_3:
 			set_tab(2)
-		KEY_4:
-			set_tab(3)
 		KEY_C:
 			_check_in()
 		KEY_G:
 			_fire_range()
 		KEY_B:
-			# 交易行专用：循环极致备弹购买挡位（鼠标点「B 换挡」钮同款）；
-			# 购买入口统一在交易行，出发页不再消费 B
-			if _tab == 3:
+			# 分级守卫：B（循环购弹挡位）只在交易行③ 极致备弹区内消费——
+			# ③区内=换挡；交易行他段=弹指路 hint 后不消费（←/→ 可达③区，指路不误导）；
+			# 其它页签（出发/改枪台，←/→ 到不了③区）静默 return false
+			if _tab == 2 and _market_sec == 2:
 				_cycle_ammo_tier()
+			elif _tab == 2:
+				show_hint("按 ←/→ 切到 ③ 极致备弹区再买弹")
+				return false
 			else:
 				return false
 		KEY_SPACE:
-			# 交易行专用：按当前挡位给③区选中枪购极致备弹（鼠标点「购 N 发」钮同款）；
-			# 出发页不再消费空格
-			if _tab == 3:
+			# 同 B 分级：空格（按当前挡位购弹）只在③区内消费——守卫后不可能
+			# 跨段买错对象（修「①区按空格实际买到③区光标所指枪」的陷阱）
+			if _tab == 2 and _market_sec == 2:
 				_buy_ammo_for(_market_ammo_gun_id())
+			elif _tab == 2:
+				show_hint("按 ←/→ 切到 ③ 极致备弹区再买弹")
+				return false
 			else:
 				return false
 		KEY_ENTER, KEY_KP_ENTER:
@@ -353,9 +365,8 @@ func _refresh_all() -> void:
 		if i == _tab:
 			match i:
 				0: _render_deploy(pg)
-				1: _render_stash(pg)
-				2: _render_bench(pg)
-				3: _render_market(pg)
+				1: _render_bench(pg)
+				2: _render_market(pg)   # ④ 仓库·战利品条并入 market 末尾（原仓库页已除）
 	for i in _tab_btns.size():
 		var b := _tab_btns[i] as Button
 		var act: bool = i == _tab
@@ -457,7 +468,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 			hb.add_child(_mk_label("已拥有", 13, COL_OK))
 			hb.add_child(_mk_equip_btn(id2, _deploy_page, 2 + r))
 		else:
-			# 购买入口已统一迁到交易行（页签 4）：未拥有只置灰展示，不可点击购买
+			# 购买入口已统一迁到交易行（按 3 进）：未拥有只置灰展示，不可点击购买
 			hb.add_child(_mk_label("₵ " + _fmt(_to_int(g2.get("price", 0))), 13, _dim(0.4)))
 			hb.add_child(_mk_label("交易行有售", 11, _dim(0.4)))
 		row.gui_input.connect(_on_deploy_row_input.bind(_deploy_page, 2 + r))
@@ -472,7 +483,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	var bwrap := CenterContainer.new()
 	bwrap.add_child(btn)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行选中 · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买去交易行（页签 4） · G 靶场 · 1/2/3/4 切页签",
+	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行选中 · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买按 3 进交易行 · G 靶场 · 1/2/3 切页签",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
@@ -503,15 +514,16 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	iv.add_child(_mk_label("身价：" + ("已拥有" if owned_sel else "₵ " + _fmt(price2)),
 			12, COL_OK))
 	# 极致备弹行（金色标识，只读）：余量来自 stash 库存（首读缺键即送满额礼物）；
-	# 购买入口已统一迁到交易行③区（页签 4 · B 换挡 空格 购买），出发页不再消费 B/空格
+	# 购买入口统一在交易行③区（B 换挡 空格 购买），出发页不再消费 B/空格；
+	# 尾注报键位补「想买弹无路标」断裂——摸底指出出发页看得到余量却不知去哪买
 	var ammo_n: int = _stash.ammo_of(sel_id)
-	iv.add_child(_mk_label("%s 余 %d 发" % [HDData.AMMO_NAME, ammo_n],
+	iv.add_child(_mk_label("%s 余 %d 发 · 买弹按 3 进交易行" % [HDData.AMMO_NAME, ammo_n],
 			13, HDData.AMMO_COLOR))
 
 
 ## 出发页行内「装备」键两态（只发给已拥有枪）：已在主/副任一槽=「已装备」置灰
 ## （主副不可同枪，点击仅选中该行）· 未装=「装备」装入聚焦槽（_slot_focus）。
-## 未拥有枪不出钮——购买统一走交易行（页签 4），动作收敛到 _confirm_deploy 既有链
+## 未拥有枪不出钮——购买统一走交易行（按 3 进），动作收敛到 _confirm_deploy 既有链
 func _mk_equip_btn(gid: String, page: int, idx: int) -> Button:
 	var b := _mk_btn("装备", 12)
 	var in_loadout: bool = str(_stash.loadout.get("primary", "")) == gid \
@@ -554,8 +566,8 @@ func _confirm_deploy() -> void:
 		var gi: int = _deploy_page * DEPLOY_PAGE + (_cur0 - 2)
 		var gid := str(guns[gi]["id"])
 		if not _stash.guns_owned.has(gid):
-			# 购买入口已统一迁到交易行：出发页只装已有枪，未拥有不扣款只指路
-			show_hint("「%s」未拥有 —— 交易行有售（页签 4 · 交易行购买后再来装备）" % \
+			# 购买入口已统一迁到交易行：出发页只装已有枪，未拥有不扣款只指路（报键位）
+			show_hint("「%s」未拥有 —— 按 3 进交易行购买后再来装备" % \
 					String(Guns.gun_by_id(gid).get("name", gid)))
 			return
 		_load_gun(gid)
@@ -595,72 +607,98 @@ func _fire_range() -> void:
 	range_requested.emit()
 
 
-# ================= 仓库页 =================
+# ================= 仓库去向（原仓库页并入交易行④段） =================
 
-func _render_stash(pg: VBoxContainer) -> void:
+## ④ 仓库·战利品条（由 _render_market 末尾调用）：段标题+紧凑战利品格+总资产/「一键变卖」钮。
+## 紧凑格包进定高 ScrollContainer（两行窗口 ~100px）：仓库 deposit 逐件入库无封顶
+## （hd_stash.deposit 不裁件，连打两局不卖即 24 件 > BACKPACK_MAX 12），件数超窗竖向
+## 滚轮翻看、条高与件数解耦；「仓库 N/12 格」字样原样保留（超格不裁件是现状，不撒谎）
+func _render_warehouse_strip(pg: VBoxContainer) -> void:
 	var items: Array = _stash.items
+	var ware := PanelContainer.new()
+	ware.add_theme_stylebox_override("panel",
+			_panel_style(_market_sec == 3, COL_ACCENT if _market_sec == 3 else _dim(0.22), 6))
+	ware.gui_input.connect(_on_warehouse_input)   # ④段点击=切到仓库段（照③区面板同款）
+	pg.add_child(ware)
+	var wv := VBoxContainer.new()
+	wv.add_theme_constant_override("separation", 4)
+	wv.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到面板卡片
+	ware.add_child(wv)
+
+	# 标题行：④ 徽章 + 资产/格数 + 变卖钮（回车与钮双入口，变卖链路零丢失）
+	var whead := HBoxContainer.new()
+	whead.add_theme_constant_override("separation", 12)
+	whead.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wv.add_child(whead)
+	whead.add_child(_mk_sec_title(3, "④ 仓库·战利品"))
+	var items_sum := 0
+	for it in items:
+		if typeof(it) == TYPE_DICTIONARY:
+			items_sum += _to_int(it.get("value", 0))
+	var wsp := Control.new()
+	wsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wsp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	whead.add_child(wsp)
+	whead.add_child(_mk_label("总资产 ₵%s（含现金） · 仓库 %d/%d 格" % [
+			_fmt(items_sum + maxi(0, _stash.cash)), items.size(), HDData.BACKPACK_MAX],
+			12, COL_ACCENT))
+	var sell := _mk_btn("Enter 一键变卖全部", 12)
+	_style_btn(sell, not items.is_empty(), COL_ACCENT if not items.is_empty() else _dim(0.3), 14)
+	sell.pressed.connect(_sell_all)
+	whead.add_child(sell)
+
 	if items.is_empty():
-		var empty := _mk_label("仓库空空如也 —— 出发搜刮，活着带回来", 15, _dim(0.6))
+		var empty := _mk_label("仓库空空如也 —— 出发搜刮，活着带回来", 13, _dim(0.5))
 		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		empty.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		pg.add_child(empty)
+		wv.add_child(empty)
 	else:
+		var scroll := ScrollContainer.new()
+		scroll.custom_minimum_size = Vector2(0, 100)   # 两行窗口定高（~44px 格 ×2 + 分隔）
+		scroll.custom_maximum_size = Vector2(INF, 100)  # 定高硬顶：条高与件数解耦
+		# （x 轴写 INF——custom_maximum_size 的 0 分量是「钳到 0」不是「不限宽」，实测宽会被掐成 0）
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		wv.add_child(scroll)
 		var grid := GridContainer.new()
-		grid.columns = 7
-		grid.add_theme_constant_override("h_separation", 8)
-		grid.add_theme_constant_override("v_separation", 8)
-		grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		pg.add_child(grid)
+		grid.columns = 6
+		grid.add_theme_constant_override("h_separation", 6)
+		grid.add_theme_constant_override("v_separation", 6)
+		scroll.add_child(grid)
 		for it in items:
 			if typeof(it) == TYPE_DICTIONARY:
-				grid.add_child(_loot_cell(it))
-
-	var items_sum := 0
-	for it2 in items:
-		if typeof(it2) == TYPE_DICTIONARY:
-			items_sum += _to_int(it2.get("value", 0))
-	var foot := HBoxContainer.new()
-	foot.add_theme_constant_override("separation", 16)
-	pg.add_child(foot)
-	foot.add_child(_mk_label("总资产 ₵%s（含现金） · 仓库 %d/%d 格" % [
-			_fmt(items_sum + maxi(0, _stash.cash)), items.size(), HDData.BACKPACK_MAX],
-			14, COL_ACCENT))
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	foot.add_child(sp)
-	var sell := _mk_btn("Enter 一键变卖全部", 13)
-	_style_btn(sell, not items.is_empty(), COL_ACCENT if not items.is_empty() else _dim(0.3))
-	sell.pressed.connect(_sell_all)
-	foot.add_child(sell)
-	var hint := _mk_label("回车 一键变卖 · 品质越高越值钱", 12, _dim(0.5))
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	pg.add_child(hint)
+				var cell := _loot_cell(it)
+				cell.gui_input.connect(_on_warehouse_input)   # 点格=切到④段
+				grid.add_child(cell)
 
 
-## 品质色边框 + icon + 名称 + 价值 的一格
+## ④ 仓库条点击（面板/格共用）：仅把光标切到仓库段（变卖走回车 /「Enter 一键变卖全部」钮）
+func _on_warehouse_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and _market_sec != 3:
+			_market_sec = 3
+			_refresh_all()
+
+
+## 品质色边框 + icon + 名称 + 价值 的一格（④段紧凑版 ~44px：单行 icon+名+价，6 列两行窗口）
 func _loot_cell(it: Dictionary) -> PanelContainer:
 	var rid := clampi(_to_int(it.get("rarity", 0)), 0, 6)
 	var rar: Dictionary = HDData.RARITY[rid]
 	var rcol: Color = rar["color"]
 	var cell := PanelContainer.new()
-	cell.custom_minimum_size = Vector2(118, 92)
-	var sb := _panel_style(false, rcol)
+	cell.custom_minimum_size = Vector2(140, 44)
+	var sb := _panel_style(false, rcol, 4)
 	sb.bg_color = Color(0.05 + rcol.r * 0.1, 0.07 + rcol.g * 0.1, 0.06 + rcol.b * 0.1, 0.8)
 	cell.add_theme_stylebox_override("panel", sb)
-	var vb := VBoxContainer.new()
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 2)
-	cell.add_child(vb)
-	var icon := _mk_label(HDData.norm_icon(String(it.get("icon", ""))), 22, rcol)
-	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(icon)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到格卡片（切④段）
+	cell.add_child(hb)
+	hb.add_child(_mk_label(HDData.norm_icon(String(it.get("icon", ""))), 16, rcol))
 	var nm := _mk_label(String(it.get("name", "战利品")), 11, rcol)
-	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(nm)
-	var val := _mk_label("₵ " + _fmt(_to_int(it.get("value", 0))), 12, COL_OK)
-	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(val)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	hb.add_child(nm)
+	hb.add_child(_mk_label("₵ " + _fmt(_to_int(it.get("value", 0))), 11, COL_OK))
 	return cell
 
 
@@ -696,7 +734,8 @@ func _render_bench(pg: VBoxContainer) -> void:
 	cols.add_theme_constant_override("separation", 16)
 	pg.add_child(cols)
 
-	# 左列：枪械（↑↓ 选枪）
+	# 左列：枪械（↑↓ 选枪）；行尾 tag 显示真实装配状态——自带镜枪=自带 N×（与
+	# 局内 _scope_for/scope_zoom 的 builtin 优先语义一致）/已装 X 镜/机瞄
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.add_theme_constant_override("separation", 6)
@@ -734,10 +773,11 @@ func _render_bench(pg: VBoxContainer) -> void:
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 6)
 	cols.add_child(right)
+	var is_builtin: bool = gun.has("builtin_scope")
 	var title := "瞄具 —— 为「%s」选配（现金 ₵%s）" % [
 			String(gun.get("name", gun_id)), _fmt(maxi(0, _stash.cash))]
-	if gun.has("builtin_scope"):
-		title += "（自带 6× 密位镜）"
+	if is_builtin:
+		title += "（自带 %.0f× 原厂镜 · 不可改装）" % float(gun["builtin_scope"].get("zoom", 1.0))
 	right.add_child(_mk_label(title, 12, COL_OK))
 	for i in entries.size():
 		var e: Dictionary = entries[i]
@@ -753,7 +793,11 @@ func _render_bench(pg: VBoxContainer) -> void:
 		var unowned_sc: bool = sid != "iron" and not _stash.owns_scope(sid)
 		hb2.add_child(_mk_label(String(e.get("name", sid)), 14,
 				_dim(0.5) if unowned_sc else COL_TEXT))
-		var desc := _mk_label(String(e.get("desc", "")), 12, _dim(0.6))
+		# 自带镜枪的机瞄行=原厂镜在位：默认文案「回车卸下」与守卫拦截矛盾，就地改写
+		var desc_txt := String(e.get("desc", ""))
+		if is_builtin and sid == "iron":
+			desc_txt = "原厂镜在位（默认）"
+		var desc := _mk_label(desc_txt, 12, _dim(0.6))
 		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		hb2.add_child(desc)
 		hb2.add_child(_mk_label(_scope_tag(gun_id, sid, e), 12, _scope_tag_col(gun_id, sid)))
@@ -761,20 +805,55 @@ func _render_bench(pg: VBoxContainer) -> void:
 		row2.gui_input.connect(_on_bench_row_input.bind(1, i))
 		right.add_child(row2)
 
-	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/行内按钮 换装·卸下（瞄具单持：同镜装他枪自动卸下） · 未拥有瞄具购买去交易行（页签 4） · 点击行选中",
+	# 右列底部死区：当前装配摘要面板（装配状态一目了然 + 单持语义说明）
+	var gap := Control.new()
+	gap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right.add_child(gap)
+	var fit_sid := str(_stash.scope_fit.get(gun_id, "iron"))
+	var fit_txt := "机瞄（未装镜 · 1.0×）"
+	if is_builtin:
+		fit_txt = "自带 %s · %.0f×（不可改装）" % [
+				str(gun["builtin_scope"].get("name", "原厂镜")),
+				float(gun["builtin_scope"].get("zoom", 1.0))]
+	elif fit_sid != "iron":
+		var fsc := Guns.scope_by_id(fit_sid)
+		if not fsc.is_empty():
+			fit_txt = "%s · %.1f×" % [str(fsc.get("name", fit_sid)), float(fsc.get("zoom", 1.0))]
+	var sum_panel := PanelContainer.new()
+	sum_panel.add_theme_stylebox_override("panel", _panel_style(false, _dim(0.2)))
+	right.add_child(sum_panel)
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 4)
+	sv.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到面板卡片
+	sum_panel.add_child(sv)
+	sv.add_child(_mk_label("当前装配", 12, COL_OK))
+	sv.add_child(_mk_label("%s · 瞄具：%s" % [String(gun.get("name", gun_id)), fit_txt],
+			13, COL_TEXT))
+	sv.add_child(_mk_label("已拥有瞄具 %d/%d" % [
+			_stash.scopes_owned.size(), Guns.SCOPES.size()], 12, COL_TEXT))
+	sv.add_child(_mk_label("单持：同镜装他枪自动卸下", 11, _dim(0.5)))
+
+	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/行内按钮 换装·卸下（瞄具单持：同镜装他枪自动卸下） · 未拥有瞄具点『去购买』直达交易行（按 3） · 点击行选中",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
 
 
-## 改枪台右列行内动作：已装/已机瞄=置灰钮（点击仅选中该行）· 机瞄=「卸下」·
-## 已拥有（含装于他枪，单持自动卸下）=「换装」· 未拥有=置灰「交易行有售」标签
-## （购买入口已统一迁到交易行，改枪台不再消费现金）。
+## 改枪台右列行内动作：自带镜枪=置灰「原厂镜专属」标签（守卫拦截换装，光标域 1+5 不变）·
+## 已装/已机瞄=置灰钮（点击仅选中该行）· 机瞄=「卸下」·
+## 已拥有（含装于他枪，单持自动卸下）=「换装」· 未拥有=「去购买」钮
+## （一键跳交易行②区对应行 _goto_market_scope——两段式流程两头都有显式按钮衔接）。
 ## 装配动作收敛到 _bench_confirm 既有链（先选中该行再确认）
 func _mk_bench_action(gun_id: String, e: Dictionary, idx: int) -> Control:
 	var sid := str(e["id"])
+	if Guns.gun_by_id(gun_id).has("builtin_scope"):
+		return _mk_label("原厂镜专属", 12, _dim(0.4))   # 局内 builtin 优先，装了会被覆盖
 	if sid != "iron" and not _stash.owns_scope(sid):
-		return _mk_label("交易行有售", 12, _dim(0.4))
+		var buy := _mk_btn("去购买", 12)
+		_style_btn(buy, true, COL_ACCENT, 12)
+		buy.pressed.connect(_goto_market_scope.bind(idx))
+		return buy
 	var b := _mk_btn("换装", 12)
 	var fitted: bool = str(_stash.scope_fit.get(gun_id, "iron")) == sid
 	if sid == "iron":
@@ -791,8 +870,14 @@ func _mk_bench_action(gun_id: String, e: Dictionary, idx: int) -> Control:
 	return b
 
 
-## 瞄具条目右侧状态标签：默认 / 已装 / 装于他枪（单持提示）/ 已拥有 / 价格
+## 瞄具条目右侧状态标签：自带镜枪分流（机瞄行=原厂镜在位 · 已拥有镜行=不可改装——
+## 否则与回车守卫直接矛盾）/ 默认 / 已装 / 装于他枪（单持提示）/ 已拥有 / 价格
 func _scope_tag(gun_id: String, sid: String, e: Dictionary) -> String:
+	if Guns.gun_by_id(gun_id).has("builtin_scope"):
+		if sid == "iron":
+			return "默认 · 原厂镜"
+		if _stash.owns_scope(sid):
+			return "原厂镜专属 · 不可改装"
 	if sid == "iron":
 		return "默认 · 卸下"
 	if str(_stash.scope_fit.get(gun_id, "iron")) == sid:
@@ -810,6 +895,8 @@ func _scope_tag(gun_id: String, sid: String, e: Dictionary) -> String:
 
 
 func _scope_tag_col(gun_id: String, sid: String) -> Color:
+	if Guns.gun_by_id(gun_id).has("builtin_scope"):
+		return _dim(0.6)   # 自带镜枪整列锁定：文案与守卫同口径
 	if sid == "iron":
 		return _dim(0.6)
 	if str(_stash.scope_fit.get(gun_id, "iron")) == sid:
@@ -819,7 +906,7 @@ func _scope_tag_col(gun_id: String, sid: String) -> Color:
 			return _dim(0.6)
 	if _stash.owns_scope(sid):
 		return COL_OK
-	return _dim(0.4)   # 未拥有：购买入口在交易行（页签 4），改枪台只置灰标价
+	return _dim(0.4)   # 未拥有：购买入口在交易行（按 3 进），改枪台行内「去购买」直达
 
 
 func _bench_confirm() -> void:
@@ -827,8 +914,15 @@ func _bench_confirm() -> void:
 	_gun_idx = posmod(_gun_idx, guns.size())
 	var gun: Dictionary = guns[_gun_idx]
 	var gun_id := str(gun["id"])
-	if _bench_col == 0:              # 左列=选枪，右侧联动
-		_refresh_all()
+	if _bench_col == 0:              # 左列=选枪：一步预安装——跳右列自动选镜
+		_bench_jump_to_scope()
+		return
+	if gun.has("builtin_scope"):
+		# 狙击守卫（真 bug 修复）：自带 6× 原厂镜在局内被 _scope_for/scope_zoom 的
+		# builtin 优先覆盖，预装镜会被静默顶掉——UI 层直接拦截，杜绝「已换装」假成功
+		# （保住「狙击自带恒 6×、非狙击枪绝不自带倍率」设计语义；不动 main/hd_stash）
+		show_hint("自带 %.0f× 原厂镜 · 瞄具不可改装" % \
+				float(gun["builtin_scope"].get("zoom", 1.0)))
 		return
 	var entries := _scope_entries()
 	_scope_idx = posmod(_scope_idx, entries.size())
@@ -842,20 +936,56 @@ func _bench_confirm() -> void:
 		show_hint("该瞄具已装在此枪上")
 		return
 	if not _stash.owns_scope(sid):
-		# 购买入口已统一迁到交易行（页签 4）：改枪台只装配已拥有瞄具，不扣款只指路
-		show_hint("「%s」未拥有 —— 交易行有售（页签 4 · 交易行购买后再来装配）" % \
+		# 购买入口已统一迁到交易行（按 3 进）：改枪台只装配已拥有瞄具，不扣款只指路
+		show_hint("「%s」未拥有 —— 按 3 进交易行购买后再来装配" % \
 				String(entry.get("name", sid)))
 		return
 	_stash.equip_scope(gun_id, sid)
 	show_hint("已换装：%s" % String(entry.get("name", sid)))
 
 
+## 改枪台左列回车（一步预安装）：跳右列并自动落到「第一个已拥有且未装」的镜
+## （无则保持原选中值），再一回车沿 _bench_confirm 成交；
+## 自带镜枪不可改装：不跳列，只提示（回车不再是「按了没反应」的静默）
+func _bench_jump_to_scope() -> void:
+	var guns: Array = Guns.GUNS
+	_gun_idx = posmod(_gun_idx, guns.size())
+	var gun: Dictionary = guns[_gun_idx]
+	if gun.has("builtin_scope"):
+		show_hint("自带 %.0f× 原厂镜 · 不可改装" % \
+				float(gun["builtin_scope"].get("zoom", 1.0)))
+		return
+	_bench_col = 1
+	var entries := _scope_entries()
+	var gid := str(gun["id"])
+	for i in entries.size():
+		var sid := str(entries[i]["id"])
+		if sid != "iron" and _stash.owns_scope(sid) \
+				and str(_stash.scope_fit.get(gid, "iron")) != sid:
+			_scope_idx = i
+			break
+	show_hint("↑↓ 选镜 · 回车换装")
+	_refresh_all()
+
+
+## 改枪台未拥有镜「去购买」：一键跳交易行②区该镜行（两列共用 _scope_entries
+## 表序，idx 直通），行带光标高亮——两段式流程两头显式衔接
+func _goto_market_scope(idx: int) -> void:
+	_tab = 2
+	_market_sec = 1
+	_market_scope = idx
+	_refresh_all()
+
+
 # ================= 交易行页 =================
 
-## 交易行 = 全游戏唯一购买入口（页签 4）。三段分区：① 枪械（GUNS 全表列出，含未拥有）
-## ② 瞄具（机瞄+五镜共 6 档，多枪通用·单持）③ 极致备弹（选枪 + 挡位购买）。
-## 光标沿用既有模型：←/→ 跨段（同改枪台换列）· 段内 ↑↓ 选条目（③ 区条目=购弹对象枪）·
-## 回车/行内「购买」钮成交（buy_gun/buy_scope/buy_ammo 既有链）；鼠标点击行=只选中
+## 交易行 = 全游戏唯一购买入口 + 仓库去向（页签 3）。四段分区：
+## ① 枪械（GUNS 全表列出，含未拥有）② 瞄具（机瞄+五镜共 6 档，多枪通用·单持）
+## ③ 极致备弹（选枪 + 挡位购买）④ 仓库·战利品（原仓库页并入，变卖在此成交）。
+## 光标沿用既有模型：←/→ 跨段（同改枪台换列，域 4 回绕）· 段内 ↑↓ 选条目
+## （③ 区条目=购弹对象枪；④ 段无条目 no-op）·
+## 回车/行内「购买」钮成交（buy_gun/buy_scope/buy_ammo/sell_all 既有链）；
+## 鼠标点击行=只选中。B/空格只在③区内消费（见 handle_key 分级守卫）
 func _render_market(pg: VBoxContainer) -> void:
 	var guns: Array = Guns.GUNS
 	_market_gun = posmod(_market_gun, guns.size())
@@ -873,8 +1003,7 @@ func _render_market(pg: VBoxContainer) -> void:
 	left.size_flags_stretch_ratio = 1.15
 	left.add_theme_constant_override("separation", 4)
 	cols.add_child(left)
-	left.add_child(_mk_label("枪械 · %d 把（↑↓ 选 · 回车/「购买」钮成交）" % guns.size(),
-			12, COL_OK))
+	left.add_child(_mk_sec_title(0, "① 枪械 · %d 把（↑↓ 选 · 回车/「购买」钮成交）" % guns.size()))
 	for i in guns.size():
 		var mg: Dictionary = guns[i]
 		var mid := str(mg["id"])
@@ -882,7 +1011,7 @@ func _render_market(pg: VBoxContainer) -> void:
 		var msel := _market_sec == 0 and i == _market_gun
 		var mrow := PanelContainer.new()
 		mrow.add_theme_stylebox_override("panel",
-				_panel_style(msel, COL_ACCENT if msel else _dim(0.22), 4))
+				_panel_style(msel, COL_ACCENT if msel else _dim(0.22), 3))
 		var mhb := HBoxContainer.new()
 		mhb.add_theme_constant_override("separation", 10)
 		mhb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
@@ -908,7 +1037,7 @@ func _render_market(pg: VBoxContainer) -> void:
 	cols.add_child(right)
 
 	# ② 瞄具区：机瞄行默认拥有仅展示；五镜已拥有置灰 / 未拥有「购买」
-	right.add_child(_mk_label("瞄具 · %d 档（多枪通用 · 单持）" % entries.size(), 12, COL_OK))
+	right.add_child(_mk_sec_title(1, "② 瞄具 · %d 档（多枪通用 · 单持）" % entries.size()))
 	for i in entries.size():
 		var me: Dictionary = entries[i]
 		var msid := str(me["id"])
@@ -954,7 +1083,9 @@ func _render_market(pg: VBoxContainer) -> void:
 	ahead.add_theme_constant_override("separation", 6)
 	ahead.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	av.add_child(ahead)
-	ahead.add_child(_mk_label(HDData.AMMO_NAME, 13, HDData.AMMO_COLOR))
+	# ③ 徽章标题（段序可读性 + 显式化「给哪把枪补弹」）；「↑↓ 选枪」贴右
+	ahead.add_child(_mk_sec_title(2, "③ %s —— 给「%s」补弹（◀▶ 换枪）" % [
+			HDData.AMMO_NAME, String(ag.get("name", ammo_id))]))
 	var asp := Control.new()
 	asp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	asp.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -979,6 +1110,11 @@ func _render_market(pg: VBoxContainer) -> void:
 	var each := _to_int(HDData.AMMO_PRICE.get(ammo_id, 0))
 	av.add_child(_mk_label("单价 ₵%d/发 · 余 %d 发" % [each, _stash.ammo_of(ammo_id)],
 			12, HDData.AMMO_COLOR))
+	# 挡位指示（显式化增强）：挡位序号 + B 键身份亮出——「B 换挡」钮文字本就随挡位刷新，
+	# 这里把「现在是第几挡、B 是干嘛的」摆到明面
+	av.add_child(_mk_label("挡位 %d/%d · %d 发（B 切换）" % [
+			posmod(_ammo_tier, HDData.AMMO_TIERS.size()) + 1,
+			HDData.AMMO_TIERS.size(), _ammo_tier_n()], 11, HDData.AMMO_COLOR))
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 6)
 	arow.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -993,10 +1129,19 @@ func _render_market(pg: VBoxContainer) -> void:
 	buy.pressed.connect(_buy_ammo_for.bind(ammo_id))
 	arow.add_child(buy)
 
-	var hint := _mk_label("←→ 跨段 · ↑↓ 段内选 · 回车/「购买」钮 成交 · B 换挡 空格 购极致备弹 · 点击行选中",
+	# ④ 仓库·战利品条（原仓库页并入，底部通栏）：变卖链路=④段回车+钮双入口，零丢失
+	_render_warehouse_strip(pg)
+
+	var hint := _mk_label("←→ 跨段 · ↑↓ 段内选 · 回车/「购买」钮 成交 · ③ 区内 B 换挡 空格 购弹 · 点击行选中",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
+
+
+## 交易行段徽章标题（段序可读性增强）：当前段 COL_ACCENT 高亮、其余 COL_OK——
+## ←/→ 跨段走到第几段一眼可数（段面板/行高亮是既有段光标可见性，非修隐藏 bug）
+func _mk_sec_title(sec: int, text: String) -> Label:
+	return _mk_label(text, 12, COL_ACCENT if _market_sec == sec else COL_OK)
 
 
 ## 交易行行内「购买」钮（未拥有条目专用）：先选中该行，再沿 _market_confirm 收敛成交
@@ -1056,7 +1201,8 @@ func _market_ammo_pick(dir: int) -> void:
 
 
 ## 交易行确认（键盘回车与鼠标「购买」钮同收敛于此）：全部购买只在此页成交——
-## ① 未拥有枪 buy_gun · ② 未拥有镜 buy_scope · ③ 按挡位 buy_ammo；
+## ① 未拥有枪 buy_gun · ② 未拥有镜 buy_scope · ③ 按挡位 buy_ammo ·
+## ④ 仓库段=一键变卖全部 sell_all（原仓库页回车链路并入，零丢失）；
 ## 已拥有幂等提示不扣款（与 stash API 幂等语义一致）
 func _market_confirm() -> void:
 	var entries := _scope_entries()
@@ -1078,6 +1224,8 @@ func _market_confirm() -> void:
 			_purchase_scope(sid)
 		2:
 			_buy_ammo_for(_market_ammo_gun_id())
+		3:
+			_sell_all()   # 空仓沿用「仓库空空如也」提示；超 12 件整包一次清（deposit 无封顶）
 
 
 ## 购枪成交（唯一入口=交易行①区）：走 stash.buy_gun 既有链，钱不足拦截不扣款
@@ -1100,7 +1248,7 @@ func _purchase_scope(sid: String) -> void:
 				String(sc.get("name", sid)), _fmt(_to_int(sc.get("price", 0))),
 				_fmt(maxi(0, _stash.cash))])
 		return
-	show_hint("已购买：%s（余 ₵%s）—— 装配去改枪台（页签 3）" % [
+	show_hint("已购买：%s（余 ₵%s）—— 按 2 进改枪台装配" % [
 			String(sc.get("name", sid)), _fmt(maxi(0, _stash.cash))])
 
 
@@ -1116,7 +1264,7 @@ func _cycle_ammo_tier() -> void:
 
 
 ## 空格 /「购 N 发」钮（交易行③区）：按当前挡位给选中枪买极致备弹
-## （现金不足拦截提示，照购枪款；自出发页迁入，出发页不再消费 B/空格）
+## （现金不足拦截提示，照购枪款；键盘入口由 handle_key 分级守卫把关——只在③区内消费）
 func _buy_ammo_for(gid: String) -> void:
 	var n := _ammo_tier_n()
 	var each := _to_int(HDData.AMMO_PRICE.get(gid, 0))
@@ -1153,8 +1301,6 @@ func _move(dh: int, dv: int) -> void:
 			else:
 				_cur0 = posmod(_cur0 + dh, n)
 		1:
-			return                  # 仓库页无网格光标
-		2:
 			if dh != 0:
 				_bench_col = 1 - _bench_col
 			if dv != 0:
@@ -1162,8 +1308,9 @@ func _move(dh: int, dv: int) -> void:
 					_gun_idx = posmod(_gun_idx + dv, Guns.GUNS.size())
 				else:
 					_scope_idx = posmod(_scope_idx + dv, 1 + Guns.SCOPES.size())
-		3:
-			# 交易行：←/→ 跨段回绕；段内 ↑↓ 选条目（③ 区条目=购弹对象枪）
+		2:
+			# 交易行：←/→ 跨段回绕（域 4：0①枪械/1②瞄具/2③备弹/3④仓库）；
+			# 段内 ↑↓ 选条目（③ 区条目=购弹对象枪；④ 仓库段无条目 no-op）
 			if dh != 0:
 				_market_sec = posmod(_market_sec + dh, MARKET_SECS)
 			if dv != 0:
@@ -1174,6 +1321,8 @@ func _move(dh: int, dv: int) -> void:
 						_market_scope = posmod(_market_scope + dv, _scope_entries().size())
 					2:
 						_market_ammo_gun = posmod(_market_ammo_gun + dv, Guns.GUNS.size())
+					3:
+						pass
 	_refresh_all()
 
 
@@ -1182,11 +1331,9 @@ func _confirm() -> void:
 		0:
 			_confirm_deploy()
 		1:
-			_sell_all()
-		2:
 			_bench_confirm()
-		3:
-			_market_confirm()
+		2:
+			_market_confirm()   # ④ 仓库段 case3=sell_all（原仓库页回车链路并入）
 
 
 func _check_in() -> void:
@@ -1241,7 +1388,7 @@ func _style_btn(b: Button, active: bool, border: Color, hpad := 22) -> void:
 	b.add_theme_color_override("font_pressed_color", border)
 
 
-## vpad：上下内容边距（交易行行卡用 4 压行高，13 行一屏放得下；默认 9 沿用旧款）
+## vpad：上下内容边距（交易行枪械行卡用 3 压行高——14 行+④仓库条一屏放得下；默认 9 沿用旧款）
 func _panel_style(sel: bool, border: Color, vpad := 9) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.1, 0.14, 0.11, 0.88) if sel else Color(0.06, 0.09, 0.07, 0.62)

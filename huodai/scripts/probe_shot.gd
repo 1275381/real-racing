@@ -2,12 +2,17 @@
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 →
 # 汤姆逊腰射 → 九把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4/m250.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
-# 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
-# 交易行未拥有枪购买特写（shot_market_buy.png）→ 大坝分区四连拍
+# 大厅三页整页（shot_page_depart 出发大厅 / shot_page_bench 改枪台·选中枪+已拥有未装镜
+# 让「换装」钮可见 / shot_page_market 交易行四段分区全貌）→
+# 改枪台去购买跳转+当前装配摘要图证（shot_bench.png）→ 交易行四段全景（shot_market.png）→
+# 交易行未拥有枪购买特写（shot_market_buy.png）→ 交易行④ 仓库·战利品段图证
+# （shot_market_warehouse.png：段选中态+两行滚动窗口+「Enter 一键变卖全部」钮）→
+# 大坝分区四连拍
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
 # +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）
-# （共 29 张；腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
+# （共 31 张：22 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29 张」为误计，按实拍数订正；
+#  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
@@ -69,6 +74,24 @@ func _initialize() -> void:
 	root.add_child(main)
 	await frames(30)
 	shot("res://out/shot_lobby.png")
+
+	# ---- 大厅三页整页截图（三页签改造图证）：出发大厅 / 改枪台 / 交易行 ----
+	shot("res://out/shot_page_depart.png")   # 默认页=出发大厅（槽位卡+候选枪分页+速览）
+	if not main.stash.scopes_owned.has("reddot"):
+		main.stash.scopes_owned.append("reddot")   # 摆拍已拥有未装瞄具（收尾还原真实存档）
+	# 光标先落位再 set_tab（set_tab 即重渲染；摆拍后赋值则画面停在旧帧——set_tab
+	# 是唯一重渲染入口，无 show_lobby 兜底）
+	main.lobby._gun_idx = 2    # 改枪台：选中 M7 + 光标落红点镜行（「换装」钮可见）
+	main.lobby._bench_col = 1
+	main.lobby._scope_idx = 2  # 右列条目序 2 = 红点镜（已拥有未装）
+	main.lobby.set_tab(1)
+	await frames(8)
+	shot("res://out/shot_page_bench.png")
+	main.lobby.set_tab(2)      # 交易行：① 枪械 ② 瞄具 ③ 备弹 ④ 仓库条 四段分区全貌
+	await frames(8)
+	shot("res://out/shot_page_market.png")
+	main.lobby.set_tab(0)
+	main.lobby.hide_lobby()
 
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(50)
@@ -187,7 +210,8 @@ func _initialize() -> void:
 	# ---- 附加验收 6：shot_ads —— 靶场装红点镜开镜，专验渐晕「边上与四角
 	# 暗度一致、无重叠更黑」。开镜动作 hd_scope 实际绑定鼠标右键
 	# （main._register_inputs），探针用 action_press 直推动作层，不依赖物理键
-	main.stash.scopes_owned.append("reddot")   # 冷启动仓库无镜：先拥有再装配
+	if not main.stash.scopes_owned.has("reddot"):
+		main.stash.scopes_owned.append("reddot")   # 冷启动仓库无镜：先拥有再装配（幂等防重复）
 	main.stash.equip_scope("rifle", "reddot")
 	# 装镜不重挂：scope_provider 只在 _mount_slot 建枪模时读，enter() 同槽同枪
 	# 复用 holder（重建条件=换枪 id）——装配后手动拆旧挂新（照 enter 的重建
@@ -270,8 +294,8 @@ func _initialize() -> void:
 	shot("res://out/shot_slot_switch.png")
 
 	# ---- 附加验收 19：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
-	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」只读行
-	# （购买入口已迁交易行③区：B 换挡 / 空格 /「购 N 发」钮在页签 4 生效，见下两张）
+	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发 · 买弹按 3 进交易行」
+	# 只读行（购买入口在交易行③区：B 换挡 / 空格 /「购 N 发」钮在③区内生效，见下几张）
 	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
 	check("弹药经济首读送满额礼物", main.stash.ammo_of("mp5") == int(HDData.RESERVE["mp5"]),
 		"mp5=%d" % main.stash.ammo_of("mp5"))
@@ -282,13 +306,13 @@ func _initialize() -> void:
 	shot("res://out/shot_ammo_shop.png")
 	main.lobby.hide_lobby()
 
-	# ---- 附加验收 20：shot_bench —— 改枪台页全景（购买入口回收图证）：
+	# ---- 附加验收 20：shot_bench —— 改枪台页全景（去购买跳转 + 当前装配摘要图证）：
 	# 选中 M7（表序 2，非自带镜枪），右列 6 档瞄具逐行核对——未拥有者
-	# （全息/3.5×/5×/热成像）只有置灰「交易行有售」标签、无任何钮；已拥有且已装
-	# 的红点镜=「已装」置灰、机瞄=「卸下」（装配功能保留，非购买）；顶栏现金
-	# ₵20,000 同框——有钱也无购买入口可点
+	# （全息/3.5×/5×/热成像）=「去购买」钮（一键跳交易行②区，见 _goto_market_scope）；
+	# 已拥有且已装的红点镜=「已装」置灰、机瞄=「卸下」（装配功能保留）；右列底部
+	# 「当前装配」摘要面板（枪名+当前镜+已拥有 n/5+单持说明）；顶栏现金 ₵20,000 同框
 	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
-	main.lobby.set_tab(2)
+	main.lobby.set_tab(1)     # 新页签：0 出发大厅 / 1 改枪台 / 2 交易行
 	main.lobby._gun_idx = 2   # M7 战斗步枪（附加验收 6 已给 rifle 装红点）
 	main.lobby.show_lobby()
 	await frames(8)
@@ -296,11 +320,12 @@ func _initialize() -> void:
 	main.lobby.hide_lobby()
 
 	# ---- 附加验收 21：shot_market —— 交易行页全景（全游戏唯一购买入口）：
-	# 三段分区同框——① 枪械全表（未拥有「₵N+购买」/已拥有置灰）· ② 瞄具 6 档
-	# · ③ 极致备弹（选枪 + B 换挡 + 购 N 发）+ 顶栏现金 ₵20,000
+	# 四段分区同框——① 枪械全表（未拥有「₵N+购买」/已拥有置灰）· ② 瞄具 6 档
+	# · ③ 极致备弹（③ 徽章标题 + 挡位指示 + 选枪 + B 换挡 + 购 N 发）
+	# · ④ 仓库·战利品条（底部通栏，冷启动空仓态）+ 顶栏现金 ₵20,000
 	if main.stash.guns_owned.has("mp5"):
 		main.stash.guns_owned.erase("mp5")   # 摆拍未拥有态（前面枪照段落已把 MP5 直拥）
-	main.lobby.set_tab(3)
+	main.lobby.set_tab(2)        # 交易行=新页签 2
 	main.lobby.show_lobby()
 	await frames(8)
 	shot("res://out/shot_market.png")
@@ -309,9 +334,23 @@ func _initialize() -> void:
 	# 行高亮 + 行内「购买」钮高亮；只选中不确认，不实际成交
 	main.lobby._market_sec = 0
 	main.lobby._market_gun = 6   # GUNS 表序 6 = MP5
-	main.lobby.set_tab(3)        # 同页签重刷，光标落 MP5 行
+	main.lobby.set_tab(2)        # 同页签重刷，光标落 MP5 行
 	await frames(8)
 	shot("res://out/shot_market_buy.png")
+
+	# ---- 附加验收 23：shot_market_warehouse —— 交易行④ 仓库·战利品段图证：
+	# 种 3 件战利品 → 光标切④段（段面板高亮）· 两行滚动窗口（件数超窗竖向滚轮翻看）
+	# · 总资产/「仓库 N/12 格」脚注 +「Enter 一键变卖全部」钮
+	main.stash.items.append({"uid": "probe_wh_a", "name": "军用电池", "icon": "电源",
+		"rarity": 2, "value": 620})
+	main.stash.items.append({"uid": "probe_wh_b", "name": "机密文件", "icon": "机密",
+		"rarity": 5, "value": 4200})
+	main.stash.items.append({"uid": "probe_wh_c", "name": "金条", "icon": "贵金属",
+		"rarity": 4, "value": 3100})
+	main.lobby._market_sec = 3
+	main.lobby.set_tab(2)        # 重刷，④段面板高亮 + 仓库条就位
+	await frames(8)
+	shot("res://out/shot_market_warehouse.png")
 	main.lobby.hide_lobby()
 
 	# ---- 附加验收 26：shot_lean —— 右探头（E）：地平线左高右低 + 相机右移
@@ -325,7 +364,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/29 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/31 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

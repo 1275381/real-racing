@@ -4,7 +4,8 @@
 #       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪 +
 #         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
-# 运行：/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s huodai/test_huodai.gd
+# 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
+#      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
 
 const GUN_LIB := preload("res://scripts/hd_gunlib.gd")   # 高模工具库（路径引用，不走全局类名缓存）
@@ -266,22 +267,23 @@ func _run() -> void:
 	check("reserve=0 换弹被拒", main.guns.reloading == 0.0,
 		"reloading=%.2f" % main.guns.reloading)
 
-	# 23. 交易行页签（唯一购买入口）：键盘 4 切入 · ←/→ 跨段回绕 · 段内 ↑↓ 选条目
+	# 23. 交易行页签（唯一购买入口）：键盘 3 切入 · ←/→ 跨段回绕（域 4）· 段内 ↑↓ 选条目
 	#    （headless 无法点击，购买入口回收用「确认链状态」断言：见 24/25）
 	main.lobby.show_lobby()
-	check("键盘 4 切交易行页", main.lobby.handle_key(KEY_4)
-		and main.lobby._tab == 3)
-	check("页签四枚·交易行就位", main.lobby._tab_btns.size() == 4
-		and str(main.lobby.TAB_TITLES[3]) == "4 · 交易行")
+	check("键盘 3 切交易行页", main.lobby.handle_key(KEY_3)
+		and main.lobby._tab == 2)
+	check("页签三枚·交易行就位", main.lobby._tab_btns.size() == 3
+		and main.lobby.TAB_TITLES == ["出发大厅", "改枪台", "交易行"])
+	check("KEY_4 不再消费（删键后落默认 return false）", not main.lobby.handle_key(KEY_4))
 	main.lobby._market_sec = 0
 	main.lobby.handle_key(KEY_RIGHT)
 	check("→ 跨段 0→1", main.lobby._market_sec == 1)
 	main.lobby.handle_key(KEY_LEFT)
 	check("← 跨段 1→0", main.lobby._market_sec == 0)
 	main.lobby.handle_key(KEY_LEFT)
-	check("← 回绕跨段到 2", main.lobby._market_sec == 2)
+	check("← 回绕跨段到 3（④ 仓库，域 4）", main.lobby._market_sec == 3)
 	main.lobby.handle_key(KEY_RIGHT)
-	check("→ 回绕跨段回 0", main.lobby._market_sec == 0)
+	check("→ 回绕跨段回 0（④→①）", main.lobby._market_sec == 0)
 	main.lobby._market_gun = 0
 	main.lobby.handle_key(KEY_DOWN)
 	check("↓ 段内选下把枪", main.lobby._market_gun == 1)
@@ -289,19 +291,23 @@ func _run() -> void:
 	check("↑ 段内选回", main.lobby._market_gun == 0)
 
 	# 24. 出发页购买入口回收：未拥有枪行回车不购不装（现金足额也拦）、B/空格不再消费
+	#     （静默不消费——不弹「←→ 切③区」类误导指路，_hint_label 保持空）
 	main.stash.cash = 99999
 	main.lobby.set_tab(0)
+	main.lobby._hint_label.text = ""
 	check("出发页不再消费 B/空格", not main.lobby.handle_key(KEY_B)
 		and not main.lobby.handle_key(KEY_SPACE))
+	check("出发页 B/空格静默无指路（防误导）", main.lobby._hint_label.text == "")
 	main.lobby._deploy_page = 1
 	main.lobby._cur0 = 2   # 第 2 页首行 = MP5（未拥有：18/19 步只购过 vector/scarh）
 	main.lobby.handle_key(KEY_ENTER)
 	check("出发页回车不购未拥有枪", not main.stash.owns_gun("mp5")
 		and main.stash.cash == 99999
 		and str(main.stash.loadout.get("primary")) != "mp5")
+	check("出发页未拥有指路报键位（按 3）", main.lobby._hint_label.text.contains("按 3 进交易行"))
 
 	# 25. 交易行成交链：回车购枪/购镜 · B 换挡 · 空格按挡位购弹（changed 联动刷新现金）
-	main.lobby.handle_key(KEY_4)
+	main.lobby.handle_key(KEY_3)
 	main.lobby._market_sec = 0
 	main.lobby._market_gun = 6   # GUNS 表序 6 = MP5 ₵1200（未拥有）
 	var cash0: int = main.stash.cash
@@ -314,9 +320,9 @@ func _run() -> void:
 	main.lobby.handle_key(KEY_ENTER)
 	check("交易行回车购镜", main.stash.owns_scope("optic35")
 		and main.stash.cash == cash0 - 1800, "cash=%d" % main.stash.cash)
+	main.lobby._market_sec = 2   # B 段守卫前插：须在③区内 B 才消费（:311 已置 sec=1）
 	main.lobby.handle_key(KEY_B)   # 购弹挡位 30→90
-	check("B 换挡生效（交易行页）", main.lobby._ammo_tier == 1)
-	main.lobby._market_sec = 2
+	check("B 换挡生效（③ 区内）", main.lobby._ammo_tier == 1)
 	main.lobby._market_ammo_gun = 6   # 给 MP5 购弹（单价 ₵4/发 × 90 = ₵360）
 	cash0 = main.stash.cash
 	var mp5_ammo0: int = main.stash.ammo_of("mp5")
@@ -324,6 +330,74 @@ func _run() -> void:
 	check("空格按挡位购弹", main.stash.ammo_of("mp5") == mp5_ammo0 + 90
 		and main.stash.cash == cash0 - 360,
 		"ammo=%d cash=%d" % [main.stash.ammo_of("mp5"), main.stash.cash])
+
+	# 25b. B/空格段守卫（真陷阱修复）：交易行①区按空格不消费、不买弹，弹指路 hint
+	main.lobby._market_sec = 0
+	cash0 = main.stash.cash
+	mp5_ammo0 = main.stash.ammo_of("mp5")
+	check("交易行①区空格不消费且不买弹", not main.lobby.handle_key(KEY_SPACE)
+		and main.stash.cash == cash0 and main.stash.ammo_of("mp5") == mp5_ammo0)
+	check("交易行他段买弹指路 hint", main.lobby._hint_label.text.contains("③ 极致备弹"))
+	main.lobby.set_tab(1)   # 改枪台页：B/空格静默 return false（到不了③区，指路是误导）
+	main.lobby._hint_label.text = ""
+	check("改枪台页 B/空格静默无指路", not main.lobby.handle_key(KEY_B)
+		and not main.lobby.handle_key(KEY_SPACE)
+		and main.lobby._hint_label.text == "")
+
+	# 25c. 改枪台：狙击守卫（自带 6× 原厂镜不可改装——防「装了白装+假成功提示」）·
+	#      左列回车一步预安装（跳列自动选镜）· 镜链装配+单持迁移 · 去购买一键跳交易行
+	main.stash.buy_scope("holo")   # 先拥有：守卫拦的是「装」，不是「没镜可试」
+	main.lobby.set_tab(1)
+	main.lobby._gun_idx = 4        # GUNS 表序 4 = 狙击步枪（自带 6× 原厂镜）
+	main.lobby._bench_col = 1
+	main.lobby._scope_idx = 1      # 右列条目序 1 = holo（已拥有未装）
+	main.lobby._hint_label.text = ""
+	main.lobby._bench_confirm()
+	check("狙击枪换装被守卫拦截", str(main.stash.scope_fit.get("sniper", "iron")) != "holo",
+		"fit=%s" % str(main.stash.scope_fit.get("sniper", "iron")))
+	check("狙击拦截 hint 明示不可改装", main.lobby._hint_label.text.contains("不可改装"))
+	check("狙击右列行内 tag 同步守卫（iron=原厂镜/已拥有镜=不可改装）",
+		main.lobby._scope_tag("sniper", "iron", {"id": "iron"}) == "默认 · 原厂镜"
+		and main.lobby._scope_tag("sniper", "holo", {"id": "holo"}).contains("不可改装"))
+	var sn_act = main.lobby._mk_bench_action("sniper", {"id": "holo"}, 1)
+	check("狙击行内动作为置灰「原厂镜专属」标签（非可点钮）",
+		sn_act is Label and (sn_act as Label).text == "原厂镜专属")
+	main.lobby._gun_idx = 2        # M7 战斗步枪（非自带镜）
+	main.lobby._bench_col = 0
+	main.lobby._bench_confirm()    # 左列回车=一步预安装：跳右列自动选镜
+	check("改枪台左列回车跳右列", main.lobby._bench_col == 1)
+	check("跳列自动落「第一个已拥有且未装」的镜（holo=右列序 1）",
+		main.lobby._scope_idx == 1, "scope_idx=%d" % main.lobby._scope_idx)
+	main.lobby._gun_idx = 3        # 一步预安装链路：给霰弹枪装已拥有 holo
+	main.lobby._on_bench_equip_pressed(1)
+	check("一步预安装 scope_fit 生效", str(main.stash.scope_fit.get("shotgun", "")) == "holo",
+		"fit=%s" % str(main.stash.scope_fit.get("shotgun", "")))
+	main.lobby._gun_idx = 2        # 同镜装他枪 → 单持自动从霰弹枪卸下
+	main.lobby._on_bench_equip_pressed(1)
+	check("单持迁移生效", str(main.stash.scope_fit.get("rifle", "")) == "holo"
+		and str(main.stash.scope_fit.get("shotgun", "")) == "iron",
+		"rifle=%s shotgun=%s" % [str(main.stash.scope_fit.get("rifle", "")),
+			str(main.stash.scope_fit.get("shotgun", ""))])
+	main.lobby._goto_market_scope(1)   # 未拥有镜「去购买」：一键跳交易行②区该行
+	check("去购买跳转三元组（交易行②区该镜行）", main.lobby._tab == 2
+		and main.lobby._market_sec == 1 and main.lobby._market_scope == 1)
+
+	# 25d. 交易行④ 仓库·战利品段：种 14 件（超 BACKPACK_MAX=12，deposit 无封顶）→
+	#      滚动渲染不炸 → 回车整包一次清 + 加钱 → 空仓沿用「仓库空空如也」提示
+	main.stash.items.clear()
+	for i in 14:
+		main.stash.items.append({"uid": "test_wh_%02d" % i, "name": "测试战利品",
+			"icon": "", "rarity": 1, "value": 100})
+	main.lobby._market_sec = 3
+	main.lobby._refresh_all()   # ④段两行滚动窗口渲染路径（14 件超窗）不炸
+	check("④段 14 件滚动渲染", main.lobby._pages[2].get_child_count() > 0)
+	cash0 = main.stash.cash
+	main.lobby.handle_key(KEY_ENTER)
+	check("④段回车一键变卖（超 12 件整包清+加钱）", main.stash.items.is_empty()
+		and main.stash.cash == cash0 + 1400,
+		"cash=%d" % main.stash.cash)
+	main.lobby.handle_key(KEY_ENTER)
+	check("空仓回车沿用「仓库空空如也」提示", main.lobby._hint_label.text.contains("仓库空空如也"))
 
 	# 26. 高模顶点红线：HDGunLib 重建后的 MK4 枪身根总顶点 ≥ 8× 低模基线
 	#     （只数枪身 _smg_build 产物，不含 _finish_gun 镜体件；POLY_MIN 表
