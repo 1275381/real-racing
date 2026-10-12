@@ -67,7 +67,7 @@ const ICON_DEFAULT := "杂物"      # 空/未知图标兜底徽标
 const RESERVE := {
 	"pistol": 60, "smg": 175, "rifle": 150, "shotgun": 30, "sniper": 25,
 	"uzi": 175, "mp5": 150, "p90": 150, "vector": 125, "mk4": 150,
-	"akm": 150, "m4a1": 150, "scarh": 100,
+	"akm": 150, "m4a1": 150, "scarh": 100, "m250": 200,
 }
 
 ## ---- 极致备弹经济（2026-10）：备弹不再每局免费回满，改为按发购买、局终回收 ----
@@ -78,10 +78,13 @@ const RESERVE := {
 ## 赠送后正常买卖、只送一次（实现见 hd_stash.ammo_of）。
 const AMMO_NAME := "极致备弹"
 const AMMO_COLOR := Color(1.0, 0.79, 0.3)   # 金色标识（与品质金色同值，弹药=硬通货的视效统一）
-## 单价（₵/发，按枪定价：手枪贱 · 冲锋枪轻弹 · 步枪中价 · 霰弹/狙击一发一钱）
+## 单价（₵/发，按枪定价：手枪贱 · 冲锋枪轻弹 · 步枪中价 · 霰弹/狙击一发一钱）；
+## m250 缺键则交易行③区购弹静默拒（buy_ammo 按表拦截）——与 rifle 同 6.8mm
+## 弹族单价
 const AMMO_PRICE := {
 	"pistol": 2, "smg": 4, "mp5": 4, "p90": 4, "uzi": 4, "mk4": 4, "vector": 5,
 	"rifle": 6, "m4a1": 6, "akm": 6, "scarh": 8, "shotgun": 15, "sniper": 30,
+	"m250": 6,
 }
 ## 大厅购买挡位（发数；B 键循环），总价 = 挡位 × 单价
 const AMMO_TIERS := [30, 90, 300]

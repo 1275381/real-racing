@@ -24,7 +24,7 @@ const COL_OK := Color(0.49, 0.89, 0.66)
 const TAB_TITLES := ["1 · 出发", "2 · 仓库", "3 · 改枪台", "4 · 交易行"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
 const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
-const DEPLOY_PAGE := 6              # 出发页候选枪每页行数（13 枪=3 页，光标域随页收缩）
+const DEPLOY_PAGE := 6              # 出发页候选枪每页行数（14 枪=3 页，光标域随页收缩）
 const MARKET_SECS := 3              # 交易行段数：0 枪械 / 1 瞄具 / 2 极致备弹
 
 var lobby_visible: bool = false
@@ -377,7 +377,7 @@ func _render_top() -> void:
 
 # ================= 出发页 =================
 
-## 候选枪总页数（12 枪 / 每页 DEPLOY_PAGE = 2 页）
+## 候选枪总页数（14 枪 / 每页 DEPLOY_PAGE = 3 页）
 func _deploy_pages() -> int:
 	return int(ceil(float(Guns.GUNS.size()) / float(DEPLOY_PAGE)))
 

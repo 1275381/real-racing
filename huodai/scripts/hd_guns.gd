@@ -43,7 +43,8 @@ const HAND_HOLD_OFF := Vector3(0.0, -0.095, 0.03)  # 托新匣掌心（匣底正
 
 ## 每发后坐力（度）：[基础上抬, 连发累增系数, 水平漂移幅度]（onfoot 同表）。
 ## 2026-10 扩充七枪：vector 最柔（Super V 卖点）/ akm·scarh 大后坐（7.62 世界观）；
-## mk4 同 mp5 档（4.6×30 低后坐轻弹，缺键会吃 [0.4,0.2,0.25] 兜底后坐爆炸）
+## mk4 同 mp5 档（4.6×30 低后坐轻弹，缺键会吃 [0.4,0.2,0.25] 兜底后坐爆炸）；
+## m250 机枪（6.8×51 弹链）：机枪更沉档（比 lmg 略收——重枪管+消音器压制）
 const RECOIL := {
 	"pistol": [0.22, 0.14, 0.08],
 	"smg": [0.13, 0.06, 0.09],
@@ -59,6 +60,7 @@ const RECOIL := {
 	"akm": [0.24, 0.12, 0.14],
 	"scarh": [0.26, 0.13, 0.12],
 	"mk4": [0.12, 0.05, 0.08],
+	"m250": [0.16, 0.06, 0.10],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -534,14 +536,17 @@ func _mag_override(gid: String) -> Dictionary:
 		return _smg_mag_of(gid)
 	if _ar_has(gid):
 		return _ar_mag_of(gid)
+	if _lmg_has(gid):
+		return _lmg_mag_of(gid)
 	if _old5_has(gid):
 		return _old5_mag_of(gid)
 	return {}
 
 
-## 程序化枪模分发：三路枪册分别到枪身工厂（只造枪身根 Node3D）——冲锋枪册
-## _smg_build / 步枪册 _ar_build / 旧五枪 _old5_build（HDGunLib 高模重建，
-## 见文件尾「旧五枪高模重建」段；原内联 BoxMesh 直角拼装已整体迁出）。
+## 程序化枪模分发：四路枪册分别到枪身工厂（只造枪身根 Node3D）——冲锋枪册
+## _smg_build / 步枪册 _ar_build / 机枪册 _lmg_build / 旧五枪 _old5_build
+## （HDGunLib 高模重建，见文件尾「旧五枪高模重建」段；原内联 BoxMesh 直角
+## 拼装已整体迁出）。
 ## 弹匣动画节点/枪口火光仍由 _mount_slot 统一挂、镜体由 _finish_gun 统一挂
 ## （瞄具挂点常量原样保留，换弹手部锚点与换弹三段时间轴零改动）
 func _build_gun_visual(gun_id: String) -> Node3D:
@@ -551,6 +556,9 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	if _ar_has(gun_id):
 		return _finish_gun(_ar_build(gun_id), gun_id,
 				_ar_scope_anchor(gun_id))
+	if _lmg_has(gun_id):
+		return _finish_gun(_lmg_build(gun_id), gun_id,
+				_lmg_scope_anchor(gun_id))
 	if _old5_has(gun_id):
 		return _finish_gun(_old5_build(gun_id), gun_id,
 				_old5_scope_anchor(gun_id))
@@ -988,6 +996,7 @@ func _tick_fx(dt: float) -> void:
 ## 随收尾提交入库，否则门槛快照 preload 会失(FILE)
 const GUN_LIB := preload("res://scripts/hd_gunlib.gd")
 const AR_LIB := preload("res://scripts/hd_gun_ar.gd")
+const LMG_LIB := preload("res://scripts/hd_gun_lmg.gd")   # 机枪册几何体（同 AR_LIB 先例：新文件必须随收尾提交入库）
 
 const SMG_IDS := ["mp5", "p90", "uzi", "vector", "mk4"]
 
@@ -1811,6 +1820,82 @@ static func _ar_mats() -> Dictionary:
 	return {"dark": dark, "steel": steel, "wood": wood, "fde": fde,
 			"walnut": walnut, "polymer": polymer, "blued": blued,
 			"bakelite": bakelite}
+
+
+## ================= 枪匠·机枪册（m250，SIG XM250 体系） =================
+## 6.8×51mm 弹链机枪：几何体在 hd_gun_lmg.gd（LMG_LIB 路径 preload，不走裸
+## 全局名——同 hd_gunlib/hd_gun_ar 先例：新文件必须随收尾提交入库，否则门槛
+## 快照 preload 会失(FILE)）；材质走 _lmg_mats 工厂传参注入（新文件零材质
+## 创建）。弹链袋/镜座挂点契约与步枪册同口径：_lmg_mag_of 动画匣隐（弹链袋
+## mag_pouch 独立命名节点表达静置外形）、_lmg_scope_anchor 顶轨挂点。
+## BATTLE_GUNS 的 lmg（大战场兵种配发枪）不在本册、原链路零改动。
+
+const LMG_IDS := ["m250"]
+
+
+## id 是否属于机枪册（_build_gun_visual 分发用）
+static func _lmg_has(id: String) -> bool:
+	return LMG_IDS.has(id)
+
+
+## 统一入口：按 id 拼一把枪身根；未知 id 返回空 Node3D（防御不崩）。
+## 高模重建后几何体在 hd_gun_lmg.gd（LMG_LIB.build，HDGunLib 工具件拼装）——
+## 签名同 _ar_build 口径（_build_gun_visual / test_huodai 顶点红线断言都走
+## 此处），材质仍由 _lmg_mats 传参注入（新文件零材质创建）
+static func _lmg_build(id: String) -> Node3D:
+	return LMG_LIB.build(id, _lmg_mats())
+
+
+## 弹匣动画节点覆盖（hd_guns 枪架局部坐标 = 枪身局部 × GUN_SCALE≈0.62 换算）：
+## 75 发软式弹链袋是枪身建模件（hd_gun_lmg.gd mag_pouch 独立命名节点 +
+## 倒角盒堆叠软袋质感），动画匣隐（同 MK4/AR 三枪「匣形由枪身件表达」先例，
+## 方形软袋也无直盒可替）；pos=袋中段（换弹手抓握锚，袋顶枪身局部
+## y -0.053 ×0.62 ≈ -0.033 对齐锚顶）、size=袋外形 ×0.62（掉匣替身缩放基准）
+static func _lmg_mag_of(id: String) -> Dictionary:
+	match id:
+		"m250":
+			return {"pos": Vector3(0.0, -0.125, -0.053),
+					"size": Vector3(0.049, 0.095, 0.066), "show": false}
+	return {}
+
+
+## 机瞄/镜座挂点 (my, mz, fz)（枪身局部，喂 hd_guns._scope_visual）：
+## my 对齐各枪最高件下沿附近——开镜 AABB 量顶不悬空（mk4 口径）
+static func _lmg_scope_anchor(id: String) -> Vector3:
+	match id:
+		"m250":
+			## 顶轨齿顶 0.083 / 机匣中后段（供弹盖后）/ 护木前段——裸顶轨
+			## （考证清单⑬：XM157 整体省略，镜座挂点照 mk4 写法）
+			return Vector3(0.08, -0.12, -0.5)
+	return Vector3(0.085, -0.1, -0.5)
+
+
+## 机枪册材质工厂：M250 专用 FDE 沙黄配色分区（照 _smg_mats 的 mk 闭包抄——
+## no_depth_test 防贴墙吞枪 + render_priority 10 + 微自发光保暗处可读）：
+## fde 沙黄主体 #B09A68（机匣/护木/枪托/握把）/ supp 消音器沙棕 #8F7452 /
+## dark 近黑件 #232323（枪管/导气箍/两脚架/供弹盖/抛壳盖/锁环/拉机柄）/
+## steel 亮钢 #C9C9C9（内六角螺丝/缓冲筒等亮色点缀）/ canvas 弹链袋卡其
+## #C2A878 / webbing 织带插扣深棕 #4A3F30 / brass 黄铜弹链 #B08D3E（唯一暖金）
+static func _lmg_mats() -> Dictionary:
+	var mk := func(c: Color, e: Color, rough := 0.55, glow := 0.55) -> StandardMaterial3D:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.roughness = rough
+		m.no_depth_test = true
+		m.render_priority = 10
+		m.emission_enabled = true
+		m.emission = e
+		m.emission_energy_multiplier = glow
+		return m
+	return {
+		"fde": mk.call(Color(0.69, 0.604, 0.408), Color(0.55, 0.48, 0.33), 0.7),
+		"supp": mk.call(Color(0.561, 0.455, 0.322), Color(0.45, 0.36, 0.26), 0.6),
+		"dark": mk.call(Color(0.137, 0.137, 0.139), Color(0.17, 0.17, 0.17)),
+		"steel": mk.call(Color(0.788, 0.788, 0.788), Color(0.6, 0.6, 0.6), 0.35),
+		"canvas": mk.call(Color(0.761, 0.659, 0.471), Color(0.5, 0.43, 0.31), 0.9),
+		"webbing": mk.call(Color(0.29, 0.247, 0.188), Color(0.23, 0.2, 0.15), 0.9),
+		"brass": mk.call(Color(0.69, 0.553, 0.243), Color(0.55, 0.44, 0.19), 0.3),
+	}
 
 
 ## ================= 枪匠·旧五枪高模重建（HDGunLib） =================

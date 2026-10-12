@@ -1,13 +1,13 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 →
-# 汤姆逊腰射 → 八把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4.png）→
+# 汤姆逊腰射 → 九把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4/m250.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 改枪台无购买入口图证（shot_bench.png）→ 交易行全景（shot_market.png）→
 # 交易行未拥有枪购买特写（shot_market_buy.png）→ 大坝分区四连拍
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
 # +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）
-# （共 28 张；腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
+# （共 29 张；腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 extends SceneTree
@@ -238,10 +238,10 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~16：八把新枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~17：九把新枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型
-	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4"]:
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4", "m250"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -252,7 +252,7 @@ func _initialize() -> void:
 		await frames(2)
 		shot("res://out/shot_gun_%s.png" % gid)
 
-	# ---- 附加验收 17：shot_slot_switch —— 双槽串色验收（黄壳回归红线）：
+	# ---- 附加验收 18：shot_slot_switch —— 双槽串色验收（黄壳回归红线）：
 	# 主=MK4（全黑）+ 副=汤姆逊（蓝钢+木）两把异枪同局共存，切到副武器截
 	# 汤姆逊——配合上张 shot_gun_mk4.png 证明两把枪颜色/轮廓各自独立
 	main.stash.loadout = {"primary": "mk4", "secondary": "smg"}
@@ -269,7 +269,7 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_slot_switch.png")
 
-	# ---- 附加验收 18：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
+	# ---- 附加验收 19：shot_ammo_shop —— 大厅出发页弹药行特写（极致备弹经济）：
 	# 光标落当页第一把候选枪行 → 侧栏速览联动，金色「极致备弹 余 N 发」只读行
 	# （购买入口已迁交易行③区：B 换挡 / 空格 /「购 N 发」钮在页签 4 生效，见下两张）
 	main.stash.cash = 20000   # 摆拍现金（收尾还原真实存档）
@@ -282,7 +282,7 @@ func _initialize() -> void:
 	shot("res://out/shot_ammo_shop.png")
 	main.lobby.hide_lobby()
 
-	# ---- 附加验收 19：shot_bench —— 改枪台页全景（购买入口回收图证）：
+	# ---- 附加验收 20：shot_bench —— 改枪台页全景（购买入口回收图证）：
 	# 选中 M7（表序 2，非自带镜枪），右列 6 档瞄具逐行核对——未拥有者
 	# （全息/3.5×/5×/热成像）只有置灰「交易行有售」标签、无任何钮；已拥有且已装
 	# 的红点镜=「已装」置灰、机瞄=「卸下」（装配功能保留，非购买）；顶栏现金
@@ -295,7 +295,7 @@ func _initialize() -> void:
 	shot("res://out/shot_bench.png")
 	main.lobby.hide_lobby()
 
-	# ---- 附加验收 20：shot_market —— 交易行页全景（全游戏唯一购买入口）：
+	# ---- 附加验收 21：shot_market —— 交易行页全景（全游戏唯一购买入口）：
 	# 三段分区同框——① 枪械全表（未拥有「₵N+购买」/已拥有置灰）· ② 瞄具 6 档
 	# · ③ 极致备弹（选枪 + B 换挡 + 购 N 发）+ 顶栏现金 ₵20,000
 	if main.stash.guns_owned.has("mp5"):
@@ -305,7 +305,7 @@ func _initialize() -> void:
 	await frames(8)
 	shot("res://out/shot_market.png")
 
-	# ---- 附加验收 21：shot_market_buy —— 特写：光标选中未拥有枪（MP5 ₵1,200），
+	# ---- 附加验收 22：shot_market_buy —— 特写：光标选中未拥有枪（MP5 ₵1,200），
 	# 行高亮 + 行内「购买」钮高亮；只选中不确认，不实际成交
 	main.lobby._market_sec = 0
 	main.lobby._market_gun = 6   # GUNS 表序 6 = MP5
@@ -325,7 +325,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/28 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/29 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

@@ -1,8 +1,8 @@
 # 回归：烽火地带（Godot 版）核心链路——签到/开箱/命中/换弹掉匣/搜刮/撤离/死亡/靶场/经济
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
-#       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪总顶点
-#         ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
+#       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪 +
+#         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s huodai/test_huodai.gd
 extends SceneTree
@@ -192,10 +192,10 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：七把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：八把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
-	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh"]:
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m250"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -385,6 +385,24 @@ func _run() -> void:
 			check("冲锋枪 %s 独立命名弹匣节点在根下" % gid, mag_node != null,
 				"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
 		smg_root.free()
+
+	# 29b. 高模顶点红线：机枪册 M250（m250，hd_gun_lmg.gd 高模重建）枪身根
+	#      总顶点 ≥ 8× 低模基线（走 _lmg_build 分发入口，口径同 #26/#27/#29；
+	#      75 发弹链袋是独立命名弹匣节点 mag_pouch、动画匣隐 show=false，
+	#      契约同 MK4「匣形由枪身件表达」先例）
+	var lmg_root: Node3D = HDGuns._lmg_build("m250")
+	var lmg_verts: int = GUN_LIB.count_vertices(lmg_root)
+	check("M250 高模顶点 ≥ POLY_MIN（8× 基线）",
+		lmg_verts >= int(GUN_LIB.POLY_MIN["m250"]),
+		"verts=%d min=%d base=%d" % [lmg_verts, int(GUN_LIB.POLY_MIN["m250"]),
+			int(GUN_LIB.POLY_BASE["m250"])])
+	var lmg_mag: Node = lmg_root.find_child("mag_*", true, false)
+	check("M250 独立命名弹链袋节点在根下", lmg_mag != null
+		and str(lmg_mag.name) == "mag_pouch",
+		"node=%s" % (str(lmg_mag.name) if lmg_mag != null else "无"))
+	check("M250 动画匣隐（弹链袋由枪身件表达）",
+		not bool(HDGuns._lmg_mag_of("m250")["show"]))
+	lmg_root.free()
 
 	# 30. 大坝分区（搜打撤第三区）：装配节点/容器点 13/巡逻点 7/品质权重/矩形分区/
 	#     坝体碰撞 wall_hit（前墙 12m·开洞抵背墙 18m·溢流段高位 24m）/幂等/第二撤离
