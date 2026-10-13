@@ -530,12 +530,34 @@ func _run() -> void:
 		not bool(HDGuns._lmg_mag_of("m250")["show"]))
 	lmg_root.free()
 
+	# 29c. 持枪对齐红线（用户反馈「每把枪拿起来都不对齐，只有 MK4 对」）：
+	#      全枪册走 _build_gun_visual（含 HOLD_DELTA 出厂平移）后，握把顶锚
+	#      （grip_hold 节点位）必须统一落在 MK4 基准 (0,-0.022,-0.0018) ±1.5mm
+	#      ——14 把枪在手里共用同一持握点，错位感消除；表值错/工厂改动漂移
+	#      都会在这里现形
+	var hold_bad: Array = []
+	for g_def in Guns.GUNS:
+		var h_gid: String = str(g_def["id"])
+		var h_root: Node3D = main.guns._build_gun_visual(h_gid)
+		var h_grips: Array = h_root.find_children("grip_hold", "Node3D", true, false)
+		if h_grips.is_empty() or (h_grips[0] as Node3D).position.distance_to(
+				Vector3(0, -0.022, -0.0018)) > 0.0015:
+			hold_bad.append("%s@%s" % [h_gid,
+				str((h_grips[0] as Node3D).position) if not h_grips.is_empty() else "无grip"])
+		h_root.free()
+	check("全枪册持握锚统一到 MK4 基准（±1.5mm）", hold_bad.is_empty(),
+		str(hold_bad))
+
 	# 30. 大坝分区（搜打撤第三区）：装配节点/容器点 13/巡逻点 7/品质权重/矩形分区/
 	#     坝体碰撞 wall_hit（前墙 12m·开洞抵背墙 18m·溢流段高位 24m）/幂等/第二撤离
-	check("大坝两装配节点挂在 world 下", main.world.dam != null
+	#     + 四新区连坐（军营/大电/水泥厂/游客中心）：dam_zones 装配/总数 58/31/
+	#     障碍 ≥268（实测 279=209+新区 63+新 loot 盒 7）/四区 wall_hit/zone_at 采样
+	check("大坝三装配节点挂在 world 下（DAM→BASE→ZONES）", main.world.dam != null
 		and main.world.dam_base != null
+		and main.world.dam_zones != null
 		and main.world.dam.get_parent() == main.world
-		and main.world.dam_base.get_parent() == main.world)
+		and main.world.dam_base.get_parent() == main.world
+		and main.world.dam_zones.get_parent() == main.world)
 	var dam_box_n := 0
 	for s_v in main.world.container_spots:
 		var s: Dictionary = s_v
@@ -548,6 +570,11 @@ func _run() -> void:
 		if str(s.get("zone")) == "dam":
 			dam_pt_n += 1
 	check("坝区巡逻点 7（红线 ∈[6,8]）", dam_pt_n == 7, "n=%d" % dam_pt_n)
+	# 四新区总数连坐：容器 51+7=58 / 巡逻 26+5=31（本 session 无头实测钉死）
+	check("容器点总数 58（51+四新区 7）", main.world.container_spots.size() == 58,
+		"n=%d" % main.world.container_spots.size())
+	check("巡逻点总数 31（26+四新区 5）", main.world.patrol_spots.size() == 31,
+		"n=%d" % main.world.patrol_spots.size())
 	main.world.build()   # 重复 build 幂等（hd_world._built 护栏）：坝区点位不得翻倍
 	var dam_box_n2 := 0
 	for s_v in main.world.container_spots:
@@ -556,6 +583,11 @@ func _run() -> void:
 			dam_box_n2 += 1
 	check("重复 build() 幂等（坝区容器点不翻倍）", dam_box_n2 == 13,
 		"n=%d" % dam_box_n2)
+	check("重复 build() 幂等（新区总数不翻倍：容器 58/巡逻 31）",
+		main.world.container_spots.size() == 58
+			and main.world.patrol_spots.size() == 31,
+		"c=%d p=%d" % [main.world.container_spots.size(),
+			main.world.patrol_spots.size()])
 	var dam_w: Array = HDData.RARITY_W["dam"]
 	var dam_w_sum := 0
 	for x in dam_w:
@@ -582,8 +614,37 @@ func _run() -> void:
 		Vector3(0.0, 0.0, -1.0), 300.0)   # x=-4 避开 x=0 闸墩（墩盒 y30 处 22.2m 先挡）
 	check("坝体碰撞 wall_hit·溢流段高位 24m", absf(wh_ov - 24.0) < 0.5,
 		"d=%.1f" % wh_ov)
-	check("坝区障碍批量注册（全图 ≥140 条）", main.world.obstacles.size() >= 140,
+	check("坝区障碍批量注册（全图 ≥268 条：209+新区 83+新 loot 盒 7=299 实测）",
+		main.world.obstacles.size() >= 268,
 		"n=%d" % main.world.obstacles.size())
+	# 四区 wall_hit 各 1 条（期望值按落成几何钉死、±0.5 容差对齐 :575 先例；
+	# 采 样 视 线 逐 一 让 开 中 途 障 碍：军营视线 z=−24 让开披屋 z∈[−19,−14]、
+	# 大电 z=−17.5 让开 wreck (95,−20) AABB z∈[−21,−19] 与 loot 盒 (107,−19) 半径、
+	# 水泥 z=18 正对最西仓（勿用主楼向采样——先穿主楼名实不符）、
+	# 游客 z=40 避开南墙线 42.5 与石阶 z∈[33.9,35.5] 的边界浮点敏感）
+	var wh_camp_w: float = main.world.wall_hit(Vector3(-142.0, 1.55, -24.0),
+			Vector3(1.0, 0.0, 0.0), 300.0)
+	check("军营西围墙 wall_hit ≈11.6m", absf(wh_camp_w - 11.6) < 0.5,
+		"d=%.1f" % wh_camp_w)
+	var wh_sub_c: float = main.world.wall_hit(Vector3(88.0, 2.0, -17.5),
+			Vector3(1.0, 0.0, 0.0), 300.0)
+	check("大电主控楼西墙 wall_hit ≈16.0m（中途围栏不注册·桁架柱让开）",
+		absf(wh_sub_c - 16.0) < 0.5, "d=%.1f" % wh_sub_c)
+	var wh_cem_s: float = main.world.wall_hit(Vector3(-128.0, 2.0, 18.0),
+			Vector3(1.0, 0.0, 0.0), 300.0)
+	check("水泥厂最西筒仓 wall_hit ≈8.8m", absf(wh_cem_s - 8.8) < 0.5,
+		"d=%.1f" % wh_cem_s)
+	var wh_vis_w: float = main.world.wall_hit(Vector3(62.0, 1.55, 40.0),
+			Vector3(1.0, 0.0, 0.0), 300.0)
+	check("游客中心主翼西墙 wall_hit ≈14.0m", absf(wh_vis_w - 14.0) < 0.5,
+		"d=%.1f" % wh_vis_w)
+	# 四区 zone_at 采样（本 session 无头实测：军营板房主体 wild、大电西院 mid、
+	# 水泥厂主体 mid、游客广场 mid——无点落 center/dam 红罩）
+	check("四新区 zone_at 采样（军营 wild·大电/水泥/游客 mid）",
+		main.world.zone_at(-114.0, -18.0) == "wild"
+			and main.world.zone_at(98.0, -20.0) == "mid"
+			and main.world.zone_at(-99.0, 26.0) == "mid"
+			and main.world.zone_at(84.0, 44.0) == "mid")
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	main.player.enter(main.world.extract2_pos)
 	main._bag_value = 100.0

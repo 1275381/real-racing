@@ -285,11 +285,12 @@ func try_fire() -> void:
 		# （胸前/肩射/开镜各姿态都与发光片同位）
 		var flash: OmniLight3D = g["flash"]
 		var flash_mesh: MeshInstance3D = g["flash_mesh"]
+		var moff: Vector3 = g["muzzle_off"]   # 每槽枪口点（持枪平移随动）
 		_flash_t = 0.05
 		flash.visible = true
-		flash.position = (g["holder"] as Node3D).transform * MUZZLE_OFF
+		flash.position = (g["holder"] as Node3D).transform * moff
 		flash_mesh.visible = true
-		flash_mesh.position = MUZZLE_OFF
+		flash_mesh.position = moff
 	# 射线：相机 from、-Z 前向、右/上基向量抖动 spread（每颗弹丸独立判定）
 	var from: Vector3 = player.cam.global_position
 	var base_dir: Vector3 = -player.cam.global_transform.basis.z
@@ -414,7 +415,7 @@ func muzzle_world() -> Vector3:
 	var g := _cur_gun()
 	if not g.is_empty():
 		var holder: Node3D = g["holder"]
-		return holder.to_global(MUZZLE_OFF)
+		return holder.to_global(g["muzzle_off"])
 	if player != null and player.cam != null:
 		return player.cam.global_transform * Vector3(0.26, -0.16, -1.1)
 	return Vector3.ZERO
@@ -469,6 +470,9 @@ func _mount_slot(slot: String) -> void:
 	if player == null or player.cam == null:
 		return
 	var gid: String = str(_slots[slot]["id"])
+	# 持枪对齐随动（枪架局部 = 枪身 Δ × GUN_SCALE）：弹匣锚/枪口火光/曳光
+	# 三处消费同一 hold_off，与 _build_gun_visual 的枪身平移保持同源
+	var hold_off: Vector3 = _hold_delta(gid) * GUN_SCALE
 	var gun := _build_gun_visual(gid)
 	var holder := Node3D.new()
 	# 锚点抬到视锥内（onfoot：原点在相机上时枪会落到画面底边之外）
@@ -497,6 +501,7 @@ func _mount_slot(slot: String) -> void:
 		mag_pos = ov["pos"]
 	if ov.has("show"):
 		show_mag = bool(ov["show"])
+	mag_pos += hold_off   # 持枪平移随动：静置真匣/换弹手锚与平移后的弹匣井对齐
 	var mag_box := BoxMesh.new()
 	mag_box.size = mag_size
 	var mag_mat := StandardMaterial3D.new()
@@ -522,6 +527,7 @@ func _mount_slot(slot: String) -> void:
 	var flash_mesh := MeshInstance3D.new()
 	flash_mesh.mesh = fm
 	flash_mesh.visible = false
+	flash_mesh.position = MUZZLE_OFF + hold_off   # 枪口随枪平移（枪架局部）
 	holder.add_child(flash_mesh)
 	var flash := OmniLight3D.new()
 	flash.light_color = Color(1.0, 0.75, 0.35)
@@ -531,13 +537,16 @@ func _mount_slot(slot: String) -> void:
 	player.cam.add_child(flash)
 	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
 			"mag_pos": mag_pos, "mag_size": mag_size,
+			"muzzle_off": MUZZLE_OFF + hold_off,
 			"flash": flash, "flash_mesh": flash_mesh, "top": top, "cx": cx}
 	# 红点镜瞄准线：镜体工厂（_scope_visual reddot 分支）把窗中心 local y 写
 	# 进枪模 meta，这里记进枪架信息包 aim_y——update() 的 ADS 终点据此改按
 	# 「窗中心过屏幕中心」摆位，HUD 正中的红点分划才落进玻璃窗内。其它瞄具
 	# kind 不写 meta、不记此键，沿用枪顶 AABB 公式零改动
 	if gun.has_meta("rd_aim_y"):
-		g_pack["aim_y"] = float(gun.get_meta("rd_aim_y"))
+		# +Δy：meta 是平移前的枪身局部 y（_scope_visual 在平移前写），
+		# 补上 HOLD_DELTA 的 y 分量才是平移后窗中心的真实 local y
+		g_pack["aim_y"] = float(gun.get_meta("rd_aim_y")) + _hold_delta(gid).y
 	_guns[slot] = g_pack
 
 
@@ -565,20 +574,30 @@ func _mag_override(gid: String) -> Dictionary:
 ## 弹匣动画节点/枪口火光仍由 _mount_slot 统一挂、镜体由 _finish_gun 统一挂
 ## （瞄具挂点常量原样保留，换弹手部锚点与换弹三段时间轴零改动）
 func _build_gun_visual(gun_id: String) -> Node3D:
+	var root: Node3D
 	if _smg_has(gun_id):
-		return _finish_gun(_smg_build(gun_id), gun_id,
+		root = _finish_gun(_smg_build(gun_id), gun_id,
 				_smg_scope_anchor(gun_id))
-	if _ar_has(gun_id):
-		return _finish_gun(_ar_build(gun_id), gun_id,
+	elif _ar_has(gun_id):
+		root = _finish_gun(_ar_build(gun_id), gun_id,
 				_ar_scope_anchor(gun_id))
-	if _lmg_has(gun_id):
-		return _finish_gun(_lmg_build(gun_id), gun_id,
+	elif _lmg_has(gun_id):
+		root = _finish_gun(_lmg_build(gun_id), gun_id,
 				_lmg_scope_anchor(gun_id))
-	if _old5_has(gun_id):
-		return _finish_gun(_old5_build(gun_id), gun_id,
+	elif _old5_has(gun_id):
+		root = _finish_gun(_old5_build(gun_id), gun_id,
 				_old5_scope_anchor(gun_id))
-	# 兜底（大战场 lmg 等未列枪）：空枪身 + 默认机瞄位（原行为等值）
-	return _finish_gun(Node3D.new(), gun_id, Vector3(0.085, -0.1, -0.5))
+	else:
+		# 兜底（大战场 lmg 等未列枪）：空枪身 + 默认机瞄位（原行为等值）
+		root = _finish_gun(Node3D.new(), gun_id, Vector3(0.085, -0.1, -0.5))
+	# 持枪对齐：枪身+镜体整体平移 Δ（见 HOLD_DELTA 表头注释）——握把顶锚
+	# 统一落 MK4 基准；镜体随枪同移（scope_anchor 语义不变），AABB 与 ADS
+	# 摆位自动含 Δ，枪架局部三锚在 _mount_slot/try_fire 按 Δ×GUN_SCALE 随动
+	var d := _hold_delta(gun_id)
+	if d != Vector3.ZERO:
+		for c in root.get_children():
+			(c as Node3D).position += d
+	return root
 
 
 ## 枪顶瞄具模型统一收尾：装上的瞄具优先（iron=机瞄片）；狙击自带密位镜，
@@ -1019,6 +1038,40 @@ func _tick_fx(dt: float) -> void:
 const GUN_LIB := preload("res://scripts/hd_gunlib.gd")
 const AR_LIB := preload("res://scripts/hd_gun_ar.gd")
 const LMG_LIB := preload("res://scripts/hd_gun_lmg.gd")   # 机枪册几何体（同 AR_LIB 先例：新文件必须随收尾提交入库）
+
+## 持枪对齐（2026-10 用户反馈「每把枪拿起来都不对齐，只有 MK4 对」）：各枪匠
+## 建模时握把顶锚（GUN_LIB.grip 的 pos，枪身局部）落点五花八门——z 从 -0.044
+## （MP5）到 +0.130（汤姆逊）散布 17cm，而枪架锚 GUN_HIP_POS 全枪册共用，
+## 握把离锚点越远枪在手里的前后/高低错位越大。修法：_build_gun_visual 出厂时
+## 把枪身全部子节点平移 Δ，让每把枪的握把顶锚统一落到 MK4 基准
+## (0, -0.022, -0.0018)（用户认可的唯一样板，故 mk4 条目为零向量）。
+## Δ = 基准 − 各枪握把顶锚（枪身局部；各枪匠工厂原坐标零改动）。
+## 枪架局部消费的三处锚随动（×GUN_SCALE 换算）：_mount_slot 弹匣锚 /
+## 枪口火光与曳光（MUZZLE_OFF → 每槽 muzzle_off）/ 红点镜 aim_y（枪身局部
+## 直接加 Δy）。AABB（_local_aabb 量子节点）自动含 Δ，ADS 摆位自洽。
+const HOLD_DELTA := {
+	"mk4": Vector3.ZERO,
+	"mp5": Vector3(0, -0.0028, 0.0421),
+	"p90": Vector3(0, 0.0274, -0.0464),
+	"uzi": Vector3(0, 0.0023, -0.0692),
+	"vector": Vector3(0, -0.0021, -0.0035),
+	"m4a1": Vector3(0, 0.0087, -0.0718),
+	"akm": Vector3(0, -0.0055, -0.1008),
+	"scarh": Vector3(0, 0.0081, -0.0623),
+	"m250": Vector3(0, 0.0280, -0.0718),
+	"pistol": Vector3(0, -0.0263, -0.0348),
+	"smg": Vector3(0, 0.0190, -0.1321),
+	"rifle": Vector3(0, 0.0090, -0.0690),
+	"shotgun": Vector3(0, -0.0244, -0.1224),
+	"sniper": Vector3(0, -0.0346, -0.0837),
+}
+
+
+## 持枪平移量（未知枪/兜底 = 零向量，行为同旧）
+static func _hold_delta(gid: String) -> Vector3:
+	if HOLD_DELTA.has(gid):
+		return HOLD_DELTA[gid]
+	return Vector3.ZERO
 
 const SMG_IDS := ["mp5", "p90", "uzi", "vector", "mk4"]
 

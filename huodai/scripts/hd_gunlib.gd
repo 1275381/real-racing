@@ -317,6 +317,7 @@ static func grip(parent: Node3D, mat: Material, height: float,
 		depth: float = 0.054, ridge_mat: Material = null,
 		ridges: int = 3) -> Node3D:
 	var root := Node3D.new()
+	root.name = "grip_hold"   # 持握基准点名（hd_guns HOLD_DELTA 对齐断言用）
 	root.position = pos
 	root.rotation_degrees = Vector3(-tilt_deg, 0, 0)
 	parent.add_child(root)
