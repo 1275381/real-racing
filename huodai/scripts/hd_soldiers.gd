@@ -29,8 +29,8 @@ const PATROL_SPEED := 3.0       # 巡逻步行
 const SEARCH_SPEED_MUL := 0.62  # 搜索小跑（enemies.js SEARCH_SPEED_MUL）
 const ENGAGE_SPEED_MUL := 0.45  # 交战移速 ×0.45（小侧移，battlefield/enemies.js 同款）
 
-const VIEW_DIST := 48.0         # 索敌视距（进战后 ENGAGE_DIST）——2026-10 用户反馈「士兵太强」温和削弱：55→48
-const ENGAGE_DIST := 64.0       # 进战视距 = 敌弹射程（同轮削弱：70→64）
+const VIEW_DIST := 30.0         # 索敌视距（进战后 ENGAGE_DIST）——2026-10 用户定案：30 米内才会有反应
+const ENGAGE_DIST := 30.0       # 进战视距 = 敌弹射程（与索敌同步 30：看得见才打得到）
 const FOV_COS := 0.5736         # cos(55°)：视锥 110° 半角（背身看不见）
 const LOS_RECHECK := 0.4        # 视线复测周期（battlefield.gd:388）
 const LOSE_TIME := 6.0          # 玩家离开视距 6s 转 search
@@ -38,9 +38,9 @@ const SEARCH_TIME := 14.0       # 搜索超时回巡逻（enemies.js SEARCH_TIME
 const SEARCH_PICK_T := 3.0      # 搜索目标点换选周期（秒）
 const SEARCH_WANDER := 9.0      # 搜索目标点在最后目击点附近的游走半径（米）
 
-const BURST_MIN := 3            # 点射发数 3-5
-const BURST_MAX := 5
-const FIRE_CD := 0.13           # 点射内发弹间隔（rifle cd，guns.gd）
+const BURST_MIN := 1            # 单发枪（2026-10 用户定案）：点射退化成单发，
+const BURST_MAX := 1            # 每发之间走 BURST_PAUSE 间歇（FIRE_CD 不再触发）
+const FIRE_CD := 0.13           # 点射内发弹间隔（单发枪下恒不触发，保留常量防连坐引用）
 const BURST_PAUSE_MIN := 1.4    # 点射间歇（2026-10 温和削弱：1.1→1.4，多点喘息）
 const BURST_PAUSE_MAX := 2.6
 const MAG_SIZE := 30            # rifle 弹匣
