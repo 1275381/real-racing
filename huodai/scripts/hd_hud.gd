@@ -47,6 +47,11 @@ var _extract_bar: ProgressBar
 var _toast_box: VBoxContainer
 var _toasts: Array = []             # [{node, t, dur}]
 var _menu: Control
+var _menu_title: Label
+var _menu_sub: Label
+var _menu_rows: Array = []               # 三行选项 Label（靶场模式末行隐藏）
+var _menu_esc: Label
+var _menu_kind := "mission"              # 菜单模式：mission 实战 / range 靶场（main 在模式流转处同步）
 var _result: Control
 var _result_title: Label
 var _result_rank: Label
@@ -223,7 +228,7 @@ func setup() -> void:
 	_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_base.add_child(_toast_box)
 
-	# ---- Esc 暂停菜单 ----
+	# ---- Esc 暂停菜单（文案按 _menu_kind 分化，见 set_menu_mode） ----
 	_menu = Control.new()
 	_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_menu.visible = false
@@ -238,20 +243,23 @@ func setup() -> void:
 	mv.add_theme_constant_override("separation", 12)
 	mv.alignment = BoxContainer.ALIGNMENT_CENTER
 	mc.add_child(mv)
-	var mt := _mk_label("行动暂停", 26, COL_ACCENT)
-	mt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	mv.add_child(mt)
-	var msub := _mk_label("PAUSED · 战术行动中断", 12, _dim(0.55))
-	msub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	mv.add_child(msub)
-	for line in ["1 · 重开行动", "2 · 重开靶场", "3 · 放弃行动（回大厅）"]:
-		var row := _mk_label(line, 17, COL_TEXT)
+	_menu_title = _mk_label("行动暂停", 26, COL_ACCENT)
+	_menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mv.add_child(_menu_title)
+	_menu_sub = _mk_label("PAUSED · 战术行动中断", 12, _dim(0.55))
+	_menu_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mv.add_child(_menu_sub)
+	_menu_rows.clear()
+	for i in 3:
+		var row := _mk_label("", 17, COL_TEXT)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		mv.add_child(row)
-	var mesc := _mk_label("Esc 恢复战斗 · 游戏内 Q/E 左右探头", 12, _dim(0.55))
-	mesc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	mv.add_child(mesc)
+		_menu_rows.append(row)
+	_menu_esc = _mk_label("Esc 恢复战斗 · 游戏内 Q/E 左右探头", 12, _dim(0.55))
+	_menu_esc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mv.add_child(_menu_esc)
 	_base.add_child(_menu)
+	_apply_menu_texts()
 
 	# ---- 结算页 ----
 	_result = Control.new()
@@ -325,7 +333,12 @@ func set_raid_visible(on: bool) -> void:
 func set_ammo(cur: int, reserve: int) -> void:
 	if _ammo_label == null:
 		setup()
-	_ammo_label.text = "%d / %d" % [cur, reserve]
+	# 靶场模式备弹显示 ∞：练习弹是固定大额虚拟弹药、与库存无关——
+	# 显示真实数字（如 9999）反而像库存余量，跟「免费」语义打架
+	if _menu_kind == "range":
+		_ammo_label.text = "%d / ∞" % cur
+	else:
+		_ammo_label.text = "%d / %d" % [cur, reserve]
 	_ammo_label.add_theme_color_override("font_color", COL_LOW if cur <= 8 else COL_TEXT)
 
 
@@ -470,6 +483,34 @@ func set_score_visible(on: bool) -> void:
 
 # ================= 暂停菜单 =================
 
+## 模式感知（main 在 _start_mission/_enter_range/_back_to_lobby 同步）：
+## mission=「行动暂停」三选项照旧；range=「靶场暂停」两选项——靶场里不出现
+## 「行动/战斗/放弃」字样（用户反馈：靶场哪来的「放弃战斗」），2=离开靶场回大厅
+func set_menu_mode(kind: String) -> void:
+	_menu_kind = "range" if kind == "range" else "mission"
+	_apply_menu_texts()
+
+## 按 _menu_kind 刷菜单文案（setup 建完标签与 set_menu_mode 都走这里；
+## 靶场两行：第三行隐藏而非重建——标签常驻只换字）
+func _apply_menu_texts() -> void:
+	if _menu_title == null:
+		return
+	var rows: Array = []
+	if _menu_kind == "range":
+		_menu_title.text = "靶场暂停"
+		_menu_sub.text = "PAUSED · 靶场练习中断"
+		rows = ["1 · 重开靶场", "2 · 离开靶场（回大厅）"]
+		_menu_esc.text = "Esc 恢复练习 · 游戏内 Q/E 左右探头"
+	else:
+		_menu_title.text = "行动暂停"
+		_menu_sub.text = "PAUSED · 战术行动中断"
+		rows = ["1 · 重开行动", "2 · 重开靶场", "3 · 放弃行动（回大厅）"]
+		_menu_esc.text = "Esc 恢复战斗 · 游戏内 Q/E 左右探头"
+	for i in _menu_rows.size():
+		var row := _menu_rows[i] as Label
+		row.text = str(rows[i]) if i < rows.size() else ""
+		row.visible = i < rows.size()
+
 func show_menu() -> void:
 	if _menu == null:
 		setup()
@@ -540,8 +581,15 @@ func _input(event: InputEvent) -> void:
 				menu_restart.emit()
 			KEY_2:
 				hide_menu()
-				menu_range.emit()
+				# 模式分化：靶场菜单 2=离开靶场（回大厅）；实战 2=重开靶场
+				if _menu_kind == "range":
+					menu_abort.emit()
+				else:
+					menu_range.emit()
 			KEY_3:
+				# 靶场菜单只有两项：3 不消费不动作（main._route_key 兜底同口径）
+				if _menu_kind == "range":
+					return
 				hide_menu()
 				menu_abort.emit()
 			KEY_ESCAPE:

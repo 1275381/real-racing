@@ -1,4 +1,5 @@
 # 回归：烽火地带（Godot 版）核心链路——签到/开箱/命中/换弹掉匣/搜刮/撤离/死亡/靶场/经济
+#       + 实战/靶场语义分流：靶场练习弹免费零消耗（绝不回写库存）+ 暂停菜单模式分化文案
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪 +
@@ -23,6 +24,15 @@ func check(name: String, ok: bool, extra := "") -> void:
 	if not ok:
 		fails += 1
 	print("[huodai] %s %s%s" % ["PASS" if ok else "FAIL", name, (" —— " + extra) if extra != "" else ""])
+
+## 递归收集节点树下全部 Label 文本（暂停菜单文案断言用——菜单标签不设公开 API，遍历只读）
+func _menu_labels_text(n: Node) -> String:
+	var out := ""
+	for c in n.get_children():
+		if c is Label:
+			out += (c as Label).text + "\n"
+		out += _menu_labels_text(c)
+	return out
 
 func _initialize() -> void:
 	# 存档隔离：删掉上一次探针留下的存档，结果不依赖运行顺序
@@ -148,6 +158,46 @@ func _run() -> void:
 	var sc0: int = main.targets.score
 	main.targets.on_hit(0)
 	check("靶子计分", main.targets.score > sc0)
+
+	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
+	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——
+	#      须在离场前断言：_back_to_lobby 会把菜单复位回实战文案
+	var menu_txt := _menu_labels_text(main.hud._menu)
+	check("靶场菜单含「靶场暂停/离开靶场」", menu_txt.contains("靶场暂停")
+			and menu_txt.contains("离开靶场"))
+	check("靶场菜单无「行动/战斗/放弃」字样", not menu_txt.contains("行动")
+			and not menu_txt.contains("战斗") and not menu_txt.contains("放弃"))
+
+	# 10c. 靶场弹药免费（实战/靶场语义分流）：快照库存 → 打空整匣 → 换弹 →
+	#      再打数发 → 离场回大厅 → 库存逐发零消耗。练习弹绝不回写库存——
+	#      回写=靶场无限刷弹漏洞（经济红线）；弹药 HUD 靶场模式备弹显示 ∞
+	var rifle_snap: int = main.stash.ammo_of("rifle")
+	var pistol_snap: int = main.stash.ammo_of("pistol")
+	check("靶场练习备弹=固定大额（非库存数）",
+		main.guns.reserve == main.RANGE_RESERVE
+			and main.guns.reserve != rifle_snap,
+		"reserve=%d stash=%d" % [main.guns.reserve, rifle_snap])
+	for i in main.guns.ammo:
+		main.guns.try_fire()
+		main.guns.fire_cd = 0.0   # 绕射速间隔：账目回归不考手感
+	check("靶场打空整匣", main.guns.ammo == 0, "ammo=%d" % main.guns.ammo)
+	main.guns.start_reload()
+	for i in 140:
+		main.guns.update(0.016)
+	check("靶场换弹照常（练习弹补匣）", main.guns.ammo == 30
+			and main.guns.reserve == main.RANGE_RESERVE - 30,
+		"ammo=%d reserve=%d" % [main.guns.ammo, main.guns.reserve])
+	for i in 7:
+		main.guns.try_fire()
+		main.guns.fire_cd = 0.0
+	main._back_to_lobby()
+	await frames(10)
+	check("靶场离场库存逐发零消耗", main.stash.ammo_of("rifle") == rifle_snap
+			and main.stash.ammo_of("pistol") == pistol_snap,
+		"rifle=%d/%d pistol=%d/%d" % [main.stash.ammo_of("rifle"), rifle_snap,
+			main.stash.ammo_of("pistol"), pistol_snap])
+	check("靶场离场回大厅模式复位", main.mode == main.Mode.LOBBY
+			and main.lobby.lobby_visible)
 
 	# 11. 经济：买瞄具 → 装配 → 倍率生效
 	var cash_before: int = main.stash.cash

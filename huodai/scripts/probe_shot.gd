@@ -11,8 +11,10 @@
 # 大坝分区四连拍
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
-# +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）
-# （共 33 张：24 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31 张」为误计，按实拍数订正；
+# +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）→
+# 实战/靶场入口可辨（shot_entries 出发大厅整页：红橙实战 CTA 与绿色靶场入口同框）+
+# 靶场暂停菜单（shot_range_menu：靶场暂停/离开靶场，模式分化文案图证）
+# （共 35 张：26 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31/33 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -48,9 +50,10 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 ## 直接对 null 调 save_png 会抛脚本错误断掉 _initialize 协程，quit() 永远
 ## 到不了 = 进程挂起（2026-10 门槛 124 排查根因）。此处跳过保存只打日志，
 ## 窗口模式照常出图。另：窗口失焦会触发 main 的自动暂停菜单罩住画面——
-## 拍照前强制收菜单（2026-10 shot_gun_mk4 被暂停层糊住的事故）
-func shot(path: String) -> void:
-	if _m != null and _m.hud != null and _m.hud.menu_visible:
+## 拍照前强制收菜单（2026-10 shot_gun_mk4 被暂停层糊住的事故）；
+## keep_menu=true 例外：拍的就是暂停菜单本身（shot_range_menu）
+func shot(path: String, keep_menu := false) -> void:
+	if not keep_menu and _m != null and _m.hud != null and _m.hud.menu_visible:
 		_m.hud.hide_menu()
 	if root.get_texture() == null:
 		print("[probe] 跳过截图 %s（headless 无渲染目标）" % path)
@@ -78,6 +81,9 @@ func _initialize() -> void:
 
 	# ---- 大厅三页整页截图（三页签改造图证）：出发大厅 / 改枪台 / 交易行 ----
 	shot("res://out/shot_page_depart.png")   # 默认页=出发大厅（槽位卡+候选枪分页+速览）
+	# ---- 实战/靶场入口可辨图证：出发大厅整页——红橙「出发 · 实战行动」CTA
+	#      （含消耗提示行）与底栏绿色「G · 练习靶场 · 不耗弹药」入口同框
+	shot("res://out/shot_entries.png")
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")   # 摆拍已拥有未装瞄具（收尾还原真实存档）
 	# 光标先落位再 set_tab（set_tab 即重渲染；摆拍后赋值则画面停在旧帧——set_tab
@@ -207,6 +213,18 @@ func _initialize() -> void:
 	main._enter_range()
 	await frames(40)
 	shot("res://out/shot_range.png")
+
+	# ---- 靶场暂停菜单（模式分化图证）：进靶场按 Esc 开菜单截整屏——
+	#      「靶场暂停」标题 +「1 重开靶场 / 2 离开靶场（回大厅）」两项，
+	#      无「行动/战斗/放弃」字样；keep_menu 直拍（不收菜单护栏）
+	main.paused = true
+	main.hud.show_menu()
+	await frames(4)
+	shot("res://out/shot_range_menu.png", true)
+	check("靶场菜单标题就位", main.hud._menu_title.text == "靶场暂停",
+		"title=%s" % main.hud._menu_title.text)
+	main.hud.hide_menu()
+	main.paused = false
 
 	# ---- 附加验收 6：shot_ads —— 靶场装红点镜开镜，专验渐晕「边上与四角
 	# 暗度一致、无重叠更黑」。开镜动作 hd_scope 实际绑定鼠标右键
@@ -378,7 +396,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/33 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/35 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

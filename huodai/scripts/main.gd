@@ -6,6 +6,12 @@ extends Node3D
 
 enum Mode { LOBBY, MISSION, RANGE }
 
+## 靶场练习备弹（虚拟弹药）：每枪固定大额，与 stash 库存完全无关——
+## 取 9999 而非 999 是为了让单次练习会话几乎不可能打空（HUD 显示 ∞，
+## 若内部真耗尽会「显示 ∞ 却拒绝换弹」自相矛盾）；离场/重开一律丢弃，
+## 绝不回写库存（回写=靶场无限刷弹漏洞，经济红线）
+const RANGE_RESERVE := 9999
+
 var mode: int = Mode.LOBBY
 var paused: bool = false
 
@@ -130,8 +136,12 @@ func _scope_for(gun_id: String) -> Dictionary:
 	return {"kind": "iron", "zoom": 1.0}
 
 ## ---- 极致备弹弹药源（对齐 scope_provider 注入约定）----
-## 出发（行动/靶场）装填时 guns.enter 按枪取库存；首读缺键 = 一次性送满额礼物
+## 实战（MISSION）：备弹取 stash 库存（首读缺键 = 一次性送满额礼物），局终回收；
+## 靶场（RANGE）：发固定大额练习弹，与库存零往来——打掉的弹不扣库存，
+## 剩余的也绝不回写（否则靶场变成无限刷弹机）。mode 在 guns.enter 前已就位
 func _reserve_for(gun_id: String) -> int:
+	if mode == Mode.RANGE:
+		return RANGE_RESERVE
 	return stash.ammo_of(gun_id)
 
 ## 局终回收：把两把枪剩余备弹写回库存并存档——撤离/死亡/放弃回大厅三路同收敛；
@@ -162,6 +172,7 @@ func _start_mission(loadout: Dictionary) -> void:
 	guns.enter(loadout)
 	lobby.hide_lobby()
 	hud.hide_result()
+	hud.set_menu_mode("mission")   # 暂停菜单/弹药 HUD 按模式分化：实战=行动暂停+真实备弹数
 	hud.set_raid_visible(true)
 	hud.set_score_visible(false)   # 计分条只属于靶场
 	hud.set_danger(false)
@@ -171,6 +182,10 @@ func _start_mission(loadout: Dictionary) -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _enter_range() -> void:
+	# 从实战转靶场（暂停菜单「2 重开靶场」）= 行动局终：行动剩余备弹先入库——
+	# 否则这批发弹既没打掉也没回账，凭空蒸发；靶场练习弹另发、与库存无关
+	if mode == Mode.MISSION:
+		_reclaim_ammo()
 	mode = Mode.RANGE
 	paused = false
 	soldiers.reset_all()
@@ -185,20 +200,27 @@ func _enter_range() -> void:
 	guns.enter(stash.loadout)
 	lobby.hide_lobby()
 	hud.hide_result()
+	hud.set_menu_mode("range")    # 暂停菜单/弹药 HUD 按模式分化：靶场=靶场暂停+备弹 ∞
 	hud.set_raid_visible(true)
 	hud.set_score_visible(true)
 	hud.set_score(targets.score, targets.best)
 	hud.set_danger(false)
 	hud.set_extract(0.0, 1.0)
+	# 进场即点破语义：靶场是练习、弹药免费，与实战消耗分清（用户反馈「分不清」）
+	hud.toast("靶场练习 · 弹药免费不耗库存", Color(0.49, 0.89, 0.66))
 	_apply_mode_visuals()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _back_to_lobby() -> void:
-	_reclaim_ammo()   # 放弃/结算回大厅：剩余备弹先入库（撤离·死亡路径已回收，此处幂等）
+	# 放弃/结算回大厅：实战剩余备弹先入库（撤离·死亡路径已回收，此处幂等）；
+	# 靶场离场绝不回收——练习弹是虚拟弹药，回写库存=靶场无限刷弹漏洞
+	if mode == Mode.MISSION:
+		_reclaim_ammo()
 	mode = Mode.LOBBY
 	paused = false
 	hud.set_raid_visible(false)
 	hud.hide_result()
+	hud.set_menu_mode("mission")   # 复位默认（实战文案）：菜单只在对局内出现
 	hud.hide_menu()
 	hud.set_danger(false)
 	hud.set_extract(0.0, 1.0)
@@ -207,7 +229,10 @@ func _back_to_lobby() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func _restart_current() -> void:
-	_reclaim_ammo()   # 重开=放弃当局：剩余备弹先入库再重装（防「重开退款」漏洞）
+	# 重开=放弃当局：实战剩余备弹先入库再重装（防「重开退款」漏洞）；
+	# 靶场重开不回收——练习弹与库存无关，直接重发一轮满额
+	if mode == Mode.MISSION:
+		_reclaim_ammo()
 	if mode == Mode.RANGE:
 		_enter_range()
 	else:
@@ -350,13 +375,18 @@ func _route_key(code: int) -> void:
 		elif code == KEY_ENTER:
 			_back_to_lobby()
 		return
-	# 暂停菜单：1/2/3
+	# 暂停菜单：1/2/3（按模式分化——实战 2=重开靶场 3=放弃行动；
+	# 靶场 2=离开靶场回大厅、3 不存在；HUD._input 已先处理并标记消费，
+	# 此处是与 HUD 同口径的兜底分发）
 	if hud.menu_visible:
 		if code == KEY_1:
 			hud.menu_restart.emit()
 		elif code == KEY_2:
-			hud.menu_range.emit()
-		elif code == KEY_3:
+			if mode == Mode.RANGE:
+				hud.menu_abort.emit()
+			else:
+				hud.menu_range.emit()
+		elif code == KEY_3 and mode != Mode.RANGE:
 			hud.menu_abort.emit()
 		elif code == KEY_ESCAPE:
 			hud.hide_menu()

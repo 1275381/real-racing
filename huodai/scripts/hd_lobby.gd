@@ -1,7 +1,8 @@
 class_name HDLobby
 extends CanvasLayer
 ## 烽火地带 —— 大厅（移植 js/fps/lobby.js）：顶栏 LOGO/战绩/每日签到/现金，
-## 底部「出发大厅 / 改枪台 / 交易行」三页签 +「G 去靶场」。
+## 底部「出发大厅 / 改枪台 / 交易行」三页签 +「G · 练习靶场 · 不耗弹药」
+## （实战/练习两个入口一眼可辨：出发 CTA 红橙=消耗极致备弹，靶场入口绿=免费）。
 ## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）；
 ## 数字键 1/2/3 直切页签（页签钮与全部指路文案统一「按 N 进」口径，无「页签 N」字样）。
 ## 鼠标路径：点击行=选中光标；装入/换装统一走行内显式按钮（已拥有未装显示「装备/换装」，
@@ -28,6 +29,7 @@ const COL_BG := Color(0.03, 0.05, 0.04, 0.95)
 const COL_TEXT := Color(0.85, 0.87, 0.82)
 const COL_ACCENT := Color(1, 0.7, 0.36)
 const COL_OK := Color(0.49, 0.89, 0.66)
+const COL_LOW := Color(1.0, 0.48, 0.27)   # 实战消耗警示色（与 HUD.COL_LOW 同值）：出发 CTA 专用
 const TAB_TITLES := ["出发大厅", "改枪台", "交易行"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
 const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
@@ -253,7 +255,10 @@ func _build() -> void:
 	var sp2 := Control.new()
 	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bh.add_child(sp2)
-	var rb := _mk_btn("G · 去靶场", 13)
+	# 靶场入口（与出发 CTA 分流）：绿色=安全免费，文案自曝「练习·不耗弹药」——
+	# 用户反馈「出发实战和靶场分不清」，入口语义在两处各自点破
+	var rb := _mk_btn("G · 练习靶场 · 不耗弹药", 13)
+	_style_btn(rb, false, COL_OK, 14)
 	rb.pressed.connect(_fire_range)
 	bh.add_child(rb)
 
@@ -474,16 +479,21 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		row.gui_input.connect(_on_deploy_row_input.bind(_deploy_page, 2 + r))
 		main.add_child(row)
 
-	# 出发钮
+	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流；
+	# 下挂一行消耗提示——实战吃库存极致备弹，与靶场免费弹划清界限）
 	var di := 2 + rows
 	var dsel := _cur0 == di
-	var btn := _mk_btn("出  发", 17)
-	_style_btn(btn, dsel, COL_ACCENT if dsel else _dim(0.5), 60)
+	var btn := _mk_btn("出发 · 实战行动", 17)
+	_style_btn(btn, dsel, COL_LOW if dsel else _dim(0.5), 60)
 	btn.pressed.connect(_fire_deploy)
-	var bwrap := CenterContainer.new()
+	var bwrap := VBoxContainer.new()
+	bwrap.alignment = BoxContainer.ALIGNMENT_CENTER
 	bwrap.add_child(btn)
+	var dnote := _mk_label("实战消耗极致备弹 · 局终回收余弹", 11, COL_LOW)
+	dnote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bwrap.add_child(dnote)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行选中 · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买按 3 进交易行 · G 靶场 · 1/2/3 切页签",
+	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行选中 · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买按 3 进交易行 · G 练习靶场（免费弹） · 1/2/3 切页签",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
