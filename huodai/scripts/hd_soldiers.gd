@@ -29,8 +29,8 @@ const PATROL_SPEED := 3.0       # 巡逻步行
 const SEARCH_SPEED_MUL := 0.62  # 搜索小跑（enemies.js SEARCH_SPEED_MUL）
 const ENGAGE_SPEED_MUL := 0.45  # 交战移速 ×0.45（小侧移，battlefield/enemies.js 同款）
 
-const VIEW_DIST := 55.0         # 索敌视距（进战后 ENGAGE_DIST）
-const ENGAGE_DIST := 70.0       # 进战视距 = 敌弹射程
+const VIEW_DIST := 48.0         # 索敌视距（进战后 ENGAGE_DIST）——2026-10 用户反馈「士兵太强」温和削弱：55→48
+const ENGAGE_DIST := 64.0       # 进战视距 = 敌弹射程（同轮削弱：70→64）
 const FOV_COS := 0.5736         # cos(55°)：视锥 110° 半角（背身看不见）
 const LOS_RECHECK := 0.4        # 视线复测周期（battlefield.gd:388）
 const LOSE_TIME := 6.0          # 玩家离开视距 6s 转 search
@@ -41,16 +41,16 @@ const SEARCH_WANDER := 9.0      # 搜索目标点在最后目击点附近的游�
 const BURST_MIN := 3            # 点射发数 3-5
 const BURST_MAX := 5
 const FIRE_CD := 0.13           # 点射内发弹间隔（rifle cd，guns.gd）
-const BURST_PAUSE_MIN := 1.1    # 点射间歇（battlefield.gd:607 同款）
-const BURST_PAUSE_MAX := 2.2
+const BURST_PAUSE_MIN := 1.4    # 点射间歇（2026-10 温和削弱：1.1→1.4，多点喘息）
+const BURST_PAUSE_MAX := 2.6
 const MAG_SIZE := 30            # rifle 弹匣
 const RELOAD_T := 2.2
-const SPREAD_BASE := 0.03       # 基础散布 + 距离/60 × 0.05
+const SPREAD_BASE := 0.045      # 基础散布 + 距离/60 × 0.05（削弱：0.03→0.045，中远距命中率降）
 const SPREAD_PER_M := 0.05 / 60.0
 const SPRINT_SPREAD_MUL := 1.4  # 玩家疾跑散布再放大
 const SPRINT_SPEED := 8.0       # move_speed ≥ 此值视为疾跑（onfoot 步 6 / 跑 11.5）
 const RIFLE_DMG := 20.0         # guns.gd rifle 单发伤害
-const AI_DMG_MUL := 0.55        # AI 削弱（对齐网页版 -45%）
+const AI_DMG_MUL := 0.45        # AI 削弱（2026-10 用户反馈温和削弱：0.55→0.45，单发 11→9）
 const HIT_R := 0.5              # 玩家命中球半径
 const EYE_H := 1.5              # 敌弹出发点/视线高度（pos + 1.5）
 const CHEST_Y := 1.05           # 玩家胸口：瞄准点 + 命中球心
