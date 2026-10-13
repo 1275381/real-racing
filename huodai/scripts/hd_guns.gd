@@ -23,6 +23,8 @@ const ADS_SPREAD := 0.1                            # 开镜散布倍率（onfoot
 const ADS_SPEED := 5.0
 const MAG_REST_T := 4.0                            # 落地弹匣停留秒数（之后渐隐回收）
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
+const RD_WIN_W := 0.06     # 红点镜玻璃窗宽（枪身局部 m）——无框反射式大窗
+const RD_WIN_H := 0.045    # 红点镜玻璃窗高：窗顶=全镜最高件（_local_aabb 顶即窗顶）
 
 ## 换弹手部动画（reload 进度 prog 关键帧，照 _reload_off/_reload_rot 的插值
 ## 模式，不引入新状态机）：0.15-0.30 手入画伸匣 → 0.30-0.55 握匣下拉拔出
@@ -244,12 +246,18 @@ func update(dt: float) -> void:
 		mag.position = mag_pos
 		_falling = false
 	# 枪架摆位：肩射腰射位 ↔ 瞄准位（胸前提枪机制已按用户要求整体移除）。
-	# 开镜 lerp 终点照旧（枪顶 AABB 对准星正下方，onfoot 同款）；3× 以上
-	# 高倍镜开镜到位后隐藏枪模（镜筒贴脸挡屏，FOV 一缩还会放大数倍）
+	# 开镜 lerp 终点默认枪顶 AABB 对准星正下方（onfoot 同款）；3× 以上
+	# 高倍镜开镜到位后隐藏枪模（镜筒贴脸挡屏，FOV 一缩还会放大数倍）。
+	# 红点镜例外：改按 aim_y（挂枪时记的镜窗中心 local y）让窗中心过屏幕
+	# 中心——HUD 红点画在屏幕正中，旧 AABB 顶公式把整扇窗吊在准星下方
+	# 12mm，红点悬在玻璃窗外上方＝用户反馈「准星飞出镜子外」；窗中心在
+	# 枪身局部 x=0，x 终点随之归零。其它镜/机瞄不记 aim_y，摆位零改动
 	var holder: Node3D = g["holder"]
 	holder.visible = not (_aiming and _ads > 0.9 and current_zoom() >= HIDE_ZOOM)
 	var ads_pos := Vector3(-GUN_SCALE * float(g["cx"]),
 			-0.012 - GUN_SCALE * float(g["top"]), GUN_ADS_Z)
+	if g.has("aim_y"):
+		ads_pos = Vector3(0.0, -GUN_SCALE * float(g["aim_y"]), GUN_ADS_Z)
 	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off
 	holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
 	# 枪口火光衰减
@@ -521,9 +529,16 @@ func _mount_slot(slot: String) -> void:
 	flash.omni_range = 6.0
 	flash.visible = false
 	player.cam.add_child(flash)
-	_guns[slot] = {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
+	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
 			"mag_pos": mag_pos, "mag_size": mag_size,
 			"flash": flash, "flash_mesh": flash_mesh, "top": top, "cx": cx}
+	# 红点镜瞄准线：镜体工厂（_scope_visual reddot 分支）把窗中心 local y 写
+	# 进枪模 meta，这里记进枪架信息包 aim_y——update() 的 ADS 终点据此改按
+	# 「窗中心过屏幕中心」摆位，HUD 正中的红点分划才落进玻璃窗内。其它瞄具
+	# kind 不写 meta、不记此键，沿用枪顶 AABB 公式零改动
+	if gun.has_meta("rd_aim_y"):
+		g_pack["aim_y"] = float(gun.get_meta("rd_aim_y"))
+	_guns[slot] = g_pack
 
 
 ## 全枪册弹匣参数（枪匠契约 mag_of）：返回 {"pos","size","show"} 子集；
@@ -638,45 +653,52 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 			box.call(Vector3(0.05, 0.018, 0.05), Vector3(0, top_y + 0.02,
 					mid_z - 0.04), dk)
 		"reddot":
-			# 红点镜：无框反射式（FastFire 形态）——导轨适配座（矮倒角盒）+
-			# 单片 30×24mm 平玻璃窗（淡青透明、无上框：两侧 ≤2mm 窄边夹持）+
-			# 玻璃后方内红点投射器 + 玻璃窗中心自发光红点（=瞄准线）。
-			# 窗顶=全镜最高点：_local_aabb 量测后 ADS 镜窗顶贴准星正下方、
-			# 窗中心与屏幕准星一线（旧裸圆筒+悬浮红点拼装已整体删除）
-			# 导轨适配座：矮盒两层叠出倒角（上层四向缩进），y 0~12mm
-			box.call(Vector3(0.046, 0.006, 0.062), Vector3(0, top_y + 0.003,
+			# 红点镜：大窗无框反射式（FastFire 形态放大窗）——玻璃窗 60×45mm
+			# （用户反馈整镜改大：旧 30×24mm 小窗容差太小，瞄准线稍偏红点就
+			# 飞出窗外），底托/窄边/投射器/风偏塔按比例跟进。窗顶仍是全镜
+			# 最高件（_local_aabb 量顶与 aim_y 换算都依赖这一不变量）；窗中心
+			# local y 写进枪模 meta 供 _mount_slot 记 aim_y——ADS 时窗中心过
+			# 屏幕中心，HUD 中心红点正落在玻璃窗内（旧裸圆筒+悬浮红点已删）
+			# 窗几何（相对镜座挂点 top_y）：底托上沿 24mm 起窗，窗沿 y 24~69mm
+			var win_cy := top_y + 0.024 + RD_WIN_H * 0.5   # 窗中心=瞄准线锚点
+			var win_z := mid_z - 0.058   # 玻璃面 z（窗变大后略前移，少遮后景）
+			# 导轨适配座：矮盒两层叠出倒角（上层四向缩进），y 0~14mm，随窗加宽
+			box.call(Vector3(0.052, 0.007, 0.075), Vector3(0, top_y + 0.0035,
 					mid_z - 0.03), dk)
-			box.call(Vector3(0.038, 0.006, 0.052), Vector3(0, top_y + 0.009,
+			box.call(Vector3(0.044, 0.007, 0.064), Vector3(0, top_y + 0.0105,
 					mid_z - 0.03), dk)
-			# 镜体底托：极薄下匣（玻璃下沿插入），y 12~20mm
-			box.call(Vector3(0.034, 0.008, 0.052), Vector3(0, top_y + 0.016,
+			# 镜体底托：下匣（玻璃下沿插入），y 14~24mm
+			box.call(Vector3(0.04, 0.01, 0.064), Vector3(0, top_y + 0.019,
 					mid_z - 0.03), dk)
-			# 内红点投射器：玻璃后方暗色小盒（底托上露头）+ 右侧风偏调节塔
-			box.call(Vector3(0.012, 0.009, 0.014), Vector3(0, top_y + 0.021,
+			# 内红点投射器：玻璃后方暗色盒（底托上露头）+ 右侧风偏调节塔
+			box.call(Vector3(0.016, 0.012, 0.02), Vector3(0, top_y + 0.026,
+					mid_z - 0.032), dk)
+			box.call(Vector3(0.008, 0.008, 0.014), Vector3(0.026, top_y + 0.02,
 					mid_z - 0.028), dk)
-			box.call(Vector3(0.006, 0.006, 0.01), Vector3(0.019,
-					top_y + 0.016, mid_z - 0.018), dk)
-			# 两侧窄边：2mm 竖条夹持玻璃左右沿（「无框」仅存的框），y 20~44mm
-			box.call(Vector3(0.002, 0.024, 0.006), Vector3(-0.016,
-					top_y + 0.032, mid_z - 0.055), dk)
-			box.call(Vector3(0.002, 0.024, 0.006), Vector3(0.016,
-					top_y + 0.032, mid_z - 0.055), dk)
-			# 玻璃窗：单片平玻璃 30×24×1.5mm，淡青透明双面——窗顶 y=44mm
-			# 即 sight top（全镜无任何件高于玻璃）
-			box.call(Vector3(0.03, 0.024, 0.0015), Vector3(0, top_y + 0.032,
-					mid_z - 0.055), gl)
-			# 内投影红点：3.6mm 自发光红球嵌在玻璃面中心（窗中心=瞄准线，
-			# ADS 后与 HUD 分划点/屏幕准星三点一线）
+			# 两侧窄边：2.5mm 竖条夹持玻璃左右沿（「无框」仅存的框），比窗顶
+			# 矮 2mm——窗顶保持全镜最高（AABB 顶=窗顶的换算前提）
+			box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(-0.0313,
+					win_cy - 0.001, win_z), dk)
+			box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(0.0313,
+					win_cy - 0.001, win_z), dk)
+			# 玻璃窗：单片平玻璃 60×45×2mm，淡青透明双面——窗顶即 sight top
+			# （全镜无任何件高于玻璃）
+			box.call(Vector3(RD_WIN_W, RD_WIN_H, 0.002), Vector3(0, win_cy,
+					win_z), gl)
+			# 内投影红点：5mm 自发光红球嵌在玻璃面中心（窗中心=瞄准线，
+			# ADS 后与 HUD 分划点/屏幕准星三点一线），随窗稍放大
 			var dot := SphereMesh.new()
-			dot.radius = 0.0018
-			dot.height = 0.0036
+			dot.radius = 0.0025
+			dot.height = 0.005
 			dot.radial_segments = 8
 			dot.rings = 4
 			dot.material = rd
 			var dot_mi := MeshInstance3D.new()
 			dot_mi.mesh = dot
-			dot_mi.position = Vector3(0, top_y + 0.032, mid_z - 0.055)
+			dot_mi.position = Vector3(0, win_cy, win_z)
 			parent.add_child(dot_mi)
+			# 窗中心 local y 写 meta：_mount_slot 据此记 aim_y（只 reddot 写）
+			parent.set_meta("rd_aim_y", win_cy)
 		"optic":
 			# 3.5× 光学镜：镜身 + 大物镜 + 双固定座
 			cyl.call(0.03, 0.15, Vector3(0, top_y + 0.06, mid_z - 0.12), dk)

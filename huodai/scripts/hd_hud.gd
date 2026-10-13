@@ -697,8 +697,9 @@ class ScopeOverlay extends Control:
 		match kind:
 			"reddot":
 				# 无框红点镜：镜体已无环框 → 分划只留中心红点（旧 26px 红圈
-				# 是「镜环示形」，与无框窗冲突删除；点径 2.6→3.2 保开镜可见性）
-				draw_circle(c, 3.2, COL_RED)
+				# 是「镜环示形」，与无框窗冲突删除；点径 2.6→3.2 保开镜可见性，
+				# 2026-10 镜窗改大 60×45mm 后随窗微调至 4.0——别夸张，留观察余量）
+				draw_circle(c, 4.0, COL_RED)
 			"holo":
 				draw_rect(Rect2(c - Vector2(48, 36), Vector2(96, 72)),
 						Color(COL_GREEN.r, COL_GREEN.g, COL_GREEN.b, 0.4), false, 1.6)

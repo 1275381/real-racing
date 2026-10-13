@@ -1,5 +1,6 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
-# → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 换弹手部 →
+# → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 红点镜大窗两连拍
+# （shot_reddot_hip 腰射大窗造型 / shot_reddot_ads 开镜红点居窗）→ 换弹手部 →
 # 汤姆逊腰射 → 九把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4/m250.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 大厅三页整页（shot_page_depart 出发大厅 / shot_page_bench 改枪台·选中枪+已拥有未装镜
@@ -11,7 +12,7 @@
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
 # +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）
-# （共 31 张：22 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29 张」为误计，按实拍数订正；
+# （共 33 张：24 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -233,6 +234,19 @@ func _initialize() -> void:
 	Input.action_release("hd_scope")
 	await wait_until(func(): return main.player.ads <= 0.4)   # 收镜，别污染下张
 
+	# ---- 附加验收 6b：shot_reddot_hip / shot_reddot_ads —— 红点镜大窗两连拍：
+	# 腰射看 60×45mm 大窗造型（底托/窄边/投射器/风偏塔比例跟进）；开镜到位看
+	# HUD 中心红点落进玻璃窗内居中（ADS 摆位已改「窗中心过屏幕中心」）
+	await wait_until(func(): return main.player.ads <= 0.01)   # 彻底收镜再拍腰射
+	await frames(2)
+	shot("res://out/shot_reddot_hip.png")
+	Input.action_press("hd_scope")
+	check("大窗开镜到位 ads=1", await wait_until(func(): return main.player.ads >= 1.0))
+	await frames(4)
+	shot("res://out/shot_reddot_ads.png")
+	Input.action_release("hd_scope")
+	await wait_until(func(): return main.player.ads <= 0.4)   # 收镜，别污染下张
+
 	# ---- 附加验收 7：shot_reload_hand —— 打两发按 R，换弹中段截图。
 	# rifle 换弹全长 1.5s：剩约 0.95~0.4s 处于「旧匣已落/新匣将入、枪体
 	# 下沉倾斜」的中段（换弹手部 + 弹匣动画都在画面里）
@@ -364,7 +378,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/31 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/33 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

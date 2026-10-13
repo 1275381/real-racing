@@ -4,6 +4,8 @@
 #       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪 +
 #         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
+#       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
+#         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
 # 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
 #      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
@@ -597,6 +599,42 @@ func _run() -> void:
 	check("开镜后枪回瞄准位", ads_ok
 		and c_h.position.distance_to(hip_expect) < 0.01,
 		"d=%.3f" % c_h.position.distance_to(hip_expect))
+
+	# §红点镜瞄准线（准星不飞出镜外）：装 reddot 的枪 ADS 到位后，镜窗中心
+	# 须落在相机纵轴上（x/y 各 ±3mm）——旧 AABB 顶公式把整扇窗吊在准星下方
+	# 12mm，HUD 正中的红点悬在玻璃窗外上方（用户反馈「准星飞出镜子外」）。
+	# 用 vector 换枪重建枪模：rifle 槽 holder 是 §持枪 时按 holo 建的，enter()
+	# 同枪 id 复用 holder、换 id 才重读装配瞄具（同 probe_shot 附加验收 6 套路）
+	main.stash.buy_scope("reddot")   # 幂等：11 步已购过
+	main.stash.equip_scope("vector", "reddot")
+	main._start_mission({"primary": "vector", "secondary": "pistol"})
+	await frames(8)
+	var g_rd: Dictionary = main.guns._guns["primary"]
+	check("红点镜挂枪记 aim_y（窗中心 local y）", g_rd.has("aim_y"),
+		"keys=%s" % str(g_rd.keys()))
+	# 窗顶=全镜最高件不变量：aim_y 应恰等于 AABB 顶 − 半窗高（窗是全镜最高件，
+	# _local_aabb 量到的 top 即窗顶——HIDE_ZOOM 与此换算都依赖它）
+	check("窗顶=全镜最高件（aim_y 与 AABB 顶恰差半窗高）", g_rd.has("aim_y")
+			and absf(float(g_rd["aim_y"]) - (float(g_rd["top"])
+					- HDGuns.RD_WIN_H * 0.5)) < 0.0015,
+			"aim_y=%.4f top=%.4f" % [float(g_rd.get("aim_y", 0.0)),
+					float(g_rd["top"])])
+	Input.action_press("hd_scope")
+	var rd_ads := false
+	for i in 150:
+		main.player.update(0.016)
+		main.guns.update(0.016)
+		if main.player.ads >= 1.0:
+			rd_ads = true
+			break
+	Input.action_release("hd_scope")
+	var rd_h: Node3D = g_rd["holder"]
+	# 窗中心换到相机空间：枪模是 holder 子节点（整体 ×GUN_SCALE）、窗中心在
+	# 枪身局部 (0, aim_y) → 相机系坐标 = holder.position + GUN_SCALE·aim_y
+	var wc_y: float = rd_h.position.y + HDGuns.GUN_SCALE * float(g_rd["aim_y"])
+	check("红点镜 ADS 窗中心过屏幕中心（相机纵轴 ±3mm）", rd_ads
+			and absf(rd_h.position.x) < 0.003 and absf(wc_y) < 0.003,
+			"ads=%.2f wc=(%.4f, %.4f)" % [main.player.ads, rd_h.position.x, wc_y])
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
