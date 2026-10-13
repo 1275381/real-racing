@@ -119,7 +119,9 @@ func _make_mats() -> void:
 	_mat_concrete.albedo_texture = tex
 	_mat_concrete.uv1_triplanar = true
 	_mat_concrete.uv1_scale = Vector3(0.05, 0.006, 0.05)
-	_mat_concrete.roughness = 0.95
+	# 第 4 轮判图 #9：背光坝面读成均匀死灰板——rough 0.95→0.86 给一点
+	# 环境反射（天光在混凝土面上的冷灰反光），配竖水渍条破均色
+	_mat_concrete.roughness = 0.86
 	_mat_concrete_dark = StandardMaterial3D.new()
 	_mat_concrete_dark.albedo_color = Color(0.48, 0.47, 0.45)
 	_mat_concrete_dark.roughness = 0.95
@@ -579,12 +581,18 @@ func _shoulder(root) -> void:
 ## C 面水平缝对齐 STEP_H 节奏（y20.8/28.6/36.4）+ 竖向缝对齐垛间中线（x=-23/-5/13）；
 ## 台阶每级前脸竖缝对齐垛中线延伸（西段 -140..-50 / 东段 40..148）
 func _seams(root) -> void:
+	# 第 4 轮判图 #9：C 面浇筑横缝 0.06→0.13 加粗（中景可读）+ 竖向水渍条×3
+	# （避涂鸦环 x∈[−16.9,8.9] 与闸墩占位，放 x=−22/−18/17）
 	for sy in [20.8, 28.6, 36.4]:
-		_box(root, Vector3(60.0, 0.06, 0.08), Vector3(0.0, sy, -123.94),
+		_box(root, Vector3(60.0, 0.13, 0.16), Vector3(0.0, sy, -123.94),
 				_mat_concrete_dark)
 	for sx in [-23.0, -5.0, 13.0]:
 		_box(root, Vector3(0.06, 39.0, 0.08), Vector3(sx, 32.5, -123.94),
 				_mat_concrete_dark)
+	for wx in [-22.0, -18.0, 17.0]:   # C 面垂直水渍条（锈带语言；第 4 轮复测
+		# 0.4 宽在 240m overview 仅 1px 读不出——加宽 0.75/0.5 到 2px 可读）
+		_box(root, Vector3(0.75, 26.0, 0.12), Vector3(wx, 26.0, -123.88), _mat_rust)
+		_box(root, Vector3(0.5, 12.0, 0.12), Vector3(wx, 40.0, -123.88), _mat_rust)
 	for seg_x in [-90.0, 90.0]:
 		var joints: Array = [-140.0, -122.0, -104.0, -86.0, -68.0, -50.0] \
 				if seg_x < 0.0 \

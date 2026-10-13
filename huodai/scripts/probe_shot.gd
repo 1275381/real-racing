@@ -12,9 +12,12 @@
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
 # +下幅工业区（厂房/集装箱/白罐/烟柱/棕榈），对位目标图四层构图）→
+# 四新区五连拍（shot_dam_overview 后撤高机位全图纯净全景 + shot_dam_new1..4
+# 军营/大电/水泥厂/游客中心走位近中景，与 barracks/substation/cement/visitor
+# 参考图逐张对照形状语言）→
 # 实战/靶场入口可辨（shot_entries 出发大厅整页：红橙实战 CTA 与绿色靶场入口同框）+
 # 靶场暂停菜单（shot_range_menu：靶场暂停/离开靶场，模式分化文案图证）
-# （共 35 张：26 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31/33 张」为误计，按实拍数订正；
+# （共 40 张：31 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31/33/35 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -210,6 +213,83 @@ func _initialize() -> void:
 	for slot_v in holder_vis:
 		main.guns._guns[slot_v]["holder"].visible = holder_vis[slot_v]
 
+	# ---- shot_dam_overview：后撤高机位全图纯净全景（无 HUD/枪模，:198-211 协议）——
+	#      高机位瞄 (0,8,-40)、FOV 55：四层构图=坝脊+坝顶吊机天际线 → 中环四 accent
+	#      （西南筒仓三连/正东桁架/正西板房/东南玻璃体+旗杆）→ 中心巷道/集装箱带
+	#      → 前景戈壁；军营在西侧入画、坝后山脊东北主峰对角呼应。
+	#      机位迭代史：首版 cam(-118,58,118) 与筒仓列（沿 z 布列）近乎轴向对视，
+	#      三连剪影前后互挡只读出 2 座——东移 22m 到 (-96,58,116) 斜读三连
+	#      （机位迭代先例 :171-174）；yaw=atan2(96,-156)≈2.5899、
+	#      pitch=atan2(-50,183.2)≈-0.2667（python3 复算）
+	main.player.enter(Vector3(-96.0, 0.0, 116.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(-96.0, 58.0, 116.0)
+	main.player.cam.rotation = Vector3(-0.2667, 2.5899 + PI, 0)
+	main.player.cam.fov = 55.0
+	var hud_ov: bool = main.hud.visible
+	main.hud.visible = false
+	var holder_ov := {}
+	for slot_v in main.guns._guns:
+		var g_ov: Dictionary = main.guns._guns[slot_v]
+		holder_ov[slot_v] = g_ov["holder"].visible
+		g_ov["holder"].visible = false
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(6)
+	shot("res://out/shot_dam_overview.png")
+	main.player.dead = false
+	main.player.cam.fov = main.player.BASE_FOV
+	main.hud.visible = hud_ov
+	for slot_v in holder_ov:
+		main.guns._guns[slot_v]["holder"].visible = holder_ov[slot_v]
+
+	# ---- 四新区走位近中景（冻结摆拍 :139-149 协议：dead=true 冻玩家 update、
+	#      cam 手动定格、player.pos 挪 (90,0,-30) 熄红罩；四处站位实测均 mid）。
+	#      机位允许实拍迭代（:171-174 先例），以参考图同构为准：
+	#      new1 军营——东门外 (−96,4) 朝西北瞄板房南面（三门洞+双坡脊，对位
+	#      barracks.jpg U 形营地营房视角；视线左偏 20° 把帐篷×2+火堆收进左前景）
+	#      机位迭代史：首版 (−100,−8) 朝正西北板房立面完整但帐篷在机位身后
+	#      缺营地语汇——东门位 (−96,4) 朝 (−118,5.5,−19) 复拍（实测 mid 无红罩）
+	main.player.enter(Vector3(-96.0, 0.0, 4.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(-96.0, 1.55, 4.0)
+	main.player.cam.rotation = Vector3(0.1236, -2.378 + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
+	shot("res://out/shot_dam_new1.png")
+	main.player.dead = false
+	#      new2 大电——围栏东南角外 (92,6) 朝西北瞄 (110,3,−20)（机位迭代史：
+	#      首版 (90,−14) 朝 +X 只见主控楼西立面无窗纯方块+1 台变压器——判图
+	#      3 轮连报；斜穿视角同框收南列变压器+桁架列+主控楼南窗带，实测 mid）
+	main.player.enter(Vector3(92.0, 0.0, 6.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(92.0, 1.55, 6.0)
+	main.player.cam.rotation = Vector3(0.0459, 2.539 + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
+	shot("res://out/shot_dam_new2.png")
+	main.player.dead = false
+	#      new3 水泥厂——主楼东北料场 (−82,8) 朝西南瞄筒仓列（三连直筒+锥顶+
+	#      渡槽斜线+主楼北面卷帘门，对位 cement.jpg 筒仓群+斜撑渡槽；原候选
+	#      (−68,32) 实测落 center 红罩、(−70,40) 视线先穿主楼，均弃用）
+	main.player.enter(Vector3(-82.0, 0.0, 8.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(-82.0, 1.55, 8.0)
+	main.player.cam.rotation = Vector3(0.226, -1.192 + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
+	shot("res://out/shot_dam_new3.png")
+	main.player.dead = false
+	#      new4 游客中心——西侧 (70,46) 朝 +X 瞄门厅+南广场（通高玻璃门厅+石阶+
+	#      旗杆列+二层白墙横带窗，对位 visitor.jpg L 形玻璃楼前广场视角）
+	main.player.enter(Vector3(70.0, 0.0, 46.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(70.0, 1.55, 46.0)
+	main.player.cam.rotation = Vector3(0.1507, 1.695 + PI, 0)
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
+	shot("res://out/shot_dam_new4.png")
+	main.player.dead = false
+
 	main._enter_range()
 	await frames(40)
 	shot("res://out/shot_range.png")
@@ -396,7 +476,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/35 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/40 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

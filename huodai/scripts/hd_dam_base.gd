@@ -708,7 +708,9 @@ func _build_palms(w) -> void:
 
 
 ## 山体×5：单位球半轴缩放（远景地标，不逐面碰撞），第 3 轮全体换岩棕 rock 网格；
-## 只注册东山脚 2 条保守围合（建造计划⑫）+ 主山上撒 28 丛深橄榄灌木半球
+## 只注册东山脚 2 条保守围合（建造计划⑫）+ 主山上撒 28 丛深橄榄灌木半球。
+## 第 2 轮判图 #19：近山三座的山-沙交界是椭球赤道切线（直线硬接缝）——
+## 山脚周圈撒 LCG 固定序列碎石+灌木过渡带，打破直线交界
 func _build_hills(w) -> void:
 	for hl in HILLS:
 		var mi := MeshInstance3D.new()
@@ -719,6 +721,38 @@ func _build_hills(w) -> void:
 	_obstacle(w, 126.0, -104.0, 20.0, 12.0, 16.0)
 	_obstacle(w, 110.0, -114.0, 12.0, 6.0, 9.0)
 	_build_shrubs(w)
+	_build_hill_skirts(w)
+
+
+## 山脚过渡带：近山（东脚×2+西嘴；远山/坝后山脊不值当）赤道圈外 1~4m 环带
+## 撒碎石小球 ×10 + 灌木小半球 ×6/座——固定 LCG 幂等，不注册碰撞（<1.4m）
+func _build_hill_skirts(w) -> void:
+	var seed_v := 20261022
+	for host in [HILLS[0], HILLS[1], HILLS[2]]:
+		var hp: Vector3 = host["p"]
+		var hs: Vector3 = host["s"]
+		for k in 16:
+			seed_v = (seed_v * 1103515245 + 12345) % 2147483648
+			var th := TAU * (float(seed_v % 1000) / 1000.0 + float(k) / 16.0)
+			seed_v = (seed_v * 1103515245 + 12345) % 2147483648
+			var rr := 1.03 + 0.05 * float(seed_v % 100) / 100.0   # 赤道外 3~8%
+			var px: float = hp.x + hs.x * rr * cos(th)
+			var pz: float = hp.z + hs.z * rr * sin(th)
+			seed_v = (seed_v * 1103515245 + 12345) % 2147483648
+			if k % 8 < 5:   # 碎石小球（rock 网格缩小实例）
+				var rs := 0.35 + 0.55 * float(seed_v % 100) / 100.0
+				var mi := MeshInstance3D.new()
+				mi.mesh = _rock_mesh
+				mi.position = Vector3(px, 0.0, pz)
+				mi.scale = Vector3(rs, rs * 0.7, rs)
+				w.add_child(mi)
+			else:           # 灌木小半球
+				var bs := 0.5 + 0.4 * float(seed_v % 100) / 100.0
+				var bi := MeshInstance3D.new()
+				bi.mesh = _bush_mesh
+				bi.position = Vector3(px, 0.0, pz)
+				bi.scale = Vector3(bs, bs, bs)
+				w.add_child(bi)
 
 
 ## 主峰灌木丛（SHRUB_HOST=脊3）：LCG 伪随机固定序列（幂等），上半球面采样

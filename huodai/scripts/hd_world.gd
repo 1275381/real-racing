@@ -16,6 +16,9 @@ const PROP_DIR := "res://assets/battle/props/"
 ## （test_huodai.gd:9 GUN_LIB / main.gd:50 tracer_pool 同款先例）
 const HDDAM_SCRIPT := preload("res://scripts/hd_dam.gd")
 const HDDAM_BASE_SCRIPT := preload("res://scripts/hd_dam_base.gd")
+## 四新区件（军营/大电/水泥厂/游客中心）同由路径 preload：新 class_name
+## HDDamZones 在 --headless -s 回归下同样不进全局类名缓存，走路径最稳
+const HDDAM_ZONES_SCRIPT := preload("res://scripts/hd_dam_zones.gd")
 const GROUND_SIZE := 300.0        # 大地平面边长（隐形边界墙收在地面之内）
 const BOUND := 148.0              # 可行动边界半宽（地面 300 见方内收 2m）
 const WILD_R := 112.0             # 荒野带下限（网页版 layout.js ZONE_BANDS.wildR）
@@ -68,18 +71,27 @@ const EXTRACT_BEACON_H := 2.6
 const FOG_MAX := 0.005              # 远景可见性红线
 ## 对照优化第 5 轮教训：0.004 在 204m 对位机位上累积 ~80% 雾遮蔽，把扶壁垛/泄洪管
 ## 全洗没（评审「缺扶壁垛」实为看不见）。目标图是晴朗白天——压到 0.0012：
-## 200m 处透射 ~79%，大坝剪影清晰可辨，120m 内几乎无感
-const OUTDOOR_FOG := 0.0012         # 晴天：200m 大坝剪影清晰（对照目标图）
+## 200m 处透射 ~79%，大坝剪影清晰可辨，120m 内几乎无感。
+## 第 3 轮判图 #1：0.0012×90m+ 仍把中环剪影糊掉——再降一档到 0.0008；
+## 第 4 轮判图 #7：中远景仍灰霾、山脊白化断层——终值 0.0005（400m 透射 ~82%，
+## 近中景 ≈0 衰减、远山仅留薄大气层；真「近0/中0.3/远0.6 分层」在 Godot 指数
+## 雾模型内不可参数化——本值为程序化可达的最近似，配合体积雾压低实现分层感）
+const OUTDOOR_FOG := 0.0005         # 晴天：中环剪影层干净（对照目标图）
 ## INDOOR_FOG 刻意压在红线内一格：fog_density 引擎侧按 float32 存储，
 ## 0.003 会舍入成 0.003000000026… 反超 double 红线（回归 15 踩过）；0.0029 双保险
 const INDOOR_FOG := 0.0029          # 靶馆 22m 靶道只留薄雾感（原 0.02 把靶子糊成剪影）
-const OUTDOOR_AMB := 0.45
+## 第 3 轮判图 #1：环境光提亮半档（0.45→0.58）——上轮 −0.4EV 后暗面发灰，
+## 提环境光比提曝光更保高光不炸
+const OUTDOOR_AMB := 0.58
 const INDOOR_AMB := 0.55
 const OUTDOOR_SUN := 1.7
 const INDOOR_SUN := 0.25
 
 ## 可搜刮容器锚点（x/z 手工排布贴障碍摆：中心 18 / 过渡 11 / 荒野 9 + 坝区 13
-## 由 HDDamBase 追加 = 51；原 mid/wild 落在大坝矩形内的 6 点已迁入坝区表）
+## 由 HDDamBase 追加 + 四新区 7 由 HDDamZones 追加 = 58；原 mid/wild 落在大坝
+## 矩形内的 6 点已迁入坝区表；四新区轮两点微调：(96,0)→(104,−4) 挪入大电西院
+## 当航空储物箱锚点（实测 mid）、(−84,44)→(−84,50) 让水泥厂宿舍 footprint
+## （d=97.5 实测 mid）；(84,44) 原地保留=游客中心南广场北缘锚点（实测 mid））
 const CONTAINER_XZ := {
 	"center": [
 		Vector2(-18, -32), Vector2(-30, -30), Vector2(-46, -44), Vector2(-24, -52),
@@ -89,8 +101,8 @@ const CONTAINER_XZ := {
 		Vector2(18, 6), Vector2(-34, 22),
 	],
 	"mid": [
-		Vector2(0, 92), Vector2(44, 84), Vector2(84, 44), Vector2(96, 0),
-		Vector2(84, -44), Vector2(-84, -44), Vector2(-96, 0), Vector2(-84, 44),
+		Vector2(0, 92), Vector2(44, 84), Vector2(84, 44), Vector2(104, -4),
+		Vector2(84, -44), Vector2(-84, -44), Vector2(-96, 0), Vector2(-84, 50),
 		Vector2(-44, 84), Vector2(60, -66), Vector2(-60, 70),
 	],
 	"wild": [
@@ -212,6 +224,7 @@ var extract_pos: Vector3 = HDData.EXTRACT_POS  # 主撤离点（绿信标）
 var extract2_pos: Vector3 = HDData.DAM_EXTRACT_POS   # 第二撤离点（大坝撤离广场，信标同款）
 var dam: Node3D                   # 大坝硬结构（HDDam 实例：坝体/廊道/涂鸦/闸门排，视觉挂本类）
 var dam_base: Node3D              # 坝底工业区（HDDamBase 实例：厂房/堆场/工地 + 坝区点位）
+var dam_zones: Node3D             # 四新区（HDDamZones 实例：军营/大电/水泥厂/游客中心 + 新点位）
 
 var _built := false
 var _prop_scenes := {}            # name -> PackedScene | null（load 缓存）
@@ -252,6 +265,11 @@ func build() -> void:
 	dam_base = HDDAM_BASE_SCRIPT.new()
 	add_child(dam_base)
 	dam_base.build(self)
+	# 四新区最后装配（DAM→BASE→ZONES 次序：中环四区陈设在坝体/坝底之后，
+	# 障碍与点位 append 顺序不影响 wall_hit/搜索语义，只保证节点树层级稳定）
+	dam_zones = HDDAM_ZONES_SCRIPT.new()
+	add_child(dam_zones)
+	dam_zones.build(self)
 	# 撤离信标 ×2：主撤离（东侧绿标）+ 大坝广场第二撤离（93,-94），参数化复用同一生成器
 	_build_extract(extract_pos)
 	_build_extract(extract2_pos)
@@ -354,21 +372,25 @@ func _build_env() -> void:
 	fill.shadow_enabled = false
 	add_child(fill)
 
-	# —— 物理大气散射天空 ——
+	# —— 物理大气散射天空（第 3 轮判图 #1：上轮 turbidity 6 把天读成死板灰蓝
+	#    一块——回落到 3.5 保地平过渡带，同时瑞利 2.5 拉开天顶饱和蓝↔地平微暖
+	#    的连续渐变，配 ground_color 暖一档）——
 	var sky_mat := PhysicalSkyMaterial.new()
-	sky_mat.rayleigh_coefficient = 2.0    # 瑞利散射：天顶饱和蓝→地平暖白的连续渐变
+	sky_mat.rayleigh_coefficient = 2.5    # 瑞利散射：天顶饱和蓝→地平暖白的连续渐变
 	sky_mat.mie_coefficient = 0.008       # 米氏散射：太阳方向光晕
 	sky_mat.mie_eccentricity = 0.75
-	sky_mat.turbidity = 4.0               # 干燥霾天（沙漠大坝空气通透但非纯净）
-	sky_mat.ground_color = Color(0.5, 0.44, 0.35)   # 地平暖沙色衔接大地（物理天空单色地面）
-	sky_mat.energy_multiplier = 1.05
+	sky_mat.turbidity = 3.5               # 干燥晴天：宽渐变带但不发灰
+	sky_mat.ground_color = Color(0.55, 0.47, 0.36)   # 地平暖沙色衔接大地（物理天空单色地面）
+	sky_mat.energy_multiplier = 1.1
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.1
+	# 曝光迭代史：第 2 轮判图 #18 过曝死白降 0.4EV（1.1→0.83）；第 3 轮判图 #1
+	# 反馈整体偏暗发灰——回调到 −0.22EV（0.92），配环境光提亮半档，保高光不炸
+	env.tonemap_exposure = 0.92
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_density = OUTDOOR_FOG
@@ -380,15 +402,17 @@ func _build_env() -> void:
 	env.ambient_light_color = Color(0.6, 0.57, 0.5)
 	env.ambient_light_energy = OUTDOOR_AMB
 	env.ssao_enabled = true          # 垛间凹槽/洞龛深色竖条纹（评审 #8）
-	env.ssao_intensity = 2.2
+	env.ssao_intensity = 2.6         # 第 2 轮判图 #18：上调补接触阴影（帐篷/设备底部悬浮感）
 	env.ssil_enabled = true          # 屏幕空间间接光：暗面暖沙色反弹（第 5 轮架构）
 	env.ssil_intensity = 0.6
-	# 体积雾：只留低密度冷白前向散射做坝脚纵深（0.012 暖沙色曾把全帧洗成米色）
+	# 体积雾：只留低密度冷白前向散射做坝脚纵深（0.012 暖沙色曾把全帧洗成米色）；
+	# 第 4 轮判图 #7：0.004×160m 在中景叠出「灰霾」且远山白化断层——密度减半、
+	# 深度推远到 260m：近景≈0、中景薄散射、远山保轮廓（分层感的另一半）
 	env.volumetric_fog_enabled = true
-	env.volumetric_fog_density = 0.004
+	env.volumetric_fog_density = 0.0018
 	env.volumetric_fog_albedo = Color(0.88, 0.92, 1.0)
 	env.volumetric_fog_anisotropy = 0.55
-	env.volumetric_fog_length = 160.0
+	env.volumetric_fog_length = 260.0
 	# 调色分级（第 5 轮架构）：饱和/对比一键对位「暖沙色高饱和」（评审 #6 终解）
 	env.adjustment_enabled = true
 	env.adjustment_brightness = 1.0
@@ -401,6 +425,16 @@ func _build_env() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	# —— 全图大盒反射探针（第 3 轮判图 #2：玻璃幕墙 metallic 材质在纯 ambient
+	#    环境下是死色——一个大范围 ONCE 烘焙探针让 sky 渐变进玻璃/金属反射，
+	#    一次性烘焙零每帧开销；游客中心幕墙「上半幅映天色」由它兑现）——
+	var probe := ReflectionProbe.new()
+	probe.size = Vector3(320.0, 120.0, 320.0)
+	probe.position = Vector3(0.0, 60.0, 0.0)
+	probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	probe.intensity = 0.8
+	probe.box_projection = true
+	add_child(probe)
 	_build_clouds()
 
 
@@ -413,6 +447,9 @@ const CLOUD_BANDS := [
 	{"y": 155.0, "x": 10.0, "z": -170.0, "w": 420.0, "d": 60.0},
 	{"y": 175.0, "x": -90.0, "z": -240.0, "w": 520.0, "d": 80.0},
 	{"y": 165.0, "x": 130.0, "z": -210.0, "w": 380.0, "d": 55.0},
+	# 第 3 轮判图 #11：第 4 条低空近侧带（y120,z+40）在 new1 低机位读出水平
+	# 拉伸贴片——抬升并挪到坝后中景纵深位（y145/z-100），拉伸读法消失
+	{"y": 145.0, "x": -20.0, "z": -100.0, "w": 300.0, "d": 46.0},
 ]
 
 func _build_clouds() -> void:
@@ -428,11 +465,11 @@ func _build_clouds() -> void:
 	ctex.noise = cn
 	var cramp := Gradient.new()
 	cramp.set_color(0, Color(1.0, 1.0, 1.0, 0.0))
-	cramp.set_color(1, Color(1.0, 1.0, 1.0, 0.85))
+	cramp.set_color(1, Color(1.0, 1.0, 1.0, 0.92))   # 第 2 轮判图 #20：云可读性上调
 	ctex.color_ramp = cramp
 	var cm := StandardMaterial3D.new()
 	cm.albedo_texture = ctex
-	cm.albedo_color = Color(0.98, 0.98, 1.0, 0.9)
+	cm.albedo_color = Color(0.98, 0.98, 1.0, 0.95)
 	cm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	cm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	cm.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -465,7 +502,8 @@ func _build_ground() -> void:
 	ramp.set_color(1, Color(1.0, 1.0, 1.0))
 	tex.color_ramp = ramp
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.6, 0.52, 0.4)   # 浅沙色戈壁（乘噪点后约原色）
+	mat.albedo_color = Color(0.52, 0.45, 0.35)   # 浅沙色戈壁（第 2 轮判图 #18：
+	# 0.6,0.52,0.4 过曝死白——压暗一档防「白模」感，乘噪点后仍读浅沙）
 	mat.albedo_texture = tex
 	mat.uv1_scale = Vector3(7.0, 7.0, 1.0)   # 低频大尺度斑块破纯色（第 2 轮 20→7）
 	mat.roughness = 1.0
