@@ -63,6 +63,7 @@ const RECOIL := {
 	"scarh": [0.26, 0.13, 0.12],
 	"mk4": [0.12, 0.05, 0.08],
 	"m250": [0.16, 0.06, 0.10],
+	"mp7": [0.10, 0.05, 0.07],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -610,6 +611,13 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 	if gun_id == "sniper":
 		if s_kind == "thermal":
 			_scope_visual(root, "thermal", 0.12, 0.05, -0.3)
+	elif gun_id == "mp7" and s_kind == "iron":
+		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
+		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
+		# iron 后照门横条（0.05×0.022 暗块悬浮轨上、无自发光渲染成黑板）
+		# 正压在觇孔上读成「无特征纯黑大盒」，故 iron 时跳过；装镜走下方
+		# else 照常挂镜体，其余枪分支零改动
+		pass
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
 	return root
@@ -1059,6 +1067,9 @@ const HOLD_DELTA := {
 	"akm": Vector3(0, -0.0055, -0.1008),
 	"scarh": Vector3(0, 0.0081, -0.0623),
 	"m250": Vector3(0, 0.0280, -0.0718),
+	# mp7 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _smg_mp7 握把顶锚
+	# grip(pos=(0,-0.042,0.028)) = (0, -0.022+0.042, -0.0018-0.028)
+	"mp7": Vector3(0, 0.020, -0.0298),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -1073,7 +1084,7 @@ static func _hold_delta(gid: String) -> Vector3:
 		return HOLD_DELTA[gid]
 	return Vector3.ZERO
 
-const SMG_IDS := ["mp5", "p90", "uzi", "vector", "mk4"]
+const SMG_IDS := ["mp5", "p90", "uzi", "vector", "mk4", "mp7"]
 
 
 ## 是否冲锋枪册枪型（_build_gun_visual 分发用）
@@ -1095,6 +1106,8 @@ static func _smg_build(id: String) -> Node3D:
 			return _smg_vector()
 		"mk4":
 			return _smg_mk4()
+		"mp7":
+			return _smg_mp7()
 	return Node3D.new()
 
 
@@ -1134,6 +1147,14 @@ static func _smg_mag_of(id: String) -> Dictionary:
 			## mag_straight 建模件同步
 			return {"pos": Vector3(0.0, -0.135, -0.115),
 					"size": Vector3(0.042, 0.2, 0.068), "show": false}
+		"mp7":
+			## 4.6×30 半透明短直匣（微前倾）：真匣是枪身建模件（mag_pdw 独立
+			## 命名节点 + curved_mag 直匣 + 浅灰刻度条/圆点观察窗，匣体从握把
+			## 底板下方出露、6° 前倾），动画匣隐（同 MK4「匣形由枪身件表达」
+			## 先例）；pos=换弹手锚（握把下段沿匣抓握点，枪身局部
+			## (0,-0.23,0.052)×0.62）、size=掉匣替身缩放基准（=匣外形参数）
+			return {"pos": Vector3(0.0, -0.143, 0.032),
+					"size": Vector3(0.034, 0.195, 0.054), "show": false}
 	return {}
 
 
@@ -1156,6 +1177,9 @@ static func _smg_scope_anchor(id: String) -> Vector3:
 		"mk4":
 			## 全长顶轨齿顶 0.077 / 后折叠照门片顶 0.10
 			return Vector3(0.075, -0.10, -0.42)
+		"mp7":
+			## 分段顶轨齿顶 0.056 / 机匣中后段（拉机柄槽后）/ 轨前准星座
+			return Vector3(0.054, -0.05, -0.268)
 	return Vector3(0.085, -0.1, -0.5)
 
 
@@ -1672,13 +1696,300 @@ static func _smg_mk4() -> Node3D:
 	return root
 
 
+## H&K MP7 PDW（4.6×30mm，约950rpm）——考证特征逐条（HDGunLib 高模件拼装，
+## 按 MP7A1 参考图逐特征对照；紧凑方正、体量小于 MK4：枪身 z -0.371~+0.258
+## ≈0.63，MK4 的 57%——真枪收托仅约 41.5cm；顶点红线见 HDGunLib.POLY_MIN
+## ["mp7"]，构成式清点见 POLY_BASE 注。2026-10 二轮判图返工：导轨前段补齐
+## 楔齿（并修正首轮前齿 z 反向飞出轨基的「薄翅」bug）、照门座缩 1/3 开觇孔、
+## 抛壳窗改暗腔+亮缘、金属去蓝/聚合物提亮、前准星竖向护翼圆顶柱、弹匣单列
+## 观察孔+30 刻度线+托弹板、拉机柄扁平耳片、减重孔椭圆化、托板薄板大镂空、
+## 前握把收腰竖纹）：
+## ① 整体布局：紧凑方正直列式 PDW、形似放大手枪——弹匣插中空握把而非机匣
+##    （握把=弹匣井、匣从握把底板下出露并 6° 前倾），重心在握把正上方
+## ② 机匣两层结构：上半金属机匣壳（左右两排椭圆减重孔=负形暗件，孔四角
+##    圆角=孔高一半）+ 下半聚合物外壳，交接线平直贯穿全枪（左右缝线暗条）
+## ③ 顶部导轨：分段式 Picatinny——前 4 后 3 楔齿两段、中段下凹露拉机柄
+##    滑动槽（暗槽板），双耳拉机柄扁平矩形耳片平贴槽尾（非往复、射击不随动）
+## ④ 机瞄：轨前后各一座低矮折叠机械瞄具——前柱状准星（竖向护翼+圆顶柱）
+##    / 后小照门座亮环觇孔（torus 圆孔），放倒后与导轨齐平（建模展开态）
+## ⑤ 枪托：细长单杆伸缩滑轨（主导杆+下导杆双柱）从机匣尾拉出，末端薄板
+##    肩托（厚 7mm）+ 大镂空孔（孔面积≈板面一半）+ 铰链销双 torus（可上翻）
+## ⑥ 抛壳窗：机匣右侧前部方形开口（暗腔+亮缘倒角一圈）+ 左侧光面（无开窗件）
+## ⑦ 扳机护圈与控制件：护圈前伸与握把围成大环形，弹匣卡笋横穿护圈前下角
+##    （HK 标志性布局），快慢机居握把上方两侧带红白射击指示点
+## ⑧ 枪口：短枪管外露于护木前（轴线 y=0.018 贴握持线）+ 枪口螺纹环 +
+##    小圆柱消焰器/枪口罩（开筒内衬亮钢膛 + 前挡环）
+## ⑨ 前握把：护木下方垂直前握把（展开态、上下两段收腰）+ 竖向刻纹
+## ⑩ 握把刻纹与模印：握把侧面三道竖向刻纹条 + 根部浅灰 MP7A1 模印条
+## ⑪ 半透明弹匣：窄长矩形截面短匣（烟灰半透明 38%）+ 单列圆点观察孔 +
+##    『30』刻度线 + 匣内托弹板轮廓（匣形=枪身独立命名节点 mag_pdw）
+## ⑫ 侧面附件与刻字：机匣左右下侧短 Picatinny 导轨（各 3 齿）+ Cal.4.6
+##    mm×30 / HK MP7A1 模印浅灰条 + 红白安全指示小旗标
+## ⑬ 使用痕迹：仅顶轨棱边一条银灰磨损条 + 枪口前挡环/准星柱磨损色，不整面做旧
+static func _smg_mp7() -> Node3D:
+	var root := Node3D.new()
+	var mats := _smg_mats()
+	var mp7body: StandardMaterial3D = mats["mp7body"]
+	var mp7metal: StandardMaterial3D = mats["mp7metal"]
+	var mp7rail: StandardMaterial3D = mats["mp7rail"]
+	var mp7mag: StandardMaterial3D = mats["mp7mag"]
+	var mp7mark: StandardMaterial3D = mats["mp7mark"]
+	var mp7red: StandardMaterial3D = mats["mp7red"]
+	var mp7dark: StandardMaterial3D = mats["mp7dark"]
+	var mp7wear: StandardMaterial3D = mats["mp7wear"]
+	# ①② 机匣两层：金属上半壳（减重孔载体）+ 前斜面鼻（放大手枪的前脸）
+	#    + 聚合物下半壳——倒角盒，交接线=左右缝线暗条平直贯穿
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.052, 0.046, 0.34),
+			Vector3(0, 0.02, -0.09), Vector3.ZERO, 0.003, 12)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.048, 0.034, 0.06),
+			Vector3(0, 0.006, -0.283), Vector3(-18, 0, 0), 0.0025, 10)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.056, 0.054, 0.30),
+			Vector3(0, -0.028, -0.055), Vector3.ZERO, 0.003, 12)
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.004, 0.29),
+			Vector3(0.0284, -0.001, -0.05), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.004, 0.29),
+			Vector3(-0.0284, -0.001, -0.05), Vector3.ZERO, 0.0006, 6)
+	# ② 减重/散热孔：上壳后半左右两排 ×4 列椭圆孔（负形暗件；倒角取孔高
+	#    一半 5mm——四角圆成圆角长孔，非直角矩形）
+	for i in 4:
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.01, 0.016),
+				Vector3(0.0258, 0.03, -0.042 + 0.038 * float(i)), Vector3.ZERO,
+				0.005, 6)
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.01, 0.016),
+				Vector3(0.0258, 0.013, -0.042 + 0.038 * float(i)), Vector3.ZERO,
+				0.005, 6)
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.01, 0.016),
+				Vector3(-0.0258, 0.03, -0.042 + 0.038 * float(i)), Vector3.ZERO,
+				0.005, 6)
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.01, 0.016),
+				Vector3(-0.0258, 0.013, -0.042 + 0.038 * float(i)), Vector3.ZERO,
+				0.005, 6)
+	# ③ 分段顶轨：轨基一根直通（z -0.28..0.08）+ 前段楔齿×14 / 后段×3
+	#    （四轮判图：前段「准星基座往后到拉机柄槽之前」仍读出约 40% 光板
+	#    ——齿列从 -0.262 满铺贯通到槽板前沿 -0.122，肋距 10mm；齿高按
+	#    导轨宽 26mm 的 1/5 ≈ 5mm）+ 中段下凹槽板
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.026, 0.008, 0.36),
+			Vector3(0, 0.048, -0.1), Vector3.ZERO, 0.0015, 12)
+	for i in 14:
+		GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.021, 0.005, 0.006),
+				Vector3(0, 0.0545, -0.262 + 0.01 * float(i)), Vector3.ZERO,
+				0.0005, 6)
+	for i in 3:
+		GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.021, 0.002, 0.006),
+				Vector3(0, 0.053, -0.006 + 0.015 * float(i)), Vector3.ZERO,
+				0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.02, 0.003, 0.09),
+			Vector3(0, 0.0522, -0.07), Vector3.ZERO, 0.0006, 6)
+	# ③ 非往复拉机柄双耳（MP5 式耳柄）：扁平矩形耳片 12×6mm、贴导轨中段
+	#    下凹槽两侧、不随枪托杆（三轮判图：首轮误把铰链销圆环读成拉机柄，
+	#    销已改细圆柱；耳片加大居槽两侧）
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.005, 0.006, 0.012),
+			Vector3(0.013, 0.0535, -0.07), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.005, 0.006, 0.012),
+			Vector3(-0.013, 0.0535, -0.07), Vector3.ZERO, 0.0005, 6)
+	# ④ 前折叠准星（轨前端：基座 + 两侧竖向护翼 + 圆顶柱状准星——竖圆柱
+	#    + 顶圆环收头；柱改深灰金属与全枪统一，磨损色只留顶环）
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.016, 0.006, 0.022),
+			Vector3(0, 0.057, -0.268), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.0035, 0.022, 0.007),
+			Vector3(0.0055, 0.068, -0.268), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.0035, 0.022, 0.007),
+			Vector3(-0.0055, 0.068, -0.268), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.barrel(root, mp7metal, 0.016, 0.004, Vector3(0, 0.068, -0.268),
+			Vector3(0, 0, 0), 0, 12)
+	GUN_LIB.torus_ring(root, mp7wear, 0.002, 0.0035, Vector3(0, 0.0755, -0.268),
+			Vector3.ZERO, 12, 8)
+	# ④ 后折叠觇孔照门（导轨后位、枪托杆接口前方——五轮判图：基座收窄
+	#    1/3、两柱间觇孔开大贴 ref_6 低矮折叠轮廓：底座 10×4×25mm、双立
+	#    柱、觇孔环内径 5mm 降位贴近基座）
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.01, 0.004, 0.025),
+			Vector3(0, 0.056, 0.068), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.003, 0.014, 0.008),
+			Vector3(0.006, 0.065, 0.068), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.003, 0.014, 0.008),
+			Vector3(-0.006, 0.065, 0.068), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.torus_ring(root, mp7rail, 0.0025, 0.0055, Vector3(0, 0.072, 0.068),
+			Vector3(90, 0, 0), 12, 8)
+	# ⑤ 枪托：低剖面铰链块 + 细长单杆滑轨（主导杆 + 下导杆双柱）+ 伸缩调节钮
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.028, 0.016, 0.016),
+			Vector3(0, 0.016, 0.098), Vector3.ZERO, 0.0012, 8)
+	GUN_LIB.barrel(root, mp7metal, 0.15, 0.011, Vector3(0, 0.024, 0.178),
+			Vector3(90, 0, 0), 0, 24)
+	GUN_LIB.barrel(root, mp7metal, 0.11, 0.007, Vector3(0, 0.01, 0.165),
+			Vector3(90, 0, 0), 0, 16)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.02, 0.01, 0.03),
+			Vector3(0, 0.024, 0.206), Vector3.ZERO, 0.001, 6)
+	# ⑤ 薄板肩托（厚 7mm）+ 大镂空孔×3（孔面积≈板面一半）+ 托板顶垫
+	#    + 折叠销双细圆柱（X 轴向小销——首轮 torus 圆环被读成拉机柄圆片）
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.048, 0.082, 0.007),
+			Vector3(0, 0.006, 0.252), Vector3.ZERO, 0.001, 12)
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.024, 0.014, 0.011),
+			Vector3(0, 0.022, 0.252), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.024, 0.028, 0.011),
+			Vector3(-0.009, -0.014, 0.252), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.024, 0.028, 0.011),
+			Vector3(0.009, -0.014, 0.252), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.052, 0.01, 0.014),
+			Vector3(0, 0.05, 0.252), Vector3.ZERO, 0.001, 6)
+	GUN_LIB.barrel(root, mp7metal, 0.012, 0.004, Vector3(0.017, 0.024, 0.094),
+			Vector3(0, 0, 90), 0, 8)
+	GUN_LIB.barrel(root, mp7metal, 0.012, 0.004, Vector3(-0.017, 0.024, 0.094),
+			Vector3(0, 0, 90), 0, 8)
+	# ⑥ 抛壳窗（机匣右侧面前部：椭圆孔排往前、弹匣井正前方 z≈-0.10——
+	#    五轮判图指认位；2026-10 判图修复「右侧无抛壳窗」：原 20×30mm
+	#    齐平贴面腰射视角读不出——加大到 24×34mm 且外凸 5mm 出机匣面
+	#    （外腔盒=明暗对比载体），窗沿亮缘收窄；左侧光面=无开窗件）
+	GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.006, 0.034, 0.024),
+			Vector3(0.0272, 0.018, -0.095), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.002, 0.0015, 0.028),
+			Vector3(0.0286, 0.0383, -0.095), Vector3.ZERO, 0.0004, 6)
+	GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.002, 0.0015, 0.028),
+			Vector3(0.0286, 0.0023, -0.095), Vector3.ZERO, 0.0004, 6)
+	GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.002, 0.0035, 0.0015),
+			Vector3(0.0286, 0.0203, -0.0808), Vector3.ZERO, 0.0004, 6)
+	GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.002, 0.0035, 0.0015),
+			Vector3(0.0286, 0.0203, -0.1092), Vector3.ZERO, 0.0004, 6)
+	# ⑦ 扳机护圈（前伸大环形）+ 弹匣卡笋横穿前下角（HK 标志性布局；卡笋
+	#    外露横条按真枪为聚合物件——三轮判图高光发白已改碳黑）+ 扳机
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.008, 0.006, 0.086),
+			Vector3(0, -0.112, -0.004), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.008, 0.054, 0.006),
+			Vector3(0, -0.082, -0.045), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.022, 0.006, 0.01),
+			Vector3(0, -0.106, -0.04), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.01, 0.009, 0.008),
+			Vector3(0.016, -0.106, -0.04), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.01, 0.009, 0.008),
+			Vector3(-0.016, -0.106, -0.04), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.007, 0.022, 0.007),
+			Vector3(0, -0.092, 0.004), Vector3.ZERO, 0.0008, 6)
+	# ⑦ 快慢机/保险旋钮（机匣两侧、握把上方）+ 红白射击指示点（白点加大
+	#    与红点并列——首轮白点过小不可辨）
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.005, 0.014, 0.01),
+			Vector3(0.0288, -0.012, 0.03), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.005, 0.014, 0.01),
+			Vector3(-0.0288, -0.012, 0.03), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7red, Vector3(0.006, 0.0045, 0.0035),
+			Vector3(0.0297, -0.007, 0.03), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(root, mp7red, Vector3(0.006, 0.0045, 0.0035),
+			Vector3(-0.0297, -0.007, 0.03), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.006, 0.0045, 0.0035),
+			Vector3(0.0297, -0.016, 0.03), Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.006, 0.0045, 0.0035),
+			Vector3(-0.0297, -0.016, 0.03), Vector3.ZERO, 0.0006, 6)
+	# ⑧ 枪管（36 段高分段 + 枪口螺纹环外露）+ 小圆柱消焰器/枪口罩——
+	#    口径 1.3 倍管径（26mm）、长 25mm；筒色并入深灰金属区间（五轮
+	#    判图：压回 #2E3134–#3A3D40），与枪管区分靠径差+端部纵槽×3
+	GUN_LIB.barrel(root, mp7metal, 0.075, 0.02, Vector3(0, 0.018, -0.313),
+			Vector3(90, 0, 0), 1, 36)
+	GUN_LIB.tube(root, mp7metal, 0.025, 0.026, Vector3(0, 0.018, -0.352),
+			Vector3(90, 0, 0), 0.003, 0, null, 3, 32)
+	for s in [Vector3(0.0122, 0.018, 0.0), Vector3(0.0, 0.0302, 0.0),
+			Vector3(-0.0122, 0.018, 0.0)]:
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.002, 0.003, 0.018),
+				Vector3(s.x, s.y, -0.352), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.torus_ring(root, mp7wear, 0.0105, 0.014, Vector3(0, 0.018, -0.363),
+			Vector3(90, 0, 0), 16, 10)
+	# ⑨ 垂直前握把（展开态：上下两段收腰、总长较上轮收短约 15% 更贴
+	#    MP7 短前握把比例；顶部加与护木的连接座凸缘；柱身倒角加大四棱
+	#    圆角；+ 竖向防滑刻纹×4）
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.036, 0.012, 0.044),
+			Vector3(0, -0.055, -0.175), Vector3.ZERO, 0.0015, 6)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.03, 0.05, 0.036),
+			Vector3(0, -0.08, -0.175), Vector3.ZERO, 0.003, 12)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.026, 0.045, 0.03),
+			Vector3(0, -0.1275, -0.175), Vector3.ZERO, 0.003, 8)
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.03, 0.008, 0.034),
+			Vector3(0, -0.154, -0.175), Vector3.ZERO, 0.001, 6)
+	for i in 2:
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.005, 0.034, 0.003),
+				Vector3(-0.006 + 0.012 * float(i), -0.08, -0.1935),
+				Vector3.ZERO, 0.0005, 6)
+		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.005, 0.03, 0.003),
+				Vector3(-0.005 + 0.01 * float(i), -0.1275, -0.1915),
+				Vector3.ZERO, 0.0005, 6)
+	# ⑩ 中空直握把（内腔即弹匣井；grip 顶锚=(0,-0.042,0.028)，HOLD_DELTA
+	#    据此精算——见表注）+ 侧面竖向刻纹×3 对 + 根部 MP7A1 模印条
+	var grp: Node3D = GUN_LIB.grip(root, mp7body, 0.095,
+			Vector3(0, -0.042, 0.028), 12.0, 0.04, 0.056, mp7metal, 3)
+	for i in 3:
+		GUN_LIB.chamfer_box(grp, mp7dark, Vector3(0.002, 0.032, 0.005),
+				Vector3(0.0205, -0.03, -0.017 + 0.013 * float(i)),
+				Vector3.ZERO, 0.0006, 6)
+		GUN_LIB.chamfer_box(grp, mp7dark, Vector3(0.002, 0.032, 0.005),
+				Vector3(-0.0205, -0.03, -0.017 + 0.013 * float(i)),
+				Vector3.ZERO, 0.0006, 6)
+	GUN_LIB.chamfer_box(grp, mp7mark, Vector3(0.0025, 0.01, 0.02),
+			Vector3(0.0231, -0.0965, 0), Vector3.ZERO, 0.0006, 6)
+	# ⑪ 半透明短直匣（独立命名节点 mag_pdw：原点=匣顶中心，匣体从握把底板
+	#    下方出露、6° 前倾；curved_mag 直匣 + 匣内托弹板轮廓 + 单列观察孔×4
+	#    +『30』刻度线——首轮双列白点已按真匣改单列）
+	var mag := Node3D.new()
+	mag.name = "mag_pdw"
+	mag.position = Vector3(0, -0.132, 0.042)
+	mag.rotation_degrees = Vector3(6, 0, 0)
+	root.add_child(mag)
+	GUN_LIB.curved_mag(mag, mp7mag, Vector3(0.034, 0.195, 0.054), 0.0, 1, 6)
+	# 底板封住匣壳最底端（碳黑不透明盖板盖住 curved_mag 自带透明底板的
+	# 凸缘——五轮判图：黑底板悬匣中+下方拖 8-10% 半透明裙边穿帮；
+	# 2026-10 判图修复「底板凸角」：不透明板缩到与匣壳同 footprint
+	# （0.036×0.058）并加高到 16mm 完全吞掉透明凸缘，凸角不再露边）
+	GUN_LIB.chamfer_box(mag, mp7body, Vector3(0.036, 0.016, 0.058),
+			Vector3(0, -0.206, 0.0), Vector3.ZERO, 0.001, 6)
+	# 刻度/观察孔一律减宽一半（四轮判图：白条+点列过粗读作胶带；色已
+	# 是浅灰白 #B8B8B8 不再动）
+	GUN_LIB.chamfer_box(mag, mp7mark, Vector3(0.0015, 0.11, 0.003),
+			Vector3(0.0174, -0.1, 0.0), Vector3.ZERO, 0.0004, 6)
+	GUN_LIB.chamfer_box(mag, mp7mark, Vector3(0.0015, 0.002, 0.008),
+			Vector3(0.0174, -0.05, 0.008), Vector3.ZERO, 0.0004, 6)
+	for i in 4:
+		GUN_LIB.chamfer_box(mag, mp7mark, Vector3(0.0015, 0.004, 0.004),
+				Vector3(0.0174, -0.04 - 0.032 * float(i), 0.008), Vector3.ZERO,
+				0.0004, 6)
+	# ⑫ 侧面刻字（Cal.4.6mm×30 / HK MP7A1 浅灰模印——五轮判图「可见范围
+	#    均无」：细条凸出 1.3mm 读不出，加厚到 2mm 凸 1.5mm、加高加长成
+	#    浮雕字带）+ 红白安全指示小旗标（右下壳后段、快慢机后方）
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.002, 0.006, 0.05),
+			Vector3(0.0289, -0.014, 0.05), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.002, 0.004, 0.03),
+			Vector3(0.0289, -0.023, 0.05), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.002, 0.006, 0.05),
+			Vector3(-0.0289, -0.014, 0.05), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.002, 0.004, 0.03),
+			Vector3(-0.0289, -0.023, 0.05), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7red, Vector3(0.001, 0.006, 0.008),
+			Vector3(0.0288, -0.03, 0.062), Vector3.ZERO, 0.0005, 6)
+	GUN_LIB.chamfer_box(root, mp7mark, Vector3(0.001, 0.006, 0.008),
+			Vector3(0.0288, -0.03, 0.071), Vector3.ZERO, 0.0005, 6)
+	# ⑫ 侧导轨（机匣左右下侧短 Picatinny：三轮判图指认「红白指示下方」——
+	#    移到机匣后段下缘 z -0.055..0.015、轨长 70mm + 楔齿×6，挂战术灯/
+	#    激光；首轮轨在前部护木段被读作缺失）
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.006, 0.007, 0.07),
+			Vector3(0.0292, -0.036, -0.02), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, mp7metal, Vector3(0.006, 0.007, 0.07),
+			Vector3(-0.0292, -0.036, -0.02), Vector3.ZERO, 0.0008, 6)
+	for i in 6:
+		GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.007, 0.003, 0.008),
+				Vector3(0.0299, -0.036, -0.0475 + 0.011 * float(i)), Vector3.ZERO,
+				0.0005, 6)
+		GUN_LIB.chamfer_box(root, mp7rail, Vector3(0.007, 0.003, 0.008),
+				Vector3(-0.0299, -0.036, -0.0475 + 0.011 * float(i)), Vector3.ZERO,
+				0.0005, 6)
+	# ⑬ 使用痕迹：仅导轨棱边一条银灰磨损条（枪口端面挡环已用磨损色）
+	GUN_LIB.chamfer_box(root, mp7wear, Vector3(0.002, 0.0015, 0.05),
+			Vector3(0.0138, 0.0548, -0.19), Vector3.ZERO, 0.0005, 6)
+	return root
+
+
 ## ---------------- 内部：材质工厂与拼装闭包 ----------------
 
 
 ## 材质工厂：dark/steel 照 hd_guns.gd:475-509 参数原样抄（关深度测试防
 ## 贴墙吞枪 + render_priority 10 + 微自发光保暗处可读）；另扩冲锋枪册
 ## 专用色（深黑蓝 MP5 / 哑光聚合物 Vector / 匣灰对齐动画盒 / P90 浅灰白
-## 与烟灰顶匣 / 发光观瞄窗）
+## 与烟灰顶匣 / 发光观瞄窗）；2026-10 再扩 MP7 专用八色（出厂全黑战术
+## 涂装：碳黑聚合物/深灰金属/轨齿提亮/烟灰半透明弹匣/刻度浅灰白/红白
+## 指示暗红/刻槽负形深黑/棱边磨损银灰）
 static func _smg_mats() -> Dictionary:
 	var mk := func(c: Color, e: Color, rough := 0.55, glow := 0.55) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
@@ -1690,6 +2001,12 @@ static func _smg_mats() -> Dictionary:
 		m.emission = e
 		m.emission_energy_multiplier = glow
 		return m
+	# MP7 弹匣专用：烟灰半透明聚合物（透明度 35%——匣内托弹板轮廓透出；
+	# 二轮判图：38% 浅 albedo 在浅色墙前读作 #A0A0A5 亮白灰，压回深烟灰）
+	var mp7mag: StandardMaterial3D = mk.call(Color(0.243, 0.251, 0.271),
+			Color(0.2, 0.21, 0.23), 0.3, 0.15)
+	mp7mag.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mp7mag.albedo_color = Color(0.243, 0.251, 0.271, 0.35)
 	return {
 		"dark": mk.call(Color(0.13, 0.14, 0.16), Color(0.16, 0.18, 0.2)),
 		"blued": mk.call(Color(0.10, 0.11, 0.15), Color(0.12, 0.14, 0.19)),
@@ -1699,6 +2016,24 @@ static func _smg_mats() -> Dictionary:
 		"light": mk.call(Color(0.62, 0.62, 0.58), Color(0.5, 0.5, 0.46)),
 		"smoke": mk.call(Color(0.52, 0.53, 0.50), Color(0.42, 0.43, 0.4)),
 		"glass": mk.call(Color(0.15, 0.55, 0.75), Color(0.15, 0.55, 0.75), 0.3, 1.4),
+		# ---- MP7 专用色（2026-10 三轮判图修正：金属件自发光 0.55+高光在
+		#      打光下读成 #A8B0BE 亮银蓝——albedo 压深到 #2E3134、自发光降
+		#      0.3、roughness 提 0.6；磨损银灰 #5B5D5F 仅留轨棱与枪口端）----
+		#      mp7body 碳黑 #17171A / mp7metal 深灰金属 #2E3134 /
+		#      mp7rail 轨齿亮灰 #494A4C / mp7mag 半透明匣 #3E4045×35% /
+		#      mp7mark 刻度 #B8B8B8 / mp7red 暗红 #B32020 /
+		#      mp7dark 刻槽 #101010 / mp7wear 磨损 #5B5D5F）----
+		#      （2026-10 判图修复「金属蓝白串色」：mk 第四参 glow 缺省
+		#      0.55——body/mark/dark/wear/rail 原先全部带微发光，磨损环/
+		#      刻度白条/导轨齿读作蓝白发光件；全部显式归 0，只留材质色）
+		"mp7body": mk.call(Color(0.09, 0.09, 0.102), Color(0.105, 0.105, 0.118), 0.85, 0.0),
+		"mp7metal": mk.call(Color(0.18, 0.19, 0.203), Color(0.2, 0.21, 0.225), 0.65, 0.15),
+		"mp7rail": mk.call(Color(0.225, 0.229, 0.236), Color(0.24, 0.244, 0.25), 0.6, 0.0),
+		"mp7mag": mp7mag,
+		"mp7mark": mk.call(Color(0.722, 0.722, 0.722), Color(0.6, 0.6, 0.6), 0.6, 0.0),
+		"mp7red": mk.call(Color(0.702, 0.125, 0.125), Color(0.6, 0.11, 0.11), 0.6, 0.0),
+		"mp7dark": mk.call(Color(0.063, 0.063, 0.063), Color(0.07, 0.07, 0.07), 0.8, 0.0),
+		"mp7wear": mk.call(Color(0.30, 0.306, 0.312), Color(0.32, 0.326, 0.332), 0.5, 0.0),
 	}
 
 

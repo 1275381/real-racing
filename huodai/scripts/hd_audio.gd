@@ -115,6 +115,15 @@ const SHOT_TUNE := {
 		"tail": {"dur": 0.12, "bright": 0.45, "gain": 0.19},
 		"gain": 0.66,
 	},
+	# MP7：更短促——4.6×30mm PDW 高射速（950rpm），短枪管轻爆裂快收尾
+	# （参考 mp5 档收紧：crack/boom/tail 各缩短 1-2ms，click 略亮）
+	"mp7": {
+		"click": {"freq": 5000.0, "dur": 0.005, "gain": 0.39},
+		"crack": {"dur": 0.030, "gain": 0.83},
+		"boom": {"freq": 172.0, "dur": 0.034, "tri": 0.08, "gain": 0.45},
+		"tail": {"dur": 0.10, "bright": 0.48, "gain": 0.18},
+		"gain": 0.64,
+	},
 	# M4A1：饱满——5.56 均衡、尾音明快
 	"m4a1": {
 		"click": {"freq": 4400.0, "dur": 0.007, "gain": 0.45},

@@ -1,7 +1,7 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 红点镜大窗两连拍
 # （shot_reddot_hip 腰射大窗造型 / shot_reddot_ads 开镜红点居窗）→ 换弹手部 →
-# 汤姆逊腰射 → 九把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4/m250.png）→
+# 汤姆逊腰射 → 十把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4/m250/mp7.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 大厅三页整页（shot_page_depart 出发大厅 / shot_page_bench 改枪台·选中枪+已拥有未装镜
 # 让「换装」钮可见 / shot_page_market 交易行四段分区全貌）→
@@ -19,7 +19,7 @@
 # 参考图逐张对照形状语言）→
 # 实战/靶场入口可辨（shot_entries 出发大厅整页：红橙实战 CTA 与绿色靶场入口同框）+
 # 靶场暂停菜单（shot_range_menu：靶场暂停/离开靶场，模式分化文案图证）
-# （共 42 张：33 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31/33/35/40 张」为误计，按实拍数订正；
+# （共 43 张：33 处 shot() 调用 + 逐枪美照循环 10 把——旧注释「29/31/33/35/40 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -376,10 +376,10 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~17：九把新枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~18：十把新枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型
-	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4", "m250"]:
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4", "m250", "mp7"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -514,7 +514,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/42 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/43 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

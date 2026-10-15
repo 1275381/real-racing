@@ -2,13 +2,14 @@
 #       + 实战/靶场语义分流：靶场练习弹免费零消耗（绝不回写库存）+ 暂停菜单模式分化文案
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
-#       + 高模顶点红线：MK4 + 步枪册三枪（m4a1/akm/scarh）+ 旧五枪 +
+#       + 高模顶点红线：MK4 + 冲锋枪册五枪（mp5/p90/uzi/vector/mp7）+
+#         步枪册三枪（m4a1/akm/scarh）+ 旧五枪 +
 #         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
 #       + 拟真枪声分层回归（用户反馈「现在的枪声不拟真」）：四层合成
-#         （click/crack/boom/tail）14 枪流/时长分级/峰值/过零率/每发随机
+#         （click/crack/boom/tail）15 枪流/时长分级/峰值/过零率/每发随机
 # 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
 #      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
@@ -247,10 +248,11 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：八把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：九把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
-	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m250"]:
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m250",
+			"mp7"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -496,12 +498,12 @@ func _run() -> void:
 				int(GUN_LIB.POLY_BASE[gid])])
 		o5_root.free()
 
-	# 29. 高模顶点红线：冲锋枪册四枪（mp5/p90/uzi/vector，HDGunLib 高模重建）
-	#     逐把枪身根总顶点 ≥ 8× 低模基线（走 _smg_build 分发入口，口径同
-	#     #26/#27/#28；mp5/p90 的静置真匣是独立命名弹匣节点（mag_curved/
-	#     mag_top，mag_of show=false）；uzi/vector 匣插握把、由动画匣表达
-	#     （show=true）故无静置建模件、无节点断言）
-	for gid in ["mp5", "p90", "uzi", "vector"]:
+	# 29. 高模顶点红线：冲锋枪册五枪（mp5/p90/uzi/vector/mp7，HDGunLib 高模
+	#     重建）逐把枪身根总顶点 ≥ 8× 低模基线（走 _smg_build 分发入口，口径
+	#     同 #26/#27/#28；mp5/p90/mp7 的静置真匣是独立命名弹匣节点（mag_curved/
+	#     mag_top/mag_pdw，mag_of show=false）；uzi/vector 匣插握把、由动画匣
+	#     表达（show=true）故无静置建模件、无节点断言；mk4 在 #26 单列）
+	for gid in ["mp5", "p90", "uzi", "vector", "mp7"]:
 		var smg_root: Node3D = HDGuns._smg_build(gid)
 		var smg_verts: int = GUN_LIB.count_vertices(smg_root)
 		check("冲锋枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -553,7 +555,7 @@ func _run() -> void:
 	# 29d. 拟真枪声分层回归（用户反馈「现在的枪声不拟真」；锚点：上承 29c
 	#      持握锚、下接 30 大坝分区）。枪声已重做为四层合成（click 机械瞬态/
 	#      crack 膛口爆裂/boom 低频/tail 混响尾，见 hd_audio.gd 类头），红线：
-	#      ① ensure 预生成全 14 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
+	#      ① ensure 预生成全 15 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
 	#      ② 时长分级 sniper > rifle > pistol 且全部 ≤0.5s
 	#      ③ 波形峰值 >0.2（非哑弹：归一后 0.88×gain，最短的枪也远过线）
 	#      ④ 过零率 >3× 纯正弦（证明高频 crack 成分在场——只剩 boom 正弦的
@@ -561,12 +563,12 @@ func _run() -> void:
 	#      ⑤ play_shot 每发随机：轮换池刚用的播放器 pitch ∈[0.94,1.06]、
 	#        音量在基准 ±1.5dB 内（真枪每发都不同）
 	var audio = main.guns.audio
-	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 14 枪预生成
+	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 15 枪预生成
 	var miss_pre: Array = []
 	for g_def in Guns.GUNS:
 		if not audio._shots.has(str(g_def["id"])):
 			miss_pre.append(str(g_def["id"]))
-	check("枪声 ensure 预生成全 14 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
+	check("枪声 ensure 预生成全 15 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
 		str(miss_pre))
 	var shot_len := {}
 	var shot_peak := {}
@@ -610,10 +612,10 @@ func _run() -> void:
 			peak_bad.append("%s=%.2f" % [a_gid, shot_peak[a_gid]])
 		if float(shot_len[a_gid]) > 0.5:
 			len_bad.append("%s=%.3f" % [a_gid, shot_len[a_gid]])
-	check("14 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
+	check("15 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
 		zcr_bad.is_empty(), str(zcr_bad))
-	check("14 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
-	check("14 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
+	check("15 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
+	check("15 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
 	check("时长分级 sniper > rifle > pistol",
 		float(shot_len["sniper"]) > float(shot_len["rifle"])
 			and float(shot_len["rifle"]) > float(shot_len["pistol"]),

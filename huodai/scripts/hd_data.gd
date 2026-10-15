@@ -67,7 +67,7 @@ const ICON_DEFAULT := "杂物"      # 空/未知图标兜底徽标
 const RESERVE := {
 	"pistol": 60, "smg": 175, "rifle": 150, "shotgun": 30, "sniper": 25,
 	"uzi": 175, "mp5": 150, "p90": 150, "vector": 125, "mk4": 150,
-	"akm": 150, "m4a1": 150, "scarh": 100, "m250": 200,
+	"akm": 150, "m4a1": 150, "scarh": 100, "m250": 200, "mp7": 150,
 }
 
 ## ---- 极致备弹经济（2026-10）：备弹不再每局免费回满，改为按发购买、局终回收 ----
@@ -84,7 +84,7 @@ const AMMO_COLOR := Color(1.0, 0.79, 0.3)   # 金色标识（与品质金色同�
 const AMMO_PRICE := {
 	"pistol": 2, "smg": 4, "mp5": 4, "p90": 4, "uzi": 4, "mk4": 4, "vector": 5,
 	"rifle": 6, "m4a1": 6, "akm": 6, "scarh": 8, "shotgun": 15, "sniper": 30,
-	"m250": 6,
+	"m250": 6, "mp7": 4,
 }
 ## 大厅购买挡位（发数；B 键循环），总价 = 挡位 × 单价
 const AMMO_TIERS := [30, 90, 300]

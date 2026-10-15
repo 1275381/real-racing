@@ -1,5 +1,5 @@
 class_name Guns
-## 枪械店目录：5 种枪械数值/价格。
+## 枪械店目录：15 种枪械数值/价格。
 ## stats 约定：dmg 单发伤害 / cd 开火间隔 / mag 弹匣 / reload 换弹秒数 /
 ## pellets 弹丸数（霰弹）/ spread 散布弧度 / range 射程 /
 ## builtin_scope 枪自带的瞄具（没另装瞄具时用它；没有该字段 = 机瞄）
@@ -52,6 +52,11 @@ const GUNS := [
 	{"id": "m250", "name": "M250 机枪", "desc": "伤害 24 · 全自动 · 75 发弹链 · 6.8×51mm · 550发每分 · FDE 沙黄", "price": 3200,
 		"dmg": 24.0, "cd": 0.109, "mag": 75, "reload": 4.6, "pellets": 1,
 		"spread": 0.02, "range": 260.0},
+	# ---- 商店枪 MP7（2026-10）：H&K MP7 PDW 考证（4.6×30mm，950rpm）----
+	# cd 0.063 ≈ 952rpm 与 desc「950发每分」一致；40 发半透明短匣插中空握把
+	{"id": "mp7", "name": "MP7 冲锋枪", "desc": "伤害 14 · 全自动 · 40 发 · 4.6×30mm · 950发每分 · 紧凑 PDW · 握把内插匣", "price": 1300,
+		"dmg": 14.0, "cd": 0.063, "mag": 40, "reload": 1.6, "pellets": 1,
+		"spread": 0.017, "range": 160.0},
 ]
 
 
