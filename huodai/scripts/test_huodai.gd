@@ -7,6 +7,8 @@
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
+#       + 拟真枪声分层回归（用户反馈「现在的枪声不拟真」）：四层合成
+#         （click/crack/boom/tail）14 枪流/时长分级/峰值/过零率/每发随机
 # 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
 #      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
@@ -547,6 +549,138 @@ func _run() -> void:
 		h_root.free()
 	check("全枪册持握锚统一到 MK4 基准（±1.5mm）", hold_bad.is_empty(),
 		str(hold_bad))
+
+	# 29d. 拟真枪声分层回归（用户反馈「现在的枪声不拟真」；锚点：上承 29c
+	#      持握锚、下接 30 大坝分区）。枪声已重做为四层合成（click 机械瞬态/
+	#      crack 膛口爆裂/boom 低频/tail 混响尾，见 hd_audio.gd 类头），红线：
+	#      ① ensure 预生成全 14 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
+	#      ② 时长分级 sniper > rifle > pistol 且全部 ≤0.5s
+	#      ③ 波形峰值 >0.2（非哑弹：归一后 0.88×gain，最短的枪也远过线）
+	#      ④ 过零率 >3× 纯正弦（证明高频 crack 成分在场——只剩 boom 正弦的
+	#        回归约 440/s 会当场撞线）
+	#      ⑤ play_shot 每发随机：轮换池刚用的播放器 pitch ∈[0.94,1.06]、
+	#        音量在基准 ±1.5dB 内（真枪每发都不同）
+	var audio = main.guns.audio
+	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 14 枪预生成
+	var miss_pre: Array = []
+	for g_def in Guns.GUNS:
+		if not audio._shots.has(str(g_def["id"])):
+			miss_pre.append(str(g_def["id"]))
+	check("枪声 ensure 预生成全 14 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
+		str(miss_pre))
+	var shot_len := {}
+	var shot_peak := {}
+	var shot_zcr := {}
+	for g_def in Guns.GUNS:
+		var a_gid: String = str(g_def["id"])
+		var a_wav: AudioStreamWAV = audio._shot_stream(a_gid)
+		check("枪声流存在：%s" % a_gid, a_wav != null)
+		shot_len[a_gid] = a_wav.get_length()
+		# 逐样本解码：峰值（哑弹判定）+ 过零率（高频成分判定）
+		var a_bytes: PackedByteArray = a_wav.data
+		var a_n := a_bytes.size() / 2
+		var a_peak := 0.0
+		var a_zcr := 0
+		var a_prev := 0.0
+		for i in a_n:
+			var v := float(a_bytes.decode_s16(i * 2)) / 32768.0
+			a_peak = maxf(a_peak, absf(v))
+			if i > 0 and (v >= 0.0) != (a_prev >= 0.0):
+				a_zcr += 1
+			a_prev = v
+		shot_peak[a_gid] = a_peak
+		shot_zcr[a_gid] = float(a_zcr) / maxf(a_wav.get_length(), 0.001)
+	# 纯正弦参照：220Hz 同采样率测过零率（≈440/s）——比实测更防「想当然」
+	var sine_n := 2205
+	var sine_zcr := 0
+	var sine_prev := 0.0
+	for i in sine_n:
+		var sv := sin(TAU * 220.0 * float(i) / 22050.0)
+		if i > 0 and (sv >= 0.0) != (sine_prev >= 0.0):
+			sine_zcr += 1
+		sine_prev = sv
+	var sine_rate := float(sine_zcr) / (float(sine_n) / 22050.0)
+	var zcr_bad: Array = []
+	var peak_bad: Array = []
+	var len_bad: Array = []
+	for a_gid in shot_len:
+		if float(shot_zcr[a_gid]) < sine_rate * 3.0:
+			zcr_bad.append("%s=%.0f/s" % [a_gid, shot_zcr[a_gid]])
+		if float(shot_peak[a_gid]) <= 0.2:
+			peak_bad.append("%s=%.2f" % [a_gid, shot_peak[a_gid]])
+		if float(shot_len[a_gid]) > 0.5:
+			len_bad.append("%s=%.3f" % [a_gid, shot_len[a_gid]])
+	check("14 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
+		zcr_bad.is_empty(), str(zcr_bad))
+	check("14 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
+	check("14 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
+	check("时长分级 sniper > rifle > pistol",
+		float(shot_len["sniper"]) > float(shot_len["rifle"])
+			and float(shot_len["rifle"]) > float(shot_len["pistol"]),
+		"sniper=%.3f rifle=%.3f pistol=%.3f" % [shot_len["sniper"],
+			shot_len["rifle"], shot_len["pistol"]])
+	# 每发随机：play_shot 轮走 _idx 前一位播放器——回读那个播放器的
+	# pitch_scale / volume_db 落不落在随机域
+	var used_idx: int = audio._idx
+	audio.play_shot("rifle")
+	var used: AudioStreamPlayer = audio._pool[
+		(used_idx - 1 + audio._pool.size()) % audio._pool.size()]
+	var rifle_gain: float = float(HDAudio.SHOT_TUNE["rifle"]["gain"])
+	var base_db: float = linear_to_db(maxf(rifle_gain * 0.9, 0.05))
+	check("play_shot 移调落随机域 [0.94,1.06]",
+		used.pitch_scale >= 0.94 and used.pitch_scale <= 1.06,
+		"pitch=%.3f" % used.pitch_scale)
+	check("play_shot 音量抖动 ±1.5dB", absf(used.volume_db - base_db) <= 1.51,
+		"db=%.2f base=%.2f" % [used.volume_db, base_db])
+
+	# 29e. 点击=装备（用户「点击等于装备」）：出发页/改枪台行点击不再「只选中」——
+	#      合成左键点击直接沿既有确认链收敛：出发页当页枪行=选中+装入聚焦槽
+	#      （loadout 变化）、改枪台右列已拥有镜=选中+直接换装（scope_fit 变化）；
+	#      交易行例外维持只选中（防误购：现金/拥有数不变）
+	main.lobby.set_tab(0)
+	main.lobby._slot_focus = "secondary"   # 聚焦副槽：主槽 scarh 应保持不动（断言装入目标槽）
+	main.lobby._deploy_page = 0
+	main.lobby._cur0 = 0
+	var mb: InputEventMouseButton = InputEventMouseButton.new()
+	mb.pressed = true
+	mb.button_index = MOUSE_BUTTON_LEFT
+	main.lobby._on_deploy_row_input(mb, 0, 3)   # 当页枪行序 3 → 表序 1 = 汤姆逊（已拥有未装）
+	check("出发页点击行=直接装备（loadout 变化）",
+		str(main.stash.loadout.get("secondary")) == "smg"
+			and str(main.stash.loadout.get("primary")) == "scarh"
+			and main.lobby._cur0 == 3,
+		"primary=%s secondary=%s" % [str(main.stash.loadout.get("primary")),
+			str(main.stash.loadout.get("secondary"))])
+	main.lobby.set_tab(1)
+	main.lobby._gun_idx = 2        # M7 战斗步枪（表序 2，非自带镜；当前装 holo=25c 遗留）
+	main.lobby._bench_col = 1
+	main.lobby._scope_idx = 0
+	var mb2: InputEventMouseButton = InputEventMouseButton.new()
+	mb2.pressed = true
+	mb2.button_index = MOUSE_BUTTON_LEFT
+	main.lobby._on_bench_row_input(mb2, 1, 2)   # 右列序 2 = 红点镜（已拥有未装）
+	check("改枪台右列点击=直接换装（scope_fit 变化）",
+		str(main.stash.scope_fit.get("rifle", "")) == "reddot"
+			and main.lobby._bench_col == 1 and main.lobby._scope_idx == 2,
+		"fit=%s" % str(main.stash.scope_fit.get("rifle", "")))
+	# 还原 rifle 装配回 25c 遗留的 holo：下游 §持枪姿态 的「开镜回瞄准位」断言按
+	# top 公式（holo 拓扑）写死，reddot 走「窗中心过屏幕中心」aim_y 公式——
+	# 不还原会把本段的状态泄漏进那条几何断言（实测 d=0.026 撞线）
+	main.stash.equip_scope("rifle", "holo")
+	main.lobby.set_tab(2)
+	main.lobby._market_sec = 0
+	main.lobby._market_gun = 0
+	var cash_m: int = main.stash.cash
+	var owned_m: int = main.stash.guns_owned.size()
+	var mb3: InputEventMouseButton = InputEventMouseButton.new()
+	mb3.pressed = true
+	mb3.button_index = MOUSE_BUTTON_LEFT
+	main.lobby._on_market_row_input(mb3, 0, 7)   # 表序 7 = P90（未拥有，够钱买——负断言有意义）
+	check("交易行行点击只选中不购买（现金/拥有数不变）",
+		main.lobby._market_sec == 0 and main.lobby._market_gun == 7
+			and not main.stash.owns_gun("p90")
+			and main.stash.cash == cash_m and main.stash.guns_owned.size() == owned_m,
+		"cash=%d owned=%d" % [main.stash.cash, main.stash.guns_owned.size()])
 
 	# 30. 大坝分区（搜打撤第三区）：装配节点/容器点 13/巡逻点 7/品质权重/矩形分区/
 	#     坝体碰撞 wall_hit（前墙 12m·开洞抵背墙 18m·溢流段高位 24m）/幂等/第二撤离

@@ -1,30 +1,152 @@
 class_name HDAudio
 extends Node
 ## 烽火地带音效：全部程序化生成 AudioStreamWAV（16bit/22050），零音频文件。
-## 枪声 = 白噪声指数衰减 + 80Hz 低频 thump 叠加，按 gun_id 微调时长/音量
-## （sniper 长而响、pistol 短脆）；命中 ding（1200Hz 短音）、换弹两声咔哒、
-## UI beep（方波按需生成缓存）。播放用 4 个 AudioStreamPlayer（复音 4）轮换，
-## 同帧连发不互相掐断。ensure() 幂等：重复调用不重建。
+## 枪声拟真四层合成（2026-10 重做，用户反馈「现在的枪声不拟真」——旧版只有
+## 白噪声+80Hz 正弦，听感是软「噗」）。真枪的感知分层（业界分层配方：
+## Call of Duty Kilborn 的 Transient/Mechanical/Body/Sub/Tail 五层、
+## Splice 武器声 mechanics/low end/detail/tail——本作合并为四层）：
+##   ① click 击发机械瞬态：2-8kHz 阻尼正弦短促 click（5-15ms 快衰减）
+##      ——拉栓/滑套的机械质感；
+##   ② crack 膛口爆裂：宽带噪声减低通残差（≈1kHz 一阶高通，1-4kHz 能量
+##      强调）、攻击沿 <1ms——真枪「脆响」的来源，旧版完全缺失的一层；
+##   ③ boom 枪体低频：90-220Hz 正弦/三角脉冲（30-80ms）——旧 80Hz thump
+##      的升级，三角形变给重枪加「胸腔捶击」谐波；
+##   ④ tail 混响尾：低通噪声指数衰减（80-350ms 按枪型、亮度可调）
+##      ——室外开阔余响，与爆裂错峰 18ms 起振（毫秒级错峰防瞬态叠满）。
+## 每发随机在 play_shot（移调 0.94-1.06 + 音量 ±1.5dB——真枪每发都不同，
+## 防采样循环的「机关枪味」）；同一把枪音色一致（种子按枪 id 派生）。
+## 命中 ding（1200Hz 短音）、换弹两声咔哒、UI beep（方波按需生成缓存）不变。
+## 播放用 4 个 AudioStreamPlayer（复音 4）轮换，同帧连发不互相掐断。
+## ensure() 幂等：重复调用不重建。
 
 const MIX_RATE := 22050
 const PLAYERS := 4      # 轮换播放器数
 const POLYPHONY := 4    # 每个播放器复音数
+const CRACK_HP_HZ := 1000.0   # crack 高通角频：噪声减低通残差，1-4kHz 能量强调
+const TAIL_OFFSET := 0.018    # 混响尾起振偏移(秒)：与膛口爆裂错峰，出开阔纵深感
 
-## 按 gun_id 微调枪声：dur 时长(秒) / decay 衰减速度 / gain 音量。
-## 2026-10 扩充七枪：射速越快单发越短促；7.62 重弹更长更响（未知 id 仍兜底 rifle）
+## 按枪型四层调音表（未知 id 兜底 rifle）。各层键：
+##   click{freq 谐振Hz, dur 秒, gain}——机械瞬态，真枪域 2-8kHz / 5-15ms；
+##   crack{dur 秒, gain}——膛口爆裂时长/能量（dur 处包络衰减到 -60dB）；
+##   boom{freq Hz, dur 秒, tri 三角占比 0-1, gain}——枪体低频 90-220Hz/30-80ms；
+##   tail{dur 秒, bright 亮度 0-1（低通截止 600-5000Hz）, gain}——混响尾；
+##   gain 总响度（play_shot 里 linear_to_db(gain*0.9)，沿用旧轨音量基准）。
+## 单枪总时长 = TAIL_OFFSET + tail.dur，全部 ≤0.5s（短枪更短，狙击最长）。
+## 性格：手枪短促尖 / SMG 干脆 / 步枪饱满 / AKM 略闷 / SCAR-H 厚 /
+## 霰弹宽轰 / 狙击长尾重轰 / M250 沉重 / 汤姆逊老式。
 const SHOT_TUNE := {
-	"pistol": {"dur": 0.12, "decay": 36.0, "gain": 0.7},
-	"smg": {"dur": 0.13, "decay": 32.0, "gain": 0.65},
-	"rifle": {"dur": 0.18, "decay": 24.0, "gain": 0.85},
-	"shotgun": {"dur": 0.26, "decay": 16.0, "gain": 0.95},
-	"sniper": {"dur": 0.34, "decay": 11.0, "gain": 1.0},
-	"uzi": {"dur": 0.14, "decay": 30.0, "gain": 0.66},
-	"mp5": {"dur": 0.13, "decay": 32.0, "gain": 0.65},
-	"p90": {"dur": 0.12, "decay": 34.0, "gain": 0.62},
-	"vector": {"dur": 0.11, "decay": 36.0, "gain": 0.6},
-	"m4a1": {"dur": 0.18, "decay": 24.0, "gain": 0.85},
-	"akm": {"dur": 0.2, "decay": 22.0, "gain": 0.88},
-	"scarh": {"dur": 0.24, "decay": 18.0, "gain": 0.92},
+	# 手枪：短促尖——click 最亮、boom 短高、尾音收得快
+	"pistol": {
+		"click": {"freq": 5500.0, "dur": 0.006, "gain": 0.40},
+		"crack": {"dur": 0.032, "gain": 0.85},
+		"boom": {"freq": 170.0, "dur": 0.036, "tri": 0.10, "gain": 0.48},
+		"tail": {"dur": 0.11, "bright": 0.45, "gain": 0.20},
+		"gain": 0.68,
+	},
+	# 汤姆逊：老式——.45 重膛压低频沉、木托吃高频，尾音温
+	"smg": {
+		"click": {"freq": 3000.0, "dur": 0.008, "gain": 0.42},
+		"crack": {"dur": 0.042, "gain": 0.80},
+		"boom": {"freq": 112.0, "dur": 0.062, "tri": 0.55, "gain": 0.60},
+		"tail": {"dur": 0.17, "bright": 0.30, "gain": 0.26},
+		"gain": 0.70,
+	},
+	# 步枪：饱满——四层均衡、中庸亮度尾音
+	"rifle": {
+		"click": {"freq": 4200.0, "dur": 0.007, "gain": 0.45},
+		"crack": {"dur": 0.048, "gain": 0.90},
+		"boom": {"freq": 138.0, "dur": 0.052, "tri": 0.25, "gain": 0.62},
+		"tail": {"dur": 0.26, "bright": 0.38, "gain": 0.30},
+		"gain": 0.85,
+	},
+	# 霰弹：宽轰——boom 最低最三角、crack 最长、尾音亮而散
+	"shotgun": {
+		"click": {"freq": 2400.0, "dur": 0.010, "gain": 0.40},
+		"crack": {"dur": 0.062, "gain": 0.95},
+		"boom": {"freq": 96.0, "dur": 0.075, "tri": 0.70, "gain": 0.75},
+		"tail": {"dur": 0.30, "bright": 0.42, "gain": 0.34},
+		"gain": 0.95,
+	},
+	# 狙击：长尾重轰——最长尾音 + 重低频，响度顶格
+	"sniper": {
+		"click": {"freq": 3600.0, "dur": 0.008, "gain": 0.42},
+		"crack": {"dur": 0.055, "gain": 0.95},
+		"boom": {"freq": 98.0, "dur": 0.078, "tri": 0.60, "gain": 0.78},
+		"tail": {"dur": 0.35, "bright": 0.32, "gain": 0.36},
+		"gain": 1.0,
+	},
+	# 乌兹：干脆偏薄——高射速单发最短
+	"uzi": {
+		"click": {"freq": 5200.0, "dur": 0.005, "gain": 0.38},
+		"crack": {"dur": 0.030, "gain": 0.82},
+		"boom": {"freq": 185.0, "dur": 0.032, "tri": 0.10, "gain": 0.42},
+		"tail": {"dur": 0.10, "bright": 0.50, "gain": 0.18},
+		"gain": 0.64,
+	},
+	# MP5：干脆——9mm 清脆机械感
+	"mp5": {
+		"click": {"freq": 4800.0, "dur": 0.006, "gain": 0.40},
+		"crack": {"dur": 0.034, "gain": 0.85},
+		"boom": {"freq": 160.0, "dur": 0.038, "tri": 0.15, "gain": 0.48},
+		"tail": {"dur": 0.12, "bright": 0.45, "gain": 0.20},
+		"gain": 0.66,
+	},
+	# P90：干脆偏尖——5.7mm 高压细响
+	"p90": {
+		"click": {"freq": 5600.0, "dur": 0.005, "gain": 0.36},
+		"crack": {"dur": 0.031, "gain": 0.80},
+		"boom": {"freq": 190.0, "dur": 0.034, "tri": 0.05, "gain": 0.42},
+		"tail": {"dur": 0.11, "bright": 0.50, "gain": 0.18},
+		"gain": 0.63,
+	},
+	# 维克托：干脆最短——后坐柔和、连发哒哒
+	"vector": {
+		"click": {"freq": 5000.0, "dur": 0.005, "gain": 0.36},
+		"crack": {"dur": 0.028, "gain": 0.78},
+		"boom": {"freq": 175.0, "dur": 0.032, "tri": 0.05, "gain": 0.40},
+		"tail": {"dur": 0.09, "bright": 0.52, "gain": 0.16},
+		"gain": 0.62,
+	},
+	# MK4：干脆——4.6mm 微口径与 MP5 同族稍紧
+	"mk4": {
+		"click": {"freq": 4600.0, "dur": 0.006, "gain": 0.40},
+		"crack": {"dur": 0.033, "gain": 0.84},
+		"boom": {"freq": 165.0, "dur": 0.036, "tri": 0.10, "gain": 0.46},
+		"tail": {"dur": 0.12, "bright": 0.45, "gain": 0.19},
+		"gain": 0.66,
+	},
+	# M4A1：饱满——5.56 均衡、尾音明快
+	"m4a1": {
+		"click": {"freq": 4400.0, "dur": 0.007, "gain": 0.45},
+		"crack": {"dur": 0.045, "gain": 0.88},
+		"boom": {"freq": 150.0, "dur": 0.048, "tri": 0.20, "gain": 0.60},
+		"tail": {"dur": 0.24, "bright": 0.40, "gain": 0.28},
+		"gain": 0.82,
+	},
+	# AKM：略闷——导气孔大+木托，亮度压低、低频三角加厚
+	"akm": {
+		"click": {"freq": 3400.0, "dur": 0.008, "gain": 0.42},
+		"crack": {"dur": 0.050, "gain": 0.85},
+		"boom": {"freq": 118.0, "dur": 0.058, "tri": 0.50, "gain": 0.66},
+		"tail": {"dur": 0.26, "bright": 0.30, "gain": 0.30},
+		"gain": 0.86,
+	},
+	# SCAR-H：厚——7.62 NATO 满装药，低频长而沉
+	"scarh": {
+		"click": {"freq": 3200.0, "dur": 0.009, "gain": 0.45},
+		"crack": {"dur": 0.052, "gain": 0.88},
+		"boom": {"freq": 105.0, "dur": 0.066, "tri": 0.55, "gain": 0.70},
+		"tail": {"dur": 0.28, "bright": 0.30, "gain": 0.32},
+		"gain": 0.90,
+	},
+	# M250：沉重——机枪持续压制感，最低 boom 最暗长尾
+	"m250": {
+		"click": {"freq": 2800.0, "dur": 0.009, "gain": 0.44},
+		"crack": {"dur": 0.056, "gain": 0.90},
+		"boom": {"freq": 92.0, "dur": 0.080, "tri": 0.65, "gain": 0.80},
+		"tail": {"dur": 0.33, "bright": 0.25, "gain": 0.34},
+		"gain": 0.94,
+	},
 }
 
 var _pool: Array[AudioStreamPlayer] = []
@@ -50,12 +172,16 @@ func ensure() -> void:
 	_reload = _make_reload()
 
 
+## 开枪：轮换池播放 + 每发随机——移调 0.94-1.06、音量 ±1.5dB。
+## 真枪每发都不同（弹药批次/膛压/气温微差）；固定采样不加抖动，
+## 连发听感就是「机关枪采样循环」（Splice 武器声设计同款建议）
 func play_shot(gun_id: String) -> void:
 	var p := _next_player()
 	p.stream = _shot_stream(gun_id)
 	var tune: Dictionary = SHOT_TUNE.get(gun_id, SHOT_TUNE["rifle"])
-	p.volume_db = linear_to_db(maxf(float(tune["gain"]) * 0.9, 0.05))
-	p.pitch_scale = randf_range(0.92, 1.08)   # 每发微移调：连发不像机关枪一样死板
+	p.volume_db = linear_to_db(maxf(float(tune["gain"]) * 0.9, 0.05)) \
+			+ randf_range(-1.5, 1.5)
+	p.pitch_scale = randf_range(0.94, 1.06)
 	p.play()
 
 
@@ -103,26 +229,94 @@ func _next_player() -> AudioStreamPlayer:
 	return p
 
 
-## 枪声：白噪声 0.8 + 80Hz 低频 thump 0.55 叠加，指数衰减包络（时长/衰减按枪调）
+## 枪声四层合成（分层见类头）。各层独立包络、错峰起振（boom +4ms / tail
+## +18ms——毫秒级错峰防瞬态叠满，纵深感即出）；叠完按峰值归一再乘总响度：
+## 归一保证永不削波，编码峰值上限 0.88×1.0×31500 ≈ 27720 < 旧轨 32000
+## 满刻度——比旧声不响，只更「真」。种子按枪 id 派生：同枪每次音色一致、
+## 异枪噪声纹理不同；每发的「不同」交给 play_shot 的移调/音量抖动。
 func _shot_stream(gun_id: String) -> AudioStreamWAV:
 	if _shots.has(gun_id):
 		var cached: AudioStreamWAV = _shots[gun_id]
 		return cached
 	var tune: Dictionary = SHOT_TUNE.get(gun_id, SHOT_TUNE["rifle"])
-	var dur: float = float(tune["dur"])
-	var decay: float = float(tune["decay"])
-	var n := int(MIX_RATE * dur)
+	var click: Dictionary = tune["click"]
+	var crack: Dictionary = tune["crack"]
+	var boom: Dictionary = tune["boom"]
+	var tail: Dictionary = tune["tail"]
+	# 总时长 = tail 起振偏移 + tail 时长（tail 永远收尾，其余层都在窗口内）
+	var total: float = TAIL_OFFSET + float(tail["dur"])
+	var n := int(MIX_RATE * total)
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(gun_id)
+	# --- ① click 击发机械瞬态：阻尼正弦双分音（基频 + 2.7× 泛音）——
+	#     单正弦太「纯」，双分音出金属拉栓的「锵」而非「哔」
+	var c_dur: float = float(click["dur"])
+	var c_n := int(MIX_RATE * c_dur)
+	var c_f: float = float(click["freq"])
+	for i in c_n:
+		var t := float(i) / MIX_RATE
+		var env := exp(-t * 6.9 / c_dur)   # dur 处衰减到 -60dB（ln1000≈6.9）
+		buf[i] += (sin(TAU * c_f * t) + sin(TAU * c_f * 2.7 * t) * 0.4) \
+				* env * float(click["gain"])
+	# --- ② crack 膛口爆裂：白噪声减一阶低通残差（≈1kHz 高通），1-4kHz
+	#     能量强调；攻击沿 4 个采样（0.2ms <1ms）——脆响全靠这道立起的沿
+	var k_dur: float = float(crack["dur"])
+	var k_n := int(MIX_RATE * k_dur)
+	var lp := 0.0
+	var k := 1.0 - exp(-TAU * CRACK_HP_HZ / MIX_RATE)   # 一阶低通系数
+	for i in k_n:
+		var x := rng.randf() * 2.0 - 1.0
+		lp += (x - lp) * k
+		var t := float(i) / MIX_RATE
+		var atk := minf(t / 0.0002, 1.0)
+		var env := exp(-t * 6.9 / k_dur)
+		buf[i] += (x - lp) * env * atk * float(crack["gain"])
+	# --- ③ boom 枪体低频：正弦/三角按 tri 比例混合（三角谐波多=重枪的
+	#     「捶胸」感），+4ms 起振与 crack 错峰；2ms 起振防低频猝发的「砰」杂音
+	var b_dur: float = float(boom["dur"])
+	var b_n := int(MIX_RATE * b_dur)
+	var b_off := int(MIX_RATE * 0.004)
+	var b_f: float = float(boom["freq"])
+	var tri: float = float(boom["tri"])
+	var phase := 0.0
+	for i in b_n:
+		var t := float(i) / MIX_RATE
+		phase += TAU * b_f / MIX_RATE
+		var x01 := fposmod(phase / TAU + 0.25, 1.0)
+		var tw := 1.0 - 2.0 * absf(2.0 * x01 - 1.0)   # 与正弦同相位的三角波
+		var atk := minf(t / 0.002, 1.0)
+		var env := exp(-t * 6.9 / b_dur)
+		if b_off + i < n:
+			buf[b_off + i] += lerpf(sin(phase), tw, tri) * env * atk \
+					* float(boom["gain"])
+	# --- ④ tail 混响尾：低通噪声指数衰减，亮度 0-1 映射低通截止 600-5000Hz
+	#     （闷=远处/吸收面，亮=开阔硬反射面），+18ms 起振出「打出去飘出去」
+	var t_dur: float = float(tail["dur"])
+	var t_n := int(MIX_RATE * t_dur)
+	var t_off := int(MIX_RATE * TAIL_OFFSET)
+	var fc := lerpf(600.0, 5000.0, float(tail["bright"]))
+	var tk := 1.0 - exp(-TAU * fc / MIX_RATE)
+	var tlp := 0.0
+	for i in t_n:
+		var x := rng.randf() * 2.0 - 1.0
+		tlp += (x - tlp) * tk
+		var t := float(i) / MIX_RATE
+		var atk := minf(t / 0.003, 1.0)
+		var env := exp(-t * 6.9 / t_dur)
+		if t_off + i < n:
+			buf[t_off + i] += tlp * env * atk * float(tail["gain"])
+	# 峰值归一 → 乘总响度 → 16bit 编码
+	var peak := 0.0
+	for v in buf:
+		peak = maxf(peak, absf(v))
+	var norm: float = (0.88 / peak) if peak > 0.0001 else 0.0
+	var g: float = float(tune["gain"])
 	var data := PackedByteArray()
 	data.resize(n * 2)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 71   # 固定种子：同一把枪每次音色一致，只有 pitch 微移
-	var phase := 0.0
 	for i in n:
-		var t := float(i) / MIX_RATE
-		var env := exp(-t * decay)
-		phase += TAU * 80.0 / MIX_RATE
-		var v := ((rng.randf() * 2.0 - 1.0) * 0.8 + sin(phase) * 0.55) * env
-		data.encode_s16(i * 2, int(clampf(v, -1.0, 1.0) * 32000.0))
+		data.encode_s16(i * 2, int(clampf(buf[i] * norm * g, -1.0, 1.0) * 31500.0))
 	var wav := _raw_wav(data)
 	_shots[gun_id] = wav
 	return wav

@@ -8,6 +8,8 @@
 # 改枪台去购买跳转+当前装配摘要图证（shot_bench.png）→ 交易行四段全景（shot_market.png）→
 # 交易行未拥有枪购买特写（shot_market_buy.png）→ 交易行④ 仓库·战利品段图证
 # （shot_market_warehouse.png：段选中态+两行滚动窗口+「Enter 一键变卖全部」钮）→
+# 点击=装备两图证（shot_click_equip 出发页合成左键点击装枪后整页：行内「已装备」置灰钮
+# +副槽卡换枪 / shot_click_bench 改枪台合成左键点击换镜后整页：「已装」钮+当前装配摘要）→
 # 大坝分区四连拍
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
@@ -17,7 +19,7 @@
 # 参考图逐张对照形状语言）→
 # 实战/靶场入口可辨（shot_entries 出发大厅整页：红橙实战 CTA 与绿色靶场入口同框）+
 # 靶场暂停菜单（shot_range_menu：靶场暂停/离开靶场，模式分化文案图证）
-# （共 40 张：31 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31/33/35 张」为误计，按实拍数订正；
+# （共 42 张：33 处 shot() 调用 + 逐枪美照循环 9 把——旧注释「29/31/33/35/40 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -465,6 +467,42 @@ func _initialize() -> void:
 	shot("res://out/shot_market_warehouse.png")
 	main.lobby.hide_lobby()
 
+	# ---- 附加验收 24：shot_click_equip —— 「点击=装备」图证（出发页）：合成左键点击
+	# 当页已拥有未装枪行 → 行高亮 + 行内钮转「已装备」置灰 + 副槽卡换枪
+	# （等价 _on_equip_pressed 既有链；_slot_focus 指副槽，主槽 mk4 保持不动）
+	main.lobby.show_lobby()
+	main.lobby.set_tab(0)
+	main.lobby._slot_focus = "secondary"
+	main.lobby._deploy_page = 0
+	main.lobby._cur0 = 0
+	if not main.stash.guns_owned.has("rifle"):
+		main.stash.guns_owned.append("rifle")   # 摆拍护栏：默认五枪已含，幂等
+	var mb: InputEventMouseButton = InputEventMouseButton.new()
+	mb.pressed = true
+	mb.button_index = MOUSE_BUTTON_LEFT
+	main.lobby._on_deploy_row_input(mb, 0, 4)   # 当页枪行序 4 → 表序 2 = M7 步枪
+	await frames(8)
+	shot("res://out/shot_click_equip.png")
+	main.lobby.hide_lobby()
+
+	# ---- 附加验收 25：shot_click_bench —— 「点击=装备」图证（改枪台）：合成左键点击
+	# 右列已拥有未装镜行 → 行内钮转「已装」置灰 +「● 已装」tag + 底部「当前装配」摘要同步
+	# （等价 _on_bench_equip_pressed 既有链：选中+换装一步到位）
+	if not main.stash.scopes_owned.has("holo"):
+		main.stash.scopes_owned.append("holo")   # 摆拍已拥有（收尾还原真实存档）
+	main.lobby._gun_idx = 2     # M7 步枪（非自带镜，当前装红点=附加验收 6）
+	main.lobby._bench_col = 1
+	main.lobby._scope_idx = 0
+	main.lobby.set_tab(1)
+	main.lobby.show_lobby()
+	var mb2: InputEventMouseButton = InputEventMouseButton.new()
+	mb2.pressed = true
+	mb2.button_index = MOUSE_BUTTON_LEFT
+	main.lobby._on_bench_row_input(mb2, 1, 1)   # 右列序 1 = 全息镜（已拥有未装）
+	await frames(8)
+	shot("res://out/shot_click_bench.png")
+	main.lobby.hide_lobby()
+
 	# ---- 附加验收 26：shot_lean —— 右探头（E）：地平线左高右低 + 相机右移
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(20)
@@ -476,7 +514,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/40 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/42 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

@@ -5,8 +5,11 @@ extends CanvasLayer
 ## （实战/练习两个入口一眼可辨：出发 CTA 红橙=消耗极致备弹，靶场入口绿=免费）。
 ## 键盘主路径：main 在大厅可见时把按键转发给 handle_key()（返回 true=已消费）；
 ## 数字键 1/2/3 直切页签（页签钮与全部指路文案统一「按 N 进」口径，无「页签 N」字样）。
-## 鼠标路径：点击行=选中光标；装入/换装统一走行内显式按钮（已拥有未装显示「装备/换装」，
-## 已装备/已装置灰），槽位卡片再点已选卡=设装入目标。
+## 鼠标路径（用户「点击等于装备」）：点击行=直接装备——复用键盘既有确认链收敛，
+## 不另起逻辑：出发页当页枪行=选中+装入聚焦槽（未拥有指路按 3），他页行=翻页+选中
+## （防跨页误触装错枪）；改枪台左列=装枪/右列=换装（狙击自带镜守卫照拦、未拥有指路
+## 不自动跳页）；交易行例外维持只选中（防误购，成交仍走行内「购买」钮）；
+## 槽位卡片再点已选卡=设装入目标（与回车等价）。
 ## 出发页光标模型（单轴，候选枪按 DEPLOY_PAGE 分页）：[主槽0 | 副槽1 | 当页枪行 | 出发钮]，
 ## ←/→ 页内回绕移动；↑/↓ 端点跨页（↓ 越过出发钮=翻下页回槽位0，↑ 在槽位0=翻上页落到出发钮）。
 ## 回车：槽=设装入目标 · 枪=已拥有直接装（未拥有提示「按 3 进交易行」）· 出发钮=出发。
@@ -295,8 +298,10 @@ func _apply_ui_scale() -> void:
 	_root.offset_bottom = vs.y / s - vs.y
 
 
-## 行点击统一入口（鼠标）：一律只选中（他页行先翻页再选中）；装入/购买动作统一走行内
-## 「装备/购买」按钮；槽位卡片（page=-1）例外：再点已选卡=设为装入目标（与回车等价）。
+## 行点击统一入口（鼠标）：当页枪行点击=选中+直接装备（等价 _on_equip_pressed：
+## 已拥有装入聚焦槽 · 未拥有沿既有链只指路不扣款）；他页行先翻页再选中不自动装备
+## （防跨页误触装错枪）；交易行行点击只选中不成交（防误购，见 _on_market_row_input）；
+## 槽位卡片（page=-1）例外：再点已选卡=设为装入目标（与回车等价）。
 ## 参数序：gui_input 信号实参在前，bind 实参在后（同 city_editor._on_field_changed 约定）
 func _on_deploy_row_input(event: InputEvent, page: int, idx: int) -> void:
 	if event is InputEventMouseButton:
@@ -308,9 +313,9 @@ func _on_deploy_row_input(event: InputEvent, page: int, idx: int) -> void:
 				else:
 					_deploy_select(-1, idx)
 			elif page != _deploy_page:
-				_deploy_select(page, idx)      # 点他页行：先翻到该页，光标落该行
-			elif _cur0 != idx:
-				_deploy_select(page, idx)      # 枪行：只选中，装备走行内「装备」钮
+				_deploy_select(page, idx)      # 点他页行：先翻到该页，光标落该行（不自动装备）
+			else:
+				_on_equip_pressed(page, idx)   # 当页枪行：点击=选中+直接装备（既有「装备」钮链）
 
 
 ## 出发页选中某行（点击行 / 点「已装备」灰钮兜底）：翻到所在页、光标落行
@@ -328,19 +333,26 @@ func _on_equip_pressed(page: int, idx: int) -> void:
 	_confirm_deploy()
 
 
-## 改枪台行点击：一律只选中（col=0 左列选枪 / col=1 右列瞄具）；换装/购买统一走行内按钮
+## 改枪台行点击（鼠标）：左列点枪=选中+装入聚焦槽（未拥有沿既有链指路，不扣款）·
+## 右列点镜=选中+直接换装（机瞄=卸下 · 未拥有指路 · 狙击自带镜守卫照拦——
+## 全部沿 _bench_confirm 既有链收敛，不自动跳页）。交易行同口径例外不适用此页
 func _on_bench_row_input(event: InputEvent, col: int, idx: int) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			var cur: int = _gun_idx if col == 0 else _scope_idx
-			if _bench_col != col or cur != idx:
-				_bench_col = col
-				if col == 0:
-					_gun_idx = idx
-				else:
-					_scope_idx = idx
-				_refresh_all()
+			if col == 1:
+				_on_bench_equip_pressed(idx)   # 既有链：先选中该行再确认（守卫/指路同收敛）
+			else:
+				_bench_col = 0                 # 左列选中该枪，再沿出发页「装备」链装聚焦槽
+				_gun_idx = idx
+				_equip_gun_global(idx)
+
+
+## 全局枪表下标 → 出发页（page, idx）坐标后走 _on_equip_pressed 既有链：
+## 已拥有装入聚焦槽、未拥有只指路不扣款——改枪台左列点击与出发页「装备」钮一处收敛，
+## 不另起第二套装枪逻辑（附带把出发页光标带到该枪：回出发页所见=刚装的枪，语义连续）
+func _equip_gun_global(gi: int) -> void:
+	_on_equip_pressed(floori(float(gi) / float(DEPLOY_PAGE)), 2 + posmod(gi, DEPLOY_PAGE))
 
 
 ## 改枪台选中右列某行（点「已装」灰钮兜底）
@@ -493,7 +505,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	dnote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bwrap.add_child(dnote)
 	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行选中 · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买按 3 进交易行 · G 练习靶场（免费弹） · 1/2/3 切页签",
+	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行=直接装备（未拥有指路按 3） · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买按 3 进交易行 · G 练习靶场（免费弹） · 1/2/3 切页签",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main.add_child(hint)
@@ -844,7 +856,7 @@ func _render_bench(pg: VBoxContainer) -> void:
 			_stash.scopes_owned.size(), Guns.SCOPES.size()], 12, COL_TEXT))
 	sv.add_child(_mk_label("单持：同镜装他枪自动卸下", 11, _dim(0.5)))
 
-	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/行内按钮 换装·卸下（瞄具单持：同镜装他枪自动卸下） · 未拥有瞄具点『去购买』直达交易行（按 3） · 点击行选中",
+	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/行内按钮 换装·卸下（瞄具单持：同镜装他枪自动卸下） · 未拥有瞄具点『去购买』直达交易行（按 3） · 点击行=直接装备",
 			12, _dim(0.5))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
