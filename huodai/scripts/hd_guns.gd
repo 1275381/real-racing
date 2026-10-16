@@ -1890,24 +1890,11 @@ static func _smg_mp7() -> Node3D:
 				Vector3(s.x, s.y, -0.352), Vector3.ZERO, 0.0005, 6)
 	GUN_LIB.torus_ring(root, mp7wear, 0.0105, 0.014, Vector3(0, 0.018, -0.363),
 			Vector3(90, 0, 0), 16, 10)
-	# ⑨ 垂直前握把（展开态：上下两段收腰、总长较上轮收短约 15% 更贴
-	#    MP7 短前握把比例；顶部加与护木的连接座凸缘；柱身倒角加大四棱
-	#    圆角；+ 竖向防滑刻纹×4）
-	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.036, 0.012, 0.044),
-			Vector3(0, -0.055, -0.175), Vector3.ZERO, 0.0015, 6)
-	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.03, 0.05, 0.036),
-			Vector3(0, -0.08, -0.175), Vector3.ZERO, 0.003, 12)
-	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.026, 0.045, 0.03),
-			Vector3(0, -0.1275, -0.175), Vector3.ZERO, 0.003, 8)
-	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.03, 0.008, 0.034),
-			Vector3(0, -0.154, -0.175), Vector3.ZERO, 0.001, 6)
-	for i in 2:
-		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.005, 0.034, 0.003),
-				Vector3(-0.006 + 0.012 * float(i), -0.08, -0.1935),
-				Vector3.ZERO, 0.0005, 6)
-		GUN_LIB.chamfer_box(root, mp7dark, Vector3(0.005, 0.03, 0.003),
-				Vector3(-0.005 + 0.01 * float(i), -0.1275, -0.1915),
-				Vector3.ZERO, 0.0005, 6)
+	# ⑨ 前下壳底面（2026-10 用户定案「不用前握把」：旧垂直前握把整段
+	#    拆除——两段收腰柱/连接凸缘/底帽/防滑刻纹全删，前下壳底面只留
+	#    一条 MP7A2 式下挂导轨细基条（单件光条不刻齿，干净不乱））
+	GUN_LIB.chamfer_box(root, mp7body, Vector3(0.024, 0.005, 0.13),
+			Vector3(0, -0.0575, -0.17), Vector3.ZERO, 0.001, 6)
 	# ⑩ 中空直握把（内腔即弹匣井；grip 顶锚=(0,-0.042,0.028)，HOLD_DELTA
 	#    据此精算——见表注）+ 侧面竖向刻纹×3 对 + 根部 MP7A1 模印条
 	var grp: Node3D = GUN_LIB.grip(root, mp7body, 0.095,
@@ -1921,9 +1908,9 @@ static func _smg_mp7() -> Node3D:
 				Vector3.ZERO, 0.0006, 6)
 	GUN_LIB.chamfer_box(grp, mp7mark, Vector3(0.0025, 0.01, 0.02),
 			Vector3(0.0231, -0.0965, 0), Vector3.ZERO, 0.0006, 6)
-	# ⑪ 半透明短直匣（独立命名节点 mag_pdw：原点=匣顶中心，匣体从握把底板
-	#    下方出露、6° 前倾；curved_mag 直匣 + 匣内托弹板轮廓 + 单列观察孔×4
-	#    +『30』刻度线——首轮双列白点已按真匣改单列）
+	# ⑪ 不透明短直匣（独立命名节点 mag_pdw：原点=匣顶中心，匣体从握把底板
+	#    下方出露、6° 前倾；curved_mag 直匣——2026-10 用户定案弹匣不透明
+	#    黑聚合物，观察孔/『30』刻度白条随透匣一并拆除，匣面只留干净壳体）
 	var mag := Node3D.new()
 	mag.name = "mag_pdw"
 	mag.position = Vector3(0, -0.132, 0.042)
@@ -1936,16 +1923,8 @@ static func _smg_mp7() -> Node3D:
 	# （0.036×0.058）并加高到 16mm 完全吞掉透明凸缘，凸角不再露边）
 	GUN_LIB.chamfer_box(mag, mp7body, Vector3(0.036, 0.016, 0.058),
 			Vector3(0, -0.206, 0.0), Vector3.ZERO, 0.001, 6)
-	# 刻度/观察孔一律减宽一半（四轮判图：白条+点列过粗读作胶带；色已
-	# 是浅灰白 #B8B8B8 不再动）
-	GUN_LIB.chamfer_box(mag, mp7mark, Vector3(0.0015, 0.11, 0.003),
-			Vector3(0.0174, -0.1, 0.0), Vector3.ZERO, 0.0004, 6)
-	GUN_LIB.chamfer_box(mag, mp7mark, Vector3(0.0015, 0.002, 0.008),
-			Vector3(0.0174, -0.05, 0.008), Vector3.ZERO, 0.0004, 6)
-	for i in 4:
-		GUN_LIB.chamfer_box(mag, mp7mark, Vector3(0.0015, 0.004, 0.004),
-				Vector3(0.0174, -0.04 - 0.032 * float(i), 0.008), Vector3.ZERO,
-				0.0004, 6)
+	# （观察孔/『30』刻度白条已随透匣定案一并拆除——不透明黑匣上白件
+	# 只会读作贴纸，真不透明匣面无孔）
 	# ⑫ 侧面刻字（Cal.4.6mm×30 / HK MP7A1 浅灰模印——五轮判图「可见范围
 	#    均无」：细条凸出 1.3mm 读不出，加厚到 2mm 凸 1.5mm、加高加长成
 	#    浮雕字带）+ 红白安全指示小旗标（右下壳后段、快慢机后方）
@@ -2001,12 +1980,10 @@ static func _smg_mats() -> Dictionary:
 		m.emission = e
 		m.emission_energy_multiplier = glow
 		return m
-	# MP7 弹匣专用：烟灰半透明聚合物（透明度 35%——匣内托弹板轮廓透出；
-	# 二轮判图：38% 浅 albedo 在浅色墙前读作 #A0A0A5 亮白灰，压回深烟灰）
-	var mp7mag: StandardMaterial3D = mk.call(Color(0.243, 0.251, 0.271),
-			Color(0.2, 0.21, 0.23), 0.3, 0.15)
-	mp7mag.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mp7mag.albedo_color = Color(0.243, 0.251, 0.271, 0.35)
+	# MP7 弹匣专用（2026-10 用户定案「弹夹不要透明」）：不透明近黑聚合物
+	# （旧烟灰半透明 35% 版废弃——用户不要透匣，观察孔/刻度白条一并拆除）
+	var mp7mag: StandardMaterial3D = mk.call(Color(0.085, 0.088, 0.096),
+			Color(0.095, 0.098, 0.105), 0.85, 0.0)
 	return {
 		"dark": mk.call(Color(0.13, 0.14, 0.16), Color(0.16, 0.18, 0.2)),
 		"blued": mk.call(Color(0.10, 0.11, 0.15), Color(0.12, 0.14, 0.19)),
