@@ -96,7 +96,7 @@ const SAVE_PATH := "user://huodai_save.json"
 ## 地图与分区（340m 见方；中心危险区半径 80m）
 const MAP_HALF := 170.0
 const DANGER_R := 80.0
-const HALL_CENTER := Vector3(120.0, 0.0, 130.0)   # 室内靶馆馆心（行动区东北角外沿）
+const HALL_CENTER := Vector3(600.0, 0.0, 600.0)   # 室内靶馆馆心——地图外独立空间（2026-10 用户定案：实战不可达，进靶场=传送；旧位 (120,130) 与大坝新区游客中心只隔 57m 会「连着」）
 const EXTRACT_POS := Vector3(128.0, 0.0, 24.0)    # 主撤离点
 const DAM_EXTRACT_POS := Vector3(93.0, 0.0, -94.0)   # 第二撤离点（大坝撤离广场，与主撤离直线 122m）
 const EXTRACT_R := 3.0                            # 撤离判定半径

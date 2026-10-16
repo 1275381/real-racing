@@ -56,7 +56,6 @@ const HALL_HX := 22.0
 const HALL_HZ := 15.0
 const HALL_H := 5.0
 const HALL_WALL_T := 0.5          # 墙厚
-const HALL_DOOR_W := 4.0          # +Z 墙门洞宽（射击线后方进出）
 const HALL_FIRE_DZ := 11.0        # 射击线距馆心（+Z 侧）
 const HALL_TRAP_T := 0.6          # 尽端挡弹墙厚度（-Z 端）
 const HALL_FLOOR_Y := 0.06        # 馆内地坪高度：与大地 y=0 错开 6cm，根治共面 z-fighting 乱闪
@@ -654,7 +653,7 @@ func _build_extract(p: Vector3) -> void:
 
 ## 混凝土封闭壳 44×5×30：地坪/吊顶/四面墙（+Z 墙留门洞）/顶部成排灯板/
 ## 射击位隔断墙 ×3 / 黄黑警示条 / 车道编号 5/6/7 / 尽端挡弹墙；
-## 壳体全部注册 obstacles（挡子弹与走人，仅门洞可进出）。
+## 壳体全部注册 obstacles（挡子弹与走人；完全封闭——独立空间只靠传送进出）。
 func _build_hall() -> void:
 	var c := HDData.HALL_CENTER
 	var cx := c.x
@@ -676,14 +675,13 @@ func _build_hall() -> void:
 			HALL_HX * 2.0, HALL_H, HALL_TRAP_T, mat_trap)
 	_add_obstacle(cx, cz - HALL_HZ + HALL_TRAP_T * 0.5, HALL_HX, HALL_TRAP_T * 0.5,
 			HALL_FLOOR_Y + HALL_H)
-	# +Z 墙（射击线后方）：中央留 HALL_DOOR_W 门洞，两段各 20m
-	var seg := (HALL_HX * 2.0 - HALL_DOOR_W) * 0.5
-	for side in [-1.0, 1.0]:
-		var wx: float = cx + side * (HALL_HX - seg * 0.5)
-		_hall_box(wx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
-				seg, HALL_H, HALL_WALL_T, mat_concrete)
-		_add_obstacle(wx, cz + HALL_HZ - HALL_WALL_T * 0.5, seg * 0.5,
-				HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H)
+	# +Z 墙（射击线后方）：整面实体墙（2026-10 靶馆改地图外独立空间——
+	# 旧 HALL_DOOR_W 门洞封死：独立空间只靠传送进出，馆外已是地图外空域
+	# 无地面，留门会走出去坠空）
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
+			HALL_HX * 2.0, HALL_H, HALL_WALL_T, mat_concrete)
+	_add_obstacle(cx, cz + HALL_HZ - HALL_WALL_T * 0.5, HALL_HX,
+			HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H)
 	# 西墙 / 东墙
 	for side in [-1.0, 1.0]:
 		var wz := cz
