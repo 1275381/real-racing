@@ -545,12 +545,28 @@ func _mount_slot(slot: String) -> void:
 	# 专用 OmniLight3D（FPS 标准做法）：挂 holder 原点随枪摆、range 0.9m 只
 	# 罩枪模、不开阴影（近距硬阴影会斑驳糊墙）——贴掩体失直射光时保全枪册
 	# 可读。四路枪册+旧五枪全走 _mount_slot 此链，不必逐枪打补丁。
+	# 第三轮（3562cd3 补光引出新症的根治）：补光只照枪不照墙——3562cd3 解决
+	# 了「暗部亮度塌陷」，但 range 0.9m 同时罩住 0.4~0.7m 外的掩体面：贴掩体
+	# 时墙上打出大亮斑，ADS 进出/贴墙横移时亮斑随枪扫动、明暗直线分界扫过
+	# 视野，读作「枪分成两截」（四枪同档同图案、E8 隐灯即消失的一票定罪；
+	# 深度/透明/排序/几何经逐表面审计+全动态矩阵实证全部无病，不动）。
+	# 修法 = 补光域隔离：light_cull_mask 收到 render layer 2，挂枪后把 holder
+	# 子树全部 MeshInstance3D 并入层 2（见下）。与老防线的关系：4f79b10 材质
+	# 防线零改动照常生效（层位与材质的深度测试/优先级互不相干），主相机
+	# cull_mask 全开层 2 照常渲染、太阳/环境光 cull 全开枪身照常受光——
+	# 三层防线从此各司其职：材质防吞枪、补光保可读、层位防亮斑扫墙。
 	var vm_fill := OmniLight3D.new()
 	vm_fill.name = "vm_fill"
 	vm_fill.light_energy = 0.6
 	vm_fill.omni_range = 0.9
 	vm_fill.shadow_enabled = false
+	vm_fill.light_cull_mask = 1 << 1   # 只作用 render layer 2：掩体面不再被打出亮斑
 	holder.add_child(vm_fill)
+	# 补光域隔离的另一半：枪域全体入层 2（光源 cull mask 按 render layer 匹配，
+	# 与节点父子无关）——枪身/镜体/动画匣/枪口火光片一个不漏，vm_fill 照得到
+	# 才有意义；_mount_slot 是四路枪册公共链，primary/secondary 天然全覆盖
+	for mi_v in holder.find_children("*", "MeshInstance3D", true, false):
+		(mi_v as MeshInstance3D).layers |= 1 << 1
 	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
 			"mag_pos": mag_pos, "mag_size": mag_size,
 			"muzzle_off": MUZZLE_OFF + hold_off,
@@ -882,6 +898,7 @@ func _ensure_falling_mag() -> void:
 	_falling_mag = MeshInstance3D.new()
 	_falling_mag.mesh = box
 	_falling_mag.visible = false
+	_falling_mag.layers |= 1 << 1   # 入补光层 2：脱手旧匣还在 0.9m 补光半径内时同样被照亮
 	add_child(_falling_mag)
 
 
@@ -924,6 +941,7 @@ func _build_hand() -> Node3D:
 		mi.mesh = bm
 		mi.position = pos
 		mi.rotation_degrees = rot_deg
+		mi.layers |= 1 << 1   # 入补光层 2（与枪模同层）：vm_fill 只照层 2，换弹手才被照到
 		hand.add_child(mi)
 	# 手部局部坐标：四指朝 -Z 伸展、拇指在 +X 侧；握匣姿态的整体转角
 	# 由 _update_reload_hand 按 prog 控制

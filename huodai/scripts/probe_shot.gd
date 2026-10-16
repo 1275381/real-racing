@@ -22,7 +22,15 @@
 # + 贴掩体枪模可读两连拍（shot_gun_cover_all mp7 贴靶场隔断墙 /
 # shot_gun_cover_glass rifle 贴同墙——诊断定罪普通掩体即触发、全图无低可达
 # 透明掩体，B 按方换枪不换掩体；站位照 /tmp/probe_split.gd 场景 A）
-# （共 45 张：35 处 shot() 调用 + 逐枪美照循环 10 把——旧注释「29/31/33/35/40/43 张」为误计，按实拍数订正；
+# → 贴掩体位姿矩阵十场景（2026-10 第三轮「补光域隔离」根治回归，诊断 v1/v6
+# 矩阵固化：shot_cover_hip 腰射基线·pair / shot_cover_ads_t04 ADS 0.40 冻结档
+# ·pair / shot_cover_ads_full ADS 1.0·pair / shot_cover_lean_l·lean_r 探头 /
+# shot_cover_fire_ads 开火火光帧 / shot_cover_reload_mid 换弹 0.55·pair /
+# shot_cover_glass_ads 幕墙对照 / shot_cover_strafe_s06 真横移第 6 帧 /
+# shot_cover_m250_ads 长枪 ADS——①②③⑦ 各带 _b 图，两组 a/b 隐枪差分取
+# 稳定交集判裂，修后门槛全部「稳定完整（大域 1）」）
+# （共 59 张：35 处 shot() 调用 + 逐枪美照循环 10 把 + 矩阵段 14 张
+# ——旧注释「29/31/33/35/40/43/45 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -59,10 +67,17 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 ## 到不了 = 进程挂起（2026-10 门槛 124 排查根因）。此处跳过保存只打日志，
 ## 窗口模式照常出图。另：窗口失焦会触发 main 的自动暂停菜单罩住画面——
 ## 拍照前强制收菜单（2026-10 shot_gun_mk4 被暂停层糊住的事故）；
-## keep_menu=true 例外：拍的就是暂停菜单本身（shot_range_menu）
-func shot(path: String, keep_menu := false) -> void:
+## keep_menu=true 例外：拍的就是暂停菜单本身（shot_range_menu）。
+## pair=true（2026-10 位姿矩阵回归锁）：拍 a 后隐全部 viewmodel 渲 2 帧拍
+## b 再恢复——两组 a/b 差分取稳定交集判裂（stable_split）。visible 切换
+## 帧内【禁止】驱动 player/guns update：位姿前进会把「枪+光晕位移」伪报
+## 成裂（诊断 v4 事故），pair 全程只 await 渲染帧、零 update 调用
+func shot(path: String, keep_menu := false, pair := false) -> void:
 	if not keep_menu and _m != null and _m.hud != null and _m.hud.menu_visible:
 		_m.hud.hide_menu()
+	if pair:
+		await _shot_pair(path)
+		return
 	if root.get_texture() == null:
 		print("[probe] 跳过截图 %s（headless 无渲染目标）" % path)
 		return
@@ -72,6 +87,167 @@ func shot(path: String, keep_menu := false) -> void:
 		return
 	img.save_png(path)
 	shots_saved += 1
+
+
+## 隐/显全部 viewmodel（两槽枪架 + 换弹手 + 掉落匣替身——后两者与枪架
+## 父子不同但同属枪域，留着会在 b 图里污染差分域），返回原态列表供恢复
+func _vm_set_vis(vis: bool) -> Array:
+	var olds: Array = []
+	if _m == null:
+		return olds
+	for slot_v in _m.guns._guns:
+		var h: Node3D = _m.guns._guns[slot_v]["holder"]
+		olds.append([h, h.visible])
+		h.visible = vis
+	if _m.guns._hand != null:
+		var hd_v: Node3D = _m.guns._hand
+		olds.append([hd_v, hd_v.visible])
+		hd_v.visible = vis
+	if _m.guns._falling_mag != null:
+		var fm_v: MeshInstance3D = _m.guns._falling_mag
+		olds.append([fm_v, fm_v.visible])
+		fm_v.visible = vis
+	return olds
+
+
+func _vm_restore(olds: Array) -> void:
+	for e_v in olds:
+		var e: Array = e_v
+		(e[0] as Node3D).visible = bool(e[1])
+
+
+## 位姿冻结的一组 a/b（a 已由调用方拍好）：隐枪 → 渲 2 帧拍 b → 恢复。
+## 照诊断 /tmp/probe_iso2.gd ab() 协议；渲染帧期间零驱动（防位姿前进伪报）
+func _ab_once() -> Image:
+	var olds := _vm_set_vis(false)
+	await frames(2)
+	var ib: Image = null
+	if root.get_texture() != null:
+		ib = root.get_texture().get_image()
+	_vm_restore(olds)
+	await frames(2)
+	return ib
+
+
+## 差分掩码（降采样 2x，iso2 同参数 thr=0.15：RGB 差和阈值）
+func _diff_mask(ia: Image, ib: Image, thr := 0.15) -> Dictionary:
+	var sw := ia.get_width() / 2
+	var sh := ia.get_height() / 2
+	var mask := PackedByteArray()
+	mask.resize(sw * sh)
+	for y in sh:
+		for x in sw:
+			var ca := ia.get_pixel(x * 2, y * 2)
+			var cb := ib.get_pixel(x * 2, y * 2)
+			var d: float = absf(ca.r - cb.r) + absf(ca.g - cb.g) + absf(ca.b - cb.b)
+			mask[y * sw + x] = 1 if d > thr else 0
+	return {"mask": mask, "sw": sw, "sh": sh}
+
+
+## 连通域 BFS（4 邻接；≥400 像素算「大域」——枪身尺度，SSAO 碎噪到不了）
+func _bfs(mask: PackedByteArray, sw: int, sh: int) -> Dictionary:
+	var label := PackedInt32Array()
+	label.resize(sw * sh)
+	var sizes := {}
+	var cur := 0
+	var stack: Array = []
+	for i0 in sw * sh:
+		if mask[i0] == 1 and label[i0] == 0:
+			cur += 1
+			var sz := 0
+			stack.clear()
+			stack.append(i0)
+			label[i0] = cur
+			while not stack.is_empty():
+				var q: int = stack.pop_back()
+				var qx := q % sw
+				sz += 1
+				if qx > 0 and mask[q - 1] == 1 and label[q - 1] == 0:
+					label[q - 1] = cur
+					stack.append(q - 1)
+				if qx < sw - 1 and mask[q + 1] == 1 and label[q + 1] == 0:
+					label[q + 1] = cur
+					stack.append(q + 1)
+				if q - sw >= 0 and mask[q - sw] == 1 and label[q - sw] == 0:
+					label[q - sw] = cur
+					stack.append(q - sw)
+				if q + sw < sw * sh and mask[q + sw] == 1 and label[q + sw] == 0:
+					label[q + sw] = cur
+					stack.append(q + sw)
+			sizes[cur] = sz
+	var big: Array = []
+	for k in sizes:
+		if sizes[k] >= 400:
+			big.append(sizes[k])
+	big.sort()
+	big.reverse()
+	return {"n": big.size(), "sizes": big}
+
+
+## pair 模式主体：a 图=主图落盘 + b 图落盘供肉眼复核；两组差分取稳定交集
+## （SSAO 帧间噪声两组相位不同、交集滤掉；真几何边界两次一致、保留），
+## 大域 ≥2 =「稳定裂」——对照诊断 E8 判据「稳定完整（大域 1）」
+func _shot_pair(path: String) -> void:
+	if root.get_texture() == null:
+		print("[probe] 跳过 pair %s（headless 无渲染目标）" % path)
+		return
+	var ia1: Image = root.get_texture().get_image()
+	if ia1 == null:
+		return
+	var tag: String = path.get_file().get_basename()
+	ia1.save_png(path)
+	shots_saved += 1
+	var ib1 := await _ab_once()
+	if ib1 != null:
+		ib1.save_png(path.replace(".png", "_b.png"))
+		shots_saved += 1
+	var m1: Dictionary = _diff_mask(ia1, ib1) if ib1 != null else {}
+	# 组2：位姿不变再来一组（SSAO 换相位），只算差分不落盘
+	var ia2: Image = root.get_texture().get_image()
+	var ib2 := await _ab_once()
+	var m2: Dictionary = _diff_mask(ia2, ib2) if (ia2 != null and ib2 != null) else {}
+	if m1.is_empty() or m2.is_empty():
+		print("[probe] 跳过判裂 %s（headless 渲染目标无图像）" % tag)
+		return
+	var mx: PackedByteArray = m1["mask"]
+	var my: PackedByteArray = m2["mask"]
+	var inter := mx.duplicate()
+	for i in mx.size():
+		inter[i] = 1 if (mx[i] == 1 and my[i] == 1) else 0
+	var res := _bfs(inter, m1["sw"], m1["sh"])
+	var split: bool = res["n"] >= 2
+	var msg: String
+	if split:
+		msg = "*** 稳定判裂 sizes=%s（看 _b.png 复核）***" % str(res["sizes"])
+	else:
+		msg = "稳定完整（大域 %d sizes=%s）" % [res["n"], str(res["sizes"])]
+	check("pair 判裂 %s" % tag, not split, msg)
+
+
+## 手动冻结摆枪到任意 ads 档（复刻 /tmp/probe_iso2.gd set_ads 与
+## hd_guns.gd update 的摆位公式；不驱动 update=位姿严格冻结）——
+## ADS 过渡中档（0.40~0.70）是 vm_fill 亮斑最活跃档，冻结法才能停在档内
+func _set_ads_mx(a: float) -> void:
+	var g: Dictionary = _m.guns._cur_gun()
+	var holder: Node3D = g["holder"]
+	_m.guns._ads = a
+	_m.player.ads = a
+	var ads_pos := Vector3(-HDGuns.GUN_SCALE * float(g["cx"]),
+			-0.012 - HDGuns.GUN_SCALE * float(g["top"]), HDGuns.GUN_ADS_Z)
+	if g.has("aim_y"):
+		ads_pos = Vector3(0.0, -HDGuns.GUN_SCALE * float(g["aim_y"]),
+				HDGuns.GUN_ADS_Z)
+	holder.position = HDGuns.GUN_HIP_POS.lerp(ads_pos, a)
+	holder.rotation_degrees = HDGuns.GUN_HIP_ROT.lerp(Vector3.ZERO, a)
+
+
+## 手动驱动一帧（main 主循环已冻结：玩家+枪 update 各一步，照诊断
+## /tmp/probe_matrix.gd drive() 协议——探头/ADS/换弹/横移的真 update 链）
+func drive(n: int) -> void:
+	for i in n:
+		_m.player.update(0.016)
+		_m.guns.update(0.016)
+		await process_frame
 
 func _initialize() -> void:
 	var save := "user://huodai_save.json"
@@ -551,7 +727,148 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/45 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	# ---- 附加验收 27：贴掩体「枪分裂」位姿矩阵（2026-10 第三轮根治回归，
+	#      诊断 v1/v6 矩阵固化进本探针）——机位=坝底集装箱正贴（诊断实证
+	#      触发面：枪口入掩体 0.4~0.7m × ADS 进出过渡 × 贴墙横移）+ 游客
+	#      中心幕墙对照。协议：main.set_process(false) 冻结主循环 + 士兵
+	#      挪出场外 + HUD 收起，位姿全部探针手动驱动（drive/_set_ads_mx）；
+	#      ①②③⑦ 走 shot(pair)：两组 a/b 隐枪差分取稳定交集（stable_split，
+	#      滤 SSAO 帧间噪声；visible 切换帧内零驱动防位姿前进伪报），其余
+	#      单张图证。修后门槛：pair 全部「稳定完整（大域 1）」。
+	main.stash.guns_owned.append("mp7")   # 摆拍直拥（幂等；收尾还原真实存档）
+	main.stash.loadout = {"primary": "mp7", "secondary": "pistol"}
+	main.set_process(false)   # 冻结主循环：防士兵 AI/红罩/相机追尾干扰（诊断协议）
+	var hud_mx: bool = main.hud.visible
+	main.hud.visible = false
+	main._start_mission({"primary": "mp7", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm: Dictionary = main.soldiers.soldiers[i]
+		sm["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm["engaged"] = false
+		sm["moving"] = false
+		sm["state"] = "combat"
+		main.soldiers._write_pose(i)
+	# 坝底集装箱正贴机位（诊断 v1 基线）：pos.y 交给 update 压回地面高、
+	# cam 摆到眼高 1.55（iso2 同款；此后每场景重写 pos/yaw/pitch 再 update）
+	main.player.pos = Vector3(-62.0, 1.55, -91.55)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	await frames(4)
+	# ① 腰射正贴（基线，pair）——pair 调用必须 await：shot(pair) 内部有
+	#    隐枪/恢复的渲染帧等待，不 await 会与后续 _set_ads_mx/shot 并发交错
+	#    （a 图抓到别的 pair 的隐枪帧、b 图抓到更早的腰射帧——2026-10 首跑
+	#    ②③ 全空画面的根因）；非 pair 的 shot 保持同步调用零改动
+	await shot("res://out/shot_cover_hip.png", false, true)
+	# ② ADS 0.40 档（vm_fill 亮斑最活跃档，诊断 v6 裂档带中心）：手动冻结
+	#    摆枪、零驱动停档（pair）——drive 会把 _ads 收走，冻结法才能停档内
+	_set_ads_mx(0.40)
+	await frames(2)
+	await shot("res://out/shot_cover_ads_t04.png", false, true)
+	# ③ ADS 1.0 正贴（pair，仍冻结摆法）
+	_set_ads_mx(1.0)
+	await frames(2)
+	await shot("res://out/shot_cover_ads_full.png", false, true)
+	# ④⑤ 探头（Q/E 按住真 update 链到 |lean_cur|>0.9；枪姿回腰射）
+	_set_ads_mx(0.0)
+	await drive(2)
+	Input.action_press("hd_lean_left")
+	await drive(16)
+	check("矩阵左探头到位", main.player.lean_cur <= -0.9,
+		"lean=%.2f" % main.player.lean_cur)
+	shot("res://out/shot_cover_lean_l.png")
+	Input.action_release("hd_lean_left")
+	await drive(4)
+	Input.action_press("hd_lean_right")
+	await drive(16)
+	check("矩阵右探头到位", main.player.lean_cur >= 0.9,
+		"lean=%.2f" % main.player.lean_cur)
+	shot("res://out/shot_cover_lean_r.png")
+	Input.action_release("hd_lean_right")
+	await drive(4)
+	# ⑥ ADS 1.0 开火 1 帧（枪口火光 + vm_fill 同框；真 update 链开镜）
+	Input.action_press("hd_scope")
+	for i in 60:
+		await drive(1)
+		if main.player.ads >= 0.99:
+			break
+	main.guns.fire_cd = 0.0
+	main.guns.try_fire()
+	await drive(1)
+	shot("res://out/shot_cover_fire_ads.png")
+	Input.action_release("hd_scope")
+	await drive(20)
+	# ⑦ 换弹中段 prog≈0.55（旧匣脱手落地+手托新匣+枪体 26° 侧倾，pair）：
+	#    R 边沿触发后 drive 逐帧推进（主循环已冻结，探针手动驱动）
+	Input.action_press("hd_reload")
+	await drive(1)
+	Input.action_release("hd_reload")
+	var rl_total: float = maxf(float(main.guns._g.get("reload", 1.5)), 0.01)
+	for i in 200:
+		await drive(1)
+		if main.guns.reloading > 0.0 \
+				and 1.0 - main.guns.reloading / rl_total >= 0.55:
+			break
+	var rl_prog: float = 1.0 - main.guns.reloading / rl_total
+	check("换弹中段 prog≈0.55", main.guns.reloading > 0.0
+		and absf(rl_prog - 0.55) < 0.06, "prog=%.2f" % rl_prog)
+	await shot("res://out/shot_cover_reload_mid.png", false, true)
+	for i in 200:   # 走完换弹再进下一场景（防弹匣/手部姿态泄漏进⑧）
+		await drive(1)
+		if main.guns.reloading <= 0.0:
+			break
+	# ⑧ 游客中心幕墙对照（诊断「透明掩体」位——实测材质不透明 metallic，
+	#    普通触发面同验；冻结摆法）
+	main.player.pos = Vector3(88.0, 1.55, 43.15)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	shot("res://out/shot_cover_glass_ads.png")
+	# ⑨ 真横移第 6 帧（ads=1.0 真链按住开镜，每帧 pos.x+=0.05 掩体缘扫过
+	#    枪身——诊断「真移动 ADS 连拍」协议的固化第 6 帧）
+	Input.action_press("hd_scope")
+	for i in 60:
+		await drive(1)
+		if main.player.ads >= 0.99:
+			break
+	main.player.pos = Vector3(-62.0, 1.55, -91.55)   # 回正贴机位再横移
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	await drive(2)
+	for i in 6:
+		main.player.pos.x += 0.05
+		await drive(1)
+	shot("res://out/shot_cover_strafe_s06.png")
+	Input.action_release("hd_scope")
+	await drive(20)
+	# ⑩ m250 ADS 1.0（最长枪近剪裁/变换链抽查）：换枪重进 MISSION——
+	#    guns.enter 同槽换 id 重建链，顺带在重建路径上复核 vm_fill 隔离在位
+	main.stash.guns_owned.append("m250")   # 幂等直拥
+	main.stash.loadout = {"primary": "m250", "secondary": "pistol"}
+	main._start_mission({"primary": "m250", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm2: Dictionary = main.soldiers.soldiers[i]
+		sm2["pos"] = Vector3(0, 300, float(i) * 3.0)
+		sm2["engaged"] = false
+		sm2["moving"] = false
+		sm2["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(-62.0, 1.55, -91.55)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	shot("res://out/shot_cover_m250_ads.png")
+	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
+	main.set_process(true)
+	main.hud.visible = hud_mx
+
+	print("[probe] 探针完成：实存 %d/59 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)

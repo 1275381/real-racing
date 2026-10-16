@@ -736,6 +736,30 @@ func _run() -> void:
 					fl.light_energy, fl.omni_range, str(fl.shadow_enabled)])
 	check("挂载枪架带 viewmodel 补光（失直射光保全枪册可读）",
 		not main.guns._guns.is_empty() and fill_bad.is_empty(), str(fill_bad))
+	# 29f+（2026-10 第三轮「补光域隔离」回归锁，与根因一一对应）：3562cd3 的
+	#      vm_fill 补光同时照亮 0.9m 内掩体面——贴掩体亮斑随枪扫动（ADS 进出
+	#      0.40~0.70 档最强）读作「枪分成两截」，E8 隐灯即消失一票定罪。两条
+	#      断言各锁一半修法、缺一即复发：
+	#      ① vm_fill.light_cull_mask == 2（只作用 render layer 2）：掩体面
+	#        不再被打亮——亮斑扫墙这一可视异常源被根除；
+	#      ② 挂载枪架 holder 子树全部 MeshInstance3D（枪身/镜体/动画匣/
+	#        火光片）layers 含位 1<<1：灯只照层 2，枪模不入层 2 = 补光失效
+	#        黑枪、暗部塌陷复发（退回 3562cd3 之前）。
+	var cull_bad: Array = []
+	var layer_bad: Array = []
+	for slot_v in main.guns._guns:
+		var lh: Node3D = main.guns._guns[slot_v]["holder"]
+		var fills2: Array = lh.find_children("vm_fill", "OmniLight3D", true, false)
+		if fills2.size() == 1 and (fills2[0] as OmniLight3D).light_cull_mask != (1 << 1):
+			cull_bad.append("%s:cull=%d" % [slot_v,
+				(fills2[0] as OmniLight3D).light_cull_mask])
+		for mi_v2 in lh.find_children("*", "MeshInstance3D", true, false):
+			if (mi_v2 as MeshInstance3D).layers & (1 << 1) == 0:
+				layer_bad.append("%s/%s" % [slot_v, (mi_v2 as MeshInstance3D).name])
+	check("vm_fill 补光 cull_mask 只作用层 2（不照墙根除亮斑扫动）",
+		not main.guns._guns.is_empty() and cull_bad.is_empty(), str(cull_bad))
+	check("挂载枪模全 mesh 入补光层 2（vm_fill 照得到枪）",
+		not main.guns._guns.is_empty() and layer_bad.is_empty(), str(layer_bad))
 	var smg_mats: Dictionary = HDGuns._smg_mats()
 	var glow_bad: Array = []
 	for mk_v in smg_mats:
