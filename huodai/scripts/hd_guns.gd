@@ -536,6 +536,21 @@ func _mount_slot(slot: String) -> void:
 	flash.omni_range = 6.0
 	flash.visible = false
 	player.cam.add_child(flash)
+	# viewmodel 补光（2026-10「贴掩体枪身分裂」复发主修，公共链一次修全部枪）：
+	# 老的深度吞枪（4f79b10 修的「贴墙枪被深度测试吞掉」）并没有复发——
+	# no_depth_test+render_priority10 防线完好，a/b 隐枪差分实测枪模几何全程
+	# 完整画出；真因是贴掩体挡掉直射阳光后（707c2f1 光照架构 sun 1.7 vs
+	# ambient 0.58、ACES 0.92，直射/环境光比偏大），枪身只剩弱环境光，暗色
+	# 段亮度塌到 0-5，读作「前亮后黑两截、被吞」。给枪架挂一盏 viewmodel
+	# 专用 OmniLight3D（FPS 标准做法）：挂 holder 原点随枪摆、range 0.9m 只
+	# 罩枪模、不开阴影（近距硬阴影会斑驳糊墙）——贴掩体失直射光时保全枪册
+	# 可读。四路枪册+旧五枪全走 _mount_slot 此链，不必逐枪打补丁。
+	var vm_fill := OmniLight3D.new()
+	vm_fill.name = "vm_fill"
+	vm_fill.light_energy = 0.6
+	vm_fill.omni_range = 0.9
+	vm_fill.shadow_enabled = false
+	holder.add_child(vm_fill)
 	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
 			"mag_pos": mag_pos, "mag_size": mag_size,
 			"muzzle_off": MUZZLE_OFF + hold_off,
@@ -1982,8 +1997,9 @@ static func _smg_mats() -> Dictionary:
 		return m
 	# MP7 弹匣专用（2026-10 用户定案「弹夹不要透明」）：不透明近黑聚合物
 	# （旧烟灰半透明 35% 版废弃——用户不要透匣，观察孔/刻度白条一并拆除）
+	# glow 0.35 同三件套第三件（曾随 90cc58b 归 0，贴掩体亮度塌 0-5）
 	var mp7mag: StandardMaterial3D = mk.call(Color(0.085, 0.088, 0.096),
-			Color(0.095, 0.098, 0.105), 0.85, 0.0)
+			Color(0.095, 0.098, 0.105), 0.85, 0.35)
 	return {
 		"dark": mk.call(Color(0.13, 0.14, 0.16), Color(0.16, 0.18, 0.2)),
 		"blued": mk.call(Color(0.10, 0.11, 0.15), Color(0.12, 0.14, 0.19)),
@@ -2000,17 +2016,20 @@ static func _smg_mats() -> Dictionary:
 		#      mp7rail 轨齿亮灰 #494A4C / mp7mag 半透明匣 #3E4045×35% /
 		#      mp7mark 刻度 #B8B8B8 / mp7red 暗红 #B32020 /
 		#      mp7dark 刻槽 #101010 / mp7wear 磨损 #5B5D5F）----
-		#      （2026-10 判图修复「金属蓝白串色」：mk 第四参 glow 缺省
-		#      0.55——body/mark/dark/wear/rail 原先全部带微发光，磨损环/
-		#      刻度白条/导轨齿读作蓝白发光件；全部显式归 0，只留材质色）
-		"mp7body": mk.call(Color(0.09, 0.09, 0.102), Color(0.105, 0.105, 0.118), 0.85, 0.0),
-		"mp7metal": mk.call(Color(0.18, 0.19, 0.203), Color(0.2, 0.21, 0.225), 0.65, 0.15),
-		"mp7rail": mk.call(Color(0.225, 0.229, 0.236), Color(0.24, 0.244, 0.25), 0.6, 0.0),
+		#      （2026-10「金属蓝白串色」判图修复曾把全系 glow 显式归 0
+		#      （6d193b5 引入归 0、90cc58b 把匣 0.15 也归 0）——归 0 后贴
+		#      掩体挡直射阳光，碳黑枪身只剩弱环境光、亮度塌 0-5 读作「被
+		#      吞」，丢掉 4f79b10 三件套第三件「微自发光保暗处可读」。现
+		#      恢复 0.35~0.45：emission 色沿用各材质原色（非旧缺省发光色）
+		#      且量级低于旧串色版 0.55——只保暗处可读，不复发「蓝白发光件」）
+		"mp7body": mk.call(Color(0.09, 0.09, 0.102), Color(0.105, 0.105, 0.118), 0.85, 0.4),
+		"mp7metal": mk.call(Color(0.18, 0.19, 0.203), Color(0.2, 0.21, 0.225), 0.65, 0.35),
+		"mp7rail": mk.call(Color(0.225, 0.229, 0.236), Color(0.24, 0.244, 0.25), 0.6, 0.4),
 		"mp7mag": mp7mag,
-		"mp7mark": mk.call(Color(0.722, 0.722, 0.722), Color(0.6, 0.6, 0.6), 0.6, 0.0),
-		"mp7red": mk.call(Color(0.702, 0.125, 0.125), Color(0.6, 0.11, 0.11), 0.6, 0.0),
-		"mp7dark": mk.call(Color(0.063, 0.063, 0.063), Color(0.07, 0.07, 0.07), 0.8, 0.0),
-		"mp7wear": mk.call(Color(0.30, 0.306, 0.312), Color(0.32, 0.326, 0.332), 0.5, 0.0),
+		"mp7mark": mk.call(Color(0.722, 0.722, 0.722), Color(0.6, 0.6, 0.6), 0.6, 0.35),
+		"mp7red": mk.call(Color(0.702, 0.125, 0.125), Color(0.6, 0.11, 0.11), 0.6, 0.35),
+		"mp7dark": mk.call(Color(0.063, 0.063, 0.063), Color(0.07, 0.07, 0.07), 0.8, 0.4),
+		"mp7wear": mk.call(Color(0.30, 0.306, 0.312), Color(0.32, 0.326, 0.332), 0.5, 0.35),
 	}
 
 

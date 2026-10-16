@@ -10,6 +10,8 @@
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
 #       + 拟真枪声分层回归（用户反馈「现在的枪声不拟真」）：四层合成
 #         （click/crack/boom/tail）15 枪流/时长分级/峰值/过零率/每发随机
+#       + 贴掩体吞枪复发红线（29f）：全枪册表面材质 no_depth_test/priority≥10
+#         审计 + 枪架 viewmodel 补光在位 + MP7 微自发光（三件套全锁）
 # 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
 #      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
@@ -683,6 +685,67 @@ func _run() -> void:
 			and not main.stash.owns_gun("p90")
 			and main.stash.cash == cash_m and main.stash.guns_owned.size() == owned_m,
 		"cash=%d owned=%d" % [main.stash.cash, main.stash.guns_owned.size()])
+
+	# 29f. 贴掩体吞枪复发红线（2026-10「掩体分裂」定案回归）：老的深度吞枪
+	#      （4f79b10 no_depth_test+render_priority10 防线）实测未复发——a/b
+	#      隐枪差分证明枪模几何全程画出；真因是贴掩体挡直射阳光后暗色枪身
+	#      亮度塌 0-5 读作「被吞」。三层断言各锁一层防线：
+	#      ① 全枪册每把枪 _build_gun_visual 后遍历全部 MeshInstance3D 全部
+	#        surface 材质，断言 no_depth_test=true 且 render_priority≥10——
+	#        锁三件套前两件：材质一旦回归深度测试（老吞枪机制：枪插进
+	#        掩体被深度缓冲盖掉），贴掩体即真吞枪，此处当场现形；材质为
+	#        null 的表面也计违例（null 走引擎默认材质=深度测试开着，同险）。
+	#      ② 已挂载槽位枪架 holder 带 vm_fill 补光 OmniLight3D（energy≥0.5、
+	#        range≥0.8、不开阴影）——锁主修公共链：全枪册可读性只认
+	#        _mount_slot 这一條出口（四路枪册+旧五枪全走此链），灯被误删
+	#        则贴掩体全枪册齐瞎、复发「分裂」。
+	#      ③ _smg_mats MP7 全系 emission_energy_multiplier≥0.3——锁三件套
+	#        第三件（微自发光保暗处可读）：6d193b5/90cc58b 判图修「蓝白
+	#        串色」时全系归 0，掩体阴影里碳黑枪身亮度塌到不可辨即此回归。
+	var mat_bad: Array = []
+	var surf_total := 0
+	for g_def in Guns.GUNS:
+		var m_gid: String = str(g_def["id"])
+		var m_root: Node3D = main.guns._build_gun_visual(m_gid)
+		for mi_v in m_root.find_children("*", "MeshInstance3D", true, false):
+			var mi := mi_v as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			for s in mi.mesh.get_surface_count():
+				var mat: Material = mi.mesh.surface_get_material(s)
+				if mat == null:
+					mat = mi.get_surface_override_material(s)
+				surf_total += 1
+				var sm := mat as StandardMaterial3D
+				if mat == null or not sm.no_depth_test or sm.render_priority < 10:
+					mat_bad.append("%s/%s:s%d" % [m_gid, mi.name, s])
+		m_root.free()
+	check("全枪册表面材质 no_depth_test+priority≥10（老吞枪防线）",
+		mat_bad.is_empty() and surf_total > 0,
+		"违例=%s 审计表面数=%d" % [str(mat_bad).substr(0, 300), surf_total])
+	var fill_bad: Array = []
+	for slot_v in main.guns._guns:
+		var fills: Array = (main.guns._guns[slot_v]["holder"] as Node3D).find_children(
+				"vm_fill", "OmniLight3D", true, false)
+		if fills.size() != 1:
+			fill_bad.append("%s:vm_fill×%d" % [slot_v, fills.size()])
+			continue
+		var fl := fills[0] as OmniLight3D
+		if fl.light_energy < 0.5 or fl.omni_range < 0.8 or fl.shadow_enabled:
+			fill_bad.append("%s:energy=%.2f range=%.2f shadow=%s" % [slot_v,
+					fl.light_energy, fl.omni_range, str(fl.shadow_enabled)])
+	check("挂载枪架带 viewmodel 补光（失直射光保全枪册可读）",
+		not main.guns._guns.is_empty() and fill_bad.is_empty(), str(fill_bad))
+	var smg_mats: Dictionary = HDGuns._smg_mats()
+	var glow_bad: Array = []
+	for mk_v in smg_mats:
+		if not str(mk_v).begins_with("mp7"):
+			continue
+		var pm: StandardMaterial3D = smg_mats[mk_v]
+		if not pm.emission_enabled or pm.emission_energy_multiplier < 0.3:
+			glow_bad.append("%s=%.2f" % [str(mk_v), pm.emission_energy_multiplier])
+	check("MP7 全系材质微自发光 ≥0.3（三件套第三件）",
+		glow_bad.is_empty(), str(glow_bad))
 
 	# 30. 大坝分区（搜打撤第三区）：装配节点/容器点 13/巡逻点 7/品质权重/矩形分区/
 	#     坝体碰撞 wall_hit（前墙 12m·开洞抵背墙 18m·溢流段高位 24m）/幂等/第二撤离

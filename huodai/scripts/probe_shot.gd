@@ -19,7 +19,10 @@
 # 参考图逐张对照形状语言）→
 # 实战/靶场入口可辨（shot_entries 出发大厅整页：红橙实战 CTA 与绿色靶场入口同框）+
 # 靶场暂停菜单（shot_range_menu：靶场暂停/离开靶场，模式分化文案图证）
-# （共 43 张：33 处 shot() 调用 + 逐枪美照循环 10 把——旧注释「29/31/33/35/40 张」为误计，按实拍数订正；
+# + 贴掩体枪模可读两连拍（shot_gun_cover_all mp7 贴靶场隔断墙 /
+# shot_gun_cover_glass rifle 贴同墙——诊断定罪普通掩体即触发、全图无低可达
+# 透明掩体，B 按方换枪不换掩体；站位照 /tmp/probe_split.gd 场景 A）
+# （共 45 张：35 处 shot() 调用 + 逐枪美照循环 10 把——旧注释「29/31/33/35/40/43 张」为误计，按实拍数订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -390,6 +393,40 @@ func _initialize() -> void:
 		await frames(2)
 		shot("res://out/shot_gun_%s.png" % gid)
 
+	# ---- 附加验收 18b：shot_gun_cover_all / shot_gun_cover_glass —— 贴掩体
+	# 枪模可读性图证（2026-10「贴掩体枪身分裂/吞枪」复发回归）：站位照诊断
+	# 探针 /tmp/probe_split.gd 场景 A 原样搬——靶场混凝土隔断墙（hd_world.gd
+	# 射击位隔断墙 dx=+1 列，x=119 墙面 118.94），cam(118.30,1.61,139.8)
+	# yaw=PI/2 pitch=-0.12 面 +X 贴墙 0.64m；set_process(false) 冻结主循环
+	# 防相机追尾（probe_split 同款）+ 收 HUD 保画面纯净。
+	# A=shot_gun_cover_all：mp7 贴普通掩体（修复前枪身中后段亮度 0-5、暗
+	# 像素 94-98%＝读作「前亮后黑两截被吞」的那把枪；逐枪美照循环收尾正是
+	# mp7 在枪上，直接摆位）。
+	# B=shot_gun_cover_glass：按诊断定罪换枪不换掩体——全图无低可达透明
+	# 掩体（唯一透明件伪装网在厂房屋顶高位）、游客中心「玻璃」幕墙材质实
+	# 为不透明 metallic 无 transparency，普通掩体即触发，故 B=rifle 贴同一
+	# 面普通混凝土墙（微自发光 0.55 效力对照枪）。修复后两图枪身全段应
+	# 均匀可读、无「前亮后黑两截」。
+	main.set_process(false)
+	var hud_cv: bool = main.hud.visible
+	main.hud.visible = false
+	main.player.cam.position = Vector3(118.30, 1.61, 139.8)
+	main.player.cam.rotation = Vector3(-0.12, PI * 0.5 + PI, 0)
+	await frames(6)
+	shot("res://out/shot_gun_cover_all.png")
+	# B：换 rifle 重新进场贴同墙（loadout 换枪走 guns.enter 同槽换 id 重建链）
+	main.set_process(true)
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.set_process(false)
+	main.player.cam.position = Vector3(118.30, 1.61, 139.8)
+	main.player.cam.rotation = Vector3(-0.12, PI * 0.5 + PI, 0)
+	await frames(6)
+	shot("res://out/shot_gun_cover_glass.png")
+	main.set_process(true)
+	main.hud.visible = hud_cv
+
 	# ---- 附加验收 18：shot_slot_switch —— 双槽串色验收（黄壳回归红线）：
 	# 主=MK4（全黑）+ 副=汤姆逊（蓝钢+木）两把异枪同局共存，切到副武器截
 	# 汤姆逊——配合上张 shot_gun_mk4.png 证明两把枪颜色/轮廓各自独立
@@ -514,7 +551,7 @@ func _initialize() -> void:
 	Input.action_release("hd_lean_right")
 	await frames(4)
 
-	print("[probe] 探针完成：实存 %d/43 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/45 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)
