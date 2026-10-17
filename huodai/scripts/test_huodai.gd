@@ -551,6 +551,59 @@ func _run() -> void:
 		not bool(HDGuns._lmg_mag_of("m250")["show"]))
 	lmg_root.free()
 
+	# 29c. 一体成型 unibody 断言（2026-10 合并回归锁）：全枪册逐把枪
+	#      _build_gun_visual 出厂链（含镜体合并与 Δ 平移）后——
+	#      ① 枪身根下恰 1 个 MeshInstance3D 且名 unibody——分件全部并入
+	#        单网格（镜体/机瞄件一并并入），物理上无件可裂
+	#      ② 命名锚点保留：grip_hold（HOLD_DELTA 对齐断言的锚）必在；
+	#        合并前树里存在的 mag_* 独立弹匣节点合并后原样重建（换弹手
+	#        沿 mag_of 锚点跟随的契约不变）
+	#      ③ 顶点总数守恒：合并前（各册 build 工厂产物，无镜体无 Δ）与
+	#        合并后 count_vertices 相等——append_from 平移拷贝零焊接零
+	#        丢失（commit 前不 index()，纯加和）；POLY_MIN 红线口径不变
+	var uni_bad: Array = []
+	for g_def in Guns.GUNS:
+		var u_gid: String = str(g_def["id"])
+		# 合并前基准：四路工厂直接产物 + 同参 _finish_gun 镜体（= 合并
+		# 链里 merge_unibody 之前的完整形态；漏镜体会差出 iron 机瞄 2 盒
+		# 48 顶点，首个版本就栽在这）
+		var pre_root: Node3D
+		var pre_anchor: Vector3
+		if HDGuns._smg_has(u_gid):
+			pre_root = HDGuns._smg_build(u_gid)
+			pre_anchor = HDGuns._smg_scope_anchor(u_gid)
+		elif HDGuns._ar_has(u_gid):
+			pre_root = HDGuns._ar_build(u_gid)
+			pre_anchor = HDGuns._ar_scope_anchor(u_gid)
+		elif HDGuns._lmg_has(u_gid):
+			pre_root = HDGuns._lmg_build(u_gid)
+			pre_anchor = HDGuns._lmg_scope_anchor(u_gid)
+		else:
+			pre_root = HDGuns._old5_build(u_gid)
+			pre_anchor = HDGuns._old5_scope_anchor(u_gid)
+		main.guns._finish_gun(pre_root, u_gid, pre_anchor)
+		var pre_verts: int = GUN_LIB.count_vertices(pre_root)
+		var pre_mag: Node = pre_root.find_child("mag_*", true, false)
+		var pre_grip: Node = pre_root.find_child("grip_hold", true, false)
+		pre_root.free()
+		# 合并后：完整出厂链
+		var post_root: Node3D = main.guns._build_gun_visual(u_gid)
+		var u_mis: Array = post_root.find_children("*", "MeshInstance3D",
+			true, false)
+		if u_mis.size() != 1 or str((u_mis[0] as MeshInstance3D).name) != "unibody":
+			uni_bad.append("%s:MeshInstance3D=%d(应恰 1 名 unibody)" % [u_gid,
+				u_mis.size()])
+		if pre_grip != null and post_root.find_child("grip_hold", true, false) == null:
+			uni_bad.append("%s:grip_hold 丢失" % u_gid)
+		if pre_mag != null and post_root.find_child("mag_*", true, false) == null:
+			uni_bad.append("%s:mag_* 丢失" % u_gid)
+		var post_verts: int = GUN_LIB.count_vertices(post_root)
+		if post_verts != pre_verts:
+			uni_bad.append("%s:顶点 %d→%d" % [u_gid, pre_verts, post_verts])
+		post_root.free()
+	check("全枪册 unibody 合并（恰 1 MeshInstance3D+锚点保留+顶点守恒）",
+		uni_bad.is_empty(), "违例=%s" % str(uni_bad).substr(0, 300))
+
 	# 29c. 持枪对齐红线（用户反馈「每把枪拿起来都不对齐，只有 MK4 对」）：
 	#      全枪册走 _build_gun_visual（含 HOLD_DELTA 出厂平移）后，握把顶锚
 	#      （grip_hold 节点位）必须统一落在 MK4 基准 (0,-0.022,-0.0018) ±1.5mm
@@ -701,15 +754,18 @@ func _run() -> void:
 			and main.stash.cash == cash_m and main.stash.guns_owned.size() == owned_m,
 		"cash=%d owned=%d" % [main.stash.cash, main.stash.guns_owned.size()])
 
-	# 29f. 贴掩体吞枪复发红线（2026-10「掩体分裂」定案回归）：老的深度吞枪
-	#      （4f79b10 no_depth_test+render_priority10 防线）实测未复发——a/b
-	#      隐枪差分证明枪模几何全程画出；真因是贴掩体挡直射阳光后暗色枪身
-	#      亮度塌 0-5 读作「被吞」。三层断言各锁一层防线：
-	#      ① 全枪册每把枪 _build_gun_visual 后遍历全部 MeshInstance3D 全部
-	#        surface 材质，断言 no_depth_test=true 且 render_priority≥10——
-	#        锁三件套前两件：材质一旦回归深度测试（老吞枪机制：枪插进
-	#        掩体被深度缓冲盖掉），贴掩体即真吞枪，此处当场现形；材质为
-	#        null 的表面也计违例（null 走引擎默认材质=深度测试开着，同险）。
+	# 29f. 贴掩体吞枪防线回归（2026-10「掩体分裂」定案 → 架构演化版）：
+	#      老三件套（4f79b10 no_depth_test+render_priority 10）的前提是枪
+	#      在主世界渲染、靠关深度测试防掩体吞枪；81309a1 把枪模迁入
+	#      own_world_3d 独立视口后 vm 世界零场景几何，吞枪病因物理消失，
+	#      一体成型 unibody 恢复 no_depth_test=false（枪件间 per-pixel
+	#      物理遮挡——分件引擎排序观感的结构性替代，白盘悬空三案的终审
+	#      修法，见 HDGunLib.merge_unibody 头注）。断言随架构演化：
+	#      ① 全枪册每把枪 _build_gun_visual 产物（=unibody）遍历全部
+	#        surface 材质，断言 no_depth_test=false（vm 世界物理遮挡契约：
+	#        表面若残留 ndt=true 会退回无深度直画，白盘/读色案当场复发）
+	#        且 render_priority≥10（防线参数不丢）；材质为 null 的表面也
+	#        计违例（null 走引擎默认材质，深度/排序语义不受控）。
 	#      ② 已挂载槽位枪架 holder 带 vm_fill 补光 OmniLight3D（energy≥0.5、
 	#        range≥0.8、不开阴影）——锁主修公共链：全枪册可读性只认
 	#        _mount_slot 这一條出口（四路枪册+旧五枪全走此链），灯被误删
@@ -746,10 +802,10 @@ func _run() -> void:
 					mat = mi.get_surface_override_material(s)
 				surf_total += 1
 				var sm := mat as StandardMaterial3D
-				if mat == null or not sm.no_depth_test or sm.render_priority < 10:
+				if mat == null or sm.no_depth_test or sm.render_priority < 10:
 					mat_bad.append("%s/%s:s%d" % [m_gid, mi.name, s])
 		m_root.free()
-	check("全枪册表面材质 no_depth_test+priority≥10（老吞枪防线）",
+	check("全枪册 unibody 表面物理深度（ndt=false）+priority≥10",
 		mat_bad.is_empty() and surf_total > 0,
 		"违例=%s 审计表面数=%d" % [str(mat_bad).substr(0, 300), surf_total])
 	var fill_bad: Array = []

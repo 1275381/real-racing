@@ -29,8 +29,9 @@
 # shot_cover_glass_ads 幕墙对照 / shot_cover_strafe_s06 真横移第 6 帧 /
 # shot_cover_m250_ads 长枪 ADS——①②③⑦ 各带 _b 图，两组 a/b 隐枪差分取
 # 稳定交集判裂，修后门槛全部「稳定完整（大域 1）」）
-# （共 59 张：35 处 shot() 调用 + 逐枪美照循环 10 把 + 矩阵段 14 张
-# ——旧注释「29/31/33/35/40/43/45 张」为误计，按实拍数订正；
+# （共 70 张：35 处 shot() 调用 + 逐枪美照循环 15 把（全量在册：十把新枪
+# + 旧五枪，2026-10 判图补图）+ scope 瞄具系列 6 张（2026-10 判图补图）
+# + 矩阵段 14 张——旧注释「29/31/33/35/40/43/45/59 张」随图集扩充滚动订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -129,8 +130,12 @@ func _ab_once() -> Image:
 	return ib
 
 
-## 差分掩码（降采样 2x，iso2 同参数 thr=0.15：RGB 差和阈值）
-func _diff_mask(ia: Image, ib: Image, thr := 0.15) -> Dictionary:
+## 差分掩码（降采样 2x，iso2 同参数 thr=0.08：RGB 差和阈值）——2026-10
+## 判图收敛降阈值：材质收敛把枪身压暗后，暗部枪像素 vs 馆内灰墙的色差
+## 落到 0.08~0.15 区间，0.15 阈值把同一把枪的差分域拦腰断成两块、BFS
+## 误报「稳定判裂」（贴墙三案 pair 全中）；0.08 让枪域连通，SSAO 帧间
+## 噪声幅度低于 0.08 且仍被两组 a/b 稳定交集滤掉，判据语义不变
+func _diff_mask(ia: Image, ib: Image, thr := 0.08) -> Dictionary:
 	var sw := ia.get_width() / 2
 	var sh := ia.get_height() / 2
 	var mask := PackedByteArray()
@@ -555,10 +560,13 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~18：十把新枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~18：十五把在册枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
-	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型
-	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4", "m250", "mp7"]:
+	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型。
+	# 2026-10 判图补图：循环从十把新枪扩到全量在册 15 把（旧五枪
+	# pistol/smg/rifle/shotgun/sniper 并入——此前枪照缺图无法验收）
+	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
+			"m250", "mp7", "pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -569,25 +577,69 @@ func _initialize() -> void:
 		await frames(2)
 		shot("res://out/shot_gun_%s.png" % gid)
 
+	# ---- 附加验收 18a：shot_scope_* 瞄具装枪图证六连拍（2026-10 判图
+	# 补图：scope 系列此前整组缺图）——六种瞄具风格各一张 ADS 到位特写：
+	# iron 机瞄（rifle）/ reddot 红点（rifle）/ holo 全息（rifle）/
+	# optic 3.5×（rifle）/ sniper 自带密位镜（sniper 原厂，不装镜）/
+	# thermal 热成像（sniper 挂镜）。装备→重挂（照 shot_ads 段拆旧挂新
+	# 链）→ 开镜到位 → 拍 → 收镜
+	for sc in [
+			["iron", "rifle"], ["reddot", "rifle"], ["holo", "rifle"],
+			["optic", "rifle"], ["sniper", "sniper"], ["thermal", "sniper"]]:
+		var s_kind: String = sc[0]
+		var s_gun: String = sc[1]
+		# 先切 loadout 进场（_mount_slot 按 _slots id 造枪——不切枪会把
+		# 镜装到上一把枪的槽位上，首拍全成 sniper 即此误）
+		main.stash.loadout = {"primary": s_gun, "secondary": "pistol"}
+		main._enter_range()
+		await frames(20)
+		if not main.stash.scopes_owned.has(s_kind):
+			main.stash.scopes_owned.append(s_kind)
+		if s_kind != "sniper":
+			main.stash.equip_scope(s_gun, s_kind)
+		else:
+			main.stash.equip_scope(s_gun, "iron")   # 原厂镜枪：镜层走 builtin
+		# 装镜不重挂：scope_provider 只在 _mount_slot 建枪模时读——
+		# 装镜后拆旧挂新（照 shot_ads 段重挂链）
+		var old_sc: Dictionary = main.guns._guns["primary"]
+		var oldh: Node3D = old_sc["holder"]
+		oldh.visible = false
+		oldh.queue_free()
+		(old_sc["flash"] as OmniLight3D).queue_free()
+		main.guns._guns.erase("primary")
+		main.guns._mount_slot("primary")
+		main.guns._equip("primary")
+		Input.action_press("hd_scope")
+		check("scope %s 开镜到位" % s_kind,
+			await wait_until(func(): return main.player.ads >= 1.0))
+		await frames(4)
+		shot("res://out/shot_scope_%s.png" % s_kind)
+		Input.action_release("hd_scope")
+		await wait_until(func(): return main.player.ads <= 0.4)
+	# scope 段收尾：恢复 mp7 在枪（下段 shot_gun_cover_all 依赖「逐枪循环
+	# 收尾正是 mp7」的摆位前提）；镜装配不还原（收尾存档还原兜底）
+	main.stash.loadout = {"primary": "mp7", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+
 	# ---- 附加验收 18b：shot_gun_cover_all / shot_gun_cover_glass —— 贴掩体
-	# 枪模可读性图证（2026-10「贴掩体枪身分裂/吞枪」复发回归）：站位照诊断
-	# 探针 /tmp/probe_split.gd 场景 A 原样搬——靶场混凝土隔断墙（hd_world.gd
-	# 射击位隔断墙 dx=+1 列，x=119 墙面 118.94），cam(118.30,1.61,139.8)
-	# yaw=PI/2 pitch=-0.12 面 +X 贴墙 0.64m；set_process(false) 冻结主循环
-	# 防相机追尾（probe_split 同款）+ 收 HUD 保画面纯净。
-	# A=shot_gun_cover_all：mp7 贴普通掩体（修复前枪身中后段亮度 0-5、暗
-	# 像素 94-98%＝读作「前亮后黑两截被吞」的那把枪；逐枪美照循环收尾正是
-	# mp7 在枪上，直接摆位）。
-	# B=shot_gun_cover_glass：按诊断定罪换枪不换掩体——全图无低可达透明
-	# 掩体（唯一透明件伪装网在厂房屋顶高位）、游客中心「玻璃」幕墙材质实
-	# 为不透明 metallic 无 transparency，普通掩体即触发，故 B=rifle 贴同一
-	# 面普通混凝土墙（微自发光 0.55 效力对照枪）。修复后两图枪身全段应
-	# 均匀可读、无「前亮后黑两截」。
+	# 枪模可读性图证（2026-10「贴掩体枪身分裂/吞枪」复发回归）：站位=地下
+	# 靶馆射击位隔断墙（2026-10 判图迁移：HALL_CENTER=(120,130) 入地后地坪
+	# -6.94，此前 598 地表机位实拍只剩天空雾——隔断墙 x=121.06 面 ±X、高
+	# 1.2m，贴墙 0.64m）——cam(121.70,-5.39,143.0) yaw=PI 面 -Z 射击线；
+	# set_indoor(true) 手动切馆内雾/环境光（冻结主循环后位置判定不跑）；
+	# set_process(false) 冻结主循环防相机追尾 + 收 HUD。
+	# A=shot_gun_cover_all：mp7 贴普通掩体（逐枪美照循环收尾正是 mp7 在
+	# 枪上，直接摆位）。
+	# B=shot_gun_cover_glass：按诊断定罪换枪不换掩体——B=rifle 贴同一面
+	# 普通混凝土隔断墙（微自发光效力对照枪）。修复后两图枪身全段应均匀
+	# 可读、无「前亮后黑两截」。
 	main.set_process(false)
 	var hud_cv: bool = main.hud.visible
 	main.hud.visible = false
-	main.player.cam.position = Vector3(118.30, 1.61, 139.8)
-	main.player.cam.rotation = Vector3(-0.12, PI * 0.5 + PI, 0)
+	main.world.set_indoor(true)
+	main.player.cam.position = Vector3(121.70, -5.39, 145.0)
+	main.player.cam.rotation = Vector3(-0.12, PI, 0)
 	await frames(6)
 	shot("res://out/shot_gun_cover_all.png")
 	# B：换 rifle 重新进场贴同墙（loadout 换枪走 guns.enter 同槽换 id 重建链）
@@ -596,12 +648,14 @@ func _initialize() -> void:
 	main._enter_range()
 	await frames(20)
 	main.set_process(false)
-	main.player.cam.position = Vector3(118.30, 1.61, 139.8)
-	main.player.cam.rotation = Vector3(-0.12, PI * 0.5 + PI, 0)
+	main.world.set_indoor(true)
+	main.player.cam.position = Vector3(121.70, -5.39, 145.0)
+	main.player.cam.rotation = Vector3(-0.12, PI, 0)
 	await frames(6)
 	shot("res://out/shot_gun_cover_glass.png")
 	main.set_process(true)
 	main.hud.visible = hud_cv
+	main.world.set_indoor(false)
 
 	# ---- 附加验收 18：shot_slot_switch —— 双槽串色验收（黄壳回归红线）：
 	# 主=MK4（全黑）+ 副=汤姆逊（蓝钢+木）两把异枪同局共存，切到副武器截
@@ -730,7 +784,9 @@ func _initialize() -> void:
 	# ---- 附加验收 27：贴掩体「枪分裂」位姿矩阵（2026-10 第三轮根治回归，
 	#      诊断 v1/v6 矩阵固化进本探针）——机位=坝底集装箱正贴（诊断实证
 	#      触发面：枪口入掩体 0.4~0.7m × ADS 进出过渡 × 贴墙横移）+ 游客
-	#      中心幕墙对照。协议：main.set_process(false) 冻结主循环 + 士兵
+	#      中心幕墙对照（2026-10 判图迁移：正贴机位由坝底集装箱位迁靶馆
+	#      隔断墙 x=598.94——旧位掩体已随靶馆 (600,600) 迁移消失、背景穿帮）。
+	#      协议：main.set_process(false) 冻结主循环 + 士兵
 	#      挪出场外 + HUD 收起，位姿全部探针手动驱动（drive/_set_ads_mx）；
 	#      ①②③⑦ 走 shot(pair)：两组 a/b 隐枪差分取稳定交集（stable_split，
 	#      滤 SSAO 帧间噪声；visible 切换帧内零驱动防位姿前进伪报），其余
@@ -749,9 +805,12 @@ func _initialize() -> void:
 		sm["moving"] = false
 		sm["state"] = "combat"
 		main.soldiers._write_pose(i)
-	# 坝底集装箱正贴机位（诊断 v1 基线）：pos.y 交给 update 压回地面高、
-	# cam 摆到眼高 1.55（iso2 同款；此后每场景重写 pos/yaw/pitch 再 update）
-	main.player.pos = Vector3(-62.0, 1.55, -91.55)
+	# 靶馆隔断墙正贴机位（2026-10 判图迁移：旧坝底位/598 地表位在靶馆
+	# 入地后均已无掩体、实拍只剩天空雾——机位迁入地下馆贴 x=121.06 面
+	# ±X 隔断墙、贴墙 0.64m，眼高地坪 -6.94+1.55，同 shot_gun_cover 段
+	# 站位）：pos.y 交给 update 压回地坪、此后每场景重写 pos/yaw/pitch
+	main.world.set_indoor(true)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -820,6 +879,7 @@ func _initialize() -> void:
 			break
 	# ⑧ 游客中心幕墙对照（诊断「透明掩体」位——实测材质不透明 metallic，
 	#    普通触发面同验；冻结摆法）
+	main.world.set_indoor(false)   # 幕墙=户外位：切回户外氛围
 	main.player.pos = Vector3(88.0, 1.55, 43.15)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
@@ -834,12 +894,13 @@ func _initialize() -> void:
 		await drive(1)
 		if main.player.ads >= 0.99:
 			break
-	main.player.pos = Vector3(-62.0, 1.55, -91.55)   # 回正贴机位再横移
+	main.world.set_indoor(true)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)   # 回正贴机位再横移
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	await drive(2)
 	for i in 6:
-		main.player.pos.x += 0.05
+		main.player.pos.x += 0.05   # 沿视线横向（x 向）扫过墙缘
 		await drive(1)
 	shot("res://out/shot_cover_strafe_s06.png")
 	Input.action_release("hd_scope")
@@ -857,13 +918,14 @@ func _initialize() -> void:
 		sm2["moving"] = false
 		sm2["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(-62.0, 1.55, -91.55)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
 	_set_ads_mx(1.0)
 	await frames(2)
 	shot("res://out/shot_cover_m250_ads.png")
+	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx

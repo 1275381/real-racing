@@ -34,7 +34,14 @@ const VM_LAYER := 5
 ## vm 专属定向光能量：恒定档（介于主世界室外 1.7 与室内 0.25 之间）——
 ## 枪可读性从此不依赖站位遮阳，这正是「不再一味补光、让分裂物理不可能」
 ## 之后光照侧的收口：独立世界没有遮挡，一盏恒光 + vm_fill 就处处可读
-const VM_SUN_ENERGY := 1.05
+# 0.55（2026-10 三/四轮判图「银白件/发光面」终审收敛）：vm_sun 是 viewmodel
+# 专属定向光（挂 vm_cam 只照枪），降它只影响枪的受光亮度、场景/掩体/玩法
+# 零影响。A/B/C 三分支对照实证：分件+引擎排序、unibody+物理深度的枪区
+# 亮度像素级相同（平均 0.201/最大 0.871），「银白件」是枪专属光照绝对强度
+# （vm_sun 1.05+vm_fill+ambient 叠加 ~2.4×）把 alb 0.2+ 的面顶到 0.5+——
+# 1.05→0.55 全枪亮面降约一半（0.87→0.48 中灰），暗部由 emission 0.32+
+# vm_fill 0.5 锁线兜底保可读；vm_fill energy ≥0.5 锁线不动（29f②）
+const VM_SUN_ENERGY := 0.55
 
 var cam: Camera3D
 var vm_viewport: SubViewport   # 枪模独立视口（own_world_3d：独立 World3D）

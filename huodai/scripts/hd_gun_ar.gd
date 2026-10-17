@@ -145,7 +145,10 @@ static func _m4a1(mats: Dictionary, root: Node3D) -> void:
 	mag.name = "mag_stanag"
 	mag.position = Vector3(0, -0.055, -0.16)
 	root.add_child(mag)
-	GUN_LIB.curved_mag(mag, met, Vector3(0.05, 0.17, 0.09), 5.0, 3, 3)
+	# 弹匣 polymer 近黑（2026-10 二轮判图「M4A1 银白弹匣」：dark 直射渲染
+	# 0.4 左右在黑枪身上读作银白——黑聚合物匣通用语义）
+	GUN_LIB.curved_mag(mag, mats["polymer"], Vector3(0.05, 0.17, 0.09),
+			5.0, 3, 3)
 	# 后握把（护圈正后、后倾 20°——A2 握把角，指棱高模握把）：grip() 顶锚
 	# = 旋转支点，旧 _add_grip 中心锚迁移矢量式（含 z）：
 	# pos = 旧盒心 (0,-0.072,0.085) + Rx(−20°)·(0, 0.044, 0) = (0,-0.0307,0.0700)
@@ -251,7 +254,10 @@ static func _akm(mats: Dictionary, root: Node3D) -> void:
 	mag.name = "mag_banana"
 	mag.position = Vector3(0, -0.035, -0.17)
 	root.add_child(mag)
-	GUN_LIB.curved_mag(mag, rcv, Vector3(0.048, 0.19, 0.08), 12.0, 4, 3)
+	# 弹匣 polymer 近黑（2026-10 二轮判图「AKM 银白弹匣」：blued 渲 0.49
+	# 亮银灰——黑聚合物匣，木件/电木撞色不变）
+	GUN_LIB.curved_mag(mag, mats["polymer"], Vector3(0.048, 0.19, 0.08),
+			12.0, 4, 3)
 	# ⑧ 小而直的下置握把（bakelite 橙棕、后倾 16°，电木同色指棱×2）：
 	#    grip() 顶锚迁移矢量式：pos = 旧盒心 (0,-0.055,0.11) +
 	#    Rx(−16°)·(0, 0.04, 0) = (0,-0.0165,0.0990)（8 角点偏差 ≤0.05mm）
@@ -319,9 +325,13 @@ static func _scarh(mats: Dictionary, root: Node3D) -> void:
 			Vector3(0.013, 0.028, -0.675), Vector3.ZERO, 0.0006, 3)
 	GUN_LIB.torus_ring(root, stl, 0.0135, 0.018, Vector3(0, 0.028, -0.65),
 			Vector3(90, 0, 0))
-	# ③ 大侧折托：贴腮板（⑦ 顶 0.080 与轨齿顶齐平）+ 倒角托体 + 托底板 +
-	#    折叠钮 + 铰链轴（24 段）/ 端钮 torus + 托侧调节钮 torus + 托底斜楔
-	#    （「大方托」，与 M7 的 Magpul 小托对照）
+	# ③ 大侧折托：托接颈（2026-10 判图「枪托衔接断缝」：机匣尾 z +0.10 与
+	#    托体头 z +0.205 之间 105mm 空档只有悬空贴腮板——补 FDE 接颈盒两端
+	#    各嵌入 5mm 连成一体）+ 贴腮板（⑦ 顶 0.080 与轨齿顶齐平）+ 倒角托体
+	#    + 托底板 + 折叠钮 + 铰链轴（24 段）/ 端钮 torus + 托侧调节钮 torus
+	#    + 托底斜楔（「大方托」，与 M7 的 Magpul 小托对照）
+	GUN_LIB.chamfer_box(root, fde, Vector3(0.046, 0.055, 0.13),
+			Vector3(0, 0.008, 0.157), Vector3.ZERO, 0.002, 8)
 	GUN_LIB.chamfer_box(root, fde, Vector3(0.042, 0.026, 0.24),
 			Vector3(0, 0.067, 0.28), Vector3.ZERO, 0.0015, 6)
 	GUN_LIB.chamfer_box(root, fde, Vector3(0.046, 0.085, 0.19),
@@ -347,7 +357,9 @@ static func _scarh(mats: Dictionary, root: Node3D) -> void:
 	mag.name = "mag_wide"
 	mag.position = Vector3(0, -0.03, -0.175)
 	root.add_child(mag)
-	GUN_LIB.curved_mag(mag, met, Vector3(0.054, 0.2, 0.09), 4.0, 3, 3)
+	# 弹匣 polymer 近黑（2026-10 二轮判图「SCAR-H 银白弹匣」，同 M4A1 案）
+	GUN_LIB.curved_mag(mag, mats["polymer"], Vector3(0.054, 0.2, 0.09),
+			4.0, 3, 3)
 	# 后握把（护圈正后、后倾 20°，指棱高模握把）：grip() 顶锚迁移矢量式：
 	# pos = 旧盒心 (0,-0.07,0.075) + Rx(−20°)·(0, 0.0425, 0) = (0,-0.0301,0.0605)
 	GUN_LIB.grip(root, met, 0.085, Vector3(0, -0.0301, 0.0605), 20.0,

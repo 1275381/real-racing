@@ -19,7 +19,11 @@ signal hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: bool)
 
 
 const GUN_HIP_POS := Vector3(0.26, -0.22, -0.55)   # 腰射枪架位（onfoot 同款）
-const GUN_ADS_Z := -0.45
+# ADS 沿轴端面视图收敛（2026-10 判图「贴掩体开镜枪模塌缩成小黑条」）：
+# 物理深度下沿枪轴只能看到枪尾端面（几何事实），-0.45→-0.38 让端面投影
+# 放大 ~18%、端面细节可辨；只动枪-相机距离这一个观感参数，握把锚对齐
+# 体系（HOLD_DELTA）与镜窗对齐（aim_y）零改动
+const GUN_ADS_Z := -0.38
 const GUN_HIP_ROT := Vector3(2.5, 4.0, 3.0)
 const GUN_SCALE := 0.62
 const MAG_POS := Vector3(0.02, -0.14, -0.16)       # 枪上弹匣位（枪架局部）
@@ -533,8 +537,15 @@ func _mount_slot(slot: String) -> void:
 	mag_pos += hold_off   # 持枪平移随动：静置真匣/换弹手锚与平移后的弹匣井对齐
 	var mag_box := BoxMesh.new()
 	mag_box.size = mag_size
+	# 动画匣材质收敛（2026-10 判图「发光白面」三轮终审）：动画匣是纯功能
+	# 件（换弹动画方块），show=true 时（uzi/vector）顶面承全部顶向光
+	# （vm_sun+vm_fill 近距+ambient 叠加），lit 材质 alb 压到 0.05 仍有
+	# 近距光斑——改 UNSHADED 恒定暗灰：不参与光照=永不受光翻白。
+	# 注意高光属性名是 metallic_specular（曾误写 specular 导致 _mount_slot
+	# 每次抛错中断、火光/vm_fill/枪架包全没建——教训保留在此）
 	var mag_mat := StandardMaterial3D.new()
-	mag_mat.albedo_color = Color(0.16, 0.18, 0.22)
+	mag_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mag_mat.albedo_color = Color(0.08, 0.085, 0.095)
 	mag_mat.no_depth_test = true
 	mag_mat.render_priority = 10
 	mag_box.material = mag_mat
@@ -676,6 +687,14 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	if d != Vector3.ZERO:
 		for c in root.get_children():
 			(c as Node3D).position += d
+	# 一体成型（2026-10 用户定案「重新建模」）：全部零件合并为单 unibody
+	# 网格——分件树序绘制的运动接缝被读作「建模分裂」，合并后物理上无件可裂；
+	# Δ 平移在合并前完成（烘焙进网格变换），命名锚点由合并器保留。
+	# HD_NO_MERGE 环境变量非空 = 跳过合并（A/B 隔离开关：同一探针分别带/
+	# 不带该变量各跑一遍，同帧位对比合并前后观感——白环/白球/弹匣浅灰
+	# 三疑点排查用；缺省照常合并）
+	if OS.get_environment("HD_NO_MERGE") == "":
+		GUN_LIB.merge_unibody(root)
 	return root
 
 
@@ -1522,9 +1541,11 @@ static func _smg_uzi() -> Node3D:
 			Vector3(90, 0, 0))
 	GUN_LIB.barrel(root, dark, 0.08, 0.024, Vector3(0, 0.025, -0.20),
 			Vector3(90, 0, 0), 2, 32)
-	# ⑤ 机匣顶后段圆柱拉机柄钮（开筒：帽顶封、内衬探下藏进机匣）
-	GUN_LIB.tube(root, steel, 0.022, 0.03, Vector3(0, 0.079, 0.04),
-			Vector3.ZERO, 0.004, 0, null, 3, 32)
+	# ⑤ 机匣顶后段圆柱拉机柄钮（2026-10 二轮判图「错位拉机柄杆」：
+	#    旧 rot=ZERO 管体直立悬空读作错位钢杆——躺平沿枪管向、dark 同
+	#    机匣顶；开筒帽顶封、内衬探下藏进机匣）
+	GUN_LIB.tube(root, dark, 0.022, 0.03, Vector3(0, 0.079, 0.04),
+			Vector3(90, 0, 0), 0.004, 0, null, 3, 32)
 	# ⑦ 前准星座 + 护圈双耳 + 准星柱（机匣前上）
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.026, 0.02, 0.018),
 			Vector3(0, 0.078, -0.135), Vector3.ZERO, 0.001, 4)
@@ -1564,9 +1585,9 @@ static func _smg_uzi() -> Node3D:
 			Vector3(0, 0, 90))
 	GUN_LIB.torus_ring(root, steel, 0.0035, 0.0085, Vector3(-0.026, 0.03, 0.12),
 			Vector3(0, 0, 90))
-	GUN_LIB.barrel(root, steel, 0.185, 0.007, Vector3(0.023, 0.028, 0.215),
+	GUN_LIB.barrel(root, dark, 0.185, 0.007, Vector3(0.023, 0.028, 0.215),
 			Vector3(90, 0, 0), 0, 24)
-	GUN_LIB.barrel(root, steel, 0.185, 0.007, Vector3(-0.023, 0.028, 0.215),
+	GUN_LIB.barrel(root, dark, 0.185, 0.007, Vector3(-0.023, 0.028, 0.215),
 			Vector3(90, 0, 0), 0, 24)
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.054, 0.072, 0.012),
 			Vector3(0, 0.018, 0.31), Vector3.ZERO, 0.002, 6)
@@ -1726,9 +1747,14 @@ static func _smg_mk4() -> Node3D:
 			Vector3(-0.017, 0.062, 0.13), Vector3.ZERO, 0.0008, 3)
 	# ⑥ 缓冲管（开筒 + 前锁环/后调节环双 torus）+ 铰链块 + 可调支臂（下斜细件）
 	#    + 托体/贴腮板 + 橡胶托底板 + 侧调节圆钮（torus 侧钮，环面 ⊥ X）
+	# 缓冲管尾端开放（cap_tail=false，2026-10 三轮判图「MK4 银环」终审：
+	# 尾盖圆盘正对沿轴视角且 dark 材质仍渲 0.4+——开放后只剩内衬尾盖
+	# 暗面（凸出 2mm）+管口环，端面异物消失）
 	GUN_LIB.tube(root, dark, 0.17, 0.036, Vector3(0, 0.014, 0.155),
-			Vector3(90, 0, 0), 0.005, 0, null, 3, 32)
-	GUN_LIB.torus_ring(root, dark, 0.016, 0.021, Vector3(0, 0.014, 0.085),
+			Vector3(90, 0, 0), 0.005, 0, null, 3, 32, 0.05, false)
+	# 后调节环 dark（2026-10 二轮判图「MK4 银环」：steel 弧带在顶灯直射
+	# 下读作亮银环异物——换 dark 与缓冲管/前锁环同色隐入）
+	GUN_LIB.torus_ring(root, dark, 0.017, 0.021, Vector3(0, 0.014, 0.215),
 			Vector3(90, 0, 0))
 	GUN_LIB.torus_ring(root, steel, 0.017, 0.021, Vector3(0, 0.014, 0.215),
 			Vector3(90, 0, 0))
@@ -2060,10 +2086,14 @@ static func _smg_mp7() -> Node3D:
 ## 涂装：碳黑聚合物/深灰金属/轨齿提亮/烟灰半透明弹匣/刻度浅灰白/红白
 ## 指示暗红/刻槽负形深黑/棱边磨损银灰）
 static func _smg_mats() -> Dictionary:
-	var mk := func(c: Color, e: Color, rough := 0.55, glow := 0.55) -> StandardMaterial3D:
+	# glow 缺省 0.42（2026-10 判图收敛：0.55 微自发光 + 顶灯/vm_sun 直射
+	# 在 ACES 下把深色面整片翻白——「白盘/发光白面/串色」判图案；0.42 仍
+	# 高于 MP7 锁线 0.3，暗处可读三件套不回退）
+	var mk := func(c: Color, e: Color, rough := 0.55, glow := 0.42) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
 		m.roughness = rough
+		m.metallic_specular = 0.1   # 镜面压档（端面/倒角棱白亮最后来源）
 		m.no_depth_test = true
 		m.render_priority = 10
 		m.emission_enabled = true
@@ -2076,13 +2106,16 @@ static func _smg_mats() -> Dictionary:
 	var mp7mag: StandardMaterial3D = mk.call(Color(0.085, 0.088, 0.096),
 			Color(0.095, 0.098, 0.105), 0.85, 0.35)
 	return {
-		"dark": mk.call(Color(0.13, 0.14, 0.16), Color(0.16, 0.18, 0.2)),
-		"blued": mk.call(Color(0.10, 0.11, 0.15), Color(0.12, 0.14, 0.19)),
-		"steel": mk.call(Color(0.35, 0.38, 0.42), Color(0.4, 0.44, 0.5)),
-		"polymer": mk.call(Color(0.15, 0.155, 0.17), Color(0.18, 0.19, 0.21), 0.85),
-		"maggrey": mk.call(Color(0.16, 0.18, 0.22), Color(0.19, 0.21, 0.25)),
-		"light": mk.call(Color(0.62, 0.62, 0.58), Color(0.5, 0.5, 0.46)),
-		"smoke": mk.call(Color(0.52, 0.53, 0.50), Color(0.42, 0.43, 0.4)),
+		"dark": mk.call(Color(0.10, 0.11, 0.125), Color(0.125, 0.14, 0.155)),
+		"blued": mk.call(Color(0.08, 0.088, 0.12), Color(0.095, 0.11, 0.15)),
+		# steel 收敛（2026-10 判图「银环/串色」）：alb 0.35→0.26、emission
+		# 同步压档——亮钢仍比 blued/dark 亮一档提层次，顶灯直射不再翻白
+		"steel": mk.call(Color(0.115, 0.125, 0.14), Color(0.12, 0.13, 0.145)),
+		"polymer": mk.call(Color(0.10, 0.105, 0.115), Color(0.12, 0.125, 0.135), 0.85),
+		"maggrey": mk.call(Color(0.07, 0.078, 0.10), Color(0.08, 0.088, 0.115)),
+		# light/smoke 收敛（同判图案：浅灰大面翻白）
+		"light": mk.call(Color(0.30, 0.30, 0.28), Color(0.24, 0.24, 0.22)),
+		"smoke": mk.call(Color(0.26, 0.27, 0.255), Color(0.21, 0.215, 0.20)),
 		"glass": mk.call(Color(0.15, 0.55, 0.75), Color(0.15, 0.55, 0.75), 0.3, 1.4),
 		# ---- MP7 专用色（2026-10 三轮判图修正：金属件自发光 0.55+高光在
 		#      打光下读成 #A8B0BE 亮银蓝——albedo 压深到 #2E3134、自发光降
@@ -2097,14 +2130,14 @@ static func _smg_mats() -> Dictionary:
 		#      吞」，丢掉 4f79b10 三件套第三件「微自发光保暗处可读」。现
 		#      恢复 0.35~0.45：emission 色沿用各材质原色（非旧缺省发光色）
 		#      且量级低于旧串色版 0.55——只保暗处可读，不复发「蓝白发光件」）
-		"mp7body": mk.call(Color(0.09, 0.09, 0.102), Color(0.105, 0.105, 0.118), 0.85, 0.4),
-		"mp7metal": mk.call(Color(0.18, 0.19, 0.203), Color(0.2, 0.21, 0.225), 0.65, 0.35),
-		"mp7rail": mk.call(Color(0.225, 0.229, 0.236), Color(0.24, 0.244, 0.25), 0.6, 0.4),
+		"mp7body": mk.call(Color(0.07, 0.07, 0.08), Color(0.08, 0.08, 0.09), 0.85, 0.4),
+		"mp7metal": mk.call(Color(0.13, 0.14, 0.15), Color(0.145, 0.155, 0.165), 0.65, 0.35),
+		"mp7rail": mk.call(Color(0.15, 0.153, 0.158), Color(0.165, 0.168, 0.172), 0.6, 0.4),
 		"mp7mag": mp7mag,
-		"mp7mark": mk.call(Color(0.722, 0.722, 0.722), Color(0.6, 0.6, 0.6), 0.6, 0.35),
+		"mp7mark": mk.call(Color(0.45, 0.45, 0.45), Color(0.38, 0.38, 0.38), 0.6, 0.35),
 		"mp7red": mk.call(Color(0.702, 0.125, 0.125), Color(0.6, 0.11, 0.11), 0.6, 0.35),
 		"mp7dark": mk.call(Color(0.063, 0.063, 0.063), Color(0.07, 0.07, 0.07), 0.8, 0.4),
-		"mp7wear": mk.call(Color(0.30, 0.306, 0.312), Color(0.32, 0.326, 0.332), 0.5, 0.35),
+		"mp7wear": mk.call(Color(0.19, 0.194, 0.198), Color(0.21, 0.214, 0.218), 0.5, 0.35),
 	}
 
 
@@ -2239,65 +2272,76 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 ## 微自发光保暗处可读）；另加本文件新枪专用三种：polymer 纯黑聚合物（M4A1
 ## 全黑件）/ blued 深灰蓝钢（AKM 冲压机匣）/ bakelite 橙棕电木（AKM 握把）
 static func _ar_mats() -> Dictionary:
+	# 2026-10 判图收敛：glow 0.55→0.42（顶灯/vm_sun 直射下深色面整片翻白
+	# ——「白盘/发光白面/串色」案，同 _smg_mats 头注）；steel/fde/walnut
+	# 压档——亮钢不再银白、FDE/胡桃木保色深一档，层次关系不变
 	var dark := StandardMaterial3D.new()
-	dark.albedo_color = Color(0.13, 0.14, 0.16)
+	dark.albedo_color = Color(0.10, 0.11, 0.125)
+	dark.metallic_specular = 0.1
 	dark.no_depth_test = true
 	dark.render_priority = 10
 	dark.emission_enabled = true
-	dark.emission = Color(0.16, 0.18, 0.2)
-	dark.emission_energy_multiplier = 0.55
+	dark.emission = Color(0.125, 0.14, 0.155)
+	dark.emission_energy_multiplier = 0.32
 	var wood := StandardMaterial3D.new()
-	wood.albedo_color = Color(0.45, 0.3, 0.18)
+	wood.albedo_color = Color(0.10, 0.072, 0.048)
+	wood.metallic_specular = 0.1
 	wood.no_depth_test = true
 	wood.render_priority = 10
 	wood.emission_enabled = true
-	wood.emission = Color(0.3, 0.2, 0.12)
-	wood.emission_energy_multiplier = 0.55
+	wood.emission = Color(0.09, 0.06, 0.035)
+	wood.emission_energy_multiplier = 0.32
 	var steel := StandardMaterial3D.new()
-	steel.albedo_color = Color(0.35, 0.38, 0.42)
+	steel.albedo_color = Color(0.115, 0.125, 0.14)
+	steel.metallic_specular = 0.1
 	steel.no_depth_test = true
 	steel.render_priority = 10
 	steel.emission_enabled = true
-	steel.emission = Color(0.4, 0.44, 0.5)
-	steel.emission_energy_multiplier = 0.55
+	steel.emission = Color(0.12, 0.13, 0.145)
+	steel.emission_energy_multiplier = 0.32
 	var fde := StandardMaterial3D.new()   # 沙 tan FDE（SCAR-H 机匣/托体，色近 M7）
-	fde.albedo_color = Color(0.56, 0.46, 0.32)
+	fde.albedo_color = Color(0.30, 0.25, 0.175)
+	fde.metallic_specular = 0.1
 	fde.no_depth_test = true
 	fde.render_priority = 10
 	fde.emission_enabled = true
-	fde.emission = Color(0.42, 0.35, 0.24)
-	fde.emission_energy_multiplier = 0.55
+	fde.emission = Color(0.23, 0.195, 0.13)
+	fde.emission_energy_multiplier = 0.32
 	var walnut := StandardMaterial3D.new()   # 胡桃木（AKM 木质三件套）
-	walnut.albedo_color = Color(0.42, 0.26, 0.14)
+	walnut.albedo_color = Color(0.10, 0.072, 0.048)
 	walnut.roughness = 0.85
+	walnut.metallic_specular = 0.1
 	walnut.no_depth_test = true
 	walnut.render_priority = 10
 	walnut.emission_enabled = true
-	walnut.emission = Color(0.3, 0.19, 0.1)
-	walnut.emission_energy_multiplier = 0.55
+	walnut.emission = Color(0.09, 0.062, 0.043)
+	walnut.emission_energy_multiplier = 0.32
 	var polymer := StandardMaterial3D.new()   # 纯黑聚合物（M4A1 全黑主体）
 	polymer.albedo_color = Color(0.07, 0.075, 0.085)
 	polymer.roughness = 0.85
+	polymer.metallic_specular = 0.1
 	polymer.no_depth_test = true
 	polymer.render_priority = 10
 	polymer.emission_enabled = true
 	polymer.emission = Color(0.1, 0.105, 0.115)
-	polymer.emission_energy_multiplier = 0.55
+	polymer.emission_energy_multiplier = 0.32
 	var blued := StandardMaterial3D.new()   # 深灰蓝钢（AKM 冲压机匣/枪管）
-	blued.albedo_color = Color(0.2, 0.21, 0.24)
+	blued.albedo_color = Color(0.15, 0.16, 0.185)
+	blued.metallic_specular = 0.1
 	blued.no_depth_test = true
 	blued.render_priority = 10
 	blued.emission_enabled = true
-	blued.emission = Color(0.24, 0.25, 0.28)
-	blued.emission_energy_multiplier = 0.55
+	blued.emission = Color(0.185, 0.195, 0.22)
+	blued.emission_energy_multiplier = 0.32
 	var bakelite := StandardMaterial3D.new()   # 橙棕电木（AKM 下置握把）
-	bakelite.albedo_color = Color(0.48, 0.26, 0.12)
+	bakelite.albedo_color = Color(0.37, 0.20, 0.095)
 	bakelite.roughness = 0.8
+	bakelite.metallic_specular = 0.1
 	bakelite.no_depth_test = true
 	bakelite.render_priority = 10
 	bakelite.emission_enabled = true
-	bakelite.emission = Color(0.36, 0.2, 0.1)
-	bakelite.emission_energy_multiplier = 0.55
+	bakelite.emission = Color(0.28, 0.155, 0.078)
+	bakelite.emission_energy_multiplier = 0.32
 	return {"dark": dark, "steel": steel, "wood": wood, "fde": fde,
 			"walnut": walnut, "polymer": polymer, "blued": blued,
 			"bakelite": bakelite}
@@ -2358,24 +2402,28 @@ static func _lmg_scope_anchor(id: String) -> Vector3:
 ## steel 亮钢 #C9C9C9（内六角螺丝/缓冲筒等亮色点缀）/ canvas 弹链袋卡其
 ## #C2A878 / webbing 织带插扣深棕 #4A3F30 / brass 黄铜弹链 #B08D3E（唯一暖金）
 static func _lmg_mats() -> Dictionary:
-	var mk := func(c: Color, e: Color, rough := 0.55, glow := 0.55) -> StandardMaterial3D:
+	var mk := func(c: Color, e: Color, rough := 0.55, glow := 0.42) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
 		m.roughness = rough
+		m.metallic_specular = 0.1
 		m.no_depth_test = true
 		m.render_priority = 10
 		m.emission_enabled = true
 		m.emission = e
 		m.emission_energy_multiplier = glow
 		return m
+	# 2026-10 判图收敛：「发光白面」主源 = fde 0.69/steel 0.788/canvas 0.761
+	# 大面在顶灯+vm_sun 直射下整片翻白——全部压档，glow 0.55→0.42；黄铜
+	# 点缀 0.69→0.58 保金色不刺眼
 	return {
-		"fde": mk.call(Color(0.69, 0.604, 0.408), Color(0.55, 0.48, 0.33), 0.7),
-		"supp": mk.call(Color(0.561, 0.455, 0.322), Color(0.45, 0.36, 0.26), 0.6),
-		"dark": mk.call(Color(0.137, 0.137, 0.139), Color(0.17, 0.17, 0.17)),
-		"steel": mk.call(Color(0.788, 0.788, 0.788), Color(0.6, 0.6, 0.6), 0.35),
-		"canvas": mk.call(Color(0.761, 0.659, 0.471), Color(0.5, 0.43, 0.31), 0.9),
-		"webbing": mk.call(Color(0.29, 0.247, 0.188), Color(0.23, 0.2, 0.15), 0.9),
-		"brass": mk.call(Color(0.69, 0.553, 0.243), Color(0.55, 0.44, 0.19), 0.3),
+		"fde": mk.call(Color(0.20, 0.175, 0.12), Color(0.125, 0.11, 0.075), 0.7, 0.42),
+		"supp": mk.call(Color(0.19, 0.155, 0.11), Color(0.115, 0.09, 0.065), 0.6, 0.42),
+		"dark": mk.call(Color(0.105, 0.105, 0.107), Color(0.13, 0.13, 0.132), 0.55, 0.42),
+		"steel": mk.call(Color(0.10, 0.10, 0.105), Color(0.08, 0.08, 0.085), 0.5, 0.42),
+		"canvas": mk.call(Color(0.23, 0.20, 0.15), Color(0.135, 0.12, 0.085), 0.9, 0.42),
+		"webbing": mk.call(Color(0.17, 0.15, 0.115), Color(0.13, 0.115, 0.09), 0.9, 0.42),
+		"brass": mk.call(Color(0.23, 0.185, 0.085), Color(0.185, 0.15, 0.068), 0.3, 0.3),
 	}
 
 
@@ -2591,23 +2639,28 @@ static func _old5_mag_of(id: String) -> Dictionary:
 ## 防贴墙吞枪 + render_priority 10 + 微自发光保暗处可读）；rough=-1 =
 ## 不设 roughness（保持引擎默认，与原材质段逐字同参）
 static func _old5_mats() -> Dictionary:
+	# 2026-10 判图收敛：glow 0.55→0.42、steel/fde 压档（翻白/串色案，
+	# 同 _ar_mats 头注；汤姆逊亮钢弹匣/枪机白块即 steel 直射翻白）
 	var mk := func(c: Color, e: Color, rough := -1.0) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
 		if rough >= 0.0:
 			m.roughness = rough
+		m.metallic_specular = 0.1
 		m.no_depth_test = true
 		m.render_priority = 10
 		m.emission_enabled = true
 		m.emission = e
-		m.emission_energy_multiplier = 0.55
+		m.emission_energy_multiplier = 0.32
 		return m
 	return {
-		"dark": mk.call(Color(0.13, 0.14, 0.16), Color(0.16, 0.18, 0.2)),
-		"wood": mk.call(Color(0.45, 0.3, 0.18), Color(0.3, 0.2, 0.12)),
-		"steel": mk.call(Color(0.35, 0.38, 0.42), Color(0.4, 0.44, 0.5)),
-		"fde": mk.call(Color(0.56, 0.46, 0.32), Color(0.42, 0.35, 0.24)),
-		"walnut": mk.call(Color(0.42, 0.26, 0.14), Color(0.3, 0.19, 0.1), 0.85),
+		"dark": mk.call(Color(0.10, 0.11, 0.125), Color(0.125, 0.14, 0.155)),
+		# wood/walnut 二轮收敛（判图「SMG 橙木托串色/霰弹枪发光白面」：
+		# 0.45/0.38 橙棕直射翻白且色偏橙——压到深胡桃棕档）
+		"wood": mk.call(Color(0.10, 0.072, 0.048), Color(0.075, 0.055, 0.037)),
+		"steel": mk.call(Color(0.115, 0.125, 0.14), Color(0.12, 0.13, 0.145)),
+		"fde": mk.call(Color(0.30, 0.25, 0.175), Color(0.25, 0.21, 0.145)),
+		"walnut": mk.call(Color(0.10, 0.072, 0.048), Color(0.075, 0.055, 0.037), 0.85),
 	}
 
 
@@ -2695,7 +2748,10 @@ static func _old5_smg() -> Node3D:
 	mag.name = "mag_thompson"
 	mag.position = Vector3(0, -0.058, -0.155)
 	root.add_child(mag)
-	GUN_LIB.curved_mag(mag, steel, Vector3(0.04, 0.13, 0.068), 4.0, 3, 3)
+	# 弹匣 dark（2026-10 二轮判图「SMG 银白弹匣」：steel 直射渲染 0.6+
+	# 读作银白——近黑钢与蓝钢机匣分层保留）
+	# 弹匣 dark（四刀压暗后 dark 渲 ~0.3 暗部级别；_old5_mats 无 blued 键）
+	GUN_LIB.curved_mag(mag, dark, Vector3(0.04, 0.13, 0.068), 4.0, 3, 3)
 	# 枪管（36 段高分段 + 枪口端螺纹环×2 作枪管箍）+ 平直枪口帽
 	GUN_LIB.barrel(root, steel, 0.26, 0.034, Vector3(0, 0.03, -0.31),
 			Vector3(90, 0, 0), 2, 36)
@@ -2740,11 +2796,13 @@ static func _old5_smg() -> Node3D:
 	# = (0, -0.0410, 0.1303)——8 角点与旧模偏差 ≤0.05mm（矩阵精算）
 	GUN_LIB.grip(root, walnut, 0.115, Vector3(0, -0.0410, 0.1303), 20.0,
 			0.046, 0.11)
-	# 木质固定枪托（下斜 5°）+ 钢托底板
+	# 木质固定枪托（下斜 5°）+ 钢托底板——2026-10 判图「枪托衔接断缝」：
+	# 托体 z 0.30→0.27 前移（托头 0.165 嵌入机匣尾 0.17 内 5mm，walnut 与
+	# 机匣握把同色区互嵌读作一体托颈），托底板随行 0.405→0.375
 	GUN_LIB.chamfer_box(root, walnut, Vector3(0.052, 0.095, 0.21),
-			Vector3(0, -0.095, 0.30), Vector3(-5, 0, 0), 0.003, 10)
+			Vector3(0, -0.095, 0.27), Vector3(-5, 0, 0), 0.003, 10)
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.056, 0.1, 0.014),
-			Vector3(0, -0.115, 0.405), Vector3.ZERO, 0.0015, 6)
+			Vector3(0, -0.115, 0.375), Vector3.ZERO, 0.0015, 6)
 	return root
 
 
@@ -2846,7 +2904,9 @@ static func _old5_shotgun() -> Node3D:
 	GUN_LIB.chamfer_box(root, wood, Vector3(0.058, 0.07, 0.22),
 			Vector3(0, 0.04, -0.04), Vector3.ZERO, 0.003, 10)
 	# 枪管（36 段 + 枪口箍纹环）+ 弹管（开筒，管尾藏机身内）
-	GUN_LIB.barrel(root, steel, 0.50, 0.056, Vector3(0, 0.06, -0.35),
+	# 枪管 dark（2026-10 二轮判图「霰弹枪发光白面」：steel 长管顶面直射
+	# +镜面读作白亮长条——发黑钢管语义）
+	GUN_LIB.barrel(root, dark, 0.50, 0.056, Vector3(0, 0.06, -0.35),
 			Vector3(90, 0, 0), 1, 36)
 	GUN_LIB.tube(root, dark, 0.44, 0.044, Vector3(0, -0.005, -0.34),
 			Vector3(90, 0, 0), 0.003, 0, null, 3, 32)
@@ -2893,11 +2953,10 @@ static func _old5_shotgun() -> Node3D:
 static func _old5_sniper() -> Node3D:
 	var root := Node3D.new()
 	var mats := _old5_mats()
-	var steel: StandardMaterial3D = mats["steel"]
 	var dark: StandardMaterial3D = mats["dark"]
 	var wood: StandardMaterial3D = mats["wood"]
 	# 钢机匣（s12，尾段延伸到托腕——旧模长钢身侧影保留）+ 木前托（坐管）
-	GUN_LIB.chamfer_box(root, steel, Vector3(0.055, 0.075, 0.46),
+	GUN_LIB.chamfer_box(root, dark, Vector3(0.055, 0.075, 0.46),
 			Vector3(0, 0.035, -0.10), Vector3.ZERO, 0.0035, 12)
 	GUN_LIB.chamfer_box(root, wood, Vector3(0.05, 0.06, 0.32),
 			Vector3(0, 0.005, -0.41), Vector3.ZERO, 0.0028, 8)
@@ -2908,7 +2967,7 @@ static func _old5_sniper() -> Node3D:
 	root.add_child(mag)
 	GUN_LIB.chamfer_box(mag, dark, Vector3(0.044, 0.045, 0.085),
 			Vector3(0, -0.024, -0.02), Vector3.ZERO, 0.002, 4)
-	GUN_LIB.chamfer_box(mag, steel, Vector3(0.052, 0.012, 0.095),
+	GUN_LIB.chamfer_box(mag, dark, Vector3(0.052, 0.012, 0.095),
 			Vector3(0, -0.049, -0.02), Vector3.ZERO, 0.001, 3)
 	# 枪管（36 段重管 + 枪口螺纹环×2）
 	GUN_LIB.barrel(root, dark, 0.48, 0.044, Vector3(0, 0.038, -0.72),
@@ -2917,34 +2976,34 @@ static func _old5_sniper() -> Node3D:
 	# 主镜筒开筒 + 物镜罩（前环露亮钢口）+ 目镜筒 + 眼杯环 + 双镜环 + 双镜柱
 	GUN_LIB.tube(root, dark, 0.20, 0.070, Vector3(0, 0.105, -0.30),
 			Vector3(90, 0, 0), 0.003, 0, null, 3, 32)
-	GUN_LIB.tube(root, steel, 0.06, 0.090, Vector3(0, 0.105, -0.405),
+	GUN_LIB.tube(root, dark, 0.06, 0.090, Vector3(0, 0.105, -0.405),
 			Vector3(90, 0, 0), 0.004, 0, null, 3, 32)
-	GUN_LIB.torus_ring(root, steel, 0.041, 0.048, Vector3(0, 0.105, -0.435),
+	GUN_LIB.torus_ring(root, dark, 0.041, 0.048, Vector3(0, 0.105, -0.435),
 			Vector3(90, 0, 0))
-	GUN_LIB.tube(root, steel, 0.10, 0.056, Vector3(0, 0.105, -0.20),
+	GUN_LIB.tube(root, dark, 0.10, 0.056, Vector3(0, 0.105, -0.20),
 			Vector3(90, 0, 0), 0.003, 0, null, 3, 32)
-	GUN_LIB.torus_ring(root, steel, 0.024, 0.030, Vector3(0, 0.105, -0.152),
+	GUN_LIB.torus_ring(root, dark, 0.024, 0.030, Vector3(0, 0.105, -0.152),
 			Vector3(90, 0, 0))
-	GUN_LIB.torus_ring(root, steel, 0.033, 0.041, Vector3(0, 0.105, -0.24),
+	GUN_LIB.torus_ring(root, dark, 0.033, 0.041, Vector3(0, 0.105, -0.24),
 			Vector3(90, 0, 0))
-	GUN_LIB.torus_ring(root, steel, 0.033, 0.041, Vector3(0, 0.105, -0.36),
+	GUN_LIB.torus_ring(root, dark, 0.033, 0.041, Vector3(0, 0.105, -0.36),
 			Vector3(90, 0, 0))
-	GUN_LIB.chamfer_box(root, steel, Vector3(0.016, 0.03, 0.02),
+	GUN_LIB.chamfer_box(root, dark, Vector3(0.016, 0.03, 0.02),
 			Vector3(0, 0.07, -0.24), Vector3.ZERO, 0.0008, 3)
-	GUN_LIB.chamfer_box(root, steel, Vector3(0.016, 0.03, 0.02),
+	GUN_LIB.chamfer_box(root, dark, Vector3(0.016, 0.03, 0.02),
 			Vector3(0, 0.07, -0.36), Vector3.ZERO, 0.0008, 3)
 	# 枪机球柄（右后：柄杆贴机匣右面 + 球头）+ 抛壳口（右亮钢）
-	GUN_LIB.chamfer_box(root, steel, Vector3(0.014, 0.014, 0.10),
+	GUN_LIB.chamfer_box(root, dark, Vector3(0.014, 0.014, 0.10),
 			Vector3(0.034, 0.045, 0.04), Vector3.ZERO, 0.0008, 3)
-	GUN_LIB.chamfer_box(root, steel, Vector3(0.02, 0.02, 0.02),
+	GUN_LIB.chamfer_box(root, dark, Vector3(0.02, 0.02, 0.02),
 			Vector3(0.034, 0.045, 0.095), Vector3.ZERO, 0.001, 2)
-	GUN_LIB.chamfer_box(root, steel, Vector3(0.004, 0.024, 0.07),
+	GUN_LIB.chamfer_box(root, dark, Vector3(0.004, 0.024, 0.07),
 			Vector3(0.0285, 0.04, -0.02), Vector3.ZERO, 0.0008, 3)
 	# 后托腕（指棱高模握把、后倾 15°）——grip() 顶锚=旋转支点，旧
 	# _add_grip 中心锚=旋转支点，迁移用矢量式（含 z！）：
 	# pos = 旧盒心 + Rx(−15°)·(0, 0.07, 0) = (0, -0.055+0.0676, 0.10-0.0181)
 	# = (0, 0.0126, 0.0819)——8 角点与旧模偏差 ≤0.03mm（矩阵精算）
-	GUN_LIB.grip(root, steel, 0.14, Vector3(0, 0.0126, 0.0819), 15.0,
+	GUN_LIB.grip(root, dark, 0.14, Vector3(0, 0.0126, 0.0819), 15.0,
 			0.05, 0.09)
 	# 枪托（木，微下斜 3°）+ 抬腮板 + 橡胶托底板
 	GUN_LIB.chamfer_box(root, wood, Vector3(0.05, 0.10, 0.34),
@@ -2954,3 +3013,4 @@ static func _old5_sniper() -> Node3D:
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.054, 0.11, 0.014),
 			Vector3(0, -0.036, 0.47), Vector3(-3, 0, 0), 0.0012, 6)
 	return root
+

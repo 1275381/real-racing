@@ -107,8 +107,108 @@ const _FACE_AXES := [
 ## ---------------- 对账工具 ----------------
 
 
-## 统计 root（含自身）子树所有 MeshInstance3D 的 0 号面顶点和——
-## test_huodai 顶点红线断言与改造前后顶点对账共用
+## 一体成型合并（2026-10 用户定案「重新建模」的渲染侧落地）：把 root 子树
+## 全部 MeshInstance3D 的几何合并成单个 unibody ArrayMesh（单节点单网格）。
+## 为什么：枪由几十个分件拼装，no_depth_test 下分件按树序绘制，运动中件间
+## 接缝/翻面被读作「建模分裂」——合并后整枪只有一块几何，物理上无件可裂。
+## 契约：
+## - 命名锚点保留：grip_hold（HOLD_DELTA 对齐断言）与 mag_*（换弹手锚/
+##   弹匣节点断言）重建为空 Node3D（原局部变换原样），meta 不受影响
+## - 顶点总数不变（append_from 平移拷贝；commit 前不再 index()——三角形
+##   原样提交、跨件零焊接，顶点数=纯加和，POLY_MIN 红线口径不变）
+## - 表面恢复物理深度：unibody 各段材质克隆并把 no_depth_test 关掉——
+##   这是分件态「引擎深度排序」观感的结构性替代（2026-10 三案终审）：
+##   no_depth_test=true 把材质放进无深度的直画通道，独立分件靠引擎按
+##   深度排序出正确遮挡，合并成单节点后 surface 只按索引序直画，任何
+##   静态序（树序/材质序/质心 z 序/priority——四联对照逐一证伪）都表达
+##   不了包裹/嵌套交叠（mk4 护木尾盖被机匣包、内衬嵌外筒），白盘悬空
+##   复发。关 ndt 的安全性：枪模已迁 own_world_3d 独立视口（81309a1 用户
+##   定案），vm 世界零场景几何——旧「贴掩体深度吞枪」的病因（掩体深度
+##   盖枪）物理上不存在，枪件间恢复 per-pixel 深度遮挡后腰射/ADS 双视
+##   角 A/B 全部复归分件观感。分件态（HD_NO_MERGE 调试开关）不受影响，
+##   仍走 ndt=true 引擎排序
+static func merge_unibody(root: Node3D) -> void:
+	var segs: Array = []        # [mat, SurfaceTool] 段=树序连续同材质
+	var keepers: Array = []     # [[name, Transform3D], ...] 待重建的命名锚点
+	_collect_meshes(root, root, segs, keepers)
+	# 摘除全部旧子件（网格已拷贝进 SurfaceTool，资源仍被引用不受释放影响）
+	for child in root.get_children():
+		root.remove_child(child)
+		child.queue_free()
+	# unibody 节点：段按树序落盘（绘制由恢复的物理深度裁决，序不敏感）
+	if segs.size() > 0:
+		var am := ArrayMesh.new()
+		for g in segs:
+			var st: SurfaceTool = g[1]
+			var mesh := st.commit()
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,
+					mesh.surface_get_arrays(0))
+			# 段材质克隆关深度测试（vm 世界契约，见头注「表面恢复物理
+			# 深度」）；其余参数原样保留。透明段（镜玻璃）本就测深度，
+			# 行为不变；render_priority 保留 10（29f 防线参数不丢）
+			var mat0: Material = g[0]
+			var mat_use: Material = mat0
+			if mat0 is StandardMaterial3D:
+				var mc: StandardMaterial3D = mat0.duplicate()
+				mc.no_depth_test = false
+				mat_use = mc
+			am.surface_set_material(am.get_surface_count() - 1, mat_use)
+		var mi := MeshInstance3D.new()
+		mi.name = "unibody"
+		mi.mesh = am
+		root.add_child(mi)
+	# 重建命名锚点（空节点，局部变换原样）
+	for k in keepers:
+		var anchor := Node3D.new()
+		anchor.name = k[0]
+		anchor.transform = k[1]
+		root.add_child(anchor)
+
+
+## 递归收集：mi 的每个 surface 按树序连续段 append_from（变换累计到 root
+## 局部）；命名锚点（grip_hold / mag_*）记录 [名字, 相对 root 变换]
+static func _collect_meshes(node: Node3D, root: Node3D,
+		segs: Array, keepers: Array) -> void:
+	for child in node.get_children():
+		if child is Node3D:
+			var c3 := child as Node3D
+			var rel := _transform_rel(root, c3)
+			if c3 is MeshInstance3D and (c3 as MeshInstance3D).mesh != null:
+				var mi := c3 as MeshInstance3D
+				var m: Mesh = mi.mesh
+				for s in m.get_surface_count():
+					var mat: Material = m.surface_get_material(s)
+					# 段切分：与当前末段材质相同→并入；不同（或无段）→新开
+					var st: SurfaceTool = null
+					if segs.size() > 0 and segs[segs.size() - 1][0] == mat:
+						st = segs[segs.size() - 1][1]
+					if st == null:
+						st = SurfaceTool.new()
+						st.begin(Mesh.PRIMITIVE_TRIANGLES)
+						segs.append([mat, st, 0.0, 0])
+					st.append_from(m, s, rel)
+			# 命名锚点保留登记（含带网格的锚节点——几何照常合并，锚点空重建）
+			var cname := String(c3.name)
+			if cname == "grip_hold" or cname.begins_with("mag_"):
+				keepers.append([cname, rel])
+			_collect_meshes(c3, root, segs, keepers)
+
+
+## c3 相对 root 的局部变换（沿父链累计——root 可能未入场景树，不能用
+## global_transform）
+static func _transform_rel(root: Node3D, c3: Node3D) -> Transform3D:
+	var acc := Transform3D()
+	var p: Node = c3
+	while p != root and p != null and p is Node3D:
+		acc = (p as Node3D).transform * acc
+		p = p.get_parent()
+	return acc
+
+
+## 统计 root（含自身）子树所有 MeshInstance3D 的全部 surface 顶点和——
+## test_huodai 顶点红线断言与改造前后顶点对账共用（一体成型后 unibody
+## 是「单节点多 surface」，逐 surface 累加才数得全；分件态每件单 surface
+## 口径不变，POLY_MIN 历史数值不受影响）
 static func count_vertices(root: Node) -> int:
 	var total := 0
 	if root is MeshInstance3D:
@@ -118,17 +218,19 @@ static func count_vertices(root: Node) -> int:
 	return total
 
 
-## 单 mesh 顶点数（无面/无顶点数组 = 0）
+## 单 mesh 全 surface 顶点数（无面/无顶点数组 = 0）
 static func _mesh_verts(m: Mesh) -> int:
 	if m == null or m.get_surface_count() == 0:
 		return 0
-	var arrs: Array = m.surface_get_arrays(0)
-	if arrs.is_empty():
-		return 0
-	var v: Variant = arrs[Mesh.ARRAY_VERTEX]
-	if v == null:
-		return 0
-	return (v as PackedVector3Array).size()
+	var total := 0
+	for s in m.get_surface_count():
+		var arrs: Array = m.surface_get_arrays(s)
+		if arrs.is_empty():
+			continue
+		var v: Variant = arrs[Mesh.ARRAY_VERTEX]
+		if v != null:
+			total += (v as PackedVector3Array).size()
+	return total
 
 
 ## ---------------- 基础件 ----------------
@@ -207,37 +309,42 @@ static func tube(parent: Node3D, mat: Material, length: float, outer_d: float,
 		pos: Vector3 = Vector3.ZERO, rot_deg: Vector3 = Vector3(90, 0, 0),
 		wall: float = 0.004, slots: int = 0, slot_mat: Material = null,
 		slot_seg: int = 4, seg: int = SEG_TUBE,
-		slot_len: float = 0.05) -> Node3D:
+		slot_len: float = 0.05, cap_tail := true) -> Node3D:
 	var root := Node3D.new()
 	root.position = pos
 	root.rotation_degrees = rot_deg
 	parent.add_child(root)
 	var r_out := outer_d * 0.5
 	var r_in := maxf(r_out - wall, r_out * 0.4)
-	# 外筒：尾端（本地 +Y，挂枪后朝玩家侧）封盖、枪口端开放
+	# 外筒：尾端（本地 +Y，挂枪后朝玩家侧）默认封盖、枪口端开放；
+	# cap_tail=false = 尾端开放（沿轴视角端面白亮件的件级收敛出口，
+	# 2026-10 二轮判图「MK4 银环」=缓冲管尾盖圆盘）
 	var outer := CylinderMesh.new()
 	outer.top_radius = r_out
 	outer.bottom_radius = r_out
 	outer.height = length
 	outer.radial_segments = seg
 	outer.rings = 1
-	outer.cap_top = true
+	outer.cap_top = cap_tail
 	outer.cap_bottom = false
 	outer.material = mat
 	var om := MeshInstance3D.new()
 	om.mesh = outer
 	root.add_child(om)
-	# 内衬筒：中心向枪口端偏 3mm、加长 6mm——枪口端探出露壁厚
+	# 内衬筒：中心向枪尾端偏 2mm、加长 6mm——枪尾端盖面凸出外筒尾盖
+	# 2mm（物理深度下内衬 dark 尾盖稳定盖住外筒 polymer 白亮尾盘，
+	# 2026-10 二轮判图「MK4 银环」根治），枪口端探出露壁厚断面
 	var inner := CylinderMesh.new()
 	inner.top_radius = r_in
 	inner.bottom_radius = r_in
 	inner.height = length + 0.006
 	inner.radial_segments = seg
 	inner.rings = 1
+	inner.cap_top = cap_tail   # 内衬尾盖随外筒：cap_tail=false 时管腔贯通
 	inner.material = slot_mat if slot_mat != null else mat
 	var im := MeshInstance3D.new()
 	im.mesh = inner
-	im.position = Vector3(0, -0.003, 0)
+	im.position = Vector3(0, 0.002, 0)
 	root.add_child(im)
 	# M-LOK 槽板：左右各 slots 条（本地 ±X）+ 底面 3 条（本地 +Z =
 	# 世界下方——rot(90,0,0) 后本地 Z 翻到世界 −Y）。板长 slot_len
