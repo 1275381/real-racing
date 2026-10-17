@@ -232,6 +232,8 @@ func _place_box(parent: Node3D, x: float, y: float, z: float, w: float, h: float
 	# 写实化：大面墙挂风化污迹贴花（雨水流挂 + 墙脚尘土）
 	if rot == Vector3.ZERO and _grime_mats.has(mat):
 		PBR.grime_decal(parent, Vector3(x, y, z), Vector3(w, h, d))
+		# 写实化第三轮：落地墙体加勒脚/压顶/壁柱，破方块盒外形
+		PBR.relief(parent, Vector3(x, y, z), Vector3(w, h, d), mat)
 	return mi
 
 

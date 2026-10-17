@@ -249,3 +249,54 @@ static func grime_decal(parent: Node3D, c: Vector3, s: Vector3) -> bool:
 		d.transform = Transform3D(basis, c + axis * off)
 		parent.add_child(d)
 	return true
+
+
+static var _trim: StandardMaterial3D
+static var _plinth: StandardMaterial3D
+
+
+## 收边材质（压顶/勒脚共用的混凝土，两档明度）
+static func trim_mat(dark := false) -> StandardMaterial3D:
+	if _trim == null:
+		_trim = make("concrete", Color(0.58, 0.58, 0.56), 2.5)
+		_plinth = make("concrete", Color(0.42, 0.41, 0.39), 2.0)
+	return _plinth if dark else _trim
+
+
+## 墙体浮雕（写实化第三轮：破「方块盒子」外形）。对落地的「像墙」的盒
+## （高 ≥2.5m、长 ≥3m、厚 ≤0.8m）加：
+##   勒脚——墙脚 0.6m 高混凝土基座，两面各外凸 5cm（墙不再直插沙地）；
+##   压顶——墙顶 0.12m 混凝土压顶，两面各外挑 7cm（顶边有线脚）；
+##   壁柱——两端 + 每 ~6m 一根 0.3m 宽结构柱，两面各外凸 10cm（转角成角柱）。
+## 纯视觉，不登记碰撞（凸出 ≤10cm，不影响掩体与弹道判定）
+static func relief(parent: Node3D, c: Vector3, s: Vector3, wall_mat: Material) -> bool:
+	var along_x := s.x >= s.z
+	var length := s.x if along_x else s.z
+	var thick := s.z if along_x else s.x
+	var bottom := c.y - s.y * 0.5
+	if s.y < 2.5 or length < 3.0 or thick > 0.8 or bottom > 0.25:
+		return false
+	var top := c.y + s.y * 0.5
+	var dims := func(l: float, h: float, t: float) -> Vector3:
+		return Vector3(l, h, t) if along_x else Vector3(t, h, l)
+	var axis := Vector3.RIGHT if along_x else Vector3(0, 0, 1)
+	_trim_box(parent, Vector3(c.x, bottom + 0.3, c.z), dims.call(length + 0.02, 0.6, thick + 0.1),
+			trim_mat(true))
+	_trim_box(parent, Vector3(c.x, top + 0.06, c.z), dims.call(length + 0.1, 0.12, thick + 0.14),
+			trim_mat())
+	var n := maxi(1, int(round(length / 6.0)))
+	for k in n + 1:
+		var off := -length * 0.5 + 0.15 + (length - 0.3) * float(k) / float(n)
+		_trim_box(parent, Vector3(c.x, c.y, c.z) + axis * off,
+				dims.call(0.3, s.y, thick + 0.2), wall_mat)
+	return true
+
+
+static func _trim_box(parent: Node3D, p: Vector3, size: Vector3, m: Material) -> void:
+	var bm := BoxMesh.new()
+	bm.size = size
+	bm.material = m
+	var mi := MeshInstance3D.new()
+	mi.mesh = bm
+	mi.position = p
+	parent.add_child(mi)

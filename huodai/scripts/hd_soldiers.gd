@@ -18,7 +18,7 @@ const TracerPool := preload("res://scripts/tracer_pool.gd")
 ## 时 preload 会让脚本编译失败（battlefield.gd:43-46 同款兜底），失败退化胶囊人
 const SOLDIER_PATH := "res://assets/battle/soldier.glb"
 const SOLDIER_HD_PATH := "res://assets/pbr/models/soldier/soldier_hd.glb"   # huodai/tools/blender/make_soldier_hd.py
-const SOLDIER_SCALE := 1.1                 # 模型/命中球统一放大倍率：1.95m 略压玩家（1.55m 眼高）
+const SOLDIER_SCALE := 1.0                 # 模型/命中球统一倍率：1.0 = 真人 1.8m（写实化第三轮：1.1 的 1.98m 读成巨人，仍略高于玩家 1.55m 眼高）
                                            # 有压迫感但不畸形；1.5 是大战场遗产（AI 2.65m vs 玩家 1.55m）
 const UNIFORM_COL := Color(0.7, 0.5, 0.4)  # 敌军赭红：军装（battlefield._apply_team_colors）
 const GEAR_COL := Color(0.48, 0.41, 0.33)  # 敌军赭红：装具

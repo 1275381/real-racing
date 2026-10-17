@@ -481,6 +481,33 @@ func _build_factories(w) -> void:
 				var wx: float = seg_x[0] + wlen * (float(k) + 0.5) / 4.0
 				_place_box(w, wx, 2.2, z1 + 0.36, wlen * 0.2, 1.2, 0.1,
 						_mats["blue"])
+		# 写实化第三轮：卷帘门（门洞顶卷帘箱 + 两侧导轨 + 露出一截帘片）、
+		# 门雨棚（挑板 + 两根斜拉杆）、檐沟 + 四角落水管——全部纯视觉
+		var door_h := fh - 1.2
+		var dw := d1 - d0
+		var dc := (d0 + d1) * 0.5
+		_place_box(w, dc, door_h - 0.3, z1 + 0.18, dw + 0.4, 0.6, 0.36, _mats["gray"])
+		_place_box(w, dc, door_h - 0.75, z1 + 0.08, dw, 0.3, 0.05, _mats["white"])
+		for gx in [d0 - 0.06, d1 + 0.06]:
+			_place_box(w, gx, door_h * 0.5, z1 + 0.06, 0.1, door_h, 0.12, _mats["gray"])
+		_place_box(w, dc, door_h + 0.15, z1 + 0.75, dw + 1.6, 0.12, 1.5, _mats["gray"])
+		for tx in [d0 - 0.6, d1 + 0.6]:
+			_place_box(w, tx, door_h + 0.75, z1 + 0.75, 0.05, 0.05, 1.7, _mats["gray"],
+					Vector3(-0.62, 0.0, 0.0))
+		for gz in [z0 - 0.39, z1 + 0.39]:
+			_place_box(w, cx, fh + 0.06, gz, fx + 0.6, 0.16, 0.18, _mats["white"])
+		var pipe := CylinderMesh.new()
+		pipe.top_radius = 0.055
+		pipe.bottom_radius = 0.055
+		pipe.height = fh - 0.2
+		pipe.radial_segments = 10
+		pipe.material = _mats["white"]
+		for px in [x0 + 0.45, x1 - 0.45]:
+			for pz in [z0 - 0.36, z1 + 0.36]:
+				var dp := MeshInstance3D.new()
+				dp.mesh = pipe
+				dp.position = Vector3(px, (fh - 0.2) * 0.5 + 0.1, pz)
+				w.add_child(dp)
 		# 屋面竖向瓦棱 ×8（第 4 轮：浅色彩钢棱条）
 		for k in 8:
 			var rx: float = x0 + fx * (float(k) + 0.5) / 8.0
@@ -903,6 +930,8 @@ func _place_box(parent: Node3D, x: float, y: float, z: float, w: float, h: float
 	# 写实化：大面墙挂风化污迹贴花（雨水流挂 + 墙脚尘土）
 	if rot == Vector3.ZERO and _grime_mats.has(mat):
 		PBR.grime_decal(parent, Vector3(x, y, z), Vector3(w, h, d))
+		# 写实化第三轮：落地墙体加勒脚/压顶/壁柱，破方块盒外形
+		PBR.relief(parent, Vector3(x, y, z), Vector3(w, h, d), mat)
 	return mi
 
 

@@ -141,34 +141,36 @@ def chain(*idx):
         E.append((a, b))
 
 
-pelvis = pt("pelvis", V(0, 0.005, 0.93), 0.17, 0.12)
-waist = pt("waist", V(0, 0.0, 1.06), 0.155, 0.11)
-belly = pt("belly", V(0, -0.005, 1.17), 0.16, 0.115)
-chest = pt("chest", V(0, -0.005, 1.30), 0.18, 0.125)
-upchest = pt("upchest", V(0, 0.0, 1.40), 0.175, 0.11)
-neck0 = pt("neck0", V(0, 0.0, 1.47), 0.068, 0.066)
-neck1 = pt("neck1", V(0, -0.005, 1.535), 0.062, 0.064)
+# 写实化比例（第三轮）：肩宽/胸厚/四肢围度按成年男性 + 宽松作战服加粗——
+# 原版大腿半径 9cm、上臂 6cm，远看是细长人偶
+pelvis = pt("pelvis", V(0, 0.005, 0.93), 0.178, 0.125)
+waist = pt("waist", V(0, 0.0, 1.06), 0.162, 0.115)
+belly = pt("belly", V(0, -0.005, 1.17), 0.168, 0.12)
+chest = pt("chest", V(0, -0.005, 1.30), 0.192, 0.132)
+upchest = pt("upchest", V(0, 0.0, 1.40), 0.19, 0.118)
+neck0 = pt("neck0", V(0, 0.0, 1.47), 0.076, 0.074)
+neck1 = pt("neck1", V(0, -0.005, 1.535), 0.066, 0.068)
 head0 = pt("head0", V(0, -0.012, 1.60), 0.072, 0.085)
 head1 = pt("head1", V(0, -0.012, 1.67), 0.085, 0.10)
 head2 = pt("head2", V(0, -0.008, 1.735), 0.07, 0.082)
 head3 = pt("head3", V(0, -0.005, 1.775), 0.03, 0.035)
 chain(pelvis, waist, belly, chest, upchest, neck0, neck1, head0, head1, head2, head3)
 for s, sx in (("L", 1.0), ("R", -1.0)):
-    sh = pt("sh" + s, V(0.175 * sx, 0.01, 1.415), 0.072, 0.068)
-    ua = pt("ua" + s, V(0.27 * sx, 0.015, 1.32), 0.062, 0.06)
-    el = pt("el" + s, V(0.37 * sx, 0.02, 1.225), 0.052, 0.052)
-    fa = pt("fa" + s, V(0.46 * sx, 0.012, 1.137), 0.05, 0.047)
-    wr = pt("wr" + s, V(0.545 * sx, 0.0, 1.05), 0.036, 0.03)
-    hm = pt("hm" + s, V(0.585 * sx, -0.005, 1.01), 0.042, 0.022)
-    ht = pt("ht" + s, V(0.62 * sx, -0.01, 0.975), 0.03, 0.017)
+    sh = pt("sh" + s, V(0.185 * sx, 0.01, 1.415), 0.084, 0.076)
+    ua = pt("ua" + s, V(0.27 * sx, 0.015, 1.32), 0.071, 0.068)
+    el = pt("el" + s, V(0.37 * sx, 0.02, 1.225), 0.06, 0.06)
+    fa = pt("fa" + s, V(0.46 * sx, 0.012, 1.137), 0.056, 0.053)
+    wr = pt("wr" + s, V(0.545 * sx, 0.0, 1.05), 0.041, 0.035)
+    hm = pt("hm" + s, V(0.585 * sx, -0.005, 1.01), 0.047, 0.026)
+    ht = pt("ht" + s, V(0.62 * sx, -0.01, 0.975), 0.034, 0.02)
     chain(upchest, sh, ua, el, fa, wr, hm, ht)
-    hp = pt("hp" + s, V(0.095 * sx, 0.005, 0.90), 0.1, 0.1)      # 作战裤：宽松
-    th = pt("th" + s, V(0.102 * sx, 0.01, 0.72), 0.09, 0.09)
-    kn = pt("kn" + s, V(0.106 * sx, 0.01, 0.52), 0.068, 0.07)
-    cf = pt("cf" + s, V(0.108 * sx, 0.02, 0.33), 0.066, 0.068)
-    an = pt("an" + s, V(0.11 * sx, 0.03, 0.14), 0.055, 0.058)   # 靴筒
-    fm = pt("fm" + s, V(0.113 * sx, -0.05, 0.065), 0.056, 0.042)
-    tp = pt("tp" + s, V(0.118 * sx, -0.17, 0.05), 0.048, 0.034)
+    hp = pt("hp" + s, V(0.097 * sx, 0.005, 0.90), 0.115, 0.115)    # 作战裤：宽松
+    th = pt("th" + s, V(0.104 * sx, 0.01, 0.72), 0.104, 0.104)
+    kn = pt("kn" + s, V(0.107 * sx, 0.01, 0.52), 0.078, 0.08)
+    cf = pt("cf" + s, V(0.109 * sx, 0.02, 0.33), 0.076, 0.078)
+    an = pt("an" + s, V(0.11 * sx, 0.03, 0.14), 0.062, 0.064)   # 靴筒
+    fm = pt("fm" + s, V(0.113 * sx, -0.05, 0.065), 0.061, 0.047)
+    tp = pt("tp" + s, V(0.118 * sx, -0.17, 0.05), 0.053, 0.038)
     chain(pelvis, hp, th, kn, cf, an, fm, tp)
 
 me = bpy.data.meshes.new("Body")
@@ -462,50 +464,60 @@ def mask(bm2):
 
 
 def vest(bm2):
-    box(bm2, V(0, -0.005, 1.27), V(0.35, 0.265, 0.31), bevel=0.02)
-    box(bm2, V(0, -0.14, 1.29), V(0.27, 0.03, 0.27), bevel=0.01)       # 前插板
-    box(bm2, V(0, 0.135, 1.29), V(0.27, 0.03, 0.27), bevel=0.01)       # 后插板
+    box(bm2, V(0, -0.005, 1.27), V(0.385, 0.285, 0.31), bevel=0.02)
+    box(bm2, V(0, -0.15, 1.29), V(0.29, 0.03, 0.27), bevel=0.01)       # 前插板
+    box(bm2, V(0, 0.145, 1.29), V(0.29, 0.03, 0.27), bevel=0.01)       # 后插板
     for k in range(4):                                                 # MOLLE 织带横条
-        box(bm2, V(0, -0.157, 1.19 + k * 0.05), V(0.26, 0.006, 0.012))
+        box(bm2, V(0, -0.167, 1.19 + k * 0.05), V(0.28, 0.006, 0.012))
     for k in range(3):
-        box(bm2, V(-0.09 + k * 0.09, -0.168, 1.17), V(0.075, 0.045, 0.12), bevel=0.008)  # 弹匣包
-        box(bm2, V(-0.09 + k * 0.09, -0.188, 1.225), V(0.07, 0.012, 0.03), bevel=0.004)  # 包盖
-    box(bm2, V(0, -0.168, 1.33), V(0.16, 0.035, 0.08), bevel=0.008)    # 文件包
-    box(bm2, V(0.14, -0.13, 1.33), V(0.05, 0.04, 0.09), bevel=0.006)   # 电台包
-    cyl(bm2, V(0.15, -0.12, 1.5), 0.004, 0.26, segs=6)                 # 电台天线
+        box(bm2, V(-0.095 + k * 0.095, -0.178, 1.17), V(0.08, 0.045, 0.12), bevel=0.008)  # 弹匣包
+        box(bm2, V(-0.095 + k * 0.095, -0.198, 1.225), V(0.075, 0.012, 0.03), bevel=0.004)  # 包盖
+    box(bm2, V(0, -0.178, 1.33), V(0.17, 0.035, 0.08), bevel=0.008)    # 文件包
+    box(bm2, V(0.15, -0.14, 1.33), V(0.05, 0.04, 0.09), bevel=0.006)   # 电台包
+    cyl(bm2, V(0.16, -0.13, 1.5), 0.004, 0.26, segs=6)                 # 电台天线
     for sx in (-1, 1):
-        box(bm2, V(0.105 * sx, 0.0, 1.43), V(0.07, 0.24, 0.03))        # 肩带
-        box(bm2, V(0.165 * sx, 0.0, 1.27), V(0.03, 0.2, 0.2), bevel=0.01)  # 侧板
-        box(bm2, V(0.17 * sx, -0.06, 1.17), V(0.04, 0.06, 0.09), bevel=0.006)  # 侧袋
+        box(bm2, V(0.11 * sx, 0.0, 1.435), V(0.075, 0.26, 0.03))       # 肩带
+        box(bm2, V(0.185 * sx, 0.0, 1.27), V(0.03, 0.21, 0.2), bevel=0.01)  # 侧板
+        box(bm2, V(0.19 * sx, -0.06, 1.17), V(0.04, 0.06, 0.09), bevel=0.006)  # 侧袋
 
 
 def holster(bm2):
-    box(bm2, V(-0.165, 0.0, 0.78), V(0.05, 0.12, 0.17), bevel=0.012)   # 右腿腿挂枪套
-    box(bm2, V(-0.165, 0.0, 0.86), V(0.06, 0.13, 0.025))               # 腿带
+    box(bm2, V(-0.225, 0.0, 0.78), V(0.05, 0.12, 0.17), bevel=0.012)   # 右腿腿挂枪套（贴大腿外侧）
+    box(bm2, V(-0.205, 0.0, 0.86), V(0.04, 0.2, 0.025))                # 腿带
+
+
+def boot(sx):
+    """战术靴：靴身（踝至前掌）+ 鞋头 + 加厚橡胶底，替代皮肤修改器末端的圆头"""
+    def fn(bm2):
+        box(bm2, V(0.112 * sx, -0.035, 0.085), V(0.118, 0.25, 0.13), bevel=0.03)   # 靴身
+        box(bm2, V(0.116 * sx, -0.155, 0.055), V(0.11, 0.09, 0.08), bevel=0.03)    # 鞋头
+        box(bm2, V(0.112 * sx, -0.05, 0.015), V(0.125, 0.3, 0.03), bevel=0.008)    # 鞋底
+        box(bm2, V(0.11 * sx, 0.04, 0.17), V(0.13, 0.13, 0.08), bevel=0.02)        # 靴筒
+    return fn
 
 
 def elbowpad(sx):
     def fn(bm2):
-        box(bm2, V(0.37 * sx, 0.055, 1.225), V(0.075, 0.03, 0.08), bevel=0.01)
+        box(bm2, V(0.37 * sx, 0.085, 1.225), V(0.08, 0.03, 0.085), bevel=0.01)
     return fn
 
 
 def backpack(bm2):
-    box(bm2, V(0, 0.19, 1.28), V(0.28, 0.13, 0.34), bevel=0.025)
-    box(bm2, V(0, 0.265, 1.24), V(0.2, 0.04, 0.16), bevel=0.012)
-    cyl(bm2, V(0, 0.2, 1.47), 0.045, 0.3, axis="X")                   # 卷好的睡袋
+    box(bm2, V(0, 0.205, 1.28), V(0.3, 0.13, 0.34), bevel=0.025)
+    box(bm2, V(0, 0.28, 1.24), V(0.21, 0.04, 0.16), bevel=0.012)
+    cyl(bm2, V(0, 0.215, 1.47), 0.045, 0.32, axis="X")                # 卷好的睡袋
 
 
 def belt(bm2):
     cyl(bm2, V(0, 0.0, 1.0), 1.0, 0.055, segs=16)
-    bmesh.ops.scale(bm2, vec=V(0.152, 0.112, 1.0), verts=bm2.verts[:])
+    bmesh.ops.scale(bm2, vec=V(0.168, 0.124, 1.0), verts=bm2.verts[:])
     box(bm2, V(0.13, -0.02, 0.99), V(0.05, 0.07, 0.08), bevel=0.006)
     box(bm2, V(-0.13, 0.03, 0.97), V(0.05, 0.06, 0.1), bevel=0.006)
 
 
 def kneepad(sx):
     def fn(bm2):
-        box(bm2, V(0.105 * sx, -0.055, 0.51), V(0.085, 0.035, 0.1), bevel=0.012)
+        box(bm2, V(0.107 * sx, -0.08, 0.51), V(0.095, 0.035, 0.11), bevel=0.012)
     return fn
 
 
@@ -527,6 +539,8 @@ part("Helmet", helmet, "head", M_GEAR)
 part("Headset", headset, "head", M_DARK)
 part("Holster", holster, "thigh.R", M_GEAR)
 part("ElbowL", elbowpad(1), "forearm.L", M_DARK)
+part("BootL", boot(1), "foot.L", M_LEATHER)
+part("BootR", boot(-1), "foot.R", M_LEATHER)
 part("ElbowR", elbowpad(-1), "forearm.R", M_DARK)
 part("Goggles", goggles, "head", M_LENS)
 part("Mask", mask, "head", M_DARK)
@@ -554,7 +568,7 @@ bpy.ops.object.parent_set(type="ARMATURE_AUTO")
 part_mat = {"Helmet": "Gear", "Goggles": "Lens", "Mask": "Dark", "Vest": "Gear",
             "Backpack": "Gear", "Belt": "Leather", "KneeL": "Dark", "KneeR": "Dark",
             "Rifle": "Weapon", "Headset": "Dark", "Holster": "Gear",
-            "ElbowL": "Dark", "ElbowR": "Dark"}
+            "ElbowL": "Dark", "ElbowR": "Dark", "BootL": "Leather", "BootR": "Leather"}
 for ob, bone in PARTS:
     for m in MATS:
         ob.data.materials.append(m)

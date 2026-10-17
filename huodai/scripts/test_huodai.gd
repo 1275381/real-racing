@@ -98,7 +98,9 @@ func _run() -> void:
 	var from: Vector3 = main.player.cam.global_position
 	var dir: Vector3 = -main.player.cam.global_transform.basis.z
 	var hit: Dictionary = main.guns.raycast_all(from, dir, 300.0)
-	check("正面射线命中士兵", str(hit.get("type", "")) == "soldier",
+	# 士兵 1.0 比例（真人 1.8m）后，玩家眼高 1.55m 平射正落在头盔球内——
+	# 命中头或身都算「射线命中士兵」
+	check("正面射线命中士兵", str(hit.get("type", "")) in ["soldier", "soldier_head"],
 		"type=%s" % str(hit.get("type", "")))
 	var res: Dictionary = main.soldiers.apply_hit(0, 200.0, false)
 	check("200 伤害击倒", bool(res.get("killed", false)))
