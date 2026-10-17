@@ -787,20 +787,29 @@ class ScopeOverlay extends Control:
 
 ## 屏幕边缘红渐晕（危险区警示；可见性由宿主控制）
 class EdgeVignette extends Control:
+	## 危险区边缘红晕：屏幕中心透明、四角柔和渐红（径向 smoothstep）。
+	## 原实现是四圈实心矩形且越往里越不透明——画面上读成一圈硬边红框，像渲染故障
 	const TINT := Color(0.78, 0.16, 0.08)
 
 	func _init() -> void:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	func _draw() -> void:
-		var s := size
-		var th := 44.0
-		for i in 4:
-			var a := 0.05 + 0.05 * float(i)
-			var off := float(i) * th
-			var inner := float(i + 1) * th
-			draw_rect(Rect2(0, off, s.x, th), Color(TINT.r, TINT.g, TINT.b, a))
-			draw_rect(Rect2(0, s.y - inner, s.x, th), Color(TINT.r, TINT.g, TINT.b, a))
-			draw_rect(Rect2(off, 0, th, s.y), Color(TINT.r, TINT.g, TINT.b, a))
-			draw_rect(Rect2(s.x - inner, 0, th, s.y), Color(TINT.r, TINT.g, TINT.b, a))
+		var cr := ColorRect.new()
+		cr.set_anchors_preset(Control.PRESET_FULL_RECT)
+		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var sh := Shader.new()
+		sh.code = """
+shader_type canvas_item;
+uniform vec4 tint : source_color = vec4(0.78, 0.16, 0.08, 1.0);
+uniform float strength = 0.45;
+void fragment() {
+	vec2 p = UV * 2.0 - 1.0;
+	float d = length(p * vec2(0.92, 1.0));
+	COLOR = vec4(tint.rgb, smoothstep(0.78, 1.42, d) * strength);
+}
+"""
+		var sm := ShaderMaterial.new()
+		sm.shader = sh
+		sm.set_shader_parameter("tint", TINT)
+		cr.material = sm
+		add_child(cr)

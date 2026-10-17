@@ -715,6 +715,13 @@ func _run() -> void:
 	#      ③ _smg_mats MP7 全系 emission_energy_multiplier≥0.3——锁三件套
 	#        第三件（微自发光保暗处可读）：6d193b5/90cc58b 判图修「蓝白
 	#        串色」时全系归 0，掩体阴影里碳黑枪身亮度塌到不可辨即此回归。
+	#      例外：美术写实化换上的实拍扫描枪（HDGuns.PH_GUNS：手枪/狙击）——
+	#      多部件真实模型关深度测试会让机匣内部件透到表面；枪模已整体在
+	#      own_world_3d 独立视口（81309a1），vm 世界没有掩体可吞，深度测试
+	#      开着才画得对。这些网格反向断言「深度测试开着」，其余枪照旧锁防线
+	var ph_names: Array = []
+	for ph_id in HDGuns.PH_GUNS:
+		ph_names.append_array(HDGuns.PH_GUNS[ph_id]["keep"])
 	var mat_bad: Array = []
 	var surf_total := 0
 	for g_def in Guns.GUNS:
@@ -723,6 +730,13 @@ func _run() -> void:
 		for mi_v in m_root.find_children("*", "MeshInstance3D", true, false):
 			var mi := mi_v as MeshInstance3D
 			if mi.mesh == null:
+				continue
+			if ph_names.has(str(mi.name)):
+				for s2 in mi.mesh.get_surface_count():
+					var om := mi.get_surface_override_material(s2) as StandardMaterial3D
+					surf_total += 1
+					if om == null or om.no_depth_test:
+						mat_bad.append("%s/%s:s%d(实拍枪须开深度测试)" % [m_gid, mi.name, s2])
 				continue
 			for s in mi.mesh.get_surface_count():
 				var mat: Material = mi.mesh.surface_get_material(s)

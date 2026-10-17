@@ -58,6 +58,7 @@ extends Node3D
 ## 共用网格：单位盒按尺寸缓存（_box_mesh 同 base 款）+ 筒仓大圆柱/锥顶/旗杆/
 ## 绝缘子盘 4 张 CylinderMesh + 料堆单位球——细件全走实例 scale。
 
+const PBR := preload("res://scripts/hd_pbr.gd")   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 const WALL_T := 0.5             # 建筑墙厚（base 厂房同款）
 const GROUND_TOP := 0.03        # 新区铺装顶面统一标高：与大地 y0 错层防 z-fighting
 ## 四新区 loot 点 7（全部落地面 y=0——hd_loot 容器 bot=0 地面语义 + 纯 XZ 搜索；
@@ -98,6 +99,7 @@ func build(root: Node3D) -> void:
 	_built = true
 	var w = root   # HDWorld（鸭子类型，hd_dam_base.gd:200 同款）
 	_make_mats()
+	_dress_pbr()
 	_make_meshes()
 	_camp(w)
 	_substation(w)
@@ -107,6 +109,28 @@ func build(root: Node3D) -> void:
 
 
 # ================= 材质与共用网格 =================
+
+## 美术写实化：四新区换实拍材质——营房/箱体旧漆铁皮、主变压器与筒仓带锈钢、
+## 游客中心与营房墙面风化抹灰、路面沥青、广场混凝土；玻璃/瓷瓶/帆布保留
+func _dress_pbr() -> void:
+	var plan := {
+		"camo": ["container", 2.4],
+		"asphalt": ["asphalt", 4.0],
+		"concrete": ["concrete", 4.0],
+		"panel": ["corrugated", 2.5],
+		"corten": ["paint_rust", 1.5],
+		"silo": ["paint_rust", 3.0],
+		"siloshade": ["paint_rust", 3.0],
+		"yellow": ["stucco", 3.0],
+		"white": ["stucco", 3.0],
+		"dark": ["paint_rust", 1.5],
+		"plaza": ["concrete", 3.0],
+		"red": ["paint_rust", 2.0],
+	}
+	for key in plan:
+		if _mats.has(key):
+			PBR.dress(_mats[key], str(plan[key][0]), float(plan[key][1]))
+
 
 func _make_mats() -> void:
 	# 第 2 轮判图 #8：橄榄灰绿压暗一档+增绿相（首版 0.42,0.40,0.30 被读成沙黄）

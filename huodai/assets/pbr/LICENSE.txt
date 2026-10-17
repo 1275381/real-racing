@@ -1,0 +1,7 @@
+本目录全部素材来自 Poly Haven（https://polyhaven.com），CC0 授权：
+可商用、可随游戏分发、无需署名（https://polyhaven.com/license）。
+hdri/   kloofendal_43d_clear_puresky（2K HDR）
+tex/    gravelly_sand / cracked_concrete_wall / concrete_layers_02 / beige_wall_001 /
+        rusty_metal_02 / container_side / corrugated_iron / metal_plate / asphalt_02（1K：diff / nor_gl / arm）
+models/ service_pistol（2K）/ bolt_action_rifle_7_62（2K）/ Barrel_01 / wooden_crate_01 /
+        metal_jerrycan / boulder_01 / old_tyre / covered_car（1K）

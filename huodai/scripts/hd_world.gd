@@ -19,6 +19,13 @@ const HDDAM_BASE_SCRIPT := preload("res://scripts/hd_dam_base.gd")
 ## 四新区件（军营/大电/水泥厂/游客中心）同由路径 preload：新 class_name
 ## HDDamZones 在 --headless -s 回归下同样不进全局类名缓存，走路径最稳
 const HDDAM_ZONES_SCRIPT := preload("res://scripts/hd_dam_zones.gd")
+const PBR := preload("res://scripts/hd_pbr.gd")   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
+## 实拍 HDRI 天空（Poly Haven kloofendal_43d_clear_puresky，CC0）：天空本身 +
+## 环境光 + 反射都取它；Git LFS 没拉到时回退物理天空（另一台电脑不崩）
+const SKY_HDRI := "res://assets/pbr/hdri/kloofendal_43d_clear_puresky_2k.hdr"
+## HDRI 里太阳的方位（离线量得：等距柱状图 u=0.600 v=0.262 → 仰角 42.9°）：
+## 主光按它摆，影子方向与天空里的太阳一致
+const HDRI_SUN_ROT := Vector3(-42.9, -35.9, 0.0)
 const GROUND_SIZE := 300.0        # 大地平面边长（隐形边界墙收在地面之内）
 const BOUND := 148.0              # 可行动边界半宽（地面 300 见方内收 2m）
 const WILD_R := 112.0             # 荒野带下限（网页版 layout.js ZONE_BANDS.wildR）
@@ -42,6 +49,19 @@ const PROP_DIMS := {
 	"warehouse": Vector3(22.8, 8.2, 12.83),
 	"wreck": Vector3(1.88, 1.44, 4.3),
 }
+## 美术写实化：这些道具换成 Poly Haven 实拍扫描级模型（CC0）。按原包围盒等比
+## 塞进去——碰撞、点位、掩体尺寸全不变；模型缺失（另一台电脑没拉 LFS）回退原 GLB
+const PH_SWAP := {
+	"barrel": "res://assets/pbr/models/Barrel_01/Barrel_01_1k.gltf",
+	"crate": "res://assets/pbr/models/wooden_crate_01/wooden_crate_01_1k.gltf",
+	"rocks": "res://assets/pbr/models/boulder_01/boulder_01_1k.gltf",
+	"covered_car": "res://assets/pbr/models/covered_car/covered_car_1k.gltf",
+}
+const PH_TYRE := "res://assets/pbr/models/old_tyre/old_tyre_1k.gltf"
+const PH_JERRYCAN := "res://assets/pbr/models/metal_jerrycan/metal_jerrycan_1k.gltf"
+## 道具 GLB 内材质名 → PBR 贴图类（木头/麻袋/帆布/树皮没有对应实拍贴图，保留原样）
+const PROP_PBR := {"Plaster": "stucco", "Concrete": "concrete", "Paint": "paint_rust",
+		"TankPaint": "paint_rust", "Rust": "paint_rust", "Metal": "paint_rust", "Rock": "rock"}
 ## GLB 失败时的兜底盒底色（贴合各道具材质气质）
 const FALLBACK_COLOR := {
 	"barrel": Color(0.44, 0.49, 0.53), "container": Color(0.48, 0.42, 0.35),
@@ -236,9 +256,11 @@ var dam_zones: Node3D             # 四新区（HDDamZones 实例：军营/大�
 
 var _built := false
 var _prop_scenes := {}            # name -> PackedScene | null（load 缓存）
+var _ph_scenes := {}              # path -> PackedScene | null（实拍模型缓存）
 var _fallback_mats := {}          # name -> StandardMaterial3D（兜底盒共用）
 var _sun: DirectionalLight3D
 var _env: Environment
+var _hdri_on := false   # 实拍 HDRI 天空是否加载成功（失败回退物理天空 + 噪声云带）
 
 
 func build() -> void:
@@ -254,6 +276,7 @@ func build() -> void:
 		_place_prop(e)
 	for e in WILD_PROPS:
 		_place_prop(e)
+	_scatter_decor()
 	_build_hall()
 	_build_entrance()
 	for zone in CONTAINER_XZ:
@@ -399,6 +422,10 @@ func _build_env() -> void:
 	_sun.light_color = Color(1.0, 0.96, 0.9)   # 正午偏暖白（强日照）
 	_sun.light_energy = OUTDOOR_SUN
 	_sun.rotation_degrees = Vector3(-40.0, 25.0, 0.0)   # 中午偏斜：阴影落画面左侧
+	var hdri: Texture2D = load(SKY_HDRI) if ResourceLoader.exists(SKY_HDRI) else null
+	_hdri_on = hdri != null
+	if _hdri_on:
+		_sun.rotation_degrees = HDRI_SUN_ROT
 	_sun.shadow_enabled = true
 	_sun.directional_shadow_max_distance = 300.0   # 坝距 ref 相机 130~280m，120 会全落阴影距离外
 	_sun.shadow_bias = 0.06
@@ -412,6 +439,7 @@ func _build_env() -> void:
 	fill.light_energy = 0.32
 	fill.rotation_degrees = Vector3(-38.0, 155.0, 0.0)
 	fill.shadow_enabled = false
+	fill.visible = not _hdri_on   # HDRI 天空下天光来自真实环境光，假补光会把阴影洗蓝
 	add_child(fill)
 
 	# —— 物理大气散射天空（第 3 轮判图 #1：上轮 turbidity 6 把天读成死板灰蓝
@@ -426,6 +454,12 @@ func _build_env() -> void:
 	sky_mat.energy_multiplier = 1.1
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
+	if _hdri_on:
+		var pano := PanoramaSkyMaterial.new()
+		pano.panorama = hdri
+		pano.energy_multiplier = 1.0
+		sky.sky_material = pano
+		sky.radiance_size = Sky.RADIANCE_SIZE_256
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
@@ -443,6 +477,20 @@ func _build_env() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.6, 0.57, 0.5)
 	env.ambient_light_energy = OUTDOOR_AMB
+	if _hdri_on:
+		# 写实化：环境光/反射取实拍天空（不再是一块固定米色），
+		# SDFGI 实时全局光照——墙角、门洞、厂房内部按真实遮挡变暗，
+		# 地面暖沙色反弹到墙面（代码场景无需烘焙，Forward+ 可用）
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+		env.ambient_light_sky_contribution = 1.0
+		env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+		env.sdfgi_enabled = true
+		env.sdfgi_use_occlusion = true
+		env.sdfgi_cascades = 4
+		env.sdfgi_min_cell_size = 0.2
+		env.sdfgi_energy = 1.0
+		env.sdfgi_bounce_feedback = 0.5
+		env.tonemap_exposure = 0.85
 	env.ssao_enabled = true          # 垛间凹槽/洞龛深色竖条纹（评审 #8）
 	env.ssao_intensity = 2.6         # 第 2 轮判图 #18：上调补接触阴影（帐篷/设备底部悬浮感）
 	env.ssil_enabled = true          # 屏幕空间间接光：暗面暖沙色反弹（第 5 轮架构）
@@ -460,6 +508,10 @@ func _build_env() -> void:
 	env.adjustment_brightness = 1.0
 	env.adjustment_contrast = 1.06
 	env.adjustment_saturation = 1.18
+	if _hdri_on:
+		# 写实化：去掉「高饱和」调色（实拍贴图自带真实色彩，再 +18% 饱和就是卡通感）
+		env.adjustment_contrast = 1.0
+		env.adjustment_saturation = 1.0
 	env.glow_enabled = true          # 信标/灯板泛光
 	env.glow_intensity = 0.5
 	env.glow_hdr_threshold = 1.05
@@ -477,7 +529,8 @@ func _build_env() -> void:
 	probe.intensity = 0.8
 	probe.box_projection = true
 	add_child(probe)
-	_build_clouds()
+	if not _hdri_on:
+		_build_clouds()   # 噪声云带只给物理天空兜底用；实拍天空自带真实云
 
 
 ## 高空云带 ×3（评审 #7 丝缕白云的工程内替代：ProceduralSkyMaterial 无
@@ -553,9 +606,57 @@ func _build_ground() -> void:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(GROUND_SIZE, GROUND_SIZE)
 	plane.material = mat
+	var sand := PBR.maps("sand")
+	if not sand.is_empty():
+		# 写实化：实拍砾沙 PBR（颜色/法线/ARM）。两种尺度叠加 + 60m 大斑块明暗，
+		# 打散 2.5m 周期的重复感；原噪声图降级为大斑块遮罩
+		var sm := ShaderMaterial.new()
+		sm.shader = _ground_shader()
+		sm.set_shader_parameter("albedo_tex", sand["diff"])
+		sm.set_shader_parameter("normal_tex", sand["nor"])
+		sm.set_shader_parameter("arm_tex", sand["arm"])
+		sm.set_shader_parameter("macro_tex", tex)
+		plane.material = sm
 	var mi := MeshInstance3D.new()
 	mi.mesh = plane
 	add_child(mi)
+
+
+## 地表着色器：世界 XZ 平铺（与 PlaneMesh 的 UV/切线同向，法线贴图方向正确）
+func _ground_shader() -> Shader:
+	var sh := Shader.new()
+	sh.code = """
+shader_type spatial;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D arm_tex : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D macro_tex : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform float tile_m = 2.6;
+uniform float macro_m = 70.0;
+uniform vec3 tint = vec3(1.02, 0.98, 0.92);
+varying vec3 wpos;
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	vec2 uv = wpos.xz / tile_m;
+	vec2 uv2 = wpos.xz / (tile_m * 3.3) + vec2(0.37, 0.71);
+	float far = smoothstep(12.0, 70.0, length(VERTEX));
+	vec3 a1 = texture(albedo_tex, uv).rgb;
+	vec3 a2 = texture(albedo_tex, uv2).rgb;
+	float macro = texture(macro_tex, wpos.xz / macro_m).r;
+	ALBEDO = mix(a1, a1 * 0.5 + a2 * 0.5, far) * tint * mix(0.82, 1.1, macro);
+	vec3 arm = texture(arm_tex, uv).rgb;
+	AO = arm.r;
+	AO_LIGHT_AFFECT = 0.35;
+	ROUGHNESS = mix(arm.g, 0.95, far);
+	METALLIC = 0.0;
+	SPECULAR = 0.35;
+	NORMAL_MAP = texture(normal_tex, uv).rgb;
+	NORMAL_MAP_DEPTH = mix(1.2, 0.4, far);
+}
+"""
+	return sh
 
 
 # ================= 边界与登记 =================
@@ -591,13 +692,30 @@ func _prop_place(name: String, x: float, z: float, rot_y: float, scl: Vector3,
 	var dims: Vector3 = PROP_DIMS[name]
 	var node: Node3D
 	var ps: PackedScene = _prop_scene(name)
-	if ps != null:
+	# 残骸里每隔一辆换成盖布旧车（同尺寸车位：1.8×1.4×4.4 m），工业区更有生活痕迹
+	var swap_name := name
+	if name == "wreck" and int(absf(x * 7.0 + z * 3.0)) % 2 == 0:
+		swap_name = "covered_car"
+	var ph: PackedScene = _ph_scene(str(PH_SWAP.get(swap_name, "")))
+	if ph != null:
+		node = Node3D.new()
+		node.position = Vector3(x, y_off, z)
+		node.rotation.y = rot_y
+		node.scale = scl
+		if name == "rocks":
+			# 原岩堆是 13.6m 长条：三块巨石沿长轴错落拼出同样的轮廓
+			_fit_into(node, ph.instantiate(), Vector3(4.6, 2.2, 3.3), Vector3(-4.5, 0, 0.2), 0.4)
+			_fit_into(node, ph.instantiate(), Vector3(4.2, 1.7, 3.0), Vector3(0.2, 0, -0.3), 2.1)
+			_fit_into(node, ph.instantiate(), Vector3(4.6, 2.0, 3.2), Vector3(4.4, 0, 0.1), 4.0)
+		else:
+			_fit_into(node, ph.instantiate(), dims, Vector3.ZERO, 0.0)
+		add_child(node)
+	elif ps != null:
 		node = ps.instantiate()
 		node.position = Vector3(x, y_off, z)
 		node.rotation.y = rot_y
 		node.scale = scl
-		if tint != Color.WHITE:
-			_tint(node, tint)
+		_dress_prop(node, name, tint)
 		add_child(node)
 	else:
 		var mi := MeshInstance3D.new()
@@ -623,6 +741,111 @@ func _prop_place(name: String, x: float, z: float, rot_y: float, scl: Vector3,
 
 
 ## GLB 预载缓存（battlefield.gd 存在性检查同款：load 失败退化兜底盒不炸）
+## 写实化小件点缀（纯装饰、不登记碰撞）：每辆残骸/盖布车旁一只旧轮胎，
+## 每隔一个木箱放一个铁油壶——生活痕迹，不改任何掩体与点位
+func _scatter_decor() -> void:
+	var tyre := _ph_scene(PH_TYRE)
+	var can := _ph_scene(PH_JERRYCAN)
+	var k := 0
+	for list in [CENTER_PROPS, MID_PROPS, WILD_PROPS]:
+		for e in list:
+			var n: String = e["n"]
+			var r: float = float(e.get("r", 0.0))
+			var off := Vector3.ZERO
+			var ps: PackedScene = null
+			var size := 0.75
+			if n == "wreck" and tyre != null:
+				off = Vector3(1.7, 0.0, -1.2)
+				ps = tyre
+			elif n == "crate" and can != null and k % 2 == 0:
+				off = Vector3(0.9, 0.0, 0.5)
+				ps = can
+				size = 0.5
+			if n == "crate":
+				k += 1
+			if ps == null:
+				continue
+			var holder := Node3D.new()
+			holder.position = Vector3(float(e["x"]), 0.0, float(e["z"])) \
+					+ off.rotated(Vector3.UP, r)
+			add_child(holder)
+			_fit_into(holder, ps.instantiate(), Vector3.ONE * size, Vector3.ZERO,
+					r + 0.7 + float(k) * 1.3)
+
+
+## 实拍模型（gltf）加载缓存；路径空或加载失败返回 null（调用方回退原 GLB）
+func _ph_scene(path: String) -> PackedScene:
+	if path == "":
+		return null
+	if not _ph_scenes.has(path):
+		_ph_scenes[path] = load(path) if ResourceLoader.exists(path) else null
+		if _ph_scenes[path] == null:
+			push_warning("[烽火地带] 实拍模型缺失：%s（另一台电脑请 git lfs pull，暂用原模型）" % path)
+	return _ph_scenes[path]
+
+
+## 把模型等比缩放进 box（宽×高×深）里：底面贴地、XZ 居中于 offset，绕 Y 转 yaw
+func _fit_into(parent: Node3D, inst: Node3D, box: Vector3, offset: Vector3,
+		yaw: float) -> void:
+	var bb := _local_aabb(inst)
+	var sz := bb.size
+	var k := minf(box.y / maxf(sz.y, 0.001),
+			minf(box.x / maxf(sz.x, 0.001), box.z / maxf(sz.z, 0.001)))
+	var pivot := Node3D.new()
+	pivot.position = offset
+	pivot.rotation.y = yaw
+	parent.add_child(pivot)
+	var c := bb.get_center()
+	inst.scale = Vector3.ONE * k
+	inst.position = Vector3(-c.x * k, -bb.position.y * k, -c.z * k)
+	pivot.add_child(inst)
+	for mi in inst.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+## 子网格在 root 本地空间的合并包围盒（不依赖入树）
+func _local_aabb(root: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for n in root.find_children("*", "MeshInstance3D", true, false):
+		var m := n as MeshInstance3D
+		if m.mesh == null:
+			continue
+		var t := Transform3D()
+		var q: Node = m
+		while q != root and q != null:
+			if q is Node3D:
+				t = (q as Node3D).transform * t
+			q = q.get_parent()
+		var a: AABB = t * m.get_aabb()
+		out = a if first else out.merge(a)
+		first = false
+	return out
+
+
+## 道具材质写实化：按材质名换实拍 PBR（集装箱漆面用中性铁皮按原色着色），
+## 同时乘上摆放色 tint；贴图缺失时退回原来的纯乘色逻辑
+func _dress_prop(node: Node3D, name: String, tint: Color) -> void:
+	for child in node.find_children("*", "MeshInstance3D", true, false):
+		var mi := child as MeshInstance3D
+		for si in mi.mesh.get_surface_count():
+			var m := mi.mesh.surface_get_material(si)
+			if not (m is StandardMaterial3D):
+				continue
+			var sm := m as StandardMaterial3D
+			var kind: String = str(PROP_PBR.get(sm.resource_name, ""))
+			if name == "container" and sm.resource_name == "Paint":
+				kind = "container"
+			if name in ["barn", "warehouse"] and sm.resource_name == "Paint":
+				kind = "corrugated"
+			var t: StandardMaterial3D = sm.duplicate()
+			if sm.resource_name in TINTABLE:
+				t.albedo_color = sm.albedo_color * tint
+			var dressed := kind != "" and PBR.dress(t, kind)
+			if dressed or sm.resource_name in TINTABLE and tint != Color.WHITE:
+				mi.set_surface_override_material(si, t)
+
+
 func _prop_scene(name: String) -> PackedScene:
 	if not _prop_scenes.has(name):
 		var path: String = PROP_DIR + name + ".glb"

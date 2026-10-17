@@ -26,6 +26,8 @@ extends Node3D
 ## 材质恰 15 枚（tan/green/red/white/leaf/smoke/smoke2/rock/bush/blue/corten/
 ## track/lot/gray/net），与 hd_dam.gd 9 枚合计=24，零跨文件引用。
 
+const PBR := preload("res://scripts/hd_pbr.gd")
+const TRUCK_GLB := "res://assets/pbr/models/truck/truck.glb"   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 const WALL_T := 0.5             # 厂房墙厚
 const HOARD_T := 0.12           # 围挡板厚
 const HOARD_H := 2.2            # 围挡板高
@@ -199,6 +201,7 @@ func build(root: Node3D) -> void:
 	_built = true
 	var w = root   # HDWorld（鸭子类型：obstacles/点位容器动态访问，hd_loot.gd 同款）
 	_make_mats()
+	_dress_pbr()
 	_make_meshes()
 	_build_hardstand(w)
 	_build_factories(w)
@@ -222,8 +225,34 @@ func build(root: Node3D) -> void:
 ## smoke 浓黑烟下段 / smoke2 烟上段渐隐 / rock 岩棕三平面噪点山体 /
 ## bush 深橄榄灌木·风扇片 / blue 集装箱蓝灰·窗带 / corten 锈橙·干环箍 /
 ## track 深棕辙印 / gray 灰箱 / net 伪装网半透明 / lot 硬地压花（评审 #11 压暗）
+## 美术写实化：坝底工业区换实拍材质——厂房波纹铁皮、白罐/红门架带锈旧漆、
+## 山体岩石、场地砾沙；植物/烟/伪装网保留原材质
+func _dress_pbr() -> void:
+	var plan := {
+		"tan": ["paint_rust", 2.0],
+		"hill": ["sand", 3.0],
+		"green": ["corrugated", 2.5],
+		"red": ["paint_rust", 2.0],
+		"white": ["paint_rust", 2.5],
+		"rock": ["rock", 4.0],
+		"blue": ["container", 2.4],
+		"corten": ["paint_rust", 1.5],
+		"track": ["sand", 2.5],
+		"gray": ["concrete", 4.0],
+		"lot": ["sand", 3.0],
+	}
+	for key in plan:
+		if _mats.has(key):
+			PBR.dress(_mats[key], str(plan[key][0]), float(plan[key][1]))
+
+
 func _make_mats() -> void:
 	_mats["tan"] = _std_mat(Color(0.72, 0.62, 0.4), 1.0, 0.0)
+	# 写实化拆材质：tan 原本山体/车厢/轮胎/树干/围挡共用一张——换实拍贴图后
+	# 各要各的：山体砾沙、车厢围挡旧漆铁皮、轮胎黑橡胶、树干保持纯色
+	_mats["hill"] = _std_mat(Color(0.72, 0.62, 0.4), 1.0, 0.0)
+	_mats["trunk"] = _std_mat(Color(0.72, 0.62, 0.4), 1.0, 0.0)
+	_mats["tyre"] = _std_mat(Color(0.07, 0.07, 0.075), 0.92, 0.0)
 	_mats["green"] = _std_mat(Color(0.45, 0.42, 0.33), 0.85, 0.0)
 	_mats["red"] = _std_mat(Color(0.55, 0.18, 0.14), 0.65, 0.2)
 	_mats["white"] = _std_mat(Color(0.85, 0.84, 0.8), 0.8, 0.0)
@@ -310,7 +339,7 @@ func _make_meshes() -> void:
 	_hill_mesh.height = 2.0
 	_hill_mesh.radial_segments = 24
 	_hill_mesh.rings = 12
-	_hill_mesh.material = _mats["tan"]
+	_hill_mesh.material = _mats["hill"]
 	_smoke_mesh = SphereMesh.new()
 	_smoke_mesh.radius = 1.0
 	_smoke_mesh.height = 2.0
@@ -369,14 +398,14 @@ func _make_meshes() -> void:
 	_wheel_mesh.height = 0.3
 	_wheel_mesh.radial_segments = 10
 	_wheel_mesh.rings = 1
-	_wheel_mesh.material = _mats["tan"]
+	_wheel_mesh.material = _mats["tyre"]
 	_trunk_mesh = CylinderMesh.new()
 	_trunk_mesh.top_radius = 0.13
 	_trunk_mesh.bottom_radius = 0.22
 	_trunk_mesh.height = TRUNK_H
 	_trunk_mesh.radial_segments = 8
 	_trunk_mesh.rings = 1
-	_trunk_mesh.material = _mats["tan"]
+	_trunk_mesh.material = _mats["trunk"]
 	_frond_seg_mesh = BoxMesh.new()
 	_frond_seg_mesh.size = Vector3(SEG_LEN, 0.05, 0.45)
 	_frond_seg_mesh.material = _mats["leaf"]
@@ -612,9 +641,19 @@ func _coils(w) -> void:
 ## 碰撞按计划定死 AABB：卡车1 x[-56,-48]×z[-91.2,-88.8]、卡车2 x[56,64]×z[-82.5,-79.5]，
 ## 新增卡车3/4 同款生成器顺泊（-38,-83）/(86,-84)
 func _build_trucks(w) -> void:
+	# 美术写实化：Blender 建模的厢式货车（huodai/tools/blender/make_truck.py，
+	# 贴 CC0 实拍贴图）替代方块拼装；占地与车头朝向和原版一致（长 7.0m、
+	# 车头 +X），碰撞 _obstacle 不变。模型缺失（未拉 LFS）回退原方块车
+	var truck: PackedScene = load(TRUCK_GLB) if ResourceLoader.exists(TRUCK_GLB) else null
 	for ti in TRUCKS.size():
 		var tv: Vector2 = TRUCKS[ti]
 		var hz: float = TRUCK_HZ[ti]
+		if truck != null:
+			var t: Node3D = truck.instantiate()
+			t.position = Vector3(tv.x, 0.0, tv.y)
+			w.add_child(t)
+			_obstacle(w, tv.x, tv.y, 4.0, hz, 3.0)
+			continue
 		_place_box(w, tv.x - 0.4, 1.9, tv.y, 5.2, 2.2, 2.4, _mats["tan"])
 		_place_box(w, tv.x + 3.1, 1.35, tv.y, 1.8, 2.0, 2.3, _mats["red"])
 		for wdx_v in WHEEL_DX:

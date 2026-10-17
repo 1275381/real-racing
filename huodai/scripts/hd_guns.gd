@@ -689,6 +689,11 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 	if gun_id == "sniper":
 		if s_kind == "thermal":
 			_scope_visual(root, "thermal", 0.12, 0.05, -0.3)
+	elif s_kind == "iron" and PH_GUNS.has(gun_id) \
+			and root.find_child(str(PH_GUNS[gun_id]["keep"][0]), true, false) != null:
+		# 实拍枪自带真实机瞄（准星/照门是模型的一部分），不再叠旧版机瞄片——
+		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
+		pass
 	elif gun_id == "mp7" and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -2397,8 +2402,125 @@ static func _old5_has(id: String) -> bool:
 	return OLD5_IDS.has(id)
 
 
+## 实拍枪模（Poly Haven CC0）：keep = 要保留的网格（文件里还有另一款握把的
+## 整枪、散放弹匣、子弹，一律剔除）；模型原生枪口朝 +X、枪托朝 -X
+const PH_GUNS := {
+	"pistol": {"path": "res://assets/pbr/models/service_pistol/service_pistol_2k.gltf",
+		"keep": ["service_pistol_pistol_a", "service_pistol_slide_a",
+				"service_pistol_hammer_a", "service_pistol_trigger_a"],
+		# 握把顶（虎口位）：扳机后方、套筒底下（模型原生坐标，离线量网格得出）
+		"grip": Vector3(-0.012, 0.036, 0.0)},
+	"sniper": {"path": "res://assets/pbr/models/bolt_action_rifle_7_62/bolt_action_rifle_7_62_2k.gltf",
+		"keep": ["bolt_action_rifle_7_62", "bolt_action_rifle_7_62_scope",
+				"bolt_action_rifle_7_62_wrap", "bolt_action_rifle_7_62_bolt_a",
+				"bolt_action_rifle_7_62_trigger"],
+		# 栓动步枪无手枪握把：持握点 = 扳机后方枪托腕部顶面
+		"grip": Vector3(-0.33, 0.012, 0.0)},
+}
+
+
+## 造实拍枪身根：先造一遍原程序化枪身量出长度与持握锚（grip_hold），实拍
+## 模型等比缩到同样长度，再平移到「实拍握把顶 = 原持握锚」——之后
+## _build_gun_visual 的 HOLD_DELTA 照常把持握锚推到 MK4 基准，腰射位、
+## 换弹手锚、开镜对位全部沿用原数据链。
+## 实拍模型保留深度测试：枪模已在独立视口（own_world_3d）里，不会被墙吞；
+## 旧枪的关深度测试写法套在真实模型上会让机匣内部件透到表面
+static func _ph_gun(id: String) -> Node3D:
+	var spec: Dictionary = PH_GUNS[id]
+	var path: String = spec["path"]
+	var ps: PackedScene = load(path) if ResourceLoader.exists(path) else null
+	if ps == null:
+		push_warning("[烽火地带] 实拍枪模缺失：%s（另一台电脑请 git lfs pull，暂用程序化枪模）" % path)
+		return null
+	var model: Node3D = ps.instantiate()
+	var keep: Array = spec["keep"]
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		if not keep.has(str(mi.name)):
+			mi.get_parent().remove_child(mi)
+			mi.free()
+	var old: Node3D = _old5_build_legacy(id)
+	var target := _aabb_in(old, old)
+	var old_grip := target.get_center()
+	var gh: Node = old.find_child("grip_hold", true, false)
+	if gh is Node3D:
+		old_grip = _pos_in(gh as Node3D, old)
+	old.free()
+	var root := Node3D.new()
+	var pivot := Node3D.new()
+	pivot.rotation.y = PI * 0.5   # +X 枪口 → -Z（枪身局部前方）
+	root.add_child(pivot)
+	pivot.add_child(model)
+	var bb := _aabb_in(root, root)
+	var k := target.size.z / maxf(bb.size.z, 0.001)
+	pivot.scale = Vector3.ONE * k
+	var grip_now: Vector3 = pivot.transform * Vector3(spec["grip"])
+	pivot.position += old_grip - grip_now
+	# 持握锚：与程序化枪同名同语义（测试 29c、换弹手都按它对齐）
+	var anchor := Node3D.new()
+	anchor.name = "grip_hold"
+	anchor.position = old_grip
+	root.add_child(anchor)
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var m3 := mi as MeshInstance3D
+		m3.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for si in m3.mesh.get_surface_count():
+			var sm = m3.mesh.surface_get_material(si)
+			if sm is StandardMaterial3D:
+				var d: StandardMaterial3D = (sm as StandardMaterial3D).duplicate()
+				d.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+				m3.set_surface_override_material(si, d)
+	return root
+
+
+## 原程序化旧五枪（实拍模型的尺寸基准，也是模型缺失时的回退）
+static func _old5_build_legacy(id: String) -> Node3D:
+	match id:
+		"pistol":
+			return _old5_pistol()
+		"sniper":
+			return _old5_sniper()
+	return Node3D.new()
+
+
+## 节点原点在 space 节点空间的位置（沿父链累乘局部变换，不依赖入树）
+static func _pos_in(n: Node3D, space: Node3D) -> Vector3:
+	var t := Transform3D()
+	var q: Node = n
+	while q != space and q != null:
+		if q is Node3D:
+			t = (q as Node3D).transform * t
+		q = q.get_parent()
+	return t.origin
+
+
+## 子网格在 space 节点空间的合并包围盒（静态版，不依赖入树）
+static func _aabb_in(root: Node3D, space: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for n in root.find_children("*", "MeshInstance3D", true, false):
+		var m := n as MeshInstance3D
+		if m.mesh == null:
+			continue
+		var t := Transform3D()
+		var q: Node = m
+		while q != space and q != null:
+			if q is Node3D:
+				t = (q as Node3D).transform * t
+			q = q.get_parent()
+		var a: AABB = t * m.get_aabb()
+		out = a if first else out.merge(a)
+		first = false
+	return out
+
+
 ## 统一入口：按 id 造旧五枪枪身根；未知 id 返回空 Node3D（防御不崩）
 static func _old5_build(id: String) -> Node3D:
+	# 美术写实化：手枪/狙击换 Poly Haven 实拍扫描模型（CC0）；模型缺失
+	# （另一台电脑没 git lfs pull）返回 null → 走下方原程序化枪身
+	if PH_GUNS.has(id):
+		var real := _ph_gun(id)
+		if real != null:
+			return real
 	match id:
 		"pistol":
 			return _old5_pistol()

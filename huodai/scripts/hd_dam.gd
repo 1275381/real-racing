@@ -18,6 +18,7 @@ extends Node3D
 ## 旋转惯例（仅泄洪管保留）：坡面与水平夹 atan(7.8/6)=52.43°，Godot rotation.x
 ## 从竖直轴起算，贴坡管 rotation.x = -(PI/2 - 52.43°) = -0.6557 rad（上端朝北埋入坝体）。
 
+const PBR := preload("res://scripts/hd_pbr.gd")   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 const SLOPE_ANG := 0.9151          # atan(7.8/6)：台阶坡面与水平夹角 52.43°
 const FIN_TILT := 0.6557           # PI/2 - SLOPE_ANG：泄洪管贴坡绕 x 的转角（从竖直轴起算）
 const TOP_Y := 52.0                # 坝顶高程（路面块 y44.2→52，路面板铺其上）
@@ -73,6 +74,7 @@ func build(root) -> void:
 		return
 	_built = true
 	_make_mats()
+	_dress_pbr()
 	_make_meshes()
 	_base(root)            # A 坝基实体
 	_steps(root)           # B 下游台阶面
@@ -94,6 +96,20 @@ func build(root) -> void:
 	_apron_wall(root)      # 坝顶后方第二层坝肩墙（远景天际线双层化）
 	_seams(root)           # 施工缝线（水平对齐 STEP_H / 竖向对齐垛中线）
 	_rust_stains(root)     # 女儿墙下沿锈挂条
+
+
+## 美术写实化：坝体换实拍混凝土（模板浇筑的层状纹，正对应大坝分层浇筑），
+## 红门吊/管道换带锈旧漆钢板；贴图缺失时 dress() 不动材质，保持原纯色版
+func _dress_pbr() -> void:
+	PBR.dress(_mat_concrete, "concrete", 5.0)
+	PBR.dress(_mat_concrete_dark, "concrete", 5.0)
+	PBR.dress(_mat_steel_red, "paint_rust", 2.0)
+	# 泄洪管/箍环：风化灰漆钢管（原纯白金属在实拍天空下读成白塑料管；
+	# 设计色压到中灰，免得旧漆贴图把它刷成米白）
+	_mat_pipe.albedo_color = Color(0.5, 0.52, 0.53)
+	PBR.dress(_mat_pipe, "paint_rust", 3.0)
+	_mat_collar.albedo_color = Color(0.4, 0.41, 0.42)
+	PBR.dress(_mat_collar, "paint_rust", 2.0)
 
 
 func _make_mats() -> void:
