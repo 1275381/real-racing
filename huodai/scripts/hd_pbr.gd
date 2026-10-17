@@ -300,3 +300,96 @@ static func _trim_box(parent: Node3D, p: Vector3, size: Vector3, m: Material) ->
 	mi.mesh = bm
 	mi.position = p
 	parent.add_child(mi)
+
+
+# ================= Blender 建模建筑（美术写实化第四轮） =================
+
+const BLDG_DIR := "res://assets/pbr/models/buildings/"
+static var _named := {}
+
+
+## 按 Blender 导出的材质名还原材质（tools/blender/bldg_kit.py 命名约定）：
+##   pbr_<kind>_<r>_<g>_<b>_<周期×10> → make()（世界三平面 PBR，与代码场景同一套贴图）
+##   plain_<r>_<g>_<b>_<粗糙>_<金属>  → 纯色；glass → 镀膜玻璃；lamp → 暖光灯罩
+## 不认识的名字返回 null（保留导入材质）
+static func named_mat(nm: String) -> Material:
+	if _named.has(nm):
+		return _named[nm]
+	var m: Material = null
+	var p := nm.split("_")
+	var pct := func(i: int) -> float: return float(p[i].to_int()) / 100.0
+	if nm == "glass":
+		var g := StandardMaterial3D.new()
+		glass(g)
+		m = g
+	elif nm == "lamp":
+		var l := StandardMaterial3D.new()
+		l.albedo_color = Color(1.0, 0.95, 0.84)
+		l.emission_enabled = true
+		l.emission = Color(1.0, 0.86, 0.62)
+		l.emission_energy_multiplier = 1.5
+		m = l
+	elif nm.begins_with("pbr_") and p.size() >= 6:
+		var n := p.size()
+		var kind := "_".join(p.slice(1, n - 4))
+		m = make(kind, Color(pct.call(n - 4), pct.call(n - 3), pct.call(n - 2)),
+				float(p[n - 1].to_int()) / 10.0)
+	elif nm.begins_with("plain_") and p.size() == 6:
+		var s := StandardMaterial3D.new()
+		s.albedo_color = Color(pct.call(1), pct.call(2), pct.call(3))
+		s.roughness = pct.call(4)
+		s.metallic = pct.call(5)
+		m = s
+	_named[nm] = m
+	return m
+
+
+## 给导入的建筑场景逐面换上按名还原的材质（surface override，不改共享资源）
+static func apply_named(root: Node) -> void:
+	for n in root.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		for si in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(si)
+			if src == null:
+				continue
+			var m := named_mat(src.resource_name)
+			if m != null:
+				mi.set_surface_override_material(si, m)
+
+
+## 代码方块版建筑 → Blender 建模版：parent 下 [n0, 末尾) 是刚建好的旧可见层
+## （墙/顶/门窗/贴花/浮雕），模型可用时整段释放、在 origin 摆上模型；
+## 碰撞（obstacles）与点位由调用方照旧登记，不受影响。
+## grime：[[x0, x1, z0, z1, y0, y1], …] 外墙风化贴花范围。
+## 模型缺失（另一台电脑没 git lfs pull）返回 false，旧版原样保留
+static func swap_building(parent: Node3D, n0: int, glb: String, origin: Vector3,
+		grime: Array = []) -> bool:
+	var ps := scene(BLDG_DIR + glb + ".glb")
+	if ps == null:
+		return false
+	var olds: Array[Node] = []
+	for i in range(n0, parent.get_child_count()):
+		olds.append(parent.get_child(i))
+	for n in olds:
+		parent.remove_child(n)
+		n.free()
+	var inst: Node3D = ps.instantiate()
+	inst.name = "bldg_" + glb
+	inst.position = origin
+	apply_named(inst)
+	parent.add_child(inst)
+	for g in grime:
+		var r: Array = g
+		var x0: float = r[0]
+		var x1: float = r[1]
+		var z0: float = r[2]
+		var z1: float = r[3]
+		var y0: float = r[4]
+		var y1: float = r[5]
+		var cy := (y0 + y1) * 0.5
+		var hy := y1 - y0
+		for wz in [z0 + 0.25, z1 - 0.25]:
+			grime_decal(parent, Vector3((x0 + x1) * 0.5, cy, wz), Vector3(x1 - x0, hy, 0.5))
+		for wx in [x0 + 0.25, x1 - 0.25]:
+			grime_decal(parent, Vector3(wx, cy, (z0 + z1) * 0.5), Vector3(0.5, hy, z1 - z0))
+	return true

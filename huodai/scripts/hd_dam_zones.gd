@@ -316,6 +316,7 @@ func _camp_huts(w) -> void:
 
 
 func _camp_hut(w, cx: float, cz: float, door_west: bool) -> void:
+	var n0: int = w.get_child_count()
 	var x0 := cx - 4.0
 	var x1 := cx + 4.0
 	var z0 := cz - 3.0
@@ -340,6 +341,9 @@ func _camp_hut(w, cx: float, cz: float, door_west: bool) -> void:
 		_place_box(w, cx, 0.7 + 0.95 * float(k), z1 + 0.05, 7.2, 0.16, 0.1,
 				_mats["camo"])
 	_place_box(w, cx + 2.0, 1.8, z1 + 0.06, 1.1, 1.2, 0.12, _mats["panel"])
+	# 写实化第四轮：可见层换 Blender 建模版（缺模型保留上面方块版，碰撞不变）
+	PBR.swap_building(w, n0, "hut_a" if door_west else "hut_b", Vector3(cx, 0.0, cz),
+			[[x0, x1, z0, z1, 0.0, h]])
 
 
 ## 两层岗楼（第 3 轮判图 #7：营区再补 1 座带平台栏杆的岗楼——东门外侧
@@ -441,6 +445,7 @@ func _camp_skirt(w) -> void:
 ## 端部=军营外墙 5 段障碍的凑段手法），双坡顶沥青脊线 7m。首版误按 where 段
 ## 32×24 大饼建过（屋面只盖半跨漏天光，shot_dam_new1 实拍返工）。
 func _camp_barracks(w) -> void:
+	var n0: int = w.get_child_count()
 	var x0 := -130.0
 	var x1 := -98.0
 	var z0 := -30.0
@@ -535,6 +540,9 @@ func _camp_barracks(w) -> void:
 			var zl: float = (z1 - z0 + 0.4) * (1.0 - float(k + 1) / 5.0) + 0.35
 			_place_box(w, gx, 6.28 + 0.16 * float(k), mid_z, 0.5, 0.16, zl,
 					_mats["camo"])
+	# 写实化第四轮：可见层换 Blender 建模版（缺模型保留上面方块版，碰撞不变）
+	PBR.swap_building(w, n0, "barracks", Vector3(-114.0, 0.0, -24.0),
+			[[x0, x1, z0, z1, 0.0, h]])
 
 
 ## 2.2m 混凝土预制板围墙北/南/西三面（北墙中段让隧道口分 2 段注册）；
@@ -672,6 +680,7 @@ func _substation(w) -> void:
 ## 单层大平顶主控楼 22×12×5：北 1 + 南 2（3m 门洞 x∈[106,109]）+ 西 1 + 东 1
 ## = 5 段障碍；南窗×5 + 红门楣 + 女儿墙压顶 + 屋顶卧式白罐机组×2 + 楼内机柜列
 func _sub_control(w) -> void:
+	var n0: int = w.get_child_count()
 	var x0 := 104.0
 	var x1 := 126.0
 	var z0 := -26.0
@@ -746,6 +755,9 @@ func _sub_control(w) -> void:
 		var ang := TAU * float(k) / 4.0 + 0.79
 		_place_box(w, 122.5 + cos(ang) * 1.05, (h + 0.4) * 0.5, -22.5 + sin(ang) * 1.05,
 				0.18, h + 0.4, 0.18, _mats["dark"])
+	# 写实化第四轮：可见层换 Blender 建模版（缺模型保留上面方块版，碰撞不变）
+	PBR.swap_building(w, n0, "sub_ctrl", Vector3(115.0, 0.0, -19.0),
+			[[x0, x1, z0, z1, 0.0, h]])
 
 
 ## 户外变压器阵列×8（第 2 轮判图 #11：双列×4 排读出组团+基座黄黑警示条；
@@ -1004,6 +1016,7 @@ func _cement_bridge(w) -> void:
 ## 主厂房 16×26 两层黄主楼：北墙 4 卷帘门洞让空成 2 段（西端/东端门洞贴端 +
 ## 中间双门并排）凑 5 段；二层平台朝北料场 + 外挂钢爬梯两段（公开制高点跳点位）
 func _cement_main(w) -> void:
+	var n0: int = w.get_child_count()
 	var x0 := -92.0
 	var x1 := -76.0
 	var z0 := 14.0
@@ -1045,11 +1058,15 @@ func _cement_main(w) -> void:
 	for k in 2:
 		_place_box(w, -88.0, 1.35 + 2.75 * float(k), 10.42, 0.8, 2.7, 0.1,
 				_mats["dark"])
+	# 写实化第四轮：可见层换 Blender 建模版（缺模型保留上面方块版，碰撞不变）
+	PBR.swap_building(w, n0, "cement_main", Vector3(-84.0, 0.0, 27.0),
+			[[x0, x1, z0, z1, 0.0, h]])
 
 
 ## 宿舍小楼 8×6×5：贴主楼南墙外（z∈[40,46]，北墙探入主楼南墙 0.05 防共面）；
 ## 单门洞朝西贴南端凑 4 段障碍 + 两窗 + 门口小索降平台
 func _cement_dorm(w) -> void:
+	var n0: int = w.get_child_count()
 	var x0 := -90.0
 	var x1 := -82.0
 	var h := 5.0
@@ -1072,6 +1089,9 @@ func _cement_dorm(w) -> void:
 	_place_box(w, -91.2, 0.15, 45.0, 1.9, 0.3, 2.6, _mats["yellow"])
 	_place_box(w, -90.5, 2.2, 45.0, 0.06, 4.2, 0.06, _mats["dark"],
 			Vector3(0.0, 0.0, 0.5))
+	# 写实化第四轮：可见层换 Blender 建模版（缺模型保留上面方块版，碰撞不变）
+	PBR.swap_building(w, n0, "cement_dorm", Vector3(-86.0, 0.0, 43.0),
+			[[x0, x1, 40.0, 46.0, 0.0, h]])
 
 
 ## 垃圾场（西南角 x∈[−122,−114]×z∈[38,46]）：瓦砾堆×2（大堆注册 1 条）+
@@ -1113,6 +1133,7 @@ func _visitor(w) -> void:
 ## 短翼 10×11.5 南折 @ x∈[96,106]×z∈[42.5,54]；一层落地玻璃幕墙 + 竖向白框棂
 ## + 二层白墙横带窗 + 北侧 3m 深挑檐薄板 + 檐下细钢柱×5；L 楼墙 6 段
 func _visitor_main(w) -> void:
+	var n0: int = w.get_child_count()
 	var x0 := 76.0
 	var x1 := 100.0
 	var z0 := 33.0
@@ -1189,6 +1210,13 @@ func _visitor_main(w) -> void:
 		_place_box(w, 96.17, h1 * 0.5, 43.4 + 2.8 * float(k), 0.14, h1, 0.18,
 				_mats["white"])
 	_place_box(w, 96.17, 1.75, 48.4, 0.1, 3.5, 2.2, _mats["white"])   # 西门洞框
+	# 写实化第四轮：Blender 建模版短翼北面补了幕墙（旧版敞口）、西面幕墙只留门洞
+	# （旧版纯视觉可穿）——碰撞随可见层补齐，门洞 z∈[47.3,49.5] 照旧通行
+	if PBR.swap_building(w, n0, "visitor", Vector3(88.0, 0.0, 43.0),
+			[[x0, x1, z0, z1, h1, h], [96.0, 106.0, z1, 54.0, h1, h]]):
+		_obstacle(w, 103.0, 42.75, 3.0, WALL_T * 0.5, h)
+		_obstacle(w, 96.25, 44.9, WALL_T * 0.5, 2.4, h)
+		_obstacle(w, 96.25, 51.75, WALL_T * 0.5, 2.25, h)
 
 
 ## 南广场 + 旗杆×3 + 指示牌×2 + 树池/座椅/灯杆列/圆形拼花（第 2 轮判图 #13：

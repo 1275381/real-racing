@@ -8,5 +8,6 @@ models/ service_pistol（2K）/ bolt_action_rifle_7_62（2K）/ Barrel_01 / wood
 第二轮（2026-10-17）：
 tex/    bark_brown_02 / denim_fabric / brown_leather / painted_plaster_wall / brick_4（1K）
 models/ shrub_04 / dry_branches_medium_01 / quiver_tree_02（1K 原件 + *_lod.glb 减面版）
-自制（非 Poly Haven，贴图取自上述 CC0 素材）：models/truck、models/palm、models/soldier
+自制（非 Poly Haven，贴图取自上述 CC0 素材）：models/truck、models/palm、models/soldier、
+models/buildings（10 栋建筑，只含几何与材质名，游戏端按名套上述贴图）
 （生成脚本见 huodai/tools/blender/）

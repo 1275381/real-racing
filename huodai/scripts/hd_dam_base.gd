@@ -46,20 +46,20 @@ const BOX_TINTS := ["red", "blue", "corten", "white", "gray"]
 const FACTORIES := [
 	{   # 甲 · 绿厂房（装配车间）@ (28,-95)：足迹 x[15,41]×z[-102,-88]
 		"mat": "green", "x0": 15.0, "x1": 41.0, "z0": -102.0, "z1": -88.0,
-		"h": 9.0, "door0": 26.0, "door1": 30.0,
+		"h": 9.0, "door0": 26.0, "door1": 30.0, "glb": "fac_a",
 		"hvac": [Vector2(22, -98), Vector2(28, -98), Vector2(34, -98),
 			Vector2(22, -92), Vector2(28, -92), Vector2(34, -92)],
 		"hvac_sz": Vector3(1.8, 1.0, 1.4),
 	},
 	{   # 乙 · 黄厂房（机修间）@ (62,-94)：足迹 x[53,71]×z[-100,-88]，门对卡车2 装货位
 		"mat": "tan", "x0": 53.0, "x1": 71.0, "z0": -100.0, "z1": -88.0,
-		"h": 6.0, "door0": 58.0, "door1": 62.0,
+		"h": 6.0, "door0": 58.0, "door1": 62.0, "glb": "fac_b",
 		"hvac": [Vector2(56, -94), Vector2(60, -94), Vector2(64, -94), Vector2(68, -94)],
 		"hvac_sz": Vector3(1.6, 0.9, 1.2),
 	},
 	{   # 丙 · 黄泵站 @ (-6,-96)：足迹 x[-11,-1]×z[-100,-92]，南门 x[-7.5,-4.5]（计划口径）
 		"mat": "tan", "x0": -11.0, "x1": -1.0, "z0": -100.0, "z1": -92.0,
-		"h": 5.0, "door0": -7.5, "door1": -4.5,
+		"h": 5.0, "door0": -7.5, "door1": -4.5, "glb": "fac_c",
 		"hvac": [Vector2(-8.5, -96), Vector2(-3.5, -96)],
 		"hvac_sz": Vector3(1.4, 0.8, 1.1),
 	},
@@ -445,9 +445,12 @@ func _build_hardstand(w) -> void:
 
 
 ## 厂房×3：四墙围合（南墙 4m 门洞）+ 红门楣压净高 + 平顶出檐 + 屋顶机组阵列；
-## 碰撞只登记四墙 5 段/栋（门洞让空），门楣悬空 y≥h-1.2 不挡走人不注册
+## 碰撞只登记四墙 5 段/栋（门洞让空），门楣悬空 y≥h-1.2 不挡走人不注册。
+## 美术写实化第四轮：可见层换 Blender 建模版（tools/blender/make_buildings.py：
+## 双坡钢屋架/彩钢墙板/卷帘门/高侧窗/檐沟落水），模型缺失时保留下面的方块版
 func _build_factories(w) -> void:
 	for f in FACTORIES:
+		var n0: int = w.get_child_count()
 		var mat: StandardMaterial3D = _mats[f["mat"]]
 		var x0: float = f["x0"]
 		var x1: float = f["x1"]
@@ -528,6 +531,8 @@ func _build_factories(w) -> void:
 				_place_box(w, 24.0, 10.1, nz, 20.0, 0.06, 8.0, _mats["net"],
 						Vector3(0.0, 0.0, 0.06))
 			_place_box(w, 24.0, 10.15, -97.0, 1.2, 1.4, 20.0, _mats["white"])
+		PBR.swap_building(w, n0, str(f["glb"]), Vector3(cx, 0.0, cz),
+				[[x0, x1, z0, z1, 0.0, fh]])
 		# 碰撞：四墙 5 段（建造计划⑦，三栋共 15 段）
 		_obstacle(w, cx, z0 + WALL_T * 0.5, fx * 0.5, WALL_T * 0.5, fh)
 		_obstacle(w, (x0 + d0) * 0.5, z1 - WALL_T * 0.5, (d0 - x0) * 0.5, WALL_T * 0.5, fh)
