@@ -553,7 +553,7 @@ def cement_dorm():
 if __name__ == "__main__":
     only = os.environ.get("ONLY", "")
     jobs = {"fac_a": fac_a, "fac_b": fac_b, "fac_c": fac_c, "visitor": visitor,
-            "barracks": barracks, "hut_a": lambda: hut("hut_a", -104.0, -27.0, True),
+            "barracks": barracks, "hut_a": lambda: hut("hut_a", -123.0, -11.0, True),
             "hut_b": lambda: hut("hut_b", -125.0, -37.0, False), "sub_ctrl": sub_ctrl,
             "cement_main": cement_main, "cement_dorm": cement_dorm}
     for n, fn in jobs.items():
