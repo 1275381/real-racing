@@ -235,12 +235,22 @@ func _run() -> void:
 		and absf(float(sc_sn.get("zoom", 0.0)) - 6.0) < 0.01,
 		"kind=%s zoom=%.2f" % [str(sc_sn.get("kind")), float(sc_sn.get("zoom", 0.0))])
 
-	# 13. 靶馆地坪分层（问题⑦回归）：馆内 0.06 / 馆外 0，玩家出生贴地坪
-	check("馆内地坪 0.06", absf(main.world.ground_height(
-		HDData.HALL_CENTER.x, HDData.HALL_CENTER.z) - 0.06) < 0.001)
+	# 13. 地下靶馆地坪分层（2026-10 靶馆入地回归）：地下域 hint 馆内 -6.94 /
+	#     坡道线性 / 地表 hint 馆上方仍 0（地表行走不受脚下馆体影响）
+	check("地下馆内地坪 -6.94", absf(main.world.ground_height(
+		HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, -10.0)
+		- (-6.94)) < 0.001,
+		"gy=%.3f" % main.world.ground_height(
+			HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, -10.0))
+	check("馆上方地表仍 0（hint 守卫）", absf(main.world.ground_height(
+		HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, 0.0)) < 0.001)
+	check("坡道顶端 0.06 / 底端 -6.94", absf(main.world.ground_height(
+		120.0, 157.0, 0.0) - 0.06) < 0.001
+		and absf(main.world.ground_height(120.0, 147.0, -6.8) + 6.94) < 0.001)
 	check("馆外大地 0.0", absf(main.world.ground_height(0.0, 0.0)) < 0.001)
 	check("射位出生贴地坪", absf(main.player.pos.y
-		- main.world.ground_height(main.player.pos.x, main.player.pos.z)) < 0.001,
+		- main.world.ground_height(main.player.pos.x, main.player.pos.z,
+			main.player.pos.y)) < 0.001,
 		"pos.y=%.3f" % main.player.pos.y)
 
 	# 14. 士兵比例（问题④回归）：大战场遗产 1.5 已收敛，防回退

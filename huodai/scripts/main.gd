@@ -192,8 +192,8 @@ func _enter_range() -> void:
 	loot.reset_all()
 	targets.reset_all()
 	var lane := HDData.HALL_CENTER + Vector3(0.0, 0.0, 11.0)   # 中间射位（馆内射击线，-Z 朝靶道）
-	# 出生 y 贴馆内地坪（0.06）：地面已与大地错层根治 z-fighting，出生点同步对齐（问题⑦）
-	lane.y = world.ground_height(lane.x, lane.z)
+	# 出生 y 贴地下馆地坪（-6.94）：带地下域 hint 采样（默认 hint 会返回地表 0）
+	lane.y = world.ground_height(lane.x, lane.z, -10.0)
 	player.enter(lane)
 	player.yaw = PI          # 面朝 -Z 靶道
 	player.pitch = 0.0

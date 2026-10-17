@@ -243,7 +243,7 @@ func update(dt: float) -> void:
 		_speed = 0.0
 	if _world != null:
 		_push_out_obstacles()
-		pos.y = _world.ground_height(pos.x, pos.z)
+		pos.y = _world.ground_height(pos.x, pos.z, pos.y)
 	# 图边界（HDData：340m 见方）。地图外独立空间（靶馆，e515451 迁 (600,600)）
 	# 必须豁免：钳制曾把馆内出生的玩家每帧拽回地图角 (170,·,170)、相机跟飞
 	# ——靶馆室内景永远看不见（复验「幽灵活影+黑屏」的根因，诊断 diag 实证
