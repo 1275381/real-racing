@@ -12,6 +12,9 @@
 #         （click/crack/boom/tail）15 枪流/时长分级/峰值/过零率/每发随机
 #       + 贴掩体吞枪复发红线（29f）：全枪册表面材质 no_depth_test/priority≥10
 #         审计 + 枪架 viewmodel 补光在位 + MP7 微自发光（三件套全锁）
+#       + viewmodel 独立视口架构回归（29g）：own_world_3d 子视口在位/枪架
+#         父链在 vm 世界/muzzle_world 与主相机数学连续（mm 级）/HIDE_ZOOM
+#         藏枪照旧/闪光镜像灯与曳光掉匣件各归其位
 # 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
 #      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
@@ -770,6 +773,76 @@ func _run() -> void:
 			glow_bad.append("%s=%.2f" % [str(mk_v), pm.emission_energy_multiplier])
 	check("MP7 全系材质微自发光 ≥0.3（三件套第三件）",
 		glow_bad.is_empty(), str(glow_bad))
+
+	# 29g. viewmodel 独立视口（2026-10「贴掩体分裂」根治架构回归）：枪模整体
+	#      迁入 own_world_3d SubViewport——vm 世界零场景几何，枪与掩体的深度
+	#      交互物理消失（贴掩体枪管穿墙叠画成两截、透明掩体整层盖枪两条病
+	#      因同根除）。逐条断言各锁一环，缺一即架构回退：
+	var vm_vp: SubViewport = main.player.vm_viewport
+	check("vm SubViewport 存在且 own_world_3d+透明底+常更新",
+		vm_vp != null and vm_vp.own_world_3d and vm_vp.transparent_bg
+			and vm_vp.render_target_update_mode == SubViewport.UPDATE_ALWAYS,
+		"own=%s" % str(vm_vp != null and vm_vp.own_world_3d))
+	check("vm 相机与主相机不同 World3D（枪与掩体深度隔离在）",
+		main.player.vm_cam != null
+			and main.player.vm_cam.get_world_3d() != main.player.cam.get_world_3d())
+	check("合成层介于世界与 HUD 之间（layer 5，HUD=10/大厅=20）",
+		main.player.vm_layer != null and main.player.vm_layer.layer == 5)
+	var chain_bad: Array = []
+	for slot_v3 in main.guns._guns:
+		var h3: Node3D = main.guns._guns[slot_v3]["holder"]
+		if not vm_vp.is_ancestor_of(h3):
+			chain_bad.append(str(slot_v3))
+	check("枪架 holder 父链在 vm 世界（vm_viewport 祖先）",
+		not main.guns._guns.is_empty() and chain_bad.is_empty(), str(chain_bad))
+	# muzzle_world 连续性（mm 级）：vm 相机每帧同步主相机 → holder 在 vm 世
+	# 界的 to_global 数值必须等于「主相机 transform × 枪架局部 × 枪口点」——
+	# 曳光起点/掉匣落点/换弹手锚全靠这条不变量零改动。甩视角改摆位后复核，
+	# 防「只在进场同步一次」的假成立
+	main.player.pos = Vector3(33.0, 0.0, 44.0)
+	main.player.yaw += 2.3
+	main.player.pitch = 0.2
+	main.player.update(0.016)
+	var mz_g: Dictionary = main.guns._cur_gun()
+	var mz_off: Vector3 = mz_g["muzzle_off"]
+	var mz_holder: Node3D = mz_g["holder"]
+	var mz_d: float = main.guns.muzzle_world().distance_to(
+			main.player.cam.global_transform * (mz_holder.transform * mz_off))
+	var vm_d: float = main.player.vm_cam.global_transform.origin.distance_to(
+			main.player.cam.global_transform.origin)
+	check("muzzle_world 与主相机数学连续（mm 级容差）", mz_d < 0.001,
+		"d=%.5f" % mz_d)
+	check("vm 相机 transform 同步主相机（mm 级容差）", vm_d < 0.001,
+		"d=%.5f" % vm_d)
+	# HIDE_ZOOM 藏枪照旧：sniper 自带 6×，开镜到位（ads≥1 且 zoom≥3）枪模
+	# 隐藏——vm 世界不改变这条显示逻辑（摆位/可见性全在 holder 局部）
+	main._start_mission({"primary": "sniper", "secondary": "pistol"})
+	await frames(8)
+	Input.action_press("hd_scope")
+	var hz_hidden := false
+	for i in 200:
+		main.player.update(0.016)
+		main.guns.update(0.016)
+		if main.player.ads >= 1.0 and main.guns.current_zoom() >= HDGuns.HIDE_ZOOM \
+				and not (main.guns._guns["primary"]["holder"] as Node3D).visible:
+			hz_hidden = true
+			break
+	Input.action_release("hd_scope")
+	check("HIDE_ZOOM≥3 开镜到位藏枪照旧（vm 世界）", hz_hidden)
+	# 世界空间件去留审计：枪口闪光主世界镜像灯（墙面受闪光照明零回退）、
+	# 曳光池与掉落匣替身（要与世界交互的结算件）各归其位
+	var fz_bad: Array = []
+	for slot_v4 in main.guns._guns:
+		var fz: OmniLight3D = main.guns._guns[slot_v4]["flash_env"]
+		if fz == null or fz.get_parent() != main.player.cam:
+			fz_bad.append(str(slot_v4))
+	check("枪口闪光镜像灯留主世界（挂主相机下）",
+		not main.guns._guns.is_empty() and fz_bad.is_empty(), str(fz_bad))
+	check("曳光池/掉落匣替身留在主世界（与世界交互照旧）",
+		main.guns.tracers != null
+			and not vm_vp.is_ancestor_of(main.guns.tracers)
+			and main.guns._falling_mag != null
+			and not vm_vp.is_ancestor_of(main.guns._falling_mag))
 
 	# 30. 大坝分区（搜打撤第三区）：装配节点/容器点 13/巡逻点 7/品质权重/矩形分区/
 	#     坝体碰撞 wall_hit（前墙 12m·开洞抵背墙 18m·溢流段高位 24m）/幂等/第二撤离

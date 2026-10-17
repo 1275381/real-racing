@@ -1,11 +1,17 @@
 class_name HDGuns
 extends Node3D
 ## 烽火地带枪械：双槽（primary/secondary）程序化拼枪 + ADS + 换弹（弹匣三段
-## 掉落动画 + 程序化手套拔匣/插匣跟随）+ hitscan 结算。母本
-## onfoot.gd：枪模挂相机（no_depth_test 材质防车身吞枪）、mount 用枪模 AABB
-## 对准星正下方、曳光池。
+## 掉落动画 + 程序化手套拔匣/插匣跟随）+ hitscan 结算。
 ## 输入动作名由 main 注册，本模块只读："hd_fire"/"hd_scope"/"hd_slot1"/
 ## "hd_slot2"/"hd_reload"。
+## 枪模挂载（2026-10 架构定案）：不再挂主相机渲染进主世界，而是挂
+## player.vm_cam——own_world_3d 独立视口（HDPlayer._build_vm 装配），vm 世界
+## 零场景几何，枪与掩体的深度交互物理消失（贴掩体枪管穿墙叠画成两截、
+## 透明掩体 transparent pass 整层盖枪，两条「分裂」病因同根除）。vm 相机
+## 每帧同步主相机 transform/FOV（HDPlayer.sync_vm），故 holder 在 vm 世界
+## 的 to_global 数值 == 主世界坐标——曳光起点/掉匣落点/换弹手锚全部零改动。
+## 射线结算仍走主相机（player.cam.global_position/-basis.z），命中特效
+## （曳光池/火花/掉落弹匣）留在主世界照常与世界交互。
 
 signal fired
 signal reloaded
@@ -89,8 +95,8 @@ var _aiming := false
 var _ads := 0.0
 var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
 var _reload_rot := Vector3.ZERO
-var _falling_mag: MeshInstance3D    # 掉落弹匣替身（世界空间，落地后 queue_free 惰性重建）
-var _hand: Node3D                   # 换弹手部替身（相机子节点，与枪架同级，仅换弹可见）
+var _falling_mag: MeshInstance3D    # 掉落弹匣替身（主世界空间——落地后要与地面交互，留在主世界；queue_free 惰性重建）
+var _hand: Node3D                   # 换弹手部替身（vm 相机子节点，与枪架同级同世界，仅换弹可见）
 var _falling_vel := Vector3.ZERO
 var _mag_scale := Vector3.ONE   # 掉落匣替身按枪种弹匣尺寸的缩放（渐隐时保持比例）
 var _falling := false
@@ -156,6 +162,7 @@ func enter(loadout: Dictionary) -> void:
 			old_holder.visible = false
 			old_holder.queue_free()
 			(old["flash"] as OmniLight3D).queue_free()
+			(old["flash_env"] as OmniLight3D).queue_free()   # 主世界镜像灯随旧枪一并释放
 			_guns.erase(slot)
 		if not _guns.has(slot):
 			_mount_slot(slot)
@@ -170,6 +177,11 @@ func update(dt: float) -> void:
 	_tick_fx(dt)
 	if player == null or player.dead or player.cam == null:
 		return
+	# 本帧相机摆位先钉进 vm 相机（幂等，同帧重复同步零代价）：try_fire 的
+	# 曳光起点 muzzle_world、掉匣落点全靠「holder.to_global=主世界坐标」
+	# 这条不变量，而它成立的唯一前提是 vm 相机 transform == 主相机 transform
+	if player.has_method("sync_vm"):
+		player.sync_vm()
 	fire_cd = maxf(0.0, fire_cd - dt)
 	var slot_before := _cur_slot
 	# R 换弹 / Digit1·Digit2 切枪：边沿检测（只按 is_action_pressed，onfoot 同款读法）
@@ -269,6 +281,7 @@ func update(dt: float) -> void:
 			var flash_mesh: MeshInstance3D = g["flash_mesh"]
 			flash.visible = false
 			flash_mesh.visible = false
+			(g["flash_env"] as OmniLight3D).visible = false   # 主世界镜像闪光同灭
 
 
 ## 开一发：弹数/射线/曳光/伤害结算/后坐力/火光/枪声（按住自动连发）
@@ -282,8 +295,10 @@ func try_fire() -> void:
 	var g := _cur_gun()
 	if not g.is_empty():
 		# 枪口火光：发光片贴枪口 + 瞬时点光（onfoot 同款 0.05s）；点光同位：
-		# 枪架与点光同为相机子节点，holder.transform 把枪口点转到相机局部
-		# （胸前/肩射/开镜各姿态都与发光片同位）
+		# 枪架与点光同为 vm 相机子节点，holder.transform 把枪口点转到相机局部
+		# （胸前/肩射/开镜各姿态都与发光片同位）。vm 相机每帧同步主相机，
+		# 同一相机局部坐标写到主相机下的 flash_env（主世界镜像灯）就是同一
+		# 世界位置——枪侧被 vm 灯照、墙面被主世界灯照，观感与旧「单灯双照」一致
 		var flash: OmniLight3D = g["flash"]
 		var flash_mesh: MeshInstance3D = g["flash_mesh"]
 		var moff: Vector3 = g["muzzle_off"]   # 每槽枪口点（持枪平移随动）
@@ -292,6 +307,9 @@ func try_fire() -> void:
 		flash.position = (g["holder"] as Node3D).transform * moff
 		flash_mesh.visible = true
 		flash_mesh.position = moff
+		var flash_env: OmniLight3D = g["flash_env"]
+		flash_env.visible = true
+		flash_env.position = flash.position   # 同相机局部坐标=同世界位置（sync_vm 不变量）
 	# 射线：相机 from、-Z 前向、右/上基向量抖动 spread（每颗弹丸独立判定）
 	var from: Vector3 = player.cam.global_position
 	var base_dir: Vector3 = -player.cam.global_transform.basis.z
@@ -411,7 +429,10 @@ func current_zoom() -> float:
 	return maxf(float(sc.get("zoom", 1.0)), 1.0)
 
 
-## 枪口世界坐标：当前枪架（相机子节点）局部的枪口点，与枪口火光同位
+## 枪口世界坐标：当前枪架局部的枪口点，与枪口火光同位。
+## holder 在 vm 世界，但 vm 相机每帧同步主相机（HDPlayer.sync_vm 不变量），
+## to_global 的数值 == 主世界坐标——曳光起点（主世界 TracerPool.spawn 消费）
+## 因此零改动；数学与旧「holder 挂主相机」逐位一致
 func muzzle_world() -> Vector3:
 	var g := _cur_gun()
 	if not g.is_empty():
@@ -464,11 +485,15 @@ func _equip(slot: String) -> void:
 		holder.visible = k == slot
 		flash.visible = false
 		flash_mesh.visible = false
+		(gi["flash_env"] as OmniLight3D).visible = false
 
 
-## 挂一把枪（相机子节点）：holder 锚点 + AABB 量枪顶 + 弹匣块 + 枪口火光
+## 挂一把枪（vm 相机子节点）：holder 锚点 + AABB 量枪顶 + 弹匣块 + 枪口火光
+## （枪模整体在 own_world_3d 独立视口渲染——「为什么」见本文件头注与
+## HDPlayer._build_vm；本函数的三处挂载点 holder/flash/换弹手全在 vm 世界，
+## 射线/掉匣/火花等世界结算件一个不迁，见 _drop_mag/_spawn_impact）
 func _mount_slot(slot: String) -> void:
-	if player == null or player.cam == null:
+	if player == null or player.cam == null or player.vm_cam == null:
 		return
 	var gid: String = str(_slots[slot]["id"])
 	# 持枪对齐随动（枪架局部 = 枪身 Δ × GUN_SCALE）：弹匣锚/枪口火光/曳光
@@ -479,7 +504,10 @@ func _mount_slot(slot: String) -> void:
 	# 锚点抬到视锥内（onfoot：原点在相机上时枪会落到画面底边之外）
 	holder.position = GUN_HIP_POS
 	holder.rotation_degrees = GUN_HIP_ROT
-	player.cam.add_child(holder)
+	# 挂 vm 相机（独立世界）：主相机与 vm 相机每帧 transform 一致（sync_vm），
+	# 同一局部摆位渲染出的屏幕落点与旧「挂主相机」逐像素等价，而 vm 世界
+	# 没有任何掩体几何——枪管「穿墙」从根上不存在
+	player.vm_cam.add_child(holder)
 	gun.scale = Vector3.ONE * GUN_SCALE
 	holder.add_child(gun)
 	# 量枪模包围盒：开镜时把枪顶（机瞄/瞄具）正好放到准星正下方
@@ -535,7 +563,20 @@ func _mount_slot(slot: String) -> void:
 	flash.light_energy = 3.0
 	flash.omni_range = 6.0
 	flash.visible = false
-	player.cam.add_child(flash)
+	# 闪光灯随枪迁入 vm 世界：只照枪（vm 世界零几何，灯打不出别的）。
+	# 主世界墙面本被开火闪光照亮的观感由下面的镜像灯承接——玩法契约零回退
+	player.vm_cam.add_child(flash)
+	# 主世界镜像闪光（flash_env）：同相机局部坐标=同世界位置（sync_vm 把两
+	# 相机钉成同一 transform），开火帧同步点亮、0.05s 同灭。与 vm_fill 亮斑
+	# 案不冲突：那是常亮补光随枪扫动（每帧都亮），这盏只在开火 0.05s 闪现、
+	# 语义就是「开火照亮身边」，照墙正是它的本职
+	var flash_env := OmniLight3D.new()
+	flash_env.name = "flash_env"
+	flash_env.light_color = flash.light_color
+	flash_env.light_energy = flash.light_energy
+	flash_env.omni_range = flash.omni_range
+	flash_env.visible = false
+	player.cam.add_child(flash_env)
 	# viewmodel 补光（2026-10「贴掩体枪身分裂」复发主修，公共链一次修全部枪）：
 	# 老的深度吞枪（4f79b10 修的「贴墙枪被深度测试吞掉」）并没有复发——
 	# no_depth_test+render_priority10 防线完好，a/b 隐枪差分实测枪模几何全程
@@ -562,6 +603,11 @@ func _mount_slot(slot: String) -> void:
 	vm_fill.shadow_enabled = false
 	vm_fill.light_cull_mask = 1 << 1   # 只作用 render layer 2：掩体面不再被打出亮斑
 	holder.add_child(vm_fill)
+	# 第四轮（本次架构根治）：枪模整体迁入 own_world_3d 独立视口后，前三层
+	# 补丁的病因全部失去载体——vm 世界没有掩体，无「挡直射光塌暗」也无
+	# 「补光扫亮墙面」。vm_fill 随 holder 迁入 vm 世界继续照枪；cull_mask
+	# 层 2 与枪模入层 2 原样保留（29f/29f+ 回归锁在，且防未来往 vm 世界误
+	# 挂世界件时补光漏照）——防线不拆，只是不再被考验
 	# 补光域隔离的另一半：枪域全体入层 2（光源 cull mask 按 render layer 匹配，
 	# 与节点父子无关）——枪身/镜体/动画匣/枪口火光片一个不漏，vm_fill 照得到
 	# 才有意义；_mount_slot 是四路枪册公共链，primary/secondary 天然全覆盖
@@ -570,7 +616,8 @@ func _mount_slot(slot: String) -> void:
 	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
 			"mag_pos": mag_pos, "mag_size": mag_size,
 			"muzzle_off": MUZZLE_OFF + hold_off,
-			"flash": flash, "flash_mesh": flash_mesh, "top": top, "cx": cx}
+			"flash": flash, "flash_env": flash_env, "flash_mesh": flash_mesh,
+			"top": top, "cx": cx}
 	# 红点镜瞄准线：镜体工厂（_scope_visual reddot 分支）把窗中心 local y 写
 	# 进枪模 meta，这里记进枪架信息包 aim_y——update() 的 ADS 终点据此改按
 	# 「窗中心过屏幕中心」摆位，HUD 正中的红点分划才落进玻璃窗内。其它瞄具
@@ -862,8 +909,11 @@ func _spawn_impact(p: Vector3) -> void:
 	slot["t"] = 0.24
 
 
-## 旧弹匣脱匣：从枪身弹匣井（手部拔匣的脱离点）转入世界空间下坠，
-## 初速 = 枪前向 0.8 + 向下 0.4
+## 旧弹匣脱匣：从枪身弹匣井（手部拔匣的脱离点）转入主世界空间下坠，
+## 初速 = 枪前向 0.8 + 向下 0.4。
+## 世界空间件去留审计：掉落匣要落地贴地（world.ground_height）并留在战场
+## 4s——留主世界（本节点子节点）；起跳点用 holder.to_global 取「主世界坐标」
+## （sync_vm 不变量：vm 世界的 to_global 数值=主世界坐标），与动画匣无缝衔接
 func _drop_mag() -> void:
 	_ensure_falling_mag()
 	var g := _cur_gun()
@@ -898,18 +948,20 @@ func _ensure_falling_mag() -> void:
 	_falling_mag = MeshInstance3D.new()
 	_falling_mag.mesh = box
 	_falling_mag.visible = false
-	_falling_mag.layers |= 1 << 1   # 入补光层 2：脱手旧匣还在 0.9m 补光半径内时同样被照亮
+	# 层 2 位保留（29f+ 回归口径一致）：补光已随枪迁入 vm 世界、照不到主世
+	# 界的它，落地后由主世界日光/ambient/枪口闪光镜像灯（flash_env）照明
+	_falling_mag.layers |= 1 << 1
 	add_child(_falling_mag)
 
 
 ## 换弹手部替身：暗色战术手套低模（护腕 + 掌 + 四指各两节 + 拇指两节，
-## BoxMesh 拼装），挂相机下与枪架同级；材质关深度测试同枪模；
+## BoxMesh 拼装），挂 vm 相机下与枪架同级同世界；材质关深度测试同枪模；
 ## 懒重建（同掉落弹匣思路），仅换弹期间可见
 func _ensure_hand() -> void:
-	if _hand != null or player == null or player.cam == null:
+	if _hand != null or player == null or player.vm_cam == null:
 		return
 	_hand = _build_hand()
-	player.cam.add_child(_hand)
+	player.vm_cam.add_child(_hand)
 
 
 ## 手套构造（不入树、默认隐身）：暗色战术手套低模（护腕 + 掌 + 四指各两节
