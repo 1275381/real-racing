@@ -29,12 +29,16 @@ const KINDS := {
 	"sand": {"set": "gravelly_sand", "m": 2.5, "mode": "natural", "lum": 0.453},
 	"rock": {"dir": "res://assets/pbr/models/boulder_01/textures/", "set": "boulder_01",
 			"m": 3.0, "mode": "natural", "lum": 0.374},
+	"bark": {"set": "bark_brown_02", "m": 1.5, "mode": "natural", "lum": 0.338},
+	"brick": {"set": "brick_4", "m": 2.0, "mode": "tint", "lum": 0.459},
+	"plaster_paint": {"set": "painted_plaster_wall", "m": 2.5, "mode": "tint", "lum": 0.644},
 }
 
 ## 真实反照率系数：见 dress() 注释
 const ALBEDO_REAL := 0.78
 
 static var _cache := {}
+static var _scenes := {}
 
 
 ## 取一组贴图 {diff, nor, arm}；任一缺失返回 {}（调用方保留原材质）
@@ -115,3 +119,133 @@ static func make(kind: String, c: Color, meters := 0.0, rough := 0.9) -> Standar
 	m.roughness = rough
 	dress(m, kind, meters)
 	return m
+
+
+## 实拍/建模场景加载缓存（路径空或缺失返回 null，调用方回退原几何）。
+## 首次加载时把叶片类材质（带透明的）统一改 alpha 剪切 + 双面：导出的
+## 羽叶是半透明混合，远看会和天空排序错乱、近看发虚
+static func scene(path: String) -> PackedScene:
+	if path == "":
+		return null
+	if not _scenes.has(path):
+		var ps: PackedScene = load(path) if ResourceLoader.exists(path) else null
+		if ps == null:
+			push_warning("[烽火地带] 模型缺失：%s（另一台电脑请 git lfs pull，暂用原几何）" % path)
+		else:
+			var probe: Node = ps.instantiate()
+			for n in probe.find_children("*", "MeshInstance3D", true, false):
+				var mesh: Mesh = (n as MeshInstance3D).mesh
+				for si in mesh.get_surface_count():
+					var m := mesh.surface_get_material(si) as StandardMaterial3D
+					if m != null and m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+						m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+						m.alpha_scissor_threshold = 0.5
+						m.cull_mode = BaseMaterial3D.CULL_DISABLED
+			probe.free()
+		_scenes[path] = ps
+	return _scenes[path]
+
+
+## 场景里所有网格及其相对根的变换（给 MultiMesh 批量散布用）
+static func meshes_of(ps: PackedScene) -> Array:
+	var out := []
+	var root: Node3D = ps.instantiate()
+	for n in root.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		var t := Transform3D()
+		var q: Node = mi
+		while q != root and q != null:
+			if q is Node3D:
+				t = (q as Node3D).transform * t
+			q = q.get_parent()
+		out.append({"mesh": mi.mesh, "xf": t})
+	root.free()
+	return out
+
+
+## 写实玻璃：镀膜反射玻璃（幕墙/窗带）。原「暗蓝 metallic 0.6」在实拍
+## 天空下读成蓝色塑料板；改成镜面暗玻璃后由 HDRI/SDFGI 反射出天与周边建筑
+static func glass(m: StandardMaterial3D) -> void:
+	# 镀膜幕墙玻璃：中灰蓝 + 全金属反射——正对时也能映出约 1/3 的天空与
+	# 周边建筑（纯暗色镜面只在掠射角反光，正面读成一块黑板）
+	m.albedo_color = Color(0.3, 0.36, 0.4)
+	m.metallic = 1.0
+	m.roughness = 0.05
+
+
+static var _grime: Array = []
+
+
+## 风化污迹贴图（程序生成，3 种变体）：墙顶滴水暗边 + 往下的雨水流挂竖条 +
+## 墙脚泛起的沙土带，透明底。每张对应约 6 m 墙宽（长墙分段贴，条纹宽度才真实）
+static func grime_tex(variant: int) -> Texture2D:
+	if _grime.is_empty():
+		for k in 3:
+			_grime.append(_make_grime(20261017 + k * 97))
+	return _grime[variant % _grime.size()]
+
+
+static func _make_grime(seed_v: int) -> Texture2D:
+	var w := 384
+	var h := 512
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var n := FastNoiseLite.new()
+	n.seed = seed_v
+	n.frequency = 0.11
+	var n2 := FastNoiseLite.new()
+	n2.seed = seed_v + 3
+	n2.frequency = 0.025
+	var n3 := FastNoiseLite.new()
+	n3.seed = seed_v + 5
+	n3.frequency = 0.03
+	for x in w:
+		var col := clampf(n.get_noise_1d(float(x)) * 2.0 + 0.25, 0.0, 1.0)
+		var length := 0.18 + 0.7 * clampf(n2.get_noise_1d(float(x)) + 0.5, 0.0, 1.0)
+		for y in h:
+			var v := float(y) / float(h)
+			var a := 0.0
+			if v < 0.035:
+				a = 0.55   # 墙顶滴水暗边
+			if v < length:
+				a = maxf(a, col * pow(1.0 - v / length, 1.3) * 0.95)
+			var foot := clampf((v - 0.84) / 0.16, 0.0, 1.0)   # 墙脚沙土带
+			var foot_a := foot * foot * (0.55 + 0.3 * n3.get_noise_2d(float(x), float(y)))
+			a *= 0.8 + 0.2 * n3.get_noise_2d(float(x) * 3.0, float(y) * 0.3)
+			var c := Color(0.16, 0.14, 0.11, clampf(a, 0.0, 1.0))
+			if foot_a > a:
+				c = Color(0.46, 0.37, 0.25, clampf(foot_a, 0.0, 1.0))
+			img.set_pixel(x, y, c)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
+
+
+## 给一面墙（轴对齐盒：中心 c、尺寸 s）挂风化污迹贴花：只给「像墙」的盒
+## （高 ≥2.5m、长 ≥3m、厚 ≤0.8m），沿墙面法线投影、两面都染；长墙按 ≤6m
+## 分段、段间换变体。返回是否挂了
+static func grime_decal(parent: Node3D, c: Vector3, s: Vector3) -> bool:
+	var along_x := s.x >= s.z
+	var length := s.x if along_x else s.z
+	var thick := s.z if along_x else s.x
+	if s.y < 2.5 or length < 3.0 or thick > 0.8:
+		return false
+	# 贴花沿本地 -Y 投影、纹理 V 沿本地 Z：绕 X 转 90° 让投影轴 = 墙法线、
+	# 纹理竖向朝下（贴图第 0 行 = 墙顶）
+	var basis := Basis(Vector3.RIGHT, PI * 0.5)
+	var axis := Vector3.RIGHT
+	if not along_x:
+		basis = Basis(Vector3.UP, PI * 0.5) * basis
+		axis = Vector3(0, 0, -1)
+	var segs := int(ceil(length / 6.0))
+	var seg_len := length / float(segs)
+	for k in segs:
+		var d := Decal.new()
+		d.texture_albedo = grime_tex(int(absf(c.x * 3.0 + c.z * 7.0)) + k)
+		d.size = Vector3(seg_len, thick + 0.6, s.y)
+		d.normal_fade = 0.0
+		d.upper_fade = 0.05
+		d.lower_fade = 0.05
+		d.cull_mask = 1
+		var off := (float(k) + 0.5) * seg_len - length * 0.5
+		d.transform = Transform3D(basis, c + axis * off)
+		parent.add_child(d)
+	return true

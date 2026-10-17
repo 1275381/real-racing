@@ -61,7 +61,16 @@ const PH_TYRE := "res://assets/pbr/models/old_tyre/old_tyre_1k.gltf"
 const PH_JERRYCAN := "res://assets/pbr/models/metal_jerrycan/metal_jerrycan_1k.gltf"
 ## 道具 GLB 内材质名 → PBR 贴图类（木头/麻袋/帆布/树皮没有对应实拍贴图，保留原样）
 const PROP_PBR := {"Plaster": "stucco", "Concrete": "concrete", "Paint": "paint_rust",
-		"TankPaint": "paint_rust", "Rust": "paint_rust", "Metal": "paint_rust", "Rock": "rock"}
+		"TankPaint": "paint_rust", "Rust": "paint_rust", "Metal": "paint_rust", "Rock": "rock",
+		"Bark": "bark"}
+## 地表点缀（实拍减面版）：枯枝丛 + 低矮灌丛，散布在中环/荒野空地
+const GROUND_COVER := [
+	{"path": "res://assets/pbr/models/dry_branches_medium_01/dry_branches_medium_01_lod.glb",
+		"n": 150, "smin": 0.8, "smax": 1.35, "sy": 1.0},
+	{"path": "res://assets/pbr/models/shrub_04/shrub_04_lod.glb",
+		"n": 110, "smin": 1.8, "smax": 3.2, "sy": 1.25},
+]
+const COVER_CHUNK := 50.0          # 散布分块边长（分块才能按距离裁剪/切 LOD）
 ## GLB 失败时的兜底盒底色（贴合各道具材质气质）
 const FALLBACK_COLOR := {
 	"barrel": Color(0.44, 0.49, 0.53), "container": Color(0.48, 0.42, 0.35),
@@ -305,6 +314,8 @@ func build() -> void:
 	# 撤离信标 ×2：主撤离（东侧绿标）+ 大坝广场第二撤离（93,-94），参数化复用同一生成器
 	_build_extract(extract_pos)
 	_build_extract(extract2_pos)
+	# 地表植被最后撒：大坝/四新区的障碍物都已登记，才能避开建筑
+	_scatter_ground_cover()
 
 
 ## 进靶馆模式：雾拉近/环境光稍暗/夕阳压弱（室内氛围）；回大厅/行动恢复。
@@ -741,6 +752,67 @@ func _prop_place(name: String, x: float, z: float, rot_y: float, scl: Vector3,
 
 
 ## GLB 预载缓存（battlefield.gd 存在性检查同款：load 失败退化兜底盒不炸）
+## 地表植被点缀：只撒在中环/荒野空地（避开障碍物外扩 1.5m、出生点、撤离点、
+## 靶馆入口），固定种子可复现；按 50m 分块建 MultiMesh，120m 外淡出
+func _scatter_ground_cover() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261017
+	var keep_out: Array = [spawn_pos, extract_pos, extract2_pos,
+			Vector3(120.0, 0.0, 154.0)]
+	for spec in GROUND_COVER:
+		var ps := PBR.scene(str(spec["path"]))
+		if ps == null:
+			continue
+		var parts: Array = PBR.meshes_of(ps)
+		var chunks := {}   # Vector2i -> Array[Transform3D]
+		var placed := 0
+		var tries := 0
+		while placed < int(spec["n"]) and tries < int(spec["n"]) * 12:
+			tries += 1
+			var x := rng.randf_range(-BOUND + 4.0, BOUND - 4.0)
+			var z := rng.randf_range(-BOUND + 4.0, BOUND - 4.0)
+			var zone := zone_at(x, z)
+			if zone != "mid" and zone != "wild":
+				continue
+			var ok := true
+			for kp in keep_out:
+				if Vector2(x - kp.x, z - kp.z).length() < 7.0:
+					ok = false
+					break
+			if ok:
+				for ob in obstacles:
+					if absf(x - float(ob["cx"])) < float(ob["hx"]) + 1.5 \
+							and absf(z - float(ob["cz"])) < float(ob["hz"]) + 1.5 \
+							and float(ob["top"]) < 30.0:
+						ok = false
+						break
+			if not ok:
+				continue
+			var sc := rng.randf_range(float(spec["smin"]), float(spec["smax"]))
+			var xf := Transform3D(Basis(Vector3.UP, rng.randf() * TAU)
+					.scaled(Vector3(sc, sc * float(spec["sy"]), sc)), Vector3(x, 0.0, z))
+			var key := Vector2i(int(floor(x / COVER_CHUNK)), int(floor(z / COVER_CHUNK)))
+			if not chunks.has(key):
+				chunks[key] = []
+			chunks[key].append(xf)
+			placed += 1
+		for key in chunks:
+			var xfs: Array = chunks[key]
+			for part in parts:
+				var mm := MultiMesh.new()
+				mm.transform_format = MultiMesh.TRANSFORM_3D
+				mm.mesh = part["mesh"]
+				mm.instance_count = xfs.size()
+				for i in xfs.size():
+					mm.set_instance_transform(i, (xfs[i] as Transform3D) * (part["xf"] as Transform3D))
+				var mmi := MultiMeshInstance3D.new()
+				mmi.multimesh = mm
+				mmi.visibility_range_end = 120.0
+				mmi.visibility_range_end_margin = 15.0
+				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+				add_child(mmi)
+
+
 ## 写实化小件点缀（纯装饰、不登记碰撞）：每辆残骸/盖布车旁一只旧轮胎，
 ## 每隔一个木箱放一个铁油壶——生活痕迹，不改任何掩体与点位
 func _scatter_decor() -> void:

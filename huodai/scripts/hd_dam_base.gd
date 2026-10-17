@@ -27,7 +27,9 @@ extends Node3D
 ## track/lot/gray/net），与 hd_dam.gd 9 枚合计=24，零跨文件引用。
 
 const PBR := preload("res://scripts/hd_pbr.gd")
-const TRUCK_GLB := "res://assets/pbr/models/truck/truck.glb"   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
+const TRUCK_GLB := "res://assets/pbr/models/truck/truck.glb"
+const PALM_GLB := "res://assets/pbr/models/palm/palm.glb"   # Blender 建模写实棕榈（make_palm.py）
+const SHRUB_GLB := "res://assets/pbr/models/shrub_04/shrub_04_lod.glb"   # 实拍灌木（减面版）   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 const WALL_T := 0.5             # 厂房墙厚
 const HOARD_T := 0.12           # 围挡板厚
 const HOARD_H := 2.2            # 围挡板高
@@ -227,6 +229,9 @@ func build(root: Node3D) -> void:
 ## track 深棕辙印 / gray 灰箱 / net 伪装网半透明 / lot 硬地压花（评审 #11 压暗）
 ## 美术写实化：坝底工业区换实拍材质——厂房波纹铁皮、白罐/红门架带锈旧漆、
 ## 山体岩石、场地砾沙；植物/烟/伪装网保留原材质
+var _grime_mats: Array = []   # 挂风化污迹贴花的墙体材质
+
+
 func _dress_pbr() -> void:
 	var plan := {
 		"tan": ["paint_rust", 2.0],
@@ -244,6 +249,9 @@ func _dress_pbr() -> void:
 	for key in plan:
 		if _mats.has(key):
 			PBR.dress(_mats[key], str(plan[key][0]), float(plan[key][1]))
+	for key in ["green", "gray", "tan"]:
+		if _mats.has(key):
+			_grime_mats.append(_mats[key])
 
 
 func _make_mats() -> void:
@@ -702,6 +710,26 @@ func _build_dumper(w) -> void:
 ## 棕榈×18：弯干（基部摆根 rot.z 倾角）+ 顶端 6 片扁叶放射（YXZ 欧拉
 ## (0, yaw, -0.5) 先垂后转，共网复用）；不注册碰撞（软景，计划口径）
 func _build_palms(w) -> void:
+	# 美术写实化：Blender 建模棕榈（叶痕环弯干 + 拱垂羽叶 + 枯叶裙，树皮实拍贴图）
+	# 替代方块拼装；株高/倾斜沿用原逐株参数，朝向随机。模型缺失回退原拼装
+	var palm := PBR.scene(PALM_GLB)
+	if palm != null:
+		for i in PALM_XZ.size():
+			var pv: Vector2 = PALM_XZ[i]
+			var ph := 5.2 + 0.45 * float(i % 5)
+			var lean := 0.05 + 0.03 * float((i * 3) % 4)
+			if i % 2 == 1:
+				lean = -lean
+			var pivot := Node3D.new()
+			pivot.position = Vector3(pv.x, 0.0, pv.y)
+			pivot.rotation.z = lean
+			w.add_child(pivot)
+			var t: Node3D = palm.instantiate()
+			var k := ph / 6.0
+			t.scale = Vector3(0.9 + 0.1 * k, k, 0.9 + 0.1 * k)
+			t.rotation.y = float(i) * 2.17
+			pivot.add_child(t)
+		return
 	for i in PALM_XZ.size():
 		var pv: Vector2 = PALM_XZ[i]
 		var ph := 5.2 + 0.45 * float(i % 5)       # 5.2~7.0m（计划「高 5-7」）
@@ -787,11 +815,26 @@ func _build_hill_skirts(w) -> void:
 				w.add_child(mi)
 			else:           # 灌木小半球
 				var bs := 0.5 + 0.4 * float(seed_v % 100) / 100.0
-				var bi := MeshInstance3D.new()
-				bi.mesh = _bush_mesh
-				bi.position = Vector3(px, 0.0, pz)
-				bi.scale = Vector3(bs, bs, bs)
-				w.add_child(bi)
+				_bush_at(w, Vector3(px, 0.0, pz), bs, float(seed_v % 628) / 100.0)
+
+
+## 一丛灌木：实拍扫描灌木（0.58m 宽的低矮荒漠灌丛，按原半球半径放大到
+## 同等占地）；缺失时回退原深橄榄半球
+func _bush_at(w, p: Vector3, r: float, yaw: float) -> void:
+	var shrub := PBR.scene(SHRUB_GLB)
+	if shrub != null:
+		var t: Node3D = shrub.instantiate()
+		var k := r * 3.4
+		t.scale = Vector3(k, k * 1.25, k)
+		t.position = p
+		t.rotation.y = yaw
+		w.add_child(t)
+		return
+	var mi := MeshInstance3D.new()
+	mi.mesh = _bush_mesh
+	mi.position = p
+	mi.scale = Vector3(r, r, r)
+	w.add_child(mi)
 
 
 ## 主峰灌木丛（SHRUB_HOST=脊3）：LCG 伪随机固定序列（幂等），上半球面采样
@@ -810,11 +853,7 @@ func _build_shrubs(w) -> void:
 		var sz: float = hp.z + hs.z * sin(ph) * sin(th)
 		seed_v = (int(seed_v) * 1103515245 + 12345) % 2147483648
 		var r := 0.6 + 0.8 * float(seed_v % 1000) / 1000.0
-		var mi := MeshInstance3D.new()
-		mi.mesh = _bush_mesh
-		mi.position = Vector3(sx, sy, sz)
-		mi.scale = Vector3(r, r, r)
-		w.add_child(mi)
+		_bush_at(w, Vector3(sx, sy, sz), r, th * 3.0)
 
 
 ## 烟柱×3：10 球递升叠片（第 4 轮：每球 LCG 随机 xz 偏移 ±0.6 破「等距球串」、
@@ -861,6 +900,9 @@ func _place_box(parent: Node3D, x: float, y: float, z: float, w: float, h: float
 	if rot != Vector3.ZERO:
 		mi.rotation = rot
 	parent.add_child(mi)
+	# 写实化：大面墙挂风化污迹贴花（雨水流挂 + 墙脚尘土）
+	if rot == Vector3.ZERO and _grime_mats.has(mat):
+		PBR.grime_decal(parent, Vector3(x, y, z), Vector3(w, h, d))
 	return mi
 
 

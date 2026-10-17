@@ -58,7 +58,8 @@ extends Node3D
 ## 共用网格：单位盒按尺寸缓存（_box_mesh 同 base 款）+ 筒仓大圆柱/锥顶/旗杆/
 ## 绝缘子盘 4 张 CylinderMesh + 料堆单位球——细件全走实例 scale。
 
-const PBR := preload("res://scripts/hd_pbr.gd")   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
+const PBR := preload("res://scripts/hd_pbr.gd")
+const QUIVER_GLB := "res://assets/pbr/models/quiver_tree_02/quiver_tree_02_lod.glb"   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 const WALL_T := 0.5             # 建筑墙厚（base 厂房同款）
 const GROUND_TOP := 0.03        # 新区铺装顶面统一标高：与大地 y0 错层防 z-fighting
 ## 四新区 loot 点 7（全部落地面 y=0——hd_loot 容器 bot=0 地面语义 + 纯 XZ 搜索；
@@ -112,6 +113,9 @@ func build(root: Node3D) -> void:
 
 ## 美术写实化：四新区换实拍材质——营房/箱体旧漆铁皮、主变压器与筒仓带锈钢、
 ## 游客中心与营房墙面风化抹灰、路面沥青、广场混凝土；玻璃/瓷瓶/帆布保留
+var _grime_mats: Array = []   # 挂风化污迹贴花的墙体材质
+
+
 func _dress_pbr() -> void:
 	var plan := {
 		"camo": ["container", 2.4],
@@ -121,8 +125,8 @@ func _dress_pbr() -> void:
 		"corten": ["paint_rust", 1.5],
 		"silo": ["paint_rust", 3.0],
 		"siloshade": ["paint_rust", 3.0],
-		"yellow": ["stucco", 3.0],
-		"white": ["stucco", 3.0],
+		"yellow": ["brick", 2.2],
+		"white": ["plaster_paint", 3.0],
 		"dark": ["paint_rust", 1.5],
 		"plaza": ["concrete", 3.0],
 		"red": ["paint_rust", 2.0],
@@ -130,6 +134,10 @@ func _dress_pbr() -> void:
 	for key in plan:
 		if _mats.has(key):
 			PBR.dress(_mats[key], str(plan[key][0]), float(plan[key][1]))
+	for key in ["white", "yellow", "concrete", "camo", "panel"]:
+		if _mats.has(key):
+			_grime_mats.append(_mats[key])
+	PBR.glass(_mats["glass"])
 
 
 func _make_mats() -> void:
@@ -221,6 +229,9 @@ func _place_box(parent: Node3D, x: float, y: float, z: float, w: float, h: float
 	if rot != Vector3.ZERO:
 		mi.rotation = rot
 	parent.add_child(mi)
+	# 写实化：大面墙挂风化污迹贴花（雨水流挂 + 墙脚尘土）
+	if rot == Vector3.ZERO and _grime_mats.has(mat):
+		PBR.grime_decal(parent, Vector3(x, y, z), Vector3(w, h, d))
 	return mi
 
 
@@ -1207,10 +1218,20 @@ func _visitor_plaza(w) -> void:
 				Vector3(5.2, 4.4, 5.2))
 		_cyl(w, _mesh_insulator, Vector3(tp[0], 0.14, tp[1]), _mats["dark"],
 				Vector3(4.4, 1.6, 4.4))
-		_place_box(w, tp[0], 1.05, tp[1], 0.26, 2.1, 0.26, _mats["dark"])
-		# 树冠（第 3 轮判图 #11：冠球底缘上收——干冠交接在 y0.75，不再拖地悬浮）
-		_pile(w, Vector3(tp[0], 2.55, tp[1]), Vector3(1.7, 1.8, 1.7),
-				_mats["camo"])
+		# 美术写实化：树池种实拍箭筒树（荒漠芦荟树，CC0 扫描减面版，放大到
+		# ~3.5m）；缺失时回退原「干 + 树冠球」
+		var qt := PBR.scene(QUIVER_GLB)
+		if qt != null:
+			var tree: Node3D = qt.instantiate()
+			tree.position = Vector3(tp[0], 0.3, tp[1])
+			tree.scale = Vector3.ONE * 2.4
+			tree.rotation.y = tp[0] * 0.37
+			w.add_child(tree)
+		else:
+			_place_box(w, tp[0], 1.05, tp[1], 0.26, 2.1, 0.26, _mats["dark"])
+			# 树冠（第 3 轮判图 #11：冠球底缘上收——干冠交接在 y0.75，不再拖地悬浮）
+			_pile(w, Vector3(tp[0], 2.55, tp[1]), Vector3(1.7, 1.8, 1.7),
+					_mats["camo"])
 		_place_box(w, tp[0] + 2.1, 0.36, tp[1] + 0.2, 2.1, 0.14, 0.6,
 				_mats["white"])
 		_place_box(w, tp[0] + 2.1, 0.78, tp[1] + 0.52, 2.1, 0.74, 0.12,

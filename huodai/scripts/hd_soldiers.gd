@@ -17,10 +17,15 @@ const TracerPool := preload("res://scripts/tracer_pool.gd")
 ## 士兵模型与大战场共用；load 而非 preload：模型走 Git LFS，另一台电脑没拉到真文件
 ## 时 preload 会让脚本编译失败（battlefield.gd:43-46 同款兜底），失败退化胶囊人
 const SOLDIER_PATH := "res://assets/battle/soldier.glb"
+const SOLDIER_HD_PATH := "res://assets/pbr/models/soldier/soldier_hd.glb"   # huodai/tools/blender/make_soldier_hd.py
 const SOLDIER_SCALE := 1.1                 # 模型/命中球统一放大倍率：1.95m 略压玩家（1.55m 眼高）
                                            # 有压迫感但不畸形；1.5 是大战场遗产（AI 2.65m vs 玩家 1.55m）
 const UNIFORM_COL := Color(0.7, 0.5, 0.4)  # 敌军赭红：军装（battlefield._apply_team_colors）
 const GEAR_COL := Color(0.48, 0.41, 0.33)  # 敌军赭红：装具
+## 写实士兵（布料贴图）用的同色系深一档：原赭红在实拍光照 + 写实人形上读成裸露
+## 的粉色皮肤；压暗去粉成卡其棕，仍与蓝灰环境色相拉开、远处醒目
+const UNIFORM_COL_HD := Color(0.56, 0.43, 0.32)
+const GEAR_COL_HD := Color(0.4, 0.35, 0.28)
 const UNIFORM_EMISSION := 0.18             # 军装/装具微自发光：远景从雾里提对比（问题②，宁少勿假）
 
 const AI_TICK := 1.0 / 60.0     # AI 定步（battlefield.gd:22，与渲染帧解耦）
@@ -83,7 +88,11 @@ func build(world, player, audio) -> void:
 	_tracers = TracerPool.new()
 	add_child(_tracers)
 	_tracers.setup(32, Color(1.0, 0.55, 0.35), 4.0, 0.03)
-	var scene: PackedScene = load(SOLDIER_PATH) if ResourceLoader.exists(SOLDIER_PATH) else null
+	# 美术写实化第二轮：优先用写实士兵（细分身体 + 布料/皮革 PBR + 装具细节，
+	# 骨架/动画/材质名与旧模型完全一致）；没拉到 LFS 时退回旧模型
+	var scene: PackedScene = load(SOLDIER_HD_PATH) if ResourceLoader.exists(SOLDIER_HD_PATH) else null
+	if scene == null:
+		scene = load(SOLDIER_PATH) if ResourceLoader.exists(SOLDIER_PATH) else null
 	if scene == null:
 		push_warning("[烽火地带] 士兵模型加载失败：%s —— 暂用胶囊人代替" % SOLDIER_PATH)
 	soldiers.clear()
@@ -550,11 +559,12 @@ func _make_body(scene: PackedScene) -> Dictionary:
 			var m: Material = src.surface_get_material(si)
 			if m is StandardMaterial3D:
 				var t: StandardMaterial3D = m.duplicate()
+				var hd := t.albedo_texture != null and t.normal_enabled
 				if t.resource_name == "Uniform":
-					t.albedo_color = UNIFORM_COL
+					t.albedo_color = UNIFORM_COL_HD if hd else UNIFORM_COL
 					_emissive(t)   # 远景可见性：暖雾里赭红会隐身，微自发光提对比
 				elif t.resource_name == "Gear":
-					t.albedo_color = GEAR_COL
+					t.albedo_color = GEAR_COL_HD if hd else GEAR_COL
 					_emissive(t)
 				mi.set_surface_override_material(si, t)
 				mats.append(t)
@@ -574,7 +584,9 @@ func _make_body(scene: PackedScene) -> Dictionary:
 func _emissive(m: StandardMaterial3D) -> void:
 	m.emission_enabled = true
 	m.emission = m.albedo_color
-	m.emission_energy_multiplier = UNIFORM_EMISSION
+	# 写实士兵（带布料贴图）自发光减到 1/3：实拍天空 + 全局光下已足够醒目，
+	# 原 0.18 会把织纹压平成一块发光的纯色
+	m.emission_energy_multiplier = UNIFORM_EMISSION * (0.35 if m.albedo_texture != null else 1.0)
 
 
 ## 同步模型位置朝向 + 按状态切动画：death / 移动交火 walk / 移动 run / 原地交火 aim / idle
