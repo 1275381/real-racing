@@ -8,7 +8,7 @@ extends Node3D
 ## 契约（main.gd 装配）：build(world, player, audio) / update(dt, raid_active) /
 ## raycast / apply_hit / reset_all / alive_count / soldiers / player_hit / killed / all_dead。
 
-signal player_hit(dmg: float)    # 敌弹命中玩家（main 接到 player.hit）
+signal player_hit(dmg: float, from: Vector3)    # 敌弹命中玩家（main 接到 player.hit + 受击方向）
 signal killed(info: Dictionary)  # {i, dist} 击杀播报（dist = 玩家到目标的水平距离）
 signal all_dead()                # 全灭（只发一次）
 
@@ -52,6 +52,22 @@ const MAG_SIZE := 30            # rifle 弹匣
 const RELOAD_T := 2.2
 const SPREAD_BASE := 0.045      # 基础散布 + 距离/60 × 0.05（削弱：0.03→0.045，中远距命中率降）
 const SPREAD_PER_M := 0.05 / 60.0
+## 2026-10 改进方案第 3 节（用户定案「30 m 主动发现 + 受击/听到枪声 120 m 内还击」）：
+## 警觉后索敌/开火射程升到 ALERT_DIST；散布按 30 m 值封顶不再随距离放大——
+## 命中率随距离平方自然衰减（离线 8 万发模型：30 m 36% / 60 m 9% / 120 m 2%），
+## 远距离有风险但不致命；伤害再按距离 1.0 → 0.6 衰减
+const ALERT_DIST := 120.0       # 警觉（受击/听到枪声）后的索敌与开火射程
+const ALERT_TIME := 25.0        # 警觉持续秒数
+const SPREAD_CAP_DIST := 30.0   # 散布增长封顶距离
+const SHOT_HEAR_R := 60.0       # 玩家枪声传播半径（以后加消音器降到 20 m）
+const SPRINT_HEAR_R := 14.0     # 玩家疾跑脚步被听见的半径（步行/蹲走听不见）
+const REACT_MIN := 0.35         # 警觉后首发反应时间
+const REACT_MAX := 1.0
+const COVER_SEARCH_R := 14.0    # 找掩体半径
+const COVER_MIN_TOP := 1.2      # 掩体最低高度（挡住站姿胸口）
+const COVER_MIN_DIST := 12.0    # 离玩家比这近就不找掩体（近战照旧侧移对射）
+const RUN_SPEED := 4.2          # 跑向掩体
+const STEP_HEAR_R := 22.0       # 敌人脚步声可闻半径（3D 音源 max_distance 同步）
 const SPRINT_SPREAD_MUL := 1.4  # 玩家疾跑散布再放大
 const SPRINT_SPEED := 8.0       # move_speed ≥ 此值视为疾跑（onfoot 步 6 / 跑 11.5）
 const RIFLE_DMG := 20.0         # guns.gd rifle 单发伤害
@@ -130,6 +146,8 @@ func build(world, player, audio) -> void:
 			"strafe_t": 0.0, "strafe_dir": 1.0,
 			"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO,
 			"death_t": 0.0,
+			"alert_t": 0.0, "shots": 0, "step_t": 0.0,
+			"has_cover": false, "cover": home, "peek": home, "cover_phase": 0, "cover_t": 0.0,
 		})
 		_bodies.append(_make_body(scene))
 	# 冷启动 LOD 预处理（2026-10 性能）：进图瞬间 31 兵全部挂树蒙皮，前 ~2s
@@ -142,6 +160,8 @@ func build(world, player, audio) -> void:
 func update(dt: float, raid_active: bool) -> void:
 	if _tracers != null:
 		_tracers.tick(dt)
+	if raid_active:
+		_hear_sprint()
 	_ai_acc += dt
 	var steps := 0
 	while _ai_acc >= AI_TICK and steps < 3:
@@ -182,7 +202,7 @@ func apply_hit(i: int, dmg: float, head: bool) -> Dictionary:
 		return {"killed": false}
 	s["hp"] = float(s["hp"]) - dmg
 	if float(s["hp"]) > 0.0:
-		_agro(s)   # 受击即还击：立即转向玩家并进入交战
+		_alert(s, _peye(), true)   # 受击即还击：转向玩家、120 m 内进入交战、找掩体
 		return {"killed": false}
 	s["dead"] = true
 	s["state"] = "dead"
@@ -231,6 +251,10 @@ func reset_all() -> void:
 		s["death_t"] = 0.0
 		s["block_t"] = 0.0
 		s["detour_t"] = 0.0
+		s["alert_t"] = 0.0
+		s["shots"] = 0
+		s["has_cover"] = false
+		s["cover_phase"] = 0
 		# 上局淡出过的材质复原
 		var b: Dictionary = _bodies[i]
 		b["fading"] = false
@@ -267,34 +291,47 @@ func _update_soldier(i: int, dt: float, raid_active: bool) -> void:
 	var state: String = s["state"]
 	var dist := _pdist(s)
 	var engaged := false
+	var alerted: bool = float(s["alert_t"]) > 0.0
+	if alerted:
+		s["alert_t"] = float(s["alert_t"]) - dt
+	var fire_range: float = ALERT_DIST if alerted else ENGAGE_DIST
 	if state == "combat":
 		if not _player_alive():
+			s["has_cover"] = false
 			_to_search(s)
 		else:
-			if s["los_ok"] and dist < ENGAGE_DIST:
+			if s["los_ok"] and dist < fire_range:
 				engaged = true
 				s["lost_t"] = 0.0
 				s["last_known"] = _peye()
-			else:
+			elif not (bool(s["has_cover"]) and alerted):
+				# 掩体后蹲守/探身期间看不见是主动的，不算「跟丢」
 				s["lost_t"] = float(s["lost_t"]) + dt
-			if engaged:
+			if bool(s["has_cover"]) and alerted:
+				_cover_move(s, dt)          # 跑掩体 → 掩体后 ⇄ 探身对射
+			elif engaged:
 				_combat_move(s, dist, dt)   # 站定/小侧移，面向玩家
 			else:
 				_move_toward(s, s["last_known"], PATROL_SPEED * ENGAGE_SPEED_MUL, dt)
-			if float(s["lost_t"]) > LOSE_TIME:
+			if float(s["lost_t"]) > LOSE_TIME or (bool(s["has_cover"]) and not alerted):
+				s["has_cover"] = false
 				_to_search(s)
 	elif state == "search":
 		if s["los_ok"]:
 			_to_combat(s)
-			engaged = true
+			engaged = dist < fire_range
 		else:
 			s["search_t"] = float(s["search_t"]) - dt
 			s["search_pick_t"] = float(s["search_pick_t"]) - dt
 			if float(s["search_pick_t"]) <= 0.0:
 				_pick_search_goal(s)
-			if _move_toward(s, s["search_goal"], PATROL_SPEED * SEARCH_SPEED_MUL, dt) \
+			var spd: float = PATROL_SPEED * (SEARCH_SPEED_MUL * 1.4 if alerted else SEARCH_SPEED_MUL)
+			if _move_toward(s, s["search_goal"], spd, dt) \
 					or float(s["search_t"]) <= 0.0:
-				_to_patrol(s)
+				if alerted:
+					_pick_search_goal(s)    # 警觉中搜到点不收兵，继续在附近找
+				else:
+					_to_patrol(s)
 	else:
 		if s["los_ok"]:
 			_to_combat(s)
@@ -302,6 +339,7 @@ func _update_soldier(i: int, dt: float, raid_active: bool) -> void:
 		else:
 			_patrol_move(s, dt)
 	s["engaged"] = engaged
+	_step_sound(s, dt)
 	_write_pose(i)
 	if engaged:
 		_try_fire(s, dt, dist)
@@ -352,13 +390,177 @@ func _to_patrol(s: Dictionary) -> void:
 
 ## 受击即还击：立即（不 lerp）转向玩家并进入交战，最后目击点同步为玩家眼位
 func _agro(s: Dictionary) -> void:
-	var pe: Vector3 = _peye()
-	s["state"] = "combat"
-	s["los_ok"] = true
-	s["los_t"] = LOS_RECHECK
-	s["lost_t"] = 0.0
-	s["last_known"] = pe
-	s["yaw"] = atan2(pe.x - s["pos"].x, pe.z - s["pos"].z)
+	_alert(s, _peye(), true)
+
+
+## 警觉（2026-10 改进方案第 3 节）：受击（hurt）或听到枪声/疾跑脚步时调用。
+## 立即转向威胁点、警觉 ALERT_TIME 秒（索敌/开火射程升到 120 m）、下一拍就复测
+## 视线、首发反应 0.35–1.0 s；受击直接进交战，听到则去声源附近搜索。
+## 离玩家 12 m 外时先找最近掩体（掩体后 ⇄ 探身对射，_cover_move）
+func _alert(s: Dictionary, threat: Vector3, hurt: bool) -> void:
+	if s["dead"]:
+		return
+	var fresh: bool = float(s["alert_t"]) <= 0.0
+	s["alert_t"] = ALERT_TIME
+	s["last_known"] = threat
+	s["yaw"] = atan2(threat.x - s["pos"].x, threat.z - s["pos"].z)
+	s["los_t"] = 0.0
+	s["fire_cd"] = minf(float(s["fire_cd"]), randf_range(REACT_MIN, REACT_MAX))
+	if hurt:
+		s["state"] = "combat"
+		s["los_ok"] = true
+		s["lost_t"] = 0.0
+	elif str(s["state"]) != "combat":
+		s["state"] = "search"
+		s["search_t"] = SEARCH_TIME
+		s["search_pick_t"] = SEARCH_PICK_T
+		s["search_goal"] = Vector3(threat.x, 0.0, threat.z)
+	if fresh or not bool(s["has_cover"]):
+		var d := Vector2(threat.x - s["pos"].x, threat.z - s["pos"].z).length()
+		s["has_cover"] = d > COVER_MIN_DIST and _find_cover(s, threat)
+
+
+## 玩家开枪：SHOT_HEAR_R 内的活兵全部警觉（声源带 ±3 m 误差——听声辨位不是透视）
+func hear_shot(src: Vector3, radius: float = SHOT_HEAR_R) -> void:
+	for s in soldiers:
+		if s["dead"]:
+			continue
+		var d := Vector2(src.x - s["pos"].x, src.z - s["pos"].z).length()
+		if d > radius:
+			continue
+		if str(s["state"]) == "combat" and bool(s["los_ok"]):
+			s["alert_t"] = ALERT_TIME   # 已在对射：只续警觉
+			continue
+		var err := Vector3(randf_range(-3.0, 3.0), 0.0, randf_range(-3.0, 3.0)) \
+				* clampf(d / radius, 0.2, 1.0)
+		_alert(s, src + err, false)
+
+
+## 子弹破空：玩家子弹从身边 BULLET_SNAP_R 内飞过（未被墙挡）——60 m 外听不见
+## 枪声，但近失弹的破空声一定听得见，同样警觉（来源方向 = 射手位置）
+const BULLET_SNAP_R := 4.0
+
+func hear_bullet(from: Vector3, dir: Vector3) -> void:
+	var d := dir.normalized()
+	for s in soldiers:
+		if s["dead"]:
+			continue
+		var c: Vector3 = s["pos"] + Vector3(0, 1.2, 0)
+		var t := (c - from).dot(d)
+		if t < 1.0 or t > ALERT_DIST:
+			continue
+		if (c - from - d * t).length() > BULLET_SNAP_R:
+			continue
+		if _world.wall_hit(from, d, t) < t - 0.5:
+			continue   # 子弹先打在墙上了
+		if str(s["state"]) == "combat" and bool(s["los_ok"]):
+			s["alert_t"] = ALERT_TIME
+			continue
+		_alert(s, from, false)
+
+
+## 玩家疾跑脚步：SPRINT_HEAR_R 内巡逻中的兵听见 → 警觉转身搜过来
+func _hear_sprint() -> void:
+	if _player == null or not _player_alive() or not _player_sprinting():
+		return
+	var pp: Vector3 = _ppos()
+	for s in soldiers:
+		if s["dead"] or str(s["state"]) != "patrol":
+			continue
+		if Vector2(pp.x - s["pos"].x, pp.z - s["pos"].z).length() <= SPRINT_HEAR_R:
+			_alert(s, pp + Vector3(0, EYE_H, 0), false)
+
+
+## 找掩体：COVER_SEARCH_R 内高 ≥1.2 m 的障碍，取「威胁点 → 障碍」延长线背面的
+## 点（掩体点），要求该点胸口高度对威胁点视线被挡、点位不在障碍里；同时给出
+## 探身点（障碍侧沿外 0.6 m，视线须通）。长墙不躲中间，躲在离边沿 0.9 m 处，
+## 探身只横跨 1.8 m。没找到返回 false（照旧站桩/侧移对射）
+func _find_cover(s: Dictionary, threat: Vector3) -> bool:
+	var sp := Vector2(s["pos"].x, s["pos"].z)
+	var tp := Vector2(threat.x, threat.z)
+	var best_d := COVER_SEARCH_R
+	var found := false
+	for ob in _world.obstacles:
+		if float(ob.get("top", 3.0)) < COVER_MIN_TOP or float(ob.get("bot", 0.0)) > 0.3:
+			continue
+		var hx := float(ob["hx"])
+		var hz := float(ob["hz"])
+		var c := Vector2(float(ob["cx"]), float(ob["cz"]))
+		if c.distance_to(sp) > COVER_SEARCH_R + maxf(hx, hz):
+			continue
+		var away := (c - tp)
+		if away.length() < 1.0:
+			continue
+		away = away.normalized()
+		var lat := Vector2(-away.y, away.x)
+		var ext := absf(away.x) * hx + absf(away.y) * hz
+		var lat_ext := absf(lat.x) * hx + absf(lat.y) * hz
+		for side in [1.0, -1.0]:
+			var cp: Vector2
+			var pk: Vector2
+			if lat_ext > 1.5:
+				cp = c + away * (ext + 0.7) + lat * side * (lat_ext - 0.9)
+				pk = cp + lat * side * 1.8
+			else:
+				cp = c + away * (ext + 0.7)
+				pk = cp + lat * side * (lat_ext + 0.7)
+			var d := cp.distance_to(sp)
+			if d >= best_d:
+				continue
+			if _push_out(cp, MOVE_R).distance_to(cp) > 0.05 or _push_out(pk, MOVE_R).distance_to(pk) > 0.05:
+				continue
+			var cy := _ground_y(cp.x, cp.y)
+			if not _blocked(threat, Vector3(cp.x, cy + CHEST_Y, cp.y)):
+				continue   # 躲在这儿还是被看见：不算掩体
+			var py := _ground_y(pk.x, pk.y)
+			if _blocked(Vector3(pk.x, py + EYE_H, pk.y), threat):
+				continue   # 探身也看不见威胁点：这一侧没法对射
+			best_d = d
+			found = true
+			s["cover"] = Vector3(cp.x, cy, cp.y)
+			s["peek"] = Vector3(pk.x, py, pk.y)
+	if found:
+		s["cover_phase"] = 0
+		s["cover_t"] = 0.0
+	return found
+
+
+## 掩体战术：0 跑向掩体（跑动中有视线照样开火压制）→ 1 掩体后蹲守 0.8–1.6 s →
+## 2 探身对射 1.8–3.0 s → 回 1 …；全程面朝玩家
+func _cover_move(s: Dictionary, dt: float) -> void:
+	var to_p: Vector3 = _ppos() - s["pos"]
+	var face := Vector2(to_p.x, to_p.z)
+	face = face / maxf(face.length(), 0.01)
+	var phase := int(s["cover_phase"])
+	var goal: Vector3 = s["peek"] if phase == 2 else s["cover"]
+	var to: Vector3 = goal - s["pos"]
+	var d := Vector2(to.x, to.z).length()
+	if d > 0.35:
+		var spd: float = RUN_SPEED if phase == 0 else PATROL_SPEED * 0.6
+		_apply_move(s, Vector2(to.x, to.z) / d, face, spd, dt)
+		return
+	s["moving"] = false
+	_apply_move(s, Vector2.ZERO, face, 0.0, dt)
+	s["cover_t"] = float(s["cover_t"]) - dt
+	if phase == 0:
+		s["cover_phase"] = 1
+		s["cover_t"] = randf_range(0.8, 1.6)
+	elif float(s["cover_t"]) <= 0.0:
+		s["cover_phase"] = 2 if phase == 1 else 1
+		s["cover_t"] = randf_range(1.8, 3.0) if phase == 1 else randf_range(0.8, 1.6)
+
+
+## 敌人脚步（3D 音源，22 m 内可闻）：移动中按速度踩点，跑动更密
+func _step_sound(s: Dictionary, dt: float) -> void:
+	if not bool(s["moving"]) or _audio == null or not _audio.has_method("play_step_3d"):
+		return
+	s["step_t"] = float(s["step_t"]) - dt
+	if float(s["step_t"]) > 0.0:
+		return
+	var running: bool = bool(s["has_cover"]) and int(s["cover_phase"]) == 0
+	s["step_t"] = 0.32 if running else 0.5
+	if _pdist(s) <= STEP_HEAR_R:
+		_audio.play_step_3d(s["pos"], running)
 
 
 ## 索敌：视距（巡逻 55 / 进战 70）+ 视锥 110° + wall_hit 未挡
@@ -370,6 +572,8 @@ func _can_see_player(s: Dictionary) -> bool:
 	var to: Vector3 = pe - se
 	var dist := Vector2(to.x, to.z).length()
 	var vd: float = ENGAGE_DIST if str(s["state"]) == "combat" else VIEW_DIST
+	if float(s["alert_t"]) > 0.0:
+		vd = ALERT_DIST   # 警觉中：120 m 内看得见就打
 	if dist > vd:
 		return false
 	if dist > 0.5:   # 视锥：面朝基 (sin yaw, cos yaw)，背身 110° 外看不见
@@ -499,16 +703,17 @@ func _try_fire(s: Dictionary, dt: float, dist: float) -> void:
 	var eye: Vector3 = s["pos"] + Vector3(0, EYE_H, 0)
 	var aim: Vector3 = _ppos() + Vector3(0, CHEST_Y, 0)
 	var dir: Vector3 = (aim - eye).normalized()
-	var spread: float = SPREAD_BASE + dist * SPREAD_PER_M
+	var spread: float = SPREAD_BASE + minf(dist, SPREAD_CAP_DIST) * SPREAD_PER_M
 	if _player_sprinting():
 		spread *= SPRINT_SPREAD_MUL
 	dir = (dir + Vector3(randf() - 0.5, (randf() - 0.5) * 0.5, randf() - 0.5) * spread).normalized()
 	# 命中判定：射程内 + 未被墙挡 + 射线与玩家命中球（r=0.5 @ 胸口）相交
 	var pc: Vector3 = _ppos() + Vector3(0, CHEST_Y, 0)
 	var hit := false
-	var end_d: float = ENGAGE_DIST
+	var rng: float = ALERT_DIST if float(s["alert_t"]) > 0.0 else ENGAGE_DIST
+	var end_d: float = rng
 	var t: float = (pc - eye).dot(dir)
-	if t > 0.5 and t < ENGAGE_DIST and (pc - eye - dir * t).length() < HIT_R:
+	if t > 0.5 and t < rng and (pc - eye - dir * t).length() < HIT_R:
 		var wd: float = _world.wall_hit(eye, dir, t - 0.2)
 		if wd >= t - 0.2:
 			hit = true
@@ -520,11 +725,16 @@ func _try_fire(s: Dictionary, dt: float, dist: float) -> void:
 	var muzzle: Vector3 = s["pos"] + Basis(Vector3.UP, float(s["yaw"])) \
 			* (MUZZLE_LOCAL * SOLDIER_SCALE)
 	_tracers.spawn(muzzle, eye + dir * end_d, hit)
-	_audio.play_shot("rifle")
+	s["shots"] = int(s["shots"]) + 1
+	# 敌人枪声走 3D 音源（距离衰减 + 左右方位 + 远处闷）；老接口兜底
+	if _audio.has_method("play_shot_3d"):
+		_audio.play_shot_3d("rifle", muzzle)
+	else:
+		_audio.play_shot("rifle")
 	if hit:
-		# 伤害 = rifle 20 × 0.55 × 距离衰减（贴脸 1.0 → 70m 0.6）
-		var fade: float = 1.0 - 0.4 * clampf(dist / ENGAGE_DIST, 0.0, 1.0)
-		player_hit.emit(RIFLE_DMG * AI_DMG_MUL * fade)
+		# 伤害 = rifle 20 × 0.45 × 距离衰减（贴脸 1.0 → 120 m 0.6）
+		var fade: float = 1.0 - 0.4 * clampf(dist / ALERT_DIST, 0.0, 1.0)
+		player_hit.emit(RIFLE_DMG * AI_DMG_MUL * fade, eye)
 
 
 # ================= 渲染：士兵模型（骨骼动画 / 胶囊兜底） =================
@@ -709,6 +919,10 @@ func _player_alive() -> bool:
 
 ## 玩家疾跑：move_speed ≥ 8（onfoot WALK 6 / RUN 11.5 之间），敌弹散布 ×1.4
 func _player_sprinting() -> bool:
+	# HDPlayer 暴露 sprinting（Shift + 移动且未蹲）；旧契约 move_speed 兜底
+	var sp = _player.get("sprinting")
+	if sp != null:
+		return bool(sp)
 	var ms = _player.get("move_speed")
 	return ms != null and float(ms) >= SPRINT_SPEED
 

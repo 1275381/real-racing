@@ -34,6 +34,8 @@ var _extract_t: float = 0.0
 ## （结算页 R/Enter 再走 _restart_current/_back_to_lobby 不会二次结算）
 var _raid_live := false
 var _raid_loadout: Dictionary = {}   # 本局实际带进来的主副武器（阵亡按它丢）
+var _step_acc := 0.0                 # 玩家脚步：累计步行距离（够一步就响一声）
+var _last_ppos := Vector3.ZERO
 
 func _ready() -> void:
 	_register_inputs()
@@ -68,11 +70,12 @@ func _ready() -> void:
 	# M14 专属配件解锁态（2026-10）：查询闭包 + 环境变量（静态工厂视觉件用）
 	guns.m14_mods_provider = func(mid: String): return stash.m14_mods_on(mid)
 	guns.hit_enemy.connect(_on_hit_enemy)
+	guns.fired.connect(_on_player_fired)
 
 	soldiers = HDSoldiers.new()
 	add_child(soldiers)
 	soldiers.build(world, player, audio)
-	soldiers.player_hit.connect(func(dmg: float): player.hit(dmg))
+	soldiers.player_hit.connect(_on_player_hit)
 	soldiers.killed.connect(_on_soldier_killed)
 	guns.soldiers = soldiers
 
@@ -80,7 +83,7 @@ func _ready() -> void:
 	add_child(loot)
 	loot.build(world)
 	loot.picked.connect(_on_loot_picked)
-	loot.notice.connect(func(text: String, col: Color): hud.toast(text, col))
+	loot.notice.connect(func(text: String, col: Color): hud.feed(text, col))
 	loot.prompt.connect(func(text: String, prog: float): hud.set_prompt(text, prog))
 
 	hud = HDHud.new()
@@ -186,6 +189,8 @@ func _start_mission(loadout: Dictionary) -> void:
 	hud.hide_inventory()
 	targets.reset_all()
 	player.enter(world.spawn_pos)
+	_last_ppos = player.pos
+	_step_acc = 0.0
 	# 面朝地图中心（出生在西南角，前向 = (sin yaw, 0, cos yaw) → yaw = atan2(dx, dz)）
 	var to_c := Vector3(-world.spawn_pos.x, 0.0, -world.spawn_pos.z)
 	if to_c.length() > 0.01:
@@ -360,12 +365,32 @@ func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: boo
 func _on_soldier_killed(info: Dictionary) -> void:
 	_kills += 1
 	var dist: float = float(info.get("dist", 0.0))
-	hud.toast("击杀 · %dm" % int(dist), Color(1.0, 0.7, 0.36))
+	hud.feed("击杀 · %dm" % int(dist), Color(1.0, 0.7, 0.36))
+
+## 敌弹命中：扣血 + 受击方向弧（来袭方向相对视线：0 正前、+ 右侧）
+func _on_player_hit(dmg: float, from: Vector3) -> void:
+	player.hit(dmg)
+	var to := from - player.pos
+	var fwd := Vector2(sin(player.yaw), cos(player.yaw))
+	var right := Vector2(-cos(player.yaw), sin(player.yaw))
+	var t2 := Vector2(to.x, to.z)
+	hud.hit_from(atan2(t2.dot(right), t2.dot(fwd)))
+
+## 玩家开枪：枪声传播，60 m 内的敌人警觉（改进方案第 3 节；靶场不传播）
+func _on_player_fired() -> void:
+	if mode == Mode.MISSION and _raid_live:
+		soldiers.hear_shot(player.pos + Vector3(0.0, 1.5, 0.0))
+		# 远处听不到枪声的兵：子弹从身边飞过也会警觉（破空声）
+		soldiers.hear_bullet(player.cam.global_position, -player.cam.global_transform.basis.z)
+
+## 方位角（度，北 = -Z 为 0、顺时针，东 = +X 为 90）
+static func _bearing(dx: float, dz: float) -> float:
+	return fposmod(rad_to_deg(atan2(dx, -dz)), 360.0)
 
 func _on_loot_picked(item: Dictionary) -> void:
 	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX, loot.secure.size(), loot.secure_cap)
 	var col: Color = HDData.RARITY[int(item.get("rarity", 0))]["color"]
-	hud.toast("拾取 %s %s +₵%d" % [item.get("icon", ""), item.get("name", ""), int(item.get("value", 0))], col)
+	hud.feed("拾取 %s %s +₵%d" % [item.get("icon", ""), item.get("name", ""), int(item.get("value", 0))], col)
 
 ## ---- Tab 背包（2026-10 改进方案第 5 节：弃件 / 安全箱）----
 ## 打开时世界照常运转（敌人照打），玩家原地不动、不能开火——整理背包是有风险的
@@ -438,6 +463,25 @@ func _step_mission(dt: float) -> void:
 	# 开镜分划
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
+	# 指南针：朝向 + 各撤离点方位与距离
+	var marks: Array = []
+	for ep_m in world.extract_list():
+		var epm: Vector3 = ep_m
+		var dxm := epm.x - player.pos.x
+		var dzm := epm.z - player.pos.z
+		marks.append({"bearing": _bearing(dxm, dzm),
+			"label": "撤离 %dm" % int(Vector2(dxm, dzm).length()),
+			"color": Color(0.49, 0.89, 0.66)})
+	hud.set_compass(_bearing(sin(player.yaw), cos(player.yaw)), marks)
+	# 玩家脚步（2D 轻声）：每走一步响一声，疾跑更响更密、蹲走几乎无声
+	var mv := Vector2(player.pos.x - _last_ppos.x, player.pos.z - _last_ppos.z).length()
+	_last_ppos = player.pos
+	if mv < 1.0:   # 传送（进场/探针摆位）不算步子
+		_step_acc += mv
+		var stride := 2.0 if player.sprinting else 1.5
+		if _step_acc >= stride:
+			_step_acc = 0.0
+			audio.play_step(0.12 if player.crouching else (0.7 if player.sprinting else 0.32))
 	# 撤离读条：主撤离 + 大坝广场第二撤离（extract_list）取最近点，
 	# 圈内累计/离圈回退与单点语义一致（主撤离回归 test_huodai 步骤 8 不变）
 	var d := HDData.EXTRACT_R + 1.0

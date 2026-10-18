@@ -169,6 +169,12 @@ const SHOT_TUNE := {
 
 var _pool: Array[AudioStreamPlayer] = []
 var _idx := 0
+## 2026-10 改进方案第 4 节：敌人枪声/脚步走 AudioStreamPlayer3D（主世界听者 =
+## 玩家主相机）——按距离衰减、左右声像、远处高频被滤（越远越闷）
+var _pool3d: Array[AudioStreamPlayer3D] = []
+var _idx3d := 0
+const PLAYERS_3D := 10
+var _steps: Array[AudioStreamWAV] = []   # 脚步（沙砾）3 个变体
 var _shots := {}          # gun_id -> AudioStreamWAV（ensure 预生成，懒生成兜底）
 var _hit: AudioStreamWAV
 var _reload: AudioStreamWAV
@@ -188,6 +194,8 @@ func ensure() -> void:
 		_shot_stream(str(gid))
 	_hit = _make_ding()
 	_reload = _make_reload()
+	for k in 3:
+		_steps.append(_make_step(311 + k * 17))
 
 
 ## 开枪：轮换池播放 + 每发随机——移调 0.94-1.06、音量 ±1.5dB。
@@ -200,6 +208,49 @@ func play_shot(gun_id: String) -> void:
 	p.volume_db = linear_to_db(maxf(float(tune["gain"]) * 0.9, 0.05)) \
 			+ randf_range(-1.5, 1.5)
 	p.pitch_scale = randf_range(0.94, 1.06)
+	p.play()
+
+
+## 敌人枪声（3D）：世界坐标 pos 发声；unit_size 14 → 14 m 处约原音量、
+## 百米外衰减约 -17 dB；远处低通（attenuation_filter）让远枪发闷，听得出远近
+func play_shot_3d(gun_id: String, pos: Vector3) -> void:
+	var p := _next_3d()
+	p.global_position = pos
+	p.stream = _shot_stream(gun_id)
+	var tune: Dictionary = SHOT_TUNE.get(gun_id, SHOT_TUNE["rifle"])
+	p.unit_size = 14.0
+	p.max_distance = 420.0
+	p.attenuation_filter_cutoff_hz = 3200.0
+	p.attenuation_filter_db = -20.0
+	p.volume_db = linear_to_db(maxf(float(tune["gain"]) * 0.9, 0.05)) + randf_range(-1.5, 1.5)
+	p.pitch_scale = randf_range(0.94, 1.06)
+	p.play()
+
+
+## 敌人脚步（3D）：22 m 外听不到（max_distance），跑动更响
+func play_step_3d(pos: Vector3, running: bool) -> void:
+	if _steps.is_empty():
+		ensure()
+	var p := _next_3d()
+	p.global_position = pos
+	p.stream = _steps[randi() % _steps.size()]
+	p.unit_size = 3.5
+	p.max_distance = 22.0
+	p.attenuation_filter_cutoff_hz = 6000.0
+	p.attenuation_filter_db = -10.0
+	p.volume_db = linear_to_db(0.75 if running else 0.5) + randf_range(-1.5, 1.5)
+	p.pitch_scale = randf_range(0.9, 1.1)
+	p.play()
+
+
+## 玩家自己的脚步（2D，轻）：loud 0..1（蹲走 0.15 / 步行 0.35 / 疾跑 0.7）
+func play_step(loud: float) -> void:
+	if _steps.is_empty():
+		ensure()
+	var p := _next_player()
+	p.stream = _steps[randi() % _steps.size()]
+	p.volume_db = linear_to_db(maxf(loud, 0.02)) - 6.0
+	p.pitch_scale = randf_range(0.92, 1.08)
 	p.play()
 
 
@@ -236,6 +287,40 @@ func beep(freq: float, dur: float) -> void:
 
 
 ## ---------------- 内部：WAV 生成 ----------------
+
+
+## 3D 播放器轮换池（首用时建，挂在本节点下；本节点非 Node3D，3D 播放器按
+## 全局坐标定位）
+func _next_3d() -> AudioStreamPlayer3D:
+	if _pool3d.is_empty():
+		for i in PLAYERS_3D:
+			var p := AudioStreamPlayer3D.new()
+			p.max_polyphony = 2
+			p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+			add_child(p)
+			_pool3d.append(p)
+	var q: AudioStreamPlayer3D = _pool3d[_idx3d]
+	_idx3d = (_idx3d + 1) % _pool3d.size()
+	return q
+
+
+## 沙砾脚步：两段错开的短噪声（脚跟 + 脚掌）低通约 1.2 kHz，80 ms 内衰减完
+func _make_step(seed_v: int) -> AudioStreamWAV:
+	var n := int(MIX_RATE * 0.11)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_v
+	var lp := 0.0
+	var a := 1.0 - exp(-TAU * 1200.0 / MIX_RATE)
+	for i in n:
+		var t := float(i) / MIX_RATE
+		var env := exp(-t * 55.0) + 0.6 * exp(-maxf(t - 0.035, 0.0) * 70.0) * (1.0 if t > 0.035 else 0.0)
+		var x := rng.randf() * 2.0 - 1.0
+		lp += a * (x - lp)
+		var v := lp * env * 1.6
+		data.encode_s16(i * 2, int(clampf(v, -1.0, 1.0) * 30000.0))
+	return _raw_wav(data)
 
 
 ## 轮换取播放器；ensure 未跑过则先补跑（播放接口不依赖外部先 ensure）

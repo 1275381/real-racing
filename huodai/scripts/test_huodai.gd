@@ -1374,6 +1374,141 @@ func _run() -> void:
 		"primary槽=%d 切后ammo=%d" % [sniper_before, main.guns.ammo])
 	main.guns.update(1.0 / 60.0)
 
+	# ===== 第二阶段：战场压力（改进方案第 3/4 节）=====
+	main.stash.cash = 99999
+	main.stash.buy_gun("rifle")
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(4)
+	var sol: Array = main.soldiers.soldiers
+	var subj: Dictionary = sol[0]
+	# 试验场：西南荒漠开阔地（出生点在图角，多数方位出界）
+	var pp0 := Vector3(-40.0, 0.0, 120.0)
+	pp0.y = main.world.ground_height(pp0.x, pp0.z)
+	var others_off := func() -> void:
+		for k in range(1, sol.size()):
+			sol[k]["dead"] = true      # 单兵试验：别的兵不参与（结束时 reset_all 复活）
+	others_off.call()
+	var place := func(sp: Vector3, yaw: float) -> void:
+		subj["pos"] = Vector3(sp.x, main.world.ground_height(sp.x, sp.z), sp.z)
+		subj["yaw"] = yaw
+		subj["state"] = "patrol"
+		subj["alert_t"] = 0.0
+		subj["has_cover"] = false
+		subj["los_ok"] = false
+		subj["los_t"] = 0.0
+		subj["hp"] = 100.0
+		subj["dead"] = false
+		subj["shots"] = 0
+		subj["fire_cd"] = randf_range(0.5, 1.5)
+		subj["route"] = [subj["pos"]]
+		subj["wp"] = 0
+	var sim := func(sec: float) -> void:
+		for k in int(sec * 60.0):
+			main.soldiers.update(1.0 / 60.0, true)
+	# §30 m 定案保留：未警觉的兵在 50 m 外面朝玩家也不开火
+	main.player.enter(pp0)
+	place.call(pp0 + Vector3(0, 0, -50.0), 0.0)
+	main.player.health = 100.0
+	sim.call(3.0)
+	check("未警觉 50 m 外不反应（30 m 主动发现定案保留）", int(subj["shots"]) == 0
+		and str(subj["state"]) == "patrol", "shots=%d state=%s" % [int(subj["shots"]), str(subj["state"])])
+
+	# §门槛 B：30–120 m 开第一枪后 3 秒内被还击 ≥ 80%（射程 35/60/90/115 m × 24 方位，
+	#  兵随机朝向；开阔视线才计入；近失弹/枪声/命中三路都能触发警觉）
+	seed(4242)
+	var trials := 0
+	var answered := 0
+	for di in [35.0, 60.0, 90.0, 115.0]:
+		for ai in 24:
+			var ang := TAU * float(ai) / 24.0
+			var spos: Vector3 = pp0 + Vector3(sin(ang), 0.0, cos(ang)) * di
+			if absf(spos.x) > 160.0 or absf(spos.z) > 160.0:
+				continue
+			var eye_p: Vector3 = pp0 + Vector3(0, 1.55, 0)
+			var eye_s: Vector3 = Vector3(spos.x, main.world.ground_height(spos.x, spos.z) + 1.5, spos.z)
+			var to_s: Vector3 = eye_s - eye_p
+			if main.world.wall_hit(eye_p, to_s.normalized(), to_s.length()) < to_s.length() - 0.5:
+				continue
+			main.player.enter(pp0)
+			main.player.health = 100.0
+			main.player.dead = false
+			place.call(spos, randf() * TAU)
+			var tch: Vector3 = subj["pos"] + Vector3(0, 1.05, 0) - eye_p
+			main.player.yaw = atan2(tch.x, tch.z)
+			main.player.pitch = atan2(tch.y, Vector2(tch.x, tch.z).length())
+			main.player.update(0.016)
+			main.guns.ammo = 30
+			main.guns.fire_cd = 0.0
+			main.guns.try_fire()
+			sim.call(3.0)
+			trials += 1
+			if int(subj["shots"]) > 0:
+				answered += 1
+	randomize()
+	var rate := float(answered) / float(maxi(trials, 1))
+	check("门槛 B：30–120 m 开第一枪后 3 s 内被还击 ≥ 80%", trials >= 30 and rate >= 0.8,
+		"%d/%d = %.0f%%" % [answered, trials, rate * 100.0])
+
+	# §枪声传播 60 m：50 m 外背身的兵听到枪声警觉，80 m 外的不受影响
+	main.player.enter(pp0)
+	place.call(pp0 + Vector3(50.0, 0, 0), 0.0)
+	main.soldiers.hear_shot(pp0 + Vector3(0, 1.5, 0))
+	var heard_50: bool = float(subj["alert_t"]) > 0.0
+	place.call(pp0 + Vector3(80.0, 0, 0), 0.0)
+	main.soldiers.hear_shot(pp0 + Vector3(0, 1.5, 0))
+	check("枪声 60 m 内警觉、80 m 外不受影响", heard_50 and float(subj["alert_t"]) == 0.0)
+
+	# §疾跑脚步：背后 10 m 巡逻兵听见疾跑 → 警觉；步行不触发
+	place.call(pp0 + Vector3(0, 0, 10.0), 0.0)
+	main.player.sprinting = false
+	main.soldiers.update(1.0 / 60.0, true)
+	var walk_quiet: bool = float(subj["alert_t"]) == 0.0
+	main.player.sprinting = true
+	main.soldiers.update(1.0 / 60.0, true)
+	check("疾跑 14 m 内被听见（步行不触发）", walk_quiet and float(subj["alert_t"]) > 0.0)
+	main.player.sprinting = false
+
+	# §找掩体：威胁点在障碍正前 40 m、兵贴障碍正面 → 掩体点在障碍背面且对威胁点视线被挡
+	var cover_ok := false
+	var cover_msg := "无合适障碍"
+	for ob in main.world.obstacles:
+		if float(ob.get("top", 0.0)) < 2.0 or float(ob.get("bot", 0.0)) > 0.1:
+			continue
+		var hx := float(ob["hx"])
+		var hz := float(ob["hz"])
+		if hx < 0.8 or hz < 0.8 or hx > 5.0 or hz > 5.0:
+			continue
+		var oc := Vector3(float(ob["cx"]), 0.0, float(ob["cz"]))
+		var thr := oc + Vector3(hx + 40.0, 1.55, 0.0)
+		var probe_from := Vector3(thr.x, 1.55, thr.z)
+		if main.world.wall_hit(probe_from, Vector3(-1, 0, 0), 40.0) < 39.0:
+			continue   # 前方 40 m 内还有别的东西：换一个
+		place.call(oc + Vector3(hx + 3.0, 0.0, 0.0), 0.0)
+		if main.soldiers._find_cover(subj, thr):
+			var cp: Vector3 = subj["cover"]
+			cover_ok = cp.x < oc.x and main.soldiers._blocked(thr, cp + Vector3(0, 1.05, 0))
+			cover_msg = "obstacle=(%.0f,%.0f) cover=(%.1f,%.1f)" % [oc.x, oc.z, cp.x, cp.z]
+			break
+	check("找掩体：掩体点在障碍背面、对威胁视线被挡", cover_ok, cover_msg)
+
+	# §指南针方位 / 受击方向 / 3D 枪声
+	check("方位角：北 0 · 东 90 · 南 180 · 西 270",
+		absf(main._bearing(0, -1) - 0.0) < 0.01 and absf(main._bearing(1, 0) - 90.0) < 0.01
+			and absf(main._bearing(0, 1) - 180.0) < 0.01 and absf(main._bearing(-1, 0) - 270.0) < 0.01)
+	main.player.enter(pp0)
+	main.player.yaw = 0.0
+	main.player.health = 100.0
+	var right_src: Vector3 = pp0 + Vector3(-cos(0.0), 0, sin(0.0)) * 20.0
+	main._on_player_hit(1.0, right_src)
+	var last_hit: Dictionary = main.hud._hit_ind.hits.back()
+	check("受击方向：右侧来弹 → 弧在右（≈+90°）", absf(float(last_hit["a"]) - PI * 0.5) < 0.05,
+		"a=%.2f" % float(last_hit["a"]))
+	main.audio.play_shot_3d("rifle", pp0 + Vector3(30, 1.5, 0))
+	check("敌人枪声走 3D 音源（AudioStreamPlayer3D 池）", main.audio._pool3d.size() > 0
+		and main.audio._pool3d[0] is AudioStreamPlayer3D)
+	main.soldiers.reset_all()
+	main._raid_live = false
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)

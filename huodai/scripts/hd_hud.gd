@@ -50,6 +50,12 @@ var _extract_label: Label
 var _extract_bar: ProgressBar
 var _toast_box: VBoxContainer
 var _toasts: Array = []             # [{node, t, dur}]
+var _compass: CompassBar
+var _hit_ind: HitIndicator
+var _feed_box: VBoxContainer
+var _feeds: Array = []              # [{node, t}] 右侧信息流（击杀/拾取/背包）
+const FEED_MAX := 5
+const FEED_LIFE := 5.0
 var _menu: Control
 var _menu_title: Label
 var _menu_sub: Label
@@ -219,6 +225,7 @@ func setup() -> void:
 	dsb.content_margin_bottom = 5
 	_danger_panel.add_theme_stylebox_override("panel", dsb)
 	_danger_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_danger_panel.offset_top = 70     # 让出顶部指南针（含撤离点距离字）
 	_danger_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_danger_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_danger_panel.visible = false
@@ -230,6 +237,24 @@ func setup() -> void:
 	_center = CenterLayer.new()
 	_raid.add_child(_center)
 
+	# 2026-10 改进方案第 4 节：顶部指南针（方位刻度 + 撤离点方位与距离）、
+	# 受击方向弧、右侧信息流（击杀 / 拾取 / 背包变化）
+	_compass = CompassBar.new()
+	_raid.add_child(_compass)
+	_hit_ind = HitIndicator.new()
+	_raid.add_child(_hit_ind)
+	_feed_box = VBoxContainer.new()
+	_feed_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_feed_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_feed_box.offset_left = -420
+	_feed_box.offset_right = -24
+	_feed_box.offset_top = 128
+	_feed_box.offset_bottom = 330
+	_feed_box.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_feed_box.add_theme_constant_override("separation", 3)
+	_feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_raid.add_child(_feed_box)
+
 	# 开镜覆盖层（最上，压过中心层）
 	_scope_ov = ScopeOverlay.new()
 	_scope_ov.visible = false
@@ -239,8 +264,8 @@ func setup() -> void:
 	_toast_box = VBoxContainer.new()
 	_toast_box.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_toast_box.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_toast_box.offset_top = 84
-	_toast_box.offset_bottom = 240
+	_toast_box.offset_top = 104       # 指南针 6–64 + 高危横幅 70–96 之下
+	_toast_box.offset_bottom = 260
 	_toast_box.add_theme_constant_override("separation", 4)
 	_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_base.add_child(_toast_box)
@@ -441,6 +466,52 @@ func toast(text: String, color: Color = Color(1, 1, 1)) -> void:
 		var oldn := old["node"] as Control
 		_toast_box.remove_child(oldn)
 		oldn.queue_free()
+
+
+## 指南针：heading 玩家朝向方位角（度，北 0 顺时针）；markers [{bearing, label, color}]
+func set_compass(heading: float, markers: Array) -> void:
+	if _compass == null:
+		setup()
+	_compass.heading = heading
+	_compass.markers = markers
+	_compass.queue_redraw()
+
+
+## 受击方向：rel 为来袭方向相对视线的角度（弧度，0 = 正前、+ = 右侧）
+func hit_from(rel: float) -> void:
+	if _hit_ind == null:
+		setup()
+	_hit_ind.hits.append({"a": rel, "t": HitIndicator.LIFE})
+	while _hit_ind.hits.size() > 6:
+		_hit_ind.hits.pop_front()
+	_hit_ind.queue_redraw()
+
+
+## 右侧信息流：击杀/拾取/背包类消息（最多 5 条，5 s 淡出），与顶部 toast 分流
+func feed(text: String, color: Color = Color(1, 1, 1)) -> void:
+	if _feed_box == null:
+		setup()
+	var p := PanelContainer.new()
+	var sb := _sb_flat(Color(0.02, 0.05, 0.03, 0.62), Color(color.r, color.g, color.b, 0.0), 0)
+	sb.border_width_right = 3
+	sb.border_color = Color(color.r, color.g, color.b, 0.85)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 3
+	sb.content_margin_bottom = 3
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.size_flags_horizontal = Control.SIZE_SHRINK_END
+	var l := _mk_label(text, 13, color)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	p.add_child(l)
+	_feed_box.add_child(p)
+	_feeds.append({"node": p, "t": FEED_LIFE})
+	while _feeds.size() > FEED_MAX:
+		var old: Dictionary = _feeds.pop_front()
+		var on := old["node"] as Control
+		_feed_box.remove_child(on)
+		on.queue_free()
 
 
 ## 「! 高危战区」红横幅 + 屏幕红边渐晕（警示符用「!」：默认字体链对 ⚠ 类符号不保稳）
@@ -864,6 +935,23 @@ func _process(dt: float) -> void:
 	if _danger_panel != null and _danger_panel.visible:
 		_pulse_t += dt
 		_danger_panel.modulate.a = 0.72 + 0.28 * absf(sin(_pulse_t * 4.0))
+	if _hit_ind != null and not _hit_ind.hits.is_empty():
+		for h in _hit_ind.hits:
+			h["t"] = float(h["t"]) - dt
+		_hit_ind.hits = _hit_ind.hits.filter(func(h): return float(h["t"]) > 0.0)
+		_hit_ind.queue_redraw()
+	var fi := _feeds.size() - 1
+	while fi >= 0:
+		var fr: Dictionary = _feeds[fi]
+		fr["t"] = float(fr["t"]) - dt
+		var fnode := fr["node"] as Control
+		fnode.modulate.a = clampf(float(fr["t"]) / 0.6, 0.0, 1.0)
+		if float(fr["t"]) <= 0.0:
+			_feeds.remove_at(fi)
+			if fnode.get_parent() != null:
+				fnode.get_parent().remove_child(fnode)
+			fnode.queue_free()
+		fi -= 1
 	var i := _toasts.size() - 1
 	while i >= 0:
 		var rec: Dictionary = _toasts[i]
@@ -1060,3 +1148,97 @@ void fragment() {
 		sm.set_shader_parameter("tint", TINT)
 		cr.material = sm
 		add_child(cr)
+
+
+
+## 顶部指南针（2026-10 改进方案第 4 节）：560 px 宽、视野 ±60°；每 5° 小刻度、
+## 15° 中刻度、45° 方位字（北/东北…），中央朝向读数；撤离点等标记按方位角落在
+## 刻度带上（超出视野贴边显示箭头），下挂距离
+class CompassBar extends Control:
+	const W := 560.0
+	const H := 40.0
+	const SPAN := 60.0                  # 半视野（度）
+	const NAMES := {0: "北", 45: "东北", 90: "东", 135: "东南", 180: "南", 225: "西南", 270: "西", 315: "西北"}
+	var heading := 0.0
+	var markers: Array = []             # [{bearing, label, color}]
+
+	func _init() -> void:
+		set_anchors_preset(Control.PRESET_CENTER_TOP)
+		offset_left = -W * 0.5
+		offset_right = W * 0.5
+		offset_top = 6
+		offset_bottom = 6 + H + 18
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _wrap(d: float) -> float:
+		return fposmod(d + 180.0, 360.0) - 180.0
+
+	func _draw() -> void:
+		var f := get_theme_default_font()
+		var px := W / (SPAN * 2.0)
+		var cx := W * 0.5
+		draw_rect(Rect2(0, 0, W, H), Color(0.02, 0.05, 0.03, 0.45))
+		var base := int(floor((heading - SPAN) / 5.0)) * 5
+		var a := base
+		while a <= heading + SPAN + 5:
+			var d := _wrap(float(a) - heading)
+			if absf(d) <= SPAN:
+				var x := cx + d * px
+				var deg := posmod(a, 360)
+				var fade := 1.0 - absf(d) / SPAN * 0.6
+				if deg % 45 == 0:
+					draw_line(Vector2(x, H - 12), Vector2(x, H), Color(1, 1, 1, 0.9 * fade), 2.0)
+					if f != null:
+						var nm: String = NAMES.get(deg, str(deg))
+						var col := Color(1.0, 0.7, 0.36, fade) if deg == 0 else Color(0.85, 0.87, 0.82, fade)
+						var tw := f.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+						draw_string(f, Vector2(x - tw * 0.5, 17), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, col)
+				elif deg % 15 == 0:
+					draw_line(Vector2(x, H - 9), Vector2(x, H), Color(1, 1, 1, 0.7 * fade), 1.5)
+					if f != null:
+						var ns := str(deg)
+						var tw2 := f.get_string_size(ns, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x
+						draw_string(f, Vector2(x - tw2 * 0.5, 15), ns, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.85, 0.87, 0.82, 0.55 * fade))
+				else:
+					draw_line(Vector2(x, H - 5), Vector2(x, H), Color(1, 1, 1, 0.45 * fade), 1.0)
+			a += 5
+		# 中央朝向指针 + 读数
+		draw_colored_polygon(PackedVector2Array([Vector2(cx - 6, H + 7), Vector2(cx + 6, H + 7), Vector2(cx, H + 1)]), Color(1.0, 0.7, 0.36))
+		# 标记（撤离点等）
+		for m in markers:
+			var md := _wrap(float(m["bearing"]) - heading)
+			var col2: Color = m.get("color", Color(0.49, 0.89, 0.66))
+			var x2 := cx + clampf(md, -SPAN, SPAN) * px
+			if absf(md) <= SPAN:
+				draw_colored_polygon(PackedVector2Array([Vector2(x2 - 7, H - 22), Vector2(x2 + 7, H - 22), Vector2(x2, H - 12)]), col2)
+			else:
+				var sgn := signf(md)
+				draw_colored_polygon(PackedVector2Array([Vector2(x2 - sgn * 2, H - 26), Vector2(x2 - sgn * 2, H - 10), Vector2(x2 + sgn * 9, H - 18)]), col2)
+			if f != null:
+				var lbl := str(m.get("label", ""))
+				var tw3 := f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+				var lx := clampf(x2 - tw3 * 0.5, 0.0, W - tw3)
+				draw_string(f, Vector2(lx, H + 16), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, col2)
+
+
+## 受击方向弧：准星外圈 120 px 半径的红色弧段，指向来袭方向（相对视线），1.4 s 淡出
+class HitIndicator extends Control:
+	const LIFE := 1.4
+	const R := 120.0
+	var hits: Array = []                # [{a, t}]
+
+	func _init() -> void:
+		set_anchors_preset(Control.PRESET_FULL_RECT)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var c := size * 0.5
+		for h in hits:
+			var k := clampf(float(h["t"]) / LIFE, 0.0, 1.0)
+			# 屏幕坐标：0 = 正上（前方），顺时针为正（右侧）
+			var ang := float(h["a"]) - PI * 0.5
+			draw_arc(c, R, ang - 0.32, ang + 0.32, 18, Color(1.0, 0.18, 0.12, 0.85 * k), 7.0, true)
+			var tip := c + Vector2(cos(ang), sin(ang)) * (R + 14.0)
+			var l := c + Vector2(cos(ang - 0.09), sin(ang - 0.09)) * (R + 4.0)
+			var r := c + Vector2(cos(ang + 0.09), sin(ang + 0.09)) * (R + 4.0)
+			draw_colored_polygon(PackedVector2Array([l, tip, r]), Color(1.0, 0.18, 0.12, 0.85 * k))
