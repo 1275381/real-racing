@@ -40,9 +40,13 @@ const TYPES := [
 		"size": Vector3(1.25, 0.55, 0.6)},
 	{"id": "safe", "name": "保险箱", "color": Color(0.2, 0.21, 0.23),
 		"size": Vector3(0.75, 0.85, 0.62)},
+	{"id": "airdrop", "name": "空投箱", "color": Color(0.3, 0.36, 0.24),
+		"size": Vector3(1.5, 1.0, 1.0)},
 ]
 ## 容器分类 → 外观类型（第三阶段：分类决定掉落，外观让玩家远远认得出）
-const CLASS_TYPE := {"weapon": 0, "medical": 1, "crate": 2, "safe": 4}
+const CLASS_TYPE := {"weapon": 0, "medical": 1, "crate": 2, "safe": 4, "vault": 4, "airdrop": 5}
+const VAULT_LAMP := Color(1.0, 0.3, 0.22)   # 首领保险柜指示灯：红（只出红色及以上）
+const AIRDROP_LAMP := Color(0.75, 0.45, 1.0)   # 空投箱指示灯：紫（紫色及以上）
 ## crate.glb 实测 1.02 见方（原点在底面中心），按类型缩放到 size
 const CRATE_PATH := "res://assets/battle/props/crate.glb"
 const CRATE_DIM := 1.02
@@ -71,6 +75,11 @@ func build(world) -> void:
 		push_warning("[烽火地带] 容器模型加载失败：%s（暂用程序化箱体）" % CRATE_PATH)
 	for spot in world.container_spots:
 		_make_container(spot)
+	# 首领保险柜（第四阶段）：不进 world.container_spots（容器点总数契约不变），
+	# 由首领守着——要先打赢首领才能安心搜 6 s
+	for bd in HDData.BOSSES:
+		_make_container({"pos": bd["vault"], "zone": bd["zone"], "cls": "vault",
+				"boss": str(bd["id"])})
 
 
 func update(dt: float, player_pos: Vector3, interact_held: bool) -> void:
@@ -146,6 +155,30 @@ func use_counts() -> Dictionary:
 	return out
 
 
+## 搜刮者搜走一个容器（第四阶段 AI 搜刮者）：开盖灭灯，返回 roll 出的那件；已搜返回 {}
+func npc_take(i: int) -> Dictionary:
+	if i < 0 or i >= _containers.size():
+		return {}
+	var c: Dictionary = _containers[i]
+	if bool(c["searched"]):
+		return {}
+	c["searched"] = true
+	c["open_t"] = 0.0001
+	(c["lamp"] as MeshInstance3D).visible = false
+	if _active_i == i:
+		_active_i = -1
+		_progress = 0.0
+	var pos: Vector3 = c["pos"]
+	return HDData.roll_container(String(c["cls"]), String(_world.zone_at(pos.x, pos.z)))
+
+
+## 空投箱落地（局内事件）：动态容器，重开局时 reset_all 拆掉；返回容器下标
+func add_airdrop(pos: Vector3) -> int:
+	_make_container({"pos": pos, "zone": String(_world.zone_at(pos.x, pos.z)),
+			"cls": "airdrop", "dynamic": true})
+	return _containers.size() - 1
+
+
 ## 背包里最便宜一件的下标（空 -1）
 func cheapest_idx() -> int:
 	var bi := -1
@@ -160,6 +193,14 @@ func cheapest_idx() -> int:
 
 ## 重开行动：全部容器回未搜态、关盖、复燃指示灯、清空背包与提示
 func reset_all() -> void:
+	# 局内动态容器（空投箱）：拆掉外观与占位障碍
+	for k in range(_containers.size() - 1, -1, -1):
+		var dc: Dictionary = _containers[k]
+		if not bool(dc.get("dynamic", false)):
+			continue
+		(dc["root"] as Node3D).queue_free()
+		_world.obstacles.erase(dc["ob"])
+		_containers.remove_at(k)
 	for c in _containers:
 		c["searched"] = false
 		c["open_t"] = 0.0
@@ -184,7 +225,9 @@ func _make_container(spot: Dictionary) -> void:
 	var crng := RandomNumberGenerator.new()
 	crng.seed = int(pos.x * 73.0) * 7919 + int(pos.z * 37.0)
 	var zone0 := String(_world.zone_at(pos.x, pos.z))
-	var cls := HDData.pick_weighted(HDData.CLASS_W.get(zone0, HDData.CLASS_W["mid"]), crng)
+	var cls := String(spot.get("cls", ""))
+	if cls == "":
+		cls = HDData.pick_weighted(HDData.CLASS_W.get(zone0, HDData.CLASS_W["mid"]), crng)
 	var ti: int = CLASS_TYPE.get(cls, 2)
 	if cls == "crate" and crng.randf() < 0.4:
 		ti = 3   # 杂物箱一部分是行李袋
@@ -193,10 +236,12 @@ func _make_container(spot: Dictionary) -> void:
 	root.position = pos
 	root.rotation.y = randf() * TAU
 	add_child(root)
-	var size: Vector3 = type["size"]
+	var size: Vector3 = type["size"] * (1.3 if cls == "vault" else 1.0)   # 首领柜大一号
 	# —— 箱体：crate.glb 按类型缩放 + 整体染色；失败退化程序化色箱；保险箱单独建模 ——
-	if cls == "safe":
+	if cls == "safe" or cls == "vault":
 		_make_safe_body(root, size)
+	elif cls == "airdrop":
+		_make_airdrop_body(root, size)
 	elif _crate_scene != null:
 		var body: Node3D = _crate_scene.instantiate()
 		body.scale = Vector3(size.x / CRATE_DIM, size.y / CRATE_DIM, size.z / CRATE_DIM)
@@ -230,7 +275,7 @@ func _make_container(spot: Dictionary) -> void:
 	var lamp_mat := StandardMaterial3D.new()
 	lamp_mat.albedo_color = Color(0.16, 0.12, 0.06)
 	lamp_mat.emission_enabled = true
-	lamp_mat.emission = AMBER
+	lamp_mat.emission = VAULT_LAMP if cls == "vault" else (AIRDROP_LAMP if cls == "airdrop" else AMBER)
 	lamp_mat.emission_energy_multiplier = LAMP_BASE
 	sm.material = lamp_mat
 	lamp.position = Vector3(0.0, size.y + 0.12, size.z * 0.2)
@@ -241,12 +286,53 @@ func _make_container(spot: Dictionary) -> void:
 	var hz := size.z * 0.5
 	var cs := absf(cos(yaw))
 	var sn := absf(sin(yaw))
-	_world.obstacles.append({"cx": pos.x, "cz": pos.z,
+	var ob := {"cx": pos.x, "cz": pos.z,
 		"hx": hx * cs + hz * sn, "hz": hx * sn + hz * cs,
-		"top": size.y, "bot": 0.0})
+		"top": size.y, "bot": 0.0}
+	_world.obstacles.append(ob)
 	_containers.append({"pos": pos, "zone": spot["zone"], "type": type, "cls": cls,
+		"boss": String(spot.get("boss", "")), "dynamic": bool(spot.get("dynamic", false)), "ob": ob,
 		"searched": false, "root": root, "lid_pivot": lid_pivot, "lamp": lamp,
 		"lamp_mat": lamp_mat, "open_t": 0.0, "phase": randf() * TAU})
+
+
+## 空投箱：橄榄绿军用箱 + 深色包角框 + 两道浅色捆扎带 + 侧面白色模板字块
+func _make_airdrop_body(root: Node3D, size: Vector3) -> void:
+	var olive := StandardMaterial3D.new()
+	olive.albedo_color = Color(0.36, 0.41, 0.26)
+	olive.roughness = 0.8
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.16, 0.17, 0.14)
+	dark.roughness = 0.7
+	dark.metallic = 0.4
+	var band := StandardMaterial3D.new()
+	band.albedo_color = Color(0.72, 0.68, 0.55)
+	band.roughness = 0.9
+	var stencil := StandardMaterial3D.new()
+	stencil.albedo_color = Color(0.9, 0.9, 0.86)
+	stencil.roughness = 0.9
+	var parts := [
+		[olive, Vector3.ZERO, size],
+		# 包角框：上下四条长边
+		[dark, Vector3(0, size.y * 0.5 - 0.04, size.z * 0.5 - 0.04), Vector3(size.x + 0.02, 0.09, 0.09)],
+		[dark, Vector3(0, size.y * 0.5 - 0.04, -size.z * 0.5 + 0.04), Vector3(size.x + 0.02, 0.09, 0.09)],
+		[dark, Vector3(0, -size.y * 0.5 + 0.04, size.z * 0.5 - 0.04), Vector3(size.x + 0.02, 0.09, 0.09)],
+		[dark, Vector3(0, -size.y * 0.5 + 0.04, -size.z * 0.5 + 0.04), Vector3(size.x + 0.02, 0.09, 0.09)],
+		# 捆扎带 ×2（绕箱一圈）
+		[band, Vector3(-size.x * 0.28, 0, 0), Vector3(0.08, size.y + 0.02, size.z + 0.02)],
+		[band, Vector3(size.x * 0.28, 0, 0), Vector3(0.08, size.y + 0.02, size.z + 0.02)],
+		# 侧面模板字块（两面）
+		[stencil, Vector3(0, 0.05, size.z * 0.5 + 0.006), Vector3(size.x * 0.32, size.y * 0.22, 0.01)],
+		[stencil, Vector3(0, 0.05, -size.z * 0.5 - 0.006), Vector3(size.x * 0.32, size.y * 0.22, 0.01)],
+	]
+	for pt in parts:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = pt[2]
+		bm.material = pt[0]
+		mi.mesh = bm
+		mi.position = Vector3(0.0, size.y * 0.5, 0.0) + pt[1]
+		root.add_child(mi)
 
 
 ## 保险箱：深钢箱体 + 前面板凹框 + 密码转盘 + 把手（程序化，不用 crate.glb）

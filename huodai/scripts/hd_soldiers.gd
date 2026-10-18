@@ -11,8 +11,11 @@ extends Node3D
 signal player_hit(dmg: float, from: Vector3)    # 敌弹命中玩家（main 接到 player.hit + 受击方向）
 signal killed(info: Dictionary)  # {i, dist} 击杀播报（dist = 玩家到目标的水平距离）
 signal all_dead()                # 全灭（只发一次）
+signal dropped(items: Array, pos: Vector3)   # 搜刮者/首领阵亡掉落（main 摆到地上）
+signal scav_extracted(squad: int, n_items: int)   # 一支搜刮者小队撤离（带走 n 件）
 
 const TracerPool := preload("res://scripts/tracer_pool.gd")
+const NavGrid := preload("res://scripts/hd_nav.gd")
 
 ## 士兵模型与大战场共用；load 而非 preload：模型走 Git LFS，另一台电脑没拉到真文件
 ## 时 preload 会让脚本编译失败（battlefield.gd:43-46 同款兜底），失败退化胶囊人
@@ -26,6 +29,15 @@ const GEAR_COL := Color(0.48, 0.41, 0.33)  # 敌军赭红：装具
 ## 的粉色皮肤；压暗去粉成卡其棕，仍与蓝灰环境色相拉开、远处醒目
 const UNIFORM_COL_HD := Color(0.56, 0.43, 0.32)
 const GEAR_COL_HD := Color(0.4, 0.35, 0.28)
+## 分级配色（第四阶段）：精英深灰黑作训服 + 黑装具；首领黑军装 + 暗红装具（远处一眼认出）
+## 搜刮者：橄榄绿迷彩 + 黑装具（和守军赭红一眼区分——不是一伙的）
+const TIER_UNIFORM := {"elite": Color(0.27, 0.28, 0.29), "boss": Color(0.14, 0.14, 0.15),
+	"scav": Color(0.36, 0.41, 0.28)}
+const TIER_GEAR := {"elite": Color(0.17, 0.18, 0.18), "boss": Color(0.46, 0.12, 0.1),
+	"scav": Color(0.16, 0.17, 0.15)}
+const BOSS_BODY_SCALE := 1.08
+## 搜刮者挑箱子的分区额外代价（米）：先外围后中心，每搜到一件代价降 30%
+const SCAV_ZONE_COST := {"center": 90.0, "dam": 60.0, "mid": 10.0, "wild": 0.0}
 const UNIFORM_EMISSION := 0.18             # 军装/装具微自发光：远景从雾里提对比（问题②，宁少勿假）
 
 const AI_TICK := 1.0 / 60.0     # AI 定步（battlefield.gd:22，与渲染帧解耦）
@@ -94,6 +106,12 @@ var _bodies: Array = []    # 每兵一个模型槽 {node,ap,mesh,mats,anim,fadin
 var _tracers               # 曳光池（自己持有，敌弹橙色）
 var _ai_acc := 0.0
 var _all_dead_sent := false
+var _loot                  # HDLoot（鸭子，main 装配后注入）：搜刮者抢箱子
+var _nav                   # 步行寻路网格（hd_nav.gd；set_loot 时建——容器障碍也算进去）
+var _scene: PackedScene    # 士兵模型（增援/搜刮者复用）
+var _clock := 0.0          # 本局行动秒数（搜刮者撤离时机）
+var _foes_on := false      # 场上有搜刮者活着 → 守军/搜刮者之间互相索敌
+var exfil_points: Array = [HDData.EXTRACT_POS, HDData.DAM_EXTRACT_POS]   # 搜刮者撤离目标
 
 
 ## 装配：世界/玩家/声音引用 + 模型槽位 + 曳光池；巡逻点全部点各 1 兵
@@ -111,8 +129,10 @@ func build(world, player, audio) -> void:
 		scene = load(SOLDIER_PATH) if ResourceLoader.exists(SOLDIER_PATH) else null
 	if scene == null:
 		push_warning("[烽火地带] 士兵模型加载失败：%s —— 暂用胶囊人代替" % SOLDIER_PATH)
+	_scene = scene
 	soldiers.clear()
 	var spots: Array = _world.patrol_spots
+	var zone_n := {}   # 同区计数（精英轮次）
 	for k in spots.size():
 		var spot: Dictionary = spots[k]
 		var sp: Vector3 = spot["pos"]
@@ -132,24 +152,40 @@ func build(world, player, audio) -> void:
 		var route: Array = [home]
 		for j in mini(2, others.size()):
 			route.append(others[j]["p"])
-		var wi := 1 if route.size() > 1 else 0
-		var wp: Vector3 = route[wi]
-		soldiers.append({
-			"slot": k,
-			"pos": home, "yaw": atan2(wp.x - home.x, wp.z - home.z), "hp": ENEMY_HP,
-			"dead": false, "state": "patrol", "moving": false, "engaged": false,
-			"zone": str(spot.get("zone", "mid")),
-			"home": home, "route": route, "wp": wi,
-			"fire_cd": randf_range(0.5, 1.5), "burst": 0, "mag": MAG_SIZE, "reload_t": 0.0,
-			"los_ok": false, "los_t": randf_range(0.0, 0.4), "lost_t": 0.0,
-			"last_known": home, "search_t": 0.0, "search_pick_t": 0.0, "search_goal": home,
-			"strafe_t": 0.0, "strafe_dir": 1.0,
-			"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO,
-			"death_t": 0.0,
-			"alert_t": 0.0, "shots": 0, "step_t": 0.0,
-			"has_cover": false, "cover": home, "peek": home, "cover_phase": 0, "cover_t": 0.0,
-		})
-		_bodies.append(_make_body(scene))
+		# 精英：高价值区（中心/坝区）同区每 ELITE_EVERY 名里第 2 名
+		var zone := str(spot.get("zone", "mid"))
+		var tier := "regular"
+		if zone in HDData.ELITE_ZONES:
+			var zi := int(zone_n.get(zone, 0))
+			zone_n[zone] = zi + 1
+			if zi % HDData.ELITE_EVERY == 1:
+				tier = "elite"
+		_add_soldier(home, route, zone, tier, scene)
+	# 首领 ×2（第四阶段）：守首领保险柜，路线只有家门口（站岗不巡逻）
+	for bd in HDData.BOSSES:
+		var bp: Vector3 = bd["pos"]
+		var bh := Vector3(bp.x, _ground_y(bp.x, bp.z), bp.z)
+		_add_soldier(bh, [bh], str(bd["zone"]), "boss", scene)
+		soldiers[soldiers.size() - 1]["boss_id"] = str(bd["id"])
+		soldiers[soldiers.size() - 1]["boss_name"] = str(bd["name"])
+		# 面朝保险柜外侧（背靠宝箱守门）
+		var vp: Vector3 = bd["vault"]
+		soldiers[soldiers.size() - 1]["yaw"] = atan2(bh.x - vp.x, bh.z - vp.z)
+	# 预留槽（不活跃，reset_all 不复活）：空投增援 3 + 搜刮者 2 队 × 3
+	for k in HDData.REINFORCE_N:
+		_add_soldier(Vector3.ZERO, [Vector3.ZERO], "mid", "elite" if k == 0 else "regular", scene)
+		soldiers[soldiers.size() - 1]["reserve"] = "reinforce"
+	for q in HDData.SCAV_SQUADS:
+		for k in HDData.SCAV_SIZE:
+			_add_soldier(Vector3.ZERO, [Vector3.ZERO], "mid", "scav", scene)
+			var sc: Dictionary = soldiers[soldiers.size() - 1]
+			sc["reserve"] = "scav"
+			sc["faction"] = "scav"
+			sc["squad"] = q
+			sc["squad_k"] = k
+	for s0 in soldiers:
+		if s0.has("reserve"):
+			_deactivate(s0)
 	# 冷启动 LOD 预处理（2026-10 性能）：进图瞬间 31 兵全部挂树蒙皮，前 ~2s
 	# 帧率腰斩（实测立即测 36 帧、稳定 57 帧）——build 末按玩家当前位预跑
 	# 一遍 _write_pose，远兵在第一帧渲染前就已断链停蒙皮
@@ -157,11 +193,50 @@ func build(world, player, audio) -> void:
 		_write_pose(i)
 
 
+## 新兵入列：tier = regular / elite / boss（HDData.ENEMY_TIERS）
+func _add_soldier(home: Vector3, route: Array, zone: String, tier: String, scene: PackedScene) -> void:
+	var wi := 1 if route.size() > 1 else 0
+	var wp: Vector3 = route[wi]
+	var td: Dictionary = HDData.ENEMY_TIERS[tier]
+	soldiers.append({
+		"slot": soldiers.size(), "tier": tier,
+		"pos": home, "yaw": atan2(wp.x - home.x, wp.z - home.z) if wp != home else 0.0,
+		"hp": float(td["hp"]), "armor": float(td["armor"]),
+		"dead": false, "state": "patrol", "moving": false, "engaged": false,
+		"zone": zone,
+		"home": home, "route": route, "wp": wi,
+		"fire_cd": randf_range(0.5, 1.5), "burst": 0, "mag": MAG_SIZE, "reload_t": 0.0,
+		"los_ok": false, "los_t": randf_range(0.0, 0.4), "lost_t": 0.0,
+		"last_known": home, "search_t": 0.0, "search_pick_t": 0.0, "search_goal": home,
+		"strafe_t": 0.0, "strafe_dir": 1.0,
+		"block_t": 0.0, "detour_t": 0.0, "detour_dir": Vector2.ZERO,
+		"death_t": 0.0,
+		"alert_t": 0.0, "shots": 0, "step_t": 0.0,
+		"has_cover": false, "cover": home, "peek": home, "cover_phase": 0, "cover_t": 0.0,
+		"faction": "guard", "tgt": -1, "gone": false,
+		"loot": [], "picks": 0, "pick_goal": 0, "task": "", "goal_c": -1, "goal_t": 0.0,
+		"loot_t": 0.0, "skip": [], "prog_d": INF, "prog_t": 0.0, "stuck_n": 0,
+		"path": PackedVector3Array(), "pi": 0, "path_goal": Vector3(INF, 0, INF), "replan_t": 0.0,
+	})
+	_bodies.append(_make_body(scene, tier))
+
+
+## 该兵的分级数值表
+func _tier(s: Dictionary) -> Dictionary:
+	return HDData.ENEMY_TIERS.get(str(s.get("tier", "regular")), HDData.ENEMY_TIERS["regular"])
+
+
 func update(dt: float, raid_active: bool) -> void:
 	if _tracers != null:
 		_tracers.tick(dt)
 	if raid_active:
+		_clock += dt
 		_hear_sprint()
+	_foes_on = false
+	for s0 in soldiers:
+		if str(s0["faction"]) == "scav" and not s0["dead"]:
+			_foes_on = true
+			break
 	_ai_acc += dt
 	var steps := 0
 	while _ai_acc >= AI_TICK and steps < 3:
@@ -200,23 +275,67 @@ func apply_hit(i: int, dmg: float, head: bool) -> Dictionary:
 	var s: Dictionary = soldiers[i]
 	if s["dead"]:
 		return {"killed": false}
+	# 精英/首领护甲：身体中弹先吸 ENEMY_ARMOR_ABSORB（吸多少扣多少护甲），爆头无视护甲
+	var armor_hit := false
+	if not head and float(s.get("armor", 0.0)) > 0.0:
+		var ab := minf(float(s["armor"]), dmg * HDData.ENEMY_ARMOR_ABSORB)
+		s["armor"] = float(s["armor"]) - ab
+		dmg -= ab
+		armor_hit = true
 	s["hp"] = float(s["hp"]) - dmg
 	if float(s["hp"]) > 0.0:
 		_alert(s, _peye(), true)   # 受击即还击：转向玩家、120 m 内进入交战、找掩体
-		return {"killed": false}
+		return {"killed": false, "armor": armor_hit}
+	_die(i, true)
+	return {"killed": true}
+
+
+## 阵亡结算（玩家击杀 by_player=true 才发 killed 播报）：搜刮者掉落身上全部
+## 战利品、首领掉一件金色及以上（dropped → main 摆到尸体旁地上）
+func _die(i: int, by_player: bool) -> void:
+	var s: Dictionary = soldiers[i]
 	s["dead"] = true
 	s["state"] = "dead"
 	s["moving"] = false
 	s["engaged"] = false
 	s["death_t"] = 0.0
 	_write_pose(i)
-	var pp: Vector3 = _ppos()
-	var dist: float = Vector2(pp.x - s["pos"].x, pp.z - s["pos"].z).length()
-	killed.emit({"i": i, "dist": dist})
+	var drops: Array = []
+	if str(s["faction"]) == "scav":
+		drops = (s["loot"] as Array).duplicate()
+		(s["loot"] as Array).clear()
+		if randf() < 0.5:
+			drops.append(HDData.make_consumable(HDData.USE_KEYS[randi() % HDData.USE_KEYS.size()]))
+	elif str(s["tier"]) == "boss":
+		drops.append(HDData.roll_min(str(s["zone"]), HDData.BOSS_DROP_MIN))
+	if not drops.is_empty():
+		dropped.emit(drops, s["pos"])
+	if by_player:
+		var pp: Vector3 = _ppos()
+		var dist: float = Vector2(pp.x - s["pos"].x, pp.z - s["pos"].z).length()
+		killed.emit({"i": i, "dist": dist, "tier": str(s.get("tier", "regular")),
+				"name": str(s.get("boss_name", _tier(s)["name"])), "pos": s["pos"]})
 	if soldiers.size() > 0 and alive_count() == 0 and not _all_dead_sent:
 		_all_dead_sent = true
 		all_dead.emit()
-	return {"killed": true}
+
+
+## 守军/搜刮者互射命中（NPC 之间，身体中弹走护甲）：没死就转向射手交战，
+## 搜刮者同队一起警觉
+func _npc_hit(i: int, dmg: float, shooter: int) -> void:
+	var s: Dictionary = soldiers[i]
+	if s["dead"]:
+		return
+	if float(s.get("armor", 0.0)) > 0.0:
+		var ab := minf(float(s["armor"]), dmg * HDData.ENEMY_ARMOR_ABSORB)
+		s["armor"] = float(s["armor"]) - ab
+		dmg -= ab
+	s["hp"] = float(s["hp"]) - dmg
+	if float(s["hp"]) > 0.0:
+		var sh: Dictionary = soldiers[shooter]
+		_alert(s, sh["pos"] + Vector3(0, EYE_H, 0), true, shooter)
+		return
+	_die(i, false)
 
 
 ## 重开一局：全员重生于各自巡逻点（局内死亡不复活，重开是例外）
@@ -224,15 +343,22 @@ func reset_all() -> void:
 	_all_dead_sent = false
 	if _tracers != null:
 		_tracers.hide_all()
+	_clock = 0.0
 	for i in soldiers.size():
 		var s: Dictionary = soldiers[i]
+		s["tgt"] = -1
+		s["loot"] = []
+		if s.has("reserve"):
+			_deactivate(s)   # 增援/搜刮者槽：等空投 / spawn_scavs 激活
+			continue
 		var home: Vector3 = s["home"]
 		s["pos"] = Vector3(home.x, _ground_y(home.x, home.z), home.z)
 		var route: Array = s["route"]
 		s["wp"] = 1 if route.size() > 1 else 0
 		var fw: Vector3 = route[int(s["wp"])]
 		s["yaw"] = atan2(fw.x - s["pos"].x, fw.z - s["pos"].z)
-		s["hp"] = ENEMY_HP
+		s["hp"] = float(_tier(s)["hp"])
+		s["armor"] = float(_tier(s)["armor"])
 		s["dead"] = false
 		s["state"] = "patrol"
 		s["moving"] = false
@@ -285,25 +411,26 @@ func _update_soldier(i: int, dt: float, raid_active: bool) -> void:
 		s["los_t"] = float(s["los_t"]) - dt
 		if float(s["los_t"]) <= 0.0:
 			s["los_t"] = LOS_RECHECK
-			s["los_ok"] = _can_see_player(s)
+			_retarget(s)
 	else:
 		s["los_ok"] = false
 	var state: String = s["state"]
-	var dist := _pdist(s)
+	var dist := _tdist(s)
 	var engaged := false
 	var alerted: bool = float(s["alert_t"]) > 0.0
 	if alerted:
 		s["alert_t"] = float(s["alert_t"]) - dt
 	var fire_range: float = ALERT_DIST if alerted else ENGAGE_DIST
 	if state == "combat":
-		if not _player_alive():
+		if not _talive(s):
 			s["has_cover"] = false
+			s["tgt"] = -1
 			_to_search(s)
 		else:
 			if s["los_ok"] and dist < fire_range:
 				engaged = true
 				s["lost_t"] = 0.0
-				s["last_known"] = _peye()
+				s["last_known"] = _teye(s)
 			elif not (bool(s["has_cover"]) and alerted):
 				# 掩体后蹲守/探身期间看不见是主动的，不算「跟丢」
 				s["lost_t"] = float(s["lost_t"]) + dt
@@ -312,7 +439,7 @@ func _update_soldier(i: int, dt: float, raid_active: bool) -> void:
 			elif engaged:
 				_combat_move(s, dist, dt)   # 站定/小侧移，面向玩家
 			else:
-				_move_toward(s, s["last_known"], PATROL_SPEED * ENGAGE_SPEED_MUL, dt)
+				_move_toward(s, _leash(s, s["last_known"]), PATROL_SPEED * ENGAGE_SPEED_MUL, dt)
 			if float(s["lost_t"]) > LOSE_TIME or (bool(s["has_cover"]) and not alerted):
 				s["has_cover"] = false
 				_to_search(s)
@@ -336,6 +463,8 @@ func _update_soldier(i: int, dt: float, raid_active: bool) -> void:
 		if s["los_ok"]:
 			_to_combat(s)
 			engaged = true
+		elif str(s["faction"]) == "scav":
+			_scav_move(s, dt)
 		else:
 			_patrol_move(s, dt)
 	s["engaged"] = engaged
@@ -349,7 +478,7 @@ func _to_combat(s: Dictionary) -> void:
 	s["state"] = "combat"
 	s["los_ok"] = true
 	s["lost_t"] = 0.0
-	s["last_known"] = _peye()
+	s["last_known"] = _teye(s)
 
 
 func _to_search(s: Dictionary) -> void:
@@ -369,7 +498,19 @@ func _pick_search_goal(s: Dictionary) -> void:
 	g.x = clampf(g.x, -MAP_EDGE, MAP_EDGE)
 	g.z = clampf(g.z, -MAP_EDGE, MAP_EDGE)
 	g.y = 0.0
-	s["search_goal"] = g
+	s["search_goal"] = _leash(s, g)
+
+
+## 首领拴绳：目标点离家超过 BOSS_LEASH 就收回到拴绳圈上（首领守宝箱，不追出去）
+func _leash(s: Dictionary, g: Vector3) -> Vector3:
+	if str(s.get("tier", "")) != "boss":
+		return g
+	var home: Vector3 = s["home"]
+	var off := Vector2(g.x - home.x, g.z - home.z)
+	if off.length() <= HDData.BOSS_LEASH:
+		return g
+	off = off.normalized() * HDData.BOSS_LEASH
+	return Vector3(home.x + off.x, g.y, home.z + off.y)
 
 
 func _to_patrol(s: Dictionary) -> void:
@@ -397,15 +538,24 @@ func _agro(s: Dictionary) -> void:
 ## 立即转向威胁点、警觉 ALERT_TIME 秒（索敌/开火射程升到 120 m）、下一拍就复测
 ## 视线、首发反应 0.35–1.0 s；受击直接进交战，听到则去声源附近搜索。
 ## 离玩家 12 m 外时先找最近掩体（掩体后 ⇄ 探身对射，_cover_move）
-func _alert(s: Dictionary, threat: Vector3, hurt: bool) -> void:
+func _alert(s: Dictionary, threat: Vector3, hurt: bool, src: int = -1, team: bool = true) -> void:
 	if s["dead"]:
 		return
+	s["tgt"] = src   # -1 = 玩家；≥0 = 打我的那名守军/搜刮者
+	if team and str(s["faction"]) == "scav":
+		# 搜刮者小队：一人遇袭全队警觉（40 m 内队友去威胁点附近搜）
+		for m in soldiers:
+			if int(m["slot"]) == int(s["slot"]) or m["dead"] or str(m["faction"]) != "scav" \
+					or int(m["squad"]) != int(s["squad"]):
+				continue
+			if Vector2(m["pos"].x - s["pos"].x, m["pos"].z - s["pos"].z).length() < 40.0:
+				_alert(m, threat, false, src, false)
 	var fresh: bool = float(s["alert_t"]) <= 0.0
 	s["alert_t"] = ALERT_TIME
 	s["last_known"] = threat
 	s["yaw"] = atan2(threat.x - s["pos"].x, threat.z - s["pos"].z)
 	s["los_t"] = 0.0
-	s["fire_cd"] = minf(float(s["fire_cd"]), randf_range(REACT_MIN, REACT_MAX))
+	s["fire_cd"] = minf(float(s["fire_cd"]), randf_range(REACT_MIN, REACT_MAX) * float(_tier(s)["react"]))
 	if hurt:
 		s["state"] = "combat"
 		s["los_ok"] = true
@@ -528,7 +678,7 @@ func _find_cover(s: Dictionary, threat: Vector3) -> bool:
 ## 掩体战术：0 跑向掩体（跑动中有视线照样开火压制）→ 1 掩体后蹲守 0.8–1.6 s →
 ## 2 探身对射 1.8–3.0 s → 回 1 …；全程面朝玩家
 func _cover_move(s: Dictionary, dt: float) -> void:
-	var to_p: Vector3 = _ppos() - s["pos"]
+	var to_p: Vector3 = _tpos(s) - s["pos"]
 	var face := Vector2(to_p.x, to_p.z)
 	face = face / maxf(face.length(), 0.01)
 	var phase := int(s["cover_phase"])
@@ -597,7 +747,7 @@ func _patrol_move(s: Dictionary, dt: float) -> void:
 
 ## 交战走位：近距小侧移 / 远距站定（契约：站定/小侧移），始终面向玩家
 func _combat_move(s: Dictionary, dist: float, dt: float) -> void:
-	var to_p: Vector3 = _ppos() - s["pos"]
+	var to_p: Vector3 = _tpos(s) - s["pos"]
 	var tdir := Vector2(to_p.x, to_p.z) / maxf(Vector2(to_p.x, to_p.z).length(), 0.01)
 	var move := Vector2.ZERO
 	if dist < 22.0:
@@ -698,17 +848,20 @@ func _try_fire(s: Dictionary, dt: float, dist: float) -> void:
 		s["burst"] = randi_range(BURST_MIN, BURST_MAX)
 	s["burst"] = int(s["burst"]) - 1
 	s["mag"] = int(s["mag"]) - 1
-	s["fire_cd"] = FIRE_CD if int(s["burst"]) > 0 else randf_range(BURST_PAUSE_MIN, BURST_PAUSE_MAX)
+	var td := _tier(s)
+	s["fire_cd"] = FIRE_CD if int(s["burst"]) > 0 \
+			else randf_range(BURST_PAUSE_MIN, BURST_PAUSE_MAX) * float(td["pause"])
 	# 弹道：from = pos+(0,1.5,0)，朝玩家胸口 + 散布抖动（基础 0.03 + 距离/60×0.05，疾跑 ×1.4）
 	var eye: Vector3 = s["pos"] + Vector3(0, EYE_H, 0)
-	var aim: Vector3 = _ppos() + Vector3(0, CHEST_Y, 0)
+	var tgt := int(s["tgt"])
+	var aim: Vector3 = _tpos(s) + Vector3(0, CHEST_Y, 0)
 	var dir: Vector3 = (aim - eye).normalized()
-	var spread: float = SPREAD_BASE + minf(dist, SPREAD_CAP_DIST) * SPREAD_PER_M
-	if _player_sprinting():
+	var spread: float = (SPREAD_BASE + minf(dist, SPREAD_CAP_DIST) * SPREAD_PER_M) * float(td["spread"])
+	if tgt < 0 and _player_sprinting():
 		spread *= SPRINT_SPREAD_MUL
 	dir = (dir + Vector3(randf() - 0.5, (randf() - 0.5) * 0.5, randf() - 0.5) * spread).normalized()
 	# 命中判定：射程内 + 未被墙挡 + 射线与玩家命中球（r=0.5 @ 胸口）相交
-	var pc: Vector3 = _ppos() + Vector3(0, CHEST_Y, 0)
+	var pc: Vector3 = aim
 	var hit := false
 	var rng: float = ALERT_DIST if float(s["alert_t"]) > 0.0 else ENGAGE_DIST
 	var end_d: float = rng
@@ -734,14 +887,18 @@ func _try_fire(s: Dictionary, dt: float, dist: float) -> void:
 	if hit:
 		# 伤害 = rifle 20 × 0.45 × 距离衰减（贴脸 1.0 → 120 m 0.6）
 		var fade: float = 1.0 - 0.4 * clampf(dist / ALERT_DIST, 0.0, 1.0)
-		player_hit.emit(RIFLE_DMG * AI_DMG_MUL * fade, eye)
+		var dmg: float = RIFLE_DMG * AI_DMG_MUL * fade * float(td["dmg"])
+		if tgt >= 0:
+			_npc_hit(tgt, dmg * HDData.NPC_DMG_MUL, int(s["slot"]))
+		else:
+			player_hit.emit(dmg, eye)
 
 
 # ================= 渲染：士兵模型（骨骼动画 / 胶囊兜底） =================
 
 ## 单兵模型槽：GLB 实例化（scale = SOLDIER_SCALE）；材质逐兵 duplicate 上敌军赭红——
 ## 死亡淡出只影响自己（网页版每兵独立加载 GLB 的材质天然隔离，这里用 duplicate 等价）
-func _make_body(scene: PackedScene) -> Dictionary:
+func _make_body(scene: PackedScene, tier: String = "regular") -> Dictionary:
 	var node: Node3D
 	var ap: AnimationPlayer = null
 	var mi: MeshInstance3D = null
@@ -765,6 +922,8 @@ func _make_body(scene: PackedScene) -> Dictionary:
 		mi.position = Vector3(0, 0.875, 0)
 		node.add_child(mi)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	if tier == "boss":
+		node.scale *= BOSS_BODY_SCALE   # 首领身形略大（命中球不变，纯辨识）
 	node.visible = false
 	add_child(node)
 	var mats: Array = []
@@ -776,17 +935,17 @@ func _make_body(scene: PackedScene) -> Dictionary:
 				var t: StandardMaterial3D = m.duplicate()
 				var hd := t.albedo_texture != null and t.normal_enabled
 				if t.resource_name == "Uniform":
-					t.albedo_color = UNIFORM_COL_HD if hd else UNIFORM_COL
+					t.albedo_color = TIER_UNIFORM.get(tier, UNIFORM_COL_HD if hd else UNIFORM_COL)
 					_emissive(t)   # 远景可见性：暖雾里赭红会隐身，微自发光提对比
 				elif t.resource_name == "Gear":
-					t.albedo_color = GEAR_COL_HD if hd else GEAR_COL
+					t.albedo_color = TIER_GEAR.get(tier, GEAR_COL_HD if hd else GEAR_COL)
 					_emissive(t)
 				mi.set_surface_override_material(si, t)
 				mats.append(t)
 	if mats.is_empty():
 		# 胶囊人替身：整体赭红
 		var fb := StandardMaterial3D.new()
-		fb.albedo_color = UNIFORM_COL
+		fb.albedo_color = TIER_UNIFORM.get(tier, UNIFORM_COL)
 		_emissive(fb)
 		mi.material_override = fb
 		mats.append(fb)
@@ -814,6 +973,9 @@ func _write_pose(i: int) -> void:
 	var s: Dictionary = soldiers[i]
 	var b: Dictionary = _bodies[i]
 	var node: Node3D = b["node"]
+	if bool(s.get("gone", false)):
+		node.visible = false   # 未激活的预留槽 / 已撤离的搜刮者
+		return
 	var pv: Vector3 = _player.pos if _player != null else Vector3(999, 0, 999)
 	var far: bool = (s["pos"] as Vector3).distance_to(pv) > LOD_HIDE_DIST
 	node.visible = not far
@@ -888,6 +1050,367 @@ func _tick_deaths(dt: float) -> void:
 		for m in b["mats"]:
 			var sm: StandardMaterial3D = m
 			sm.albedo_color.a = 1.0 - k
+
+
+# ================= 第四阶段：三方混战 / 搜刮者 / 空投增援 =================
+
+## main 装配 loot 后注入（搜刮者抢箱子要用）
+func set_loot(loot) -> void:
+	_loot = loot
+	_nav = NavGrid.new()
+	_nav.build(_world)
+
+
+## 当前目标位置 / 眼位 / 水平距离 / 存活：tgt -1 = 玩家，≥0 = 另一名士兵
+func _tpos(s: Dictionary) -> Vector3:
+	var t := int(s.get("tgt", -1))
+	if t >= 0 and t < soldiers.size():
+		return soldiers[t]["pos"]
+	return _ppos()
+
+
+func _teye(s: Dictionary) -> Vector3:
+	var t := int(s.get("tgt", -1))
+	if t >= 0 and t < soldiers.size():
+		return soldiers[t]["pos"] + Vector3(0, EYE_H, 0)
+	return _peye()
+
+
+func _tdist(s: Dictionary) -> float:
+	var tp := _tpos(s)
+	return Vector2(tp.x - s["pos"].x, tp.z - s["pos"].z).length()
+
+
+func _talive(s: Dictionary) -> bool:
+	var t := int(s.get("tgt", -1))
+	if t >= 0 and t < soldiers.size():
+		return not soldiers[t]["dead"]
+	return _player_alive()
+
+
+## 视线复测：玩家优先；看不见玩家时（场上有搜刮者）找视野里最近的敌对士兵
+func _retarget(s: Dictionary) -> void:
+	if _can_see_player(s):
+		s["tgt"] = -1
+		s["los_ok"] = true
+		return
+	if _foes_on:
+		var o := _find_foe(s)
+		if o >= 0:
+			s["tgt"] = o
+			s["los_ok"] = true
+			return
+	s["los_ok"] = false
+
+
+## 敌对阵营（守军 ⇄ 搜刮者）里视距 + 视锥 + 无遮挡的最近一名；没有返回 -1
+func _find_foe(s: Dictionary) -> int:
+	var fac := str(s["faction"])
+	var se: Vector3 = s["pos"] + Vector3(0, EYE_H, 0)
+	var bd: float = ALERT_DIST if float(s["alert_t"]) > 0.0 else VIEW_DIST
+	var fwd := Vector2(sin(float(s["yaw"])), cos(float(s["yaw"])))
+	var best := -1
+	for j in soldiers.size():
+		var o: Dictionary = soldiers[j]
+		if o["dead"] or str(o["faction"]) == fac:
+			continue
+		var to: Vector3 = o["pos"] - s["pos"]
+		var d := Vector2(to.x, to.z).length()
+		if d >= bd:
+			continue
+		if d > 0.5 and fwd.dot(Vector2(to.x, to.z) / d) < FOV_COS:
+			continue
+		if _blocked(se, o["pos"] + Vector3(0, EYE_H, 0)):
+			continue
+		bd = d
+		best = j
+	return best
+
+
+## 预留槽休眠：不参与 AI/命中/渲染（dead 让全部循环跳过，gone 让 reset 不复活）
+func _deactivate(s: Dictionary) -> void:
+	s["dead"] = true
+	s["gone"] = true
+	s["state"] = "dead"
+	s["moving"] = false
+	s["engaged"] = false
+	var i := int(s["slot"])
+	if i >= 0 and i < _bodies.size():
+		var b: Dictionary = _bodies[i]
+		b["faded"] = true
+		(b["node"] as Node3D).visible = false
+
+
+## 预留槽上场：满血满甲站在 at（路线 route），材质复原
+func _activate(i: int, at: Vector3, route: Array) -> void:
+	var s: Dictionary = soldiers[i]
+	var p := Vector3(at.x, _ground_y(at.x, at.z), at.z)
+	var pp := _push_out(Vector2(p.x, p.z), MOVE_R)
+	p = Vector3(pp.x, p.y, pp.y)
+	s["pos"] = p
+	s["home"] = route[0] if not route.is_empty() else p
+	s["route"] = route
+	s["wp"] = 0
+	s["hp"] = float(_tier(s)["hp"])
+	s["armor"] = float(_tier(s)["armor"])
+	s["dead"] = false
+	s["gone"] = false
+	s["state"] = "patrol"
+	s["tgt"] = -1
+	s["alert_t"] = 0.0
+	s["los_ok"] = false
+	s["lost_t"] = 0.0
+	s["has_cover"] = false
+	s["cover_phase"] = 0
+	s["mag"] = MAG_SIZE
+	s["reload_t"] = 0.0
+	s["death_t"] = 0.0
+	s["loot"] = []
+	s["picks"] = 0
+	s["task"] = ""
+	s["goal_c"] = -1
+	s["goal_t"] = 0.0
+	s["loot_t"] = 0.0
+	s["skip"] = []
+	s["prog_d"] = INF
+	s["prog_t"] = 0.0
+	s["stuck_n"] = 0
+	s["path"] = PackedVector3Array()
+	s["pi"] = 0
+	s["path_goal"] = Vector3(INF, 0, INF)
+	s["replan_t"] = 0.0
+	var b: Dictionary = _bodies[i]
+	b["fading"] = false
+	b["faded"] = false
+	for m in b["mats"]:
+		var sm: StandardMaterial3D = m
+		sm.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		sm.albedo_color.a = 1.0
+	_write_pose(i)
+
+
+## 开局放搜刮者：每队一个出生点（避开玩家出生点，最远的优先），队员围着队长站开
+func spawn_scavs(avoid: Vector3) -> void:
+	var pts: Array = HDData.SPAWN_POINTS.duplicate()
+	pts.sort_custom(func(a, b): return Vector2(a.x - avoid.x, a.z - avoid.z).length() \
+			> Vector2(b.x - avoid.x, b.z - avoid.z).length())
+	for i in soldiers.size():
+		var s: Dictionary = soldiers[i]
+		if str(s.get("reserve", "")) != "scav":
+			continue
+		var q := int(s["squad"])
+		var sp: Vector3 = pts[q % pts.size()]
+		var k := int(s["squad_k"])
+		var at := sp + Vector3(float(k % 2) * 2.5 - 1.2, 0.0, float(k) * 2.0 - 2.0)
+		_activate(i, at, [at])
+		s["task"] = "loot"
+		s["pick_goal"] = randi_range(HDData.SCAV_PICKS[0], HDData.SCAV_PICKS[1])
+		s["yaw"] = atan2(-sp.x, -sp.z)   # 面朝地图中心
+
+
+## 空投增援：预留守军从落点外 REINFORCE_DIST 处进场，警觉跑向落点、之后绕箱巡逻；
+## 落点附近的守军也赶过去
+func call_reinforcements(at: Vector3) -> void:
+	var a0 := randf() * TAU
+	var n := 0
+	for i in soldiers.size():
+		var s: Dictionary = soldiers[i]
+		if str(s.get("reserve", "")) != "reinforce":
+			continue
+		var ang := a0 + float(n) * 0.35
+		var from := at + Vector3(cos(ang), 0.0, sin(ang)) * HDData.REINFORCE_DIST
+		from.x = clampf(from.x, -HDWorld.BOUND + 2.0, HDWorld.BOUND - 2.0)
+		from.z = clampf(from.z, -HDWorld.BOUND + 2.0, HDWorld.BOUND - 2.0)
+		var ring: Array = []
+		for k in 3:
+			var ra := a0 + float(n) * 2.1 + float(k) * TAU / 3.0
+			ring.append(at + Vector3(cos(ra), 0.0, sin(ra)) * 6.0)
+		_activate(i, from, ring)
+		s["yaw"] = atan2(at.x - from.x, at.z - from.z)
+		_alert(s, at + Vector3(0, EYE_H, 0), false)
+		n += 1
+	for s in soldiers:
+		if s["dead"] or s.has("reserve") or str(s["tier"]) == "boss":
+			continue
+		if Vector2(s["pos"].x - at.x, s["pos"].z - at.z).length() < HDData.AIRDROP_ALERT_R \
+				and str(s["state"]) == "patrol":
+			_alert(s, at + Vector3(0, EYE_H, 0), false)
+
+
+## 搜刮者小队队长（同队第一个活着的）；全灭返回 -1
+func _squad_leader(q: int) -> int:
+	for i in soldiers.size():
+		var s: Dictionary = soldiers[i]
+		if not s["dead"] and str(s["faction"]) == "scav" and int(s["squad"]) == q:
+			return i
+	return -1
+
+
+func _squad_alive(q: int) -> int:
+	var n := 0
+	for s in soldiers:
+		if not s["dead"] and str(s["faction"]) == "scav" and int(s["squad"]) == q:
+			n += 1
+	return n
+
+
+## 搜刮者非交战行动：队长去搜箱 / 撤离，队员跟在队长身后两侧
+func _scav_move(s: Dictionary, dt: float) -> void:
+	var li := _squad_leader(int(s["squad"]))
+	if li >= 0 and li != int(s["slot"]):
+		var ld: Dictionary = soldiers[li]
+		var side := -1.0 if int(s["squad_k"]) % 2 == 0 else 1.0
+		var goal: Vector3 = ld["pos"] + Basis(Vector3.UP, float(ld["yaw"])) * Vector3(side * 2.2, 0.0, -2.6)
+		if Vector2(goal.x - s["pos"].x, goal.z - s["pos"].z).length() > 1.6:
+			_nav_toward(s, goal, PATROL_SPEED * 1.3, dt)
+		else:
+			s["moving"] = false
+			s["yaw"] = lerp_angle(float(s["yaw"]), float(ld["yaw"]) + side * 0.9, minf(dt * 3.0, 1.0))
+		return
+	var alive_n := _squad_alive(int(s["squad"]))
+	var carry := (s["loot"] as Array).size()
+	if str(s["task"]) == "loot" and (_clock >= HDData.SCAV_EXFIL_T or _loot == null \
+			or (alive_n <= 1 and carry >= 1) or (alive_n < HDData.SCAV_SIZE and carry >= 2)):
+		s["task"] = "exfil"   # 到点 / 减员且有货：见好就收
+	if str(s["task"]) == "exfil":
+		# 往一个撤离点反复卡路（≥4 次绕行）就换另一个
+		var ep := _nearest_exfil(s["pos"], int(s["stuck_n"]) >= 4)
+		if _nav_toward(s, ep, PATROL_SPEED * 1.2, dt):
+			_scav_extract(int(s["squad"]))
+		return
+	var ci := int(s["goal_c"])
+	if ci < 0 or bool(_loot._containers[ci]["searched"]):
+		ci = _pick_container(s)
+		s["goal_c"] = ci
+		s["goal_t"] = 0.0
+		s["loot_t"] = 0.0
+		s["prog_d"] = INF
+		s["stuck_n"] = 0
+		if ci < 0:
+			s["task"] = "exfil"
+			return
+	var c: Dictionary = _loot._containers[ci]
+	var cp: Vector3 = c["pos"]
+	s["goal_t"] = float(s["goal_t"]) + dt
+	if Vector2(cp.x - s["pos"].x, cp.z - s["pos"].z).length() > 1.9:
+		if float(s["goal_t"]) > HDData.SCAV_STUCK_T or int(s["stuck_n"]) >= 3:
+			(s["skip"] as Array).append(ci)   # 走不过去（没有寻路）：换一个
+			s["goal_c"] = -1
+			return
+		_nav_toward(s, cp, PATROL_SPEED * 1.15, dt)
+		return
+	s["moving"] = false
+	s["yaw"] = atan2(cp.x - s["pos"].x, cp.z - s["pos"].z)
+	s["loot_t"] = float(s["loot_t"]) + dt
+	var need: float = HDData.SCAV_SEARCH_T * (2.0 if str(c["cls"]) in ["safe", "airdrop"] else 1.0)
+	if float(s["loot_t"]) >= need:
+		var it: Dictionary = _loot.npc_take(ci)
+		if not it.is_empty():
+			(s["loot"] as Array).append(it)
+			s["picks"] = int(s["picks"]) + 1
+		s["goal_c"] = -1
+		if int(s["picks"]) >= int(s["pick_goal"]):
+			s["task"] = "exfil"
+
+
+## 搜刮者挑箱子：最近的未搜容器（不碰首领保险柜；空投箱优先——和玩家抢空投）
+func _pick_container(s: Dictionary) -> int:
+	var best := -1
+	var bd := INF
+	var skip: Array = s["skip"]
+	for ci in _loot._containers.size():
+		var c: Dictionary = _loot._containers[ci]
+		if bool(c["searched"]) or str(c["cls"]) == "vault" or ci in skip:
+			continue
+		var cp: Vector3 = c["pos"]
+		if _nav != null and not _nav.reachable(s["pos"], cp):
+			continue   # 封闭院落/楼里走不到的箱子：不去
+		var d := Vector2(cp.x - s["pos"].x, cp.z - s["pos"].z).length()
+		if str(c["cls"]) == "airdrop":
+			d *= 0.3
+		# 先搜外围（中心/坝区守军密集，像真人一样先在外圈攒一点再往里摸）
+		d += float(SCAV_ZONE_COST.get(str(_world.zone_at(cp.x, cp.z)), 0.0)) \
+				* maxf(0.0, 1.0 - float(s["picks"]) * 0.3)
+		# 别和另一支队抢同一个箱子
+		for o in soldiers:
+			if int(o["slot"]) != int(s["slot"]) and not o["dead"] and str(o["faction"]) == "scav" \
+					and int(o["goal_c"]) == ci:
+				d += 200.0
+		if d < bd:
+			bd = d
+			best = ci
+	return best
+
+
+## 最近的撤离点（alt=true 取第二近：最近那个走不过去时换路）
+func _nearest_exfil(p: Vector3, alt: bool = false) -> Vector3:
+	var pts: Array = exfil_points.duplicate()
+	pts.sort_custom(func(a, b): return Vector2(a.x - p.x, a.z - p.z).length() \
+			< Vector2(b.x - p.x, b.z - p.z).length())
+	return pts[1] if alt and pts.size() > 1 else pts[0]
+
+
+## 寻路走向（AStarGrid2D，绕开围墙大院）：目标挪动 >2.5 m 才重算（≤1 次/秒）；
+## 5 s 没向目标靠近 1 m = 卡住 → 从当前位置重算并累计 stuck_n。到点返回 true
+func _nav_toward(s: Dictionary, goal: Vector3, speed: float, dt: float) -> bool:
+	var d := Vector2(goal.x - s["pos"].x, goal.z - s["pos"].z).length()
+	if d < 1.2:
+		s["moving"] = false
+		return true
+	if _nav == null:
+		return _move_toward(s, goal, speed, dt)
+	s["replan_t"] = float(s["replan_t"]) - dt
+	var pg: Vector3 = s["path_goal"]
+	if Vector2(goal.x - pg.x, goal.z - pg.z).length() > 2.5 and float(s["replan_t"]) <= 0.0:
+		_plan(s, goal)
+	if d < float(s["prog_d"]) - 1.0:
+		s["prog_d"] = d
+		s["prog_t"] = 0.0
+	else:
+		s["prog_t"] = float(s["prog_t"]) + dt
+	if float(s["prog_t"]) > 5.0 and d > 2.0:
+		s["prog_t"] = 0.0
+		s["prog_d"] = d
+		s["stuck_n"] = int(s["stuck_n"]) + 1
+		_plan(s, goal)
+	var pth: PackedVector3Array = s["path"]
+	var pi := int(s["pi"])
+	while pi < pth.size() and Vector2(pth[pi].x - s["pos"].x, pth[pi].z - s["pos"].z).length() < 0.9:
+		pi += 1
+	s["pi"] = pi
+	var tgt: Vector3 = pth[pi] if pi < pth.size() else goal
+	var to := Vector2(tgt.x - s["pos"].x, tgt.z - s["pos"].z)
+	var dir := to / maxf(to.length(), 0.01)
+	_apply_move(s, dir, dir, speed, dt)
+	return false
+
+
+func _plan(s: Dictionary, goal: Vector3) -> void:
+	s["path"] = _nav.path(s["pos"], goal)
+	s["pi"] = 0
+	s["path_goal"] = goal
+	s["replan_t"] = 1.0
+
+
+## 小队撤离：活着的队员全部离场（带走身上的战利品）
+func _scav_extract(q: int) -> void:
+	var n := 0
+	for s in soldiers:
+		if s["dead"] or str(s["faction"]) != "scav" or int(s["squad"]) != q:
+			continue
+		n += (s["loot"] as Array).size()
+		s["loot"] = []
+		_deactivate(s)
+	scav_extracted.emit(q, n)
+
+
+## 活着的搜刮者人数（HUD/测试）
+func scav_alive() -> int:
+	var n := 0
+	for s in soldiers:
+		if not s["dead"] and str(s["faction"]) == "scav":
+			n += 1
+	return n
 
 
 # ================= 玩家/世界鸭子访问 =================

@@ -26,6 +26,7 @@ var hud: HDHud
 var lobby: HDLobby
 var audio: HDAudio
 var tracers   # TracerPool（无 class_name，preload）
+var airdrop   # 空投事件（hd_airdrop.gd，无 class_name，preload）
 
 var _kills: int = 0
 var _raid_t: float = 0.0
@@ -42,6 +43,7 @@ var _lever_t := 0.0
 var _using := {}                     # 正在使用的物资 {kind, t, dur}
 var _regen_left := 0.0               # 止痛药待缓回血量
 var _warned := {}                    # 局时提醒（已提示的剩余秒档）
+var _airdrop_fired := false          # 本局空投已投放
 
 func _ready() -> void:
 	_register_inputs()
@@ -91,6 +93,14 @@ func _ready() -> void:
 	loot.picked.connect(_on_loot_picked)
 	loot.notice.connect(func(text: String, col: Color): hud.feed(text, col))
 	loot.prompt.connect(func(text: String, prog: float): hud.set_prompt(text, prog))
+	soldiers.set_loot(loot)
+	soldiers.dropped.connect(_on_soldier_dropped)
+	soldiers.scav_extracted.connect(_on_scav_extracted)
+
+	airdrop = preload("res://scripts/hd_airdrop.gd").new()
+	add_child(airdrop)
+	airdrop.setup(world, loot, soldiers)
+	airdrop.landed.connect(_on_airdrop_landed)
 
 	hud = HDHud.new()
 	add_child(hud)
@@ -200,6 +210,10 @@ func _start_mission(loadout: Dictionary) -> void:
 	world.spawn_pos = Vector3(sp.x, world.ground_height(sp.x, sp.z), sp.z)
 	player.enter(world.spawn_pos)
 	_setup_extracts()
+	# AI 搜刮者小队：从玩家以外的出生点进图；空投复位
+	soldiers.spawn_scavs(world.spawn_pos)
+	airdrop.reset()
+	_airdrop_fired = false
 	_using = {}
 	_regen_left = 0.0
 	_warned = {}
@@ -240,6 +254,7 @@ func _enter_range() -> void:
 	soldiers.reset_all()
 	loot.reset_all()
 	targets.reset_all()
+	airdrop.reset()
 	var lane := HDData.HALL_CENTER + Vector3(0.0, 0.0, 11.0)   # 中间射位（馆内射击线，-Z 朝靶道）
 	# 出生 y 贴地下馆地坪（-6.94）：带地下域 hint 采样（默认 hint 会返回地表 0）
 	lane.y = world.ground_height(lane.x, lane.z, -10.0)
@@ -390,13 +405,36 @@ func _rank_of(v: float) -> String:
 
 func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: bool) -> void:
 	var res: Dictionary = soldiers.apply_hit(idx, dmg, head)
-	hud.hitmark(head, bool(res.get("killed", false)))
+	hud.hitmark(head, bool(res.get("killed", false)), bool(res.get("armor", false)))
 	audio.play_hit()
 
 func _on_soldier_killed(info: Dictionary) -> void:
 	_kills += 1
 	var dist: float = float(info.get("dist", 0.0))
-	hud.feed("击杀 · %dm" % int(dist), Color(1.0, 0.7, 0.36))
+	var tier := str(info.get("tier", "regular"))
+	if tier == "boss":
+		hud.feed("击杀首领 %s · %dm · 尸体旁有贵重掉落" % [str(info.get("name", "")), int(dist)],
+				Color(1.0, 0.4, 0.3))
+	elif tier == "elite":
+		hud.feed("击杀精英 · %dm" % int(dist), Color(0.6, 0.78, 1.0))
+	elif tier == "scav":
+		hud.feed("击杀搜刮者 · %dm · 搜他的尸体" % int(dist), Color(0.62, 0.8, 0.45))
+	else:
+		hud.feed("击杀 · %dm" % int(dist), Color(1.0, 0.7, 0.36))
+
+## 搜刮者/首领阵亡掉落：摆在尸体旁地上（谁打死的都掉——捡漏也算）
+func _on_soldier_dropped(items: Array, at: Vector3) -> void:
+	for it in items:
+		loot._spawn_ground(it, at)
+
+func _on_scav_extracted(_squad: int, n_items: int) -> void:
+	if mode == Mode.MISSION and _raid_live:
+		hud.feed("一支搜刮者小队已撤离（带走 %d 件）" % n_items, Color(0.62, 0.8, 0.45))
+
+## 空投落地：提示 + 增援已由 airdrop 模块召唤
+func _on_airdrop_landed(at: Vector3) -> void:
+	if mode == Mode.MISSION and _raid_live:
+		hud.feed("空投已落地 · 守军增援正在赶往落点", Color(0.75, 0.45, 1.0))
 
 ## 敌弹命中：扣血 + 受击方向弧（来袭方向相对视线：0 正前、+ 右侧）
 func _on_player_hit(dmg: float, from: Vector3) -> void:
@@ -487,6 +525,7 @@ func _step_mission(dt: float) -> void:
 	soldiers.update(dt, true)
 	loot.update(dt, player.pos, Input.is_action_pressed("hd_interact"))
 	targets.update(dt)
+	airdrop.update(dt)
 	_step_lever(dt)
 	_step_use(dt)
 	hud.set_armor(player.armor)
@@ -549,6 +588,7 @@ func _step_world_only(dt: float) -> void:
 	player.update(0.0)
 	soldiers.update(dt, true)
 	targets.update(dt)
+	airdrop.update(dt)
 	hud.set_health(player.health, 100.0)
 	_extract_t = maxf(0.0, _extract_t - dt * 2.0)
 	hud.set_extract(_extract_t, HDData.EXTRACT_HOLD)
@@ -576,6 +616,16 @@ func _tick_raid_clock() -> bool:
 	if left <= 0.0:
 		_mia()
 		return true
+	# 第 10 分钟空投：随机落点冒红烟，约 18 s 后伞降落地
+	if not _airdrop_fired and _raid_t >= HDData.AIRDROP_T:
+		_airdrop_fired = true
+		var ap: Vector3 = HDData.AIRDROP_POINTS[randi() % HDData.AIRDROP_POINTS.size()]
+		airdrop.trigger(ap)
+		var dir_names := ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
+		var bdeg := _bearing(ap.x - player.pos.x, ap.z - player.pos.z)
+		hud.toast("空投已投放 · %s方向 %dm · 红色烟雾标记落点（紫色及以上 + 物资）" % [
+			dir_names[int(round(bdeg / 45.0)) % 8],
+			int(Vector2(ap.x - player.pos.x, ap.z - player.pos.z).length())], Color(0.75, 0.45, 1.0))
 	# 大坝撤离点 12 分钟后开放
 	var dam: Dictionary = _extracts.get("dam", {})
 	if bool(dam.get("enabled", false)) and not bool(dam.get("open", false)) \
@@ -666,7 +716,19 @@ func _compass_marks() -> Array:
 		marks.append({"bearing": _bearing(lp.x - player.pos.x, lp.z - player.pos.z),
 			"label": "电闸 %dm" % int(Vector2(lp.x - player.pos.x, lp.z - player.pos.z).length()),
 			"color": Color(0.3, 0.7, 1.0)})
+	# 空投（投放后到搜空前）：紫色标记 + 距离
+	if airdrop != null and str(airdrop.state) != "idle" and not _airdrop_looted():
+		var adp: Vector3 = airdrop.pos
+		marks.append({"bearing": _bearing(adp.x - player.pos.x, adp.z - player.pos.z),
+			"label": "空投 %dm" % int(Vector2(adp.x - player.pos.x, adp.z - player.pos.z).length()),
+			"color": Color(0.75, 0.45, 1.0)})
 	return marks
+
+func _airdrop_looted() -> bool:
+	for c in loot._containers:
+		if str(c["cls"]) == "airdrop":
+			return bool(c["searched"])
+	return false
 
 ## 用物资（3/4/5/6 或背包「使用」）：读条期间收枪；医疗包满血/护甲满拒用
 func _use_item(kind: String) -> void:

@@ -1166,7 +1166,9 @@ func _run() -> void:
 	#  （背包上限），中位局战利品 ÷ 中档出发装备 KIT_REF 须落 1.2–1.6 倍——
 	#  撤离就赚、阵亡就亏；固定种子保证可复现
 	seed(20261018)
-	var mc_spots: Array = main.loot._containers   # 按容器分类 roll（第三阶段：武器/医疗/杂物/保险箱）
+	# 按容器分类 roll（第三阶段：武器/医疗/杂物/保险箱）；首领保险柜不计——要先
+	# 打赢首领，属于「高风险高回报」的额外收益，不是普通搜刮的基准
+	var mc_spots: Array = main.loot._containers.filter(func(c): return str(c["cls"]) != "vault")
 	var mc_tot: Array = []
 	for r in 2000:
 		var idxs: Array = range(mc_spots.size())
@@ -1648,6 +1650,213 @@ func _run() -> void:
 		and main.hud._result_title.text.contains("失踪"))
 	check("战绩累计局时（门槛 C：平均局时）", int(main.stash.stats.get("time_total", 0)) > 0)
 	main.soldiers.reset_all()
+
+	# ===== 第四阶段：敌人分级 / 首领 =====
+	var tier_n := {}
+	var bosses: Array = []
+	for s_v in main.soldiers.soldiers:
+		if s_v.has("reserve"):
+			continue   # 空投增援 / 搜刮者预留槽另测
+		tier_n[str(s_v["tier"])] = int(tier_n.get(str(s_v["tier"]), 0)) + 1
+		if str(s_v["tier"]) == "boss":
+			bosses.append(s_v)
+		if str(s_v["tier"]) == "elite":
+			check("精英只在中心/坝区", str(s_v["zone"]) in HDData.ELITE_ZONES, str(s_v["zone"]))
+	check("精英 ≥3 名 + 首领 2 名", int(tier_n.get("elite", 0)) >= 3 and bosses.size() == 2,
+		str(tier_n))
+	var vaults: Array = main.loot._containers.filter(func(c): return str(c["cls"]) == "vault")
+	var vault_near := vaults.size() == 2
+	for b in bosses:
+		var near := false
+		for c in vaults:
+			if Vector2(c["pos"].x - b["pos"].x, c["pos"].z - b["pos"].z).length() < 5.0:
+				near = true
+		vault_near = vault_near and near
+	check("两名首领各守一只首领保险柜（5 m 内）", vault_near)
+	var vault_ok := true
+	for i in 100:
+		if int(HDData.roll_container("vault", ["center", "dam"][i % 2])["rarity"]) < 5:
+			vault_ok = false
+	check("首领保险柜只出红色及以上（100 次）", vault_ok)
+	check("容器点总数契约不变（首领柜不进 world 表）", main.world.container_spots.size() == 58)
+	# 精英护甲：身体 40 伤 → 护甲吸一半 20（hp 80 / 甲 60→40）；爆头无视护甲
+	var ei := -1
+	for i in main.soldiers.soldiers.size():
+		if str(main.soldiers.soldiers[i]["tier"]) == "elite":
+			ei = i
+			break
+	var el: Dictionary = main.soldiers.soldiers[ei]
+	var r_ar: Dictionary = main.soldiers.apply_hit(ei, 40.0, false)
+	check("精英护甲吸收一半身体伤害", absf(float(el["hp"]) - 80.0) < 0.01
+		and absf(float(el["armor"]) - 40.0) < 0.01 and bool(r_ar.get("armor", false)),
+		"hp=%.1f armor=%.1f" % [float(el["hp"]), float(el["armor"])])
+	main.soldiers.apply_hit(ei, 40.0, true)
+	check("爆头无视护甲", absf(float(el["hp"]) - 40.0) < 0.01 and absf(float(el["armor"]) - 40.0) < 0.01,
+		"hp=%.1f armor=%.1f" % [float(el["hp"]), float(el["armor"])])
+	check("精英/首领更准更狠", float(HDData.ENEMY_TIERS["elite"]["spread"]) < 1.0
+		and float(HDData.ENEMY_TIERS["boss"]["spread"]) < float(HDData.ENEMY_TIERS["elite"]["spread"])
+		and float(HDData.ENEMY_TIERS["boss"]["dmg"]) > float(HDData.ENEMY_TIERS["elite"]["dmg"]))
+	# 首领拴绳：搜索目标点不离家超过 BOSS_LEASH
+	var bs: Dictionary = bosses[0]
+	var far_g: Vector3 = main.soldiers._leash(bs, bs["home"] + Vector3(60.0, 0.0, 0.0))
+	check("首领拴绳：目标点收回到 18 m 内", Vector2(far_g.x - bs["home"].x,
+		far_g.z - bs["home"].z).length() <= HDData.BOSS_LEASH + 0.01)
+	# 首领阵亡 → 尸体旁必掉一件金色及以上
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	var g_n0: int = main.loot.ground_count()
+	var bi: int = main.soldiers.soldiers.find(bs)
+	main.soldiers.apply_hit(bi, 999.0, true)
+	var drop_ok: bool = main.loot.ground_count() == g_n0 + 1
+	if drop_ok:
+		drop_ok = int(main.loot._ground[main.loot._ground.size() - 1]["item"]["rarity"]) >= HDData.BOSS_DROP_MIN
+	check("首领阵亡掉落金色及以上", drop_ok, "ground=%d" % main.loot.ground_count())
+	main.soldiers.reset_all()
+	check("重开后首领满血满甲", float(bs["hp"]) == float(HDData.ENEMY_TIERS["boss"]["hp"])
+		and float(bs["armor"]) == float(HDData.ENEMY_TIERS["boss"]["armor"]))
+	main._raid_live = false
+
+	# ===== 第四阶段：AI 搜刮者小队（三方混战）=====
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	var SD: Array = main.soldiers.soldiers
+	check("开局搜刮者 2 队 × 3 人进场", main.soldiers.scav_alive() == HDData.SCAV_SQUADS * HDData.SCAV_SIZE,
+		"n=%d" % main.soldiers.scav_alive())
+	var sc_far := true
+	for sv in SD:
+		if str(sv["faction"]) == "scav" and not sv["dead"] \
+				and Vector2(sv["pos"].x - main.player.pos.x, sv["pos"].z - main.player.pos.z).length() < 60.0:
+			sc_far = false
+	check("搜刮者不在玩家出生点附近（≥60 m）", sc_far)
+	var rf_live := func() -> int:
+		var n := 0
+		for x in SD:
+			if str(x.get("reserve", "")) == "reinforce" and not x["dead"]:
+				n += 1
+		return n
+	check("增援预留槽开局不在场", rf_live.call() == 0)
+	# 寻路网格（搜刮者跨图跑箱子/撤离用；没有它会卡死在变电站围墙里）
+	var nv = main.soldiers._nav
+	var np_from: Vector3 = HDData.SPAWN_POINTS[0]
+	var np_to := Vector3(115.0, 0.0, -36.0)
+	var npth: PackedVector3Array = nv.path(np_from, np_to)
+	var np_free := npth.size() >= 2
+	for q in npth:
+		if not nv.is_free(q):
+			np_free = false
+	check("寻路：西南出生点 → 东部变电站院内可达，路径点全在空地", nv.reachable(np_from, np_to)
+		and np_free and npth[npth.size() - 1].distance_to(np_to) < 3.0, "pts=%d" % npth.size())
+	# 隔离试验：守军全部「离场」、玩家挪到远处角落（谁都看不见）
+	var iso := func() -> void:
+		for sv in SD:
+			if str(sv["faction"]) == "guard":
+				sv["dead"] = true
+	iso.call()
+	main.player.enter(Vector3(-140.0, 0.0, 138.0))
+	var lead_i: int = main.soldiers._squad_leader(0)
+	var lead: Dictionary = SD[lead_i]
+	var tci := -1
+	for ci in main.loot._containers.size():
+		var c: Dictionary = main.loot._containers[ci]
+		if str(c["cls"]) in ["crate", "weapon", "medical"] and not bool(c["searched"]) \
+				and Vector2(c["pos"].x + 140.0, c["pos"].z - 138.0).length() > 80.0:
+			tci = ci
+			break
+	var tcp: Vector3 = main.loot._containers[tci]["pos"]
+	for sv in SD:
+		if str(sv["faction"]) == "scav" and int(sv["squad"]) == 0:
+			sv["pos"] = tcp + Vector3(1.2, 0.0, 0.6 + float(sv["squad_k"]) * 0.8)
+	lead["goal_c"] = tci
+	lead["goal_t"] = 0.0
+	lead["loot_t"] = 0.0
+	for i in 60 * 6:
+		main.soldiers.update(1.0 / 60.0, true)
+	check("搜刮者队长搜走容器（抢玩家的箱子）", bool(main.loot._containers[tci]["searched"])
+		and (lead["loot"] as Array).size() >= 1, "loot=%d" % (lead["loot"] as Array).size())
+	var g_s0: int = main.loot.ground_count()
+	var n_carry: int = (lead["loot"] as Array).size()
+	main.soldiers.apply_hit(lead_i, 999.0, true)
+	check("击杀搜刮者 → 身上战利品全部掉地上", main.loot.ground_count() >= g_s0 + n_carry,
+		"ground %d → %d（带 %d 件）" % [g_s0, main.loot.ground_count(), n_carry])
+	check("队长阵亡 → 队员接任队长", main.soldiers._squad_leader(0) >= 0
+		and main.soldiers._squad_leader(0) != lead_i)
+	# 守军 ⇄ 搜刮者互打：西南空地相距 16 m 面对面，12 s 内有一方挂彩
+	var gd: Dictionary = SD[0]
+	var sv2: Dictionary = SD[main.soldiers._squad_leader(1)]
+	var fpos := Vector3(-40.0, 0.0, 120.0)
+	gd["dead"] = false
+	gd["hp"] = 100.0
+	gd["state"] = "patrol"
+	gd["pos"] = fpos
+	gd["yaw"] = 0.0
+	gd["route"] = [fpos]
+	sv2["pos"] = fpos + Vector3(0.0, 0.0, 16.0)
+	sv2["yaw"] = PI
+	sv2["task"] = "loot"
+	for sv in SD:
+		if str(sv["faction"]) == "scav" and int(sv["squad"]) == 1 and sv != sv2:
+			sv["dead"] = true
+	var hp_sum0: float = float(gd["hp"]) + float(sv2["hp"]) + float(sv2["armor"])
+	for i in 60 * 12:
+		main.soldiers.update(1.0 / 60.0, true)
+	check("守军 ⇄ 搜刮者互相交火（12 s 内有人挂彩）", float(gd["hp"]) + float(sv2["hp"])
+		+ float(sv2["armor"]) < hp_sum0, "guard=%.0f scav=%.0f/%.0f" % [float(gd["hp"]),
+		float(sv2["hp"]), float(sv2["armor"])])
+	# 撤离：存活队员走到撤离点 → 整队离场
+	main.soldiers.reset_all()
+	main.soldiers.spawn_scavs(main.player.pos)
+	iso.call()
+	var ex_q := [-1, -1]
+	main.soldiers.scav_extracted.connect(func(q, n): ex_q[0] = q; ex_q[1] = n, CONNECT_ONE_SHOT)
+	var l1: Dictionary = SD[main.soldiers._squad_leader(1)]
+	l1["task"] = "exfil"
+	l1["pos"] = main.soldiers._nearest_exfil(l1["pos"]) + Vector3(0.5, 0.0, 0.0)
+	for i in 30:
+		main.soldiers.update(1.0 / 60.0, true)
+	check("搜刮者小队走到撤离点整队离场", ex_q[0] == 1 and main.soldiers._squad_leader(1) < 0,
+		"q=%d" % int(ex_q[0]))
+	main.soldiers.reset_all()
+	main._raid_live = false
+
+	# ===== 第四阶段：第 10 分钟空投 =====
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	var ob_n0: int = main.world.obstacles.size()
+	main._raid_t = HDData.AIRDROP_T - 0.005
+	main._step_mission(1.0 / 60.0)
+	check("第 10 分钟空投投放（信号烟 + 伞降）", main._airdrop_fired and str(main.airdrop.state) == "falling"
+		and main.airdrop._smoke.emitting)
+	var ad_mark := false
+	for mk in main._compass_marks():
+		if str(mk["label"]).begins_with("空投"):
+			ad_mark = true
+	check("指南针出现空投标记", ad_mark)
+	for i in 30:
+		main.airdrop.update(1.0)
+	var ad_c: Array = main.loot._containers.filter(func(c): return str(c["cls"]) == "airdrop")
+	var rf_on: Array = SD.filter(func(x): return str(x.get("reserve", "")) == "reinforce" and not x["dead"])
+	check("空投落地 → 空投箱可搜 + 3 名守军增援进场", str(main.airdrop.state) == "landed"
+		and ad_c.size() == 1 and rf_on.size() == HDData.REINFORCE_N,
+		"state=%s box=%d rf=%d" % [str(main.airdrop.state), ad_c.size(), rf_on.size()])
+	var rf_ok := true
+	for x in rf_on:
+		if Vector2(x["pos"].x - main.airdrop.pos.x, x["pos"].z - main.airdrop.pos.z).length() < 20.0 \
+				or float(x["alert_t"]) <= 0.0:
+			rf_ok = false
+	check("增援从落点外进场并警觉赶来", rf_ok)
+	var ad_ok := true
+	for i in 100:
+		if int(HDData.roll_container("airdrop", "mid")["rarity"]) < 3 or HDData.roll_bonus("airdrop").is_empty():
+			ad_ok = false
+	check("空投箱：紫色及以上 + 必带物资（100 次）", ad_ok)
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	var ad_left: Array = main.loot._containers.filter(func(c): return str(c["cls"]) == "airdrop")
+	check("重开局：空投箱与占位障碍拆除、增援离场", ad_left.is_empty()
+		and main.world.obstacles.size() == ob_n0 and str(main.airdrop.state) == "idle"
+		and rf_live.call() == 0, "box=%d ob %d→%d" % [ad_left.size(), ob_n0, main.world.obstacles.size()])
+	main.soldiers.reset_all()
+	main._raid_live = false
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

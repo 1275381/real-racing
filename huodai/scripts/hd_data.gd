@@ -152,7 +152,57 @@ const CONTAINER_CLASS := {
 	"crate": {"name": "杂物箱", "search": 1.8, "use_p": 0.15,
 		"pool": [["medkit", 25], ["pills", 25], ["plate", 25], ["ammo", 25]]},
 	"safe": {"name": "保险箱", "search": 5.0, "use_p": 0.0, "pool": [], "min_rarity": 2},
+	# 首领保险柜（第四阶段）：首领守着，搜 6 s、只出红色及以上
+	"vault": {"name": "首领保险柜", "search": 6.0, "use_p": 0.0, "pool": [], "min_rarity": 5},
+	# 空投箱：搜 4 s、紫色及以上 + 必带一件护甲板/医疗包/弹药盒
+	"airdrop": {"name": "空投箱", "search": 4.0, "use_p": 1.0, "min_rarity": 3,
+		"pool": [["plate", 40], ["medkit", 40], ["ammo", 20]]},
 }
+
+## ---- 第四阶段：敌人分级（改进方案第 3 节「普通兵、精英、首领」）----
+## hp 生命；armor 护甲（身体中弹先吸 ENEMY_ARMOR_ABSORB，爆头无视护甲）；
+## spread 散布倍率（越小越准）；dmg 伤害倍率；pause 射击间歇倍率；react 首发反应倍率
+const ENEMY_TIERS := {
+	"regular": {"name": "士兵", "hp": 100.0, "armor": 0.0, "spread": 1.0, "dmg": 1.0, "pause": 1.0, "react": 1.0},
+	"elite": {"name": "精英", "hp": 100.0, "armor": 60.0, "spread": 0.65, "dmg": 1.2, "pause": 0.8, "react": 0.7},
+	"boss": {"name": "首领", "hp": 260.0, "armor": 100.0, "spread": 0.5, "dmg": 1.5, "pause": 0.65, "react": 0.5},
+	"scav": {"name": "搜刮者", "hp": 120.0, "armor": 40.0, "spread": 0.8, "dmg": 1.1, "pause": 0.85, "react": 0.8},
+}
+const ENEMY_ARMOR_ABSORB := 0.5   # 敌方护甲吸收比例（吸多少扣多少护甲）
+const ELITE_ZONES := ["center", "dam"]   # 精英只在高价值区：同区巡逻点每 3 名第 2 名是精英
+const ELITE_EVERY := 3
+## 首领 ×2：守在首领保险柜旁（中心核心巷道 / 大坝坝底），不巡逻，搜索也不离家远；
+## 阵亡必掉一件金色及以上
+const BOSSES := [
+	{"id": "center", "name": "军火商", "pos": Vector3(4.5, 0.0, -11.0), "vault": Vector3(2.0, 0.0, -10.0), "zone": "center"},
+	{"id": "dam", "name": "坝区指挥官", "pos": Vector3(-17.0, 0.0, -104.0), "vault": Vector3(-20.0, 0.0, -104.0), "zone": "dam"},
+]
+const BOSS_LEASH := 18.0          # 首领离家上限（米）：追出这么远就回守
+const BOSS_DROP_MIN := 4          # 首领掉落品质下限（金色）
+
+## ---- AI 搜刮者小队（用户勾选「在单机里模拟其他玩家的压力」）----
+## 2 支 × 3 人，开局从玩家以外的出生点进图：队长挑最近的未搜容器去搜（抢玩家的箱子），
+## 队员跟随；搜够件数或到 18 分钟就去最近的撤离点撤走（带走战利品）。
+## 三方混战：守军 ⇄ 搜刮者 ⇄ 玩家互相敌对；搜刮者阵亡掉落身上全部战利品
+const SCAV_SQUADS := 2
+const SCAV_SIZE := 3
+const SCAV_PICKS := [3, 5]        # 每队搜够这么多件就撤（减员到只剩 1 人且有货也撤）
+const SCAV_EXFIL_T := 1080.0      # 18 分钟后不管搜没搜够都撤
+const SCAV_SEARCH_T := 3.5        # 搜一个箱子要站多久（保险箱 ×2）
+const SCAV_STUCK_T := 25.0        # 一个箱子走了这么久还没到 = 卡路，换下一个
+const NPC_DMG_MUL := 2.5          # 守军/搜刮者互射伤害倍率（否则互殴要打一分钟）
+
+## ---- 局内事件：空投（改进方案第 6 节「第 10 分钟空投：烟雾信号 + 附近敌人增援」）----
+const AIRDROP_T := 600.0
+const AIRDROP_H := 80.0           # 投放高度（米）
+const AIRDROP_FALL := 4.5         # 伞降速度（米/秒）→ 约 18 s 落地
+## 落点候选（过渡区空地，探针实测四周 5 m 无障碍；每局随机一处）
+const AIRDROP_POINTS := [Vector3(73.0, 0.0, 61.0), Vector3(-73.0, 0.0, 61.0),
+	Vector3(-73.0, 0.0, -61.0), Vector3(73.0, 0.0, -61.0), Vector3(16.0, 0.0, 94.0),
+	Vector3(-90.0, 0.0, -32.0)]
+const REINFORCE_N := 3            # 空投增援人数（2 普通 + 1 精英）
+const REINFORCE_DIST := 38.0      # 增援从落点外这么远处进场
+const AIRDROP_ALERT_R := 70.0     # 落点这么远内的守军会赶过去
 ## 各分区容器分类权重（保险箱只放高价值区；荒野没有）
 const CLASS_W := {
 	"center": [["safe", 20], ["weapon", 25], ["medical", 20], ["crate", 35]],
@@ -234,7 +284,11 @@ static func roll_bonus(cls: String) -> Dictionary:
 ## 按容器分类开箱的变卖物：保险箱品质下限蓝色，其余同分区 roll_loot
 static func roll_container(cls: String, zone: String) -> Dictionary:
 	var cc: Dictionary = CONTAINER_CLASS.get(cls, CONTAINER_CLASS["crate"])
-	var min_r := int(cc.get("min_rarity", 0))
+	return roll_min(zone, int(cc.get("min_rarity", 0)))
+
+
+## 品质下限 roll：分区权重里低于 min_r 的档位清零后重新归一（保险箱/首领掉落）
+static func roll_min(zone: String, min_r: int) -> Dictionary:
 	if min_r <= 0:
 		return roll_loot(zone)
 	var w: Array = (RARITY_W.get(zone, RARITY_W["mid"]) as Array).duplicate()

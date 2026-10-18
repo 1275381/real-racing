@@ -612,11 +612,12 @@ func set_extract(t: float, need: float) -> void:
 
 
 ## 准星旁 X 命中标记（kill 红 head 黄）
-func hitmark(head: bool, kill: bool) -> void:
+func hitmark(head: bool, kill: bool, armor: bool = false) -> void:
 	if _center == null:
 		setup()
 	_center.hit_kill = kill
 	_center.hit_head = head and not kill
+	_center.hit_armor = armor and not kill and not head   # 打在护甲上：蓝色命中标记
 	_center.hit_dur = 0.42 if kill else 0.24
 	_center.hit_t = _center.hit_dur
 	_center.queue_redraw()
@@ -1102,6 +1103,7 @@ class CenterLayer extends Control:
 	var hit_dur := 0.24
 	var hit_kill := false
 	var hit_head := false
+	var hit_armor := false
 	var prompt_text := ""         # 空 = 不显示
 	var prompt_prog := -1.0       # <0 = 只显示文字不画圈
 
@@ -1126,6 +1128,8 @@ class CenterLayer extends Control:
 				col = Color(1.0, 0.35, 0.25, a)
 			elif hit_head:
 				col = Color(1.0, 0.82, 0.34, a)
+			elif hit_armor:
+				col = Color(0.4, 0.72, 1.0, a)
 			for i in 4:
 				var dir := Vector2.RIGHT.rotated(PI * 0.25 + float(i) * PI * 0.5)
 				draw_line(c + dir * 7.0, c + dir * 14.0, col, 2.0)
