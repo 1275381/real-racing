@@ -650,15 +650,21 @@ func _mount_slot(slot: String) -> void:
 ## 控制动画匣、由枪身建模件表达静置外形（P90 顶匣/汤姆逊盒匣/手枪匣入握把/
 ## 霰弹管供弹无盒匣）
 func _mag_override(gid: String) -> Dictionary:
+	var d: Dictionary = {}
 	if _smg_has(gid):
-		return _smg_mag_of(gid)
-	if _ar_has(gid):
-		return _ar_mag_of(gid)
-	if _lmg_has(gid):
-		return _lmg_mag_of(gid)
-	if _old5_has(gid):
-		return _old5_mag_of(gid)
-	return {}
+		d = _smg_mag_of(gid)
+	elif _ar_has(gid):
+		d = _ar_mag_of(gid)
+	elif _lmg_has(gid):
+		d = _lmg_mag_of(gid)
+	elif _old5_has(gid):
+		d = _old5_mag_of(gid)
+	# 写实枪模弹匣真实位置与程序化版不同时，换弹手锚/掉匣起点跟模型走
+	# （mag_hand = 枪身局部握匣点，表内口径 ×GUN_SCALE）
+	if _bl_ready(gid) and BL_GUNS[gid].has("mag_hand"):
+		d = d.duplicate()
+		d["pos"] = Vector3(BL_GUNS[gid]["mag_hand"]) * GUN_SCALE
+	return d
 
 
 ## 程序化枪模分发：四路枪册分别到枪身工厂（只造枪身根 Node3D）——冲锋枪册
@@ -707,13 +713,15 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 ## anchor = (my, mz, fz) 机瞄/镜座挂点（枪身局部）：旧五枪沿用原分支常量、
 ## 新枪来自枪匠文件 scope_anchor；狙击分支不用 anchor（自带镜例外）
 func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
+	if root.has_meta("scope_anchor"):   # 写实枪模按自身导轨/安装面重给镜座锚
+		anchor = root.get_meta("scope_anchor")
 	var sc: Dictionary = _scope_info_for(gun_id)
 	var s_kind: String = str(sc.get("kind", "iron"))
 	if gun_id == "sniper":
 		if s_kind == "thermal":
 			_scope_visual(root, "thermal", 0.12, 0.05, -0.3)
-	elif s_kind == "iron" and PH_GUNS.has(gun_id) \
-			and root.find_child(str(PH_GUNS[gun_id]["keep"][0]), true, false) != null:
+	elif s_kind == "iron" and (root.has_meta("real_sights") or PH_GUNS.has(gun_id)
+			and root.find_child(str(PH_GUNS[gun_id]["keep"][0]), true, false) != null):
 		# 实拍枪自带真实机瞄（准星/照门是模型的一部分），不再叠旧版机瞄片——
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
@@ -777,6 +785,15 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 		mi.rotation_degrees = Vector3(90, 0, 0)
 		mi.position = pos
 		parent.add_child(mi)
+	# 写实化第五轮：Blender 建模瞄具（tools/blender/guns/optic_*.py，原点 = 镜座
+	# 安装面中心，尺寸按枪模同档放大）。红点镜只换镜体，玻璃片/内投影红点/
+	# aim_y 仍走下方代码；模型缺失回退原方块版
+	var om := _optic_model(kind)
+	if om != null:
+		om.position = Vector3(0, top_y, mid_z)
+		parent.add_child(om)
+		if kind != "reddot":
+			return
 	match kind:
 		"holo":
 			# 全息镜：方框视窗 + 底座
@@ -798,25 +815,26 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 			# 窗几何（相对镜座挂点 top_y）：底托上沿 24mm 起窗，窗沿 y 24~69mm
 			var win_cy := top_y + 0.024 + RD_WIN_H * 0.5   # 窗中心=瞄准线锚点
 			var win_z := mid_z - 0.058   # 玻璃面 z（窗变大后略前移，少遮后景）
-			# 导轨适配座：矮盒两层叠出倒角（上层四向缩进），y 0~14mm，随窗加宽
-			box.call(Vector3(0.052, 0.007, 0.075), Vector3(0, top_y + 0.0035,
-					mid_z - 0.03), dk)
-			box.call(Vector3(0.044, 0.007, 0.064), Vector3(0, top_y + 0.0105,
-					mid_z - 0.03), dk)
-			# 镜体底托：下匣（玻璃下沿插入），y 14~24mm
-			box.call(Vector3(0.04, 0.01, 0.064), Vector3(0, top_y + 0.019,
-					mid_z - 0.03), dk)
-			# 内红点投射器：玻璃后方暗色盒（底托上露头）+ 右侧风偏调节塔
-			box.call(Vector3(0.016, 0.012, 0.02), Vector3(0, top_y + 0.026,
-					mid_z - 0.032), dk)
-			box.call(Vector3(0.008, 0.008, 0.014), Vector3(0.026, top_y + 0.02,
-					mid_z - 0.028), dk)
-			# 两侧窄边：2.5mm 竖条夹持玻璃左右沿（「无框」仅存的框），比窗顶
-			# 矮 2mm——窗顶保持全镜最高（AABB 顶=窗顶的换算前提）
-			box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(-0.0313,
-					win_cy - 0.001, win_z), dk)
-			box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(0.0313,
-					win_cy - 0.001, win_z), dk)
+			if om == null:
+				# 导轨适配座：矮盒两层叠出倒角（上层四向缩进），y 0~14mm，随窗加宽
+				box.call(Vector3(0.052, 0.007, 0.075), Vector3(0, top_y + 0.0035,
+						mid_z - 0.03), dk)
+				box.call(Vector3(0.044, 0.007, 0.064), Vector3(0, top_y + 0.0105,
+						mid_z - 0.03), dk)
+				# 镜体底托：下匣（玻璃下沿插入），y 14~24mm
+				box.call(Vector3(0.04, 0.01, 0.064), Vector3(0, top_y + 0.019,
+						mid_z - 0.03), dk)
+				# 内红点投射器：玻璃后方暗色盒（底托上露头）+ 右侧风偏调节塔
+				box.call(Vector3(0.016, 0.012, 0.02), Vector3(0, top_y + 0.026,
+						mid_z - 0.032), dk)
+				box.call(Vector3(0.008, 0.008, 0.014), Vector3(0.026, top_y + 0.02,
+						mid_z - 0.028), dk)
+				# 两侧窄边：2.5mm 竖条夹持玻璃左右沿（「无框」仅存的框），比窗顶
+				# 矮 2mm——窗顶保持全镜最高（AABB 顶=窗顶的换算前提）
+				box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(-0.0313,
+						win_cy - 0.001, win_z), dk)
+				box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(0.0313,
+						win_cy - 0.001, win_z), dk)
 			# 玻璃窗：单片平玻璃 60×45×2mm，淡青透明双面——窗顶即 sight top
 			# （全镜无任何件高于玻璃）
 			box.call(Vector3(RD_WIN_W, RD_WIN_H, 0.002), Vector3(0, win_cy,
@@ -1214,6 +1232,9 @@ static func _smg_has(id: String) -> bool:
 ## 统一入口：只造「枪身根」（Node3D + 若干 MeshInstance3D 子节点）。
 ## 未知 id 返回空 Node3D（防御不崩）
 static func _smg_build(id: String) -> Node3D:
+	var bl := _bl_gun(id)
+	if bl != null:
+		return bl
 	match id:
 		"mp5":
 			return _smg_mp5()
@@ -1250,12 +1271,12 @@ static func _smg_mag_of(id: String) -> Dictionary:
 			## y 下移到匣顶恰贴机匣底起垂（防 no_depth_test 动画盒上段
 			## 叠画进机匣面——握把与匣同色 maggrey 弱化嵌入接缝）
 			return {"pos": Vector3(0.0, -0.115, 0.05),
-					"size": Vector3(0.045, 0.20, 0.07), "show": true}
+					"size": Vector3(0.045, 0.20, 0.07), "show": not _bl_ready(id)}
 		"vector":
 			## 匣入大后倾斜握把：同上对中+贴机匣底（竖直动画匣 vs 斜握把
 			## 的小错位为低模已知取舍）
 			return {"pos": Vector3(0.0, -0.105, 0.01),
-					"size": Vector3(0.05, 0.18, 0.07), "show": true}
+					"size": Vector3(0.05, 0.18, 0.07), "show": not _bl_ready(id)}
 		"mk4":
 			## 4.6×30 直弹匣（微弧）：真匣是枪身建模件（mag_straight 独立命名
 			## 节点 + HDGunLib.curved_mag 三段 7° 微弧），动画匣隐（同 MP5/P90
@@ -2230,6 +2251,9 @@ static func _ar_has(id: String) -> bool:
 ## 本签名逐字不动（_build_gun_visual / test_huodai 顶点红线断言都走此处），
 ## 材质仍由 _ar_mats 传参注入（新文件零材质创建）
 static func _ar_build(id: String) -> Node3D:
+	var bl := _bl_gun(id)
+	if bl != null:
+		return bl
 	return AR_LIB.build(id, _ar_mats())
 
 
@@ -2429,6 +2453,9 @@ static func _lmg_has(id: String) -> bool:
 ## 签名同 _ar_build 口径（_build_gun_visual / test_huodai 顶点红线断言都走
 ## 此处），材质仍由 _lmg_mats 传参注入（新文件零材质创建）
 static func _lmg_build(id: String) -> Node3D:
+	var bl := _bl_gun(id)
+	if bl != null:
+		return bl
 	return LMG_LIB.build(id, _lmg_mats())
 
 
@@ -2526,6 +2553,154 @@ const PH_GUNS := {
 		# 栓动步枪无手枪握把：持握点 = 扳机后方枪托腕部顶面
 		"grip": Vector3(-0.33, 0.012, 0.0)},
 }
+
+
+## Blender 写实枪（美术写实化第五轮，tools/blender/make_gun.py + guns/<id>.py）：
+## 真实尺寸建模、Cycles 烘焙 AO/棱边磨损/倒角法线后，导出时已等比缩放平移到
+## 本枪程序化枪身局部（握把点对 grip、全长对原长）——这里只补命名锚点：
+## grip = 程序化 grip_hold 位置（HOLD_DELTA 照旧推到 MK4 基准）、
+## mag = 程序化静置弹匣节点名与位置（合并器保留空锚点，测试按名找）。
+## 模型缺失（另一台电脑没 git lfs pull）返回 null → 走原程序化枪身
+const BL_GUN_DIR := "res://assets/pbr/models/guns/"
+const BL_GUNS := {
+	# anchor = 镜座锚 (安装面高 y, 镜体中心 z, 准星 z)：AK 无顶导轨，按导气管
+	# 导轨式前置红点（UltiMAK 式）落在上护木顶面
+	"akm": {"grip": Vector3(0.0, -0.0165, 0.099),
+		"mag": ["mag_banana", Vector3(0.0, -0.035, -0.17)],
+		"anchor": Vector3(0.088, -0.36, -0.62)},
+	# P90 TR：无机瞄，镜座锚 = 顶导轨；弹匣平躺枪顶导轨罩下
+	"p90": {"grip": Vector3(0.0, -0.0494, 0.0446),
+		"mag": ["mag_top", Vector3(0.0, 0.026, 0.06)], "mag_hand": Vector3(0.0, 0.04, 0.06),
+		"anchor": Vector3(0.0586, -0.073, -0.1785)},
+	"vector": {"grip": Vector3(0.0, -0.0199, 0.0017),
+		"mag": ["mag_vector", Vector3(0.0, -0.077, -0.096)], "mag_hand": Vector3(0.0, -0.11, -0.096),
+		"anchor": Vector3(0.0896, -0.135, -0.299)},
+	# 汤姆逊 M1928A1：无导轨，镜座锚 = 机匣顶；真弹匣在扳机护圈正前（比程序化版靠后 16cm）
+	"smg": {"grip": Vector3(0.0, -0.041, 0.1303),
+		"mag": ["mag_thompson", Vector3(0.0, -0.109, 0.006)], "mag_hand": Vector3(0.0, -0.13, 0.006),
+		"anchor": Vector3(0.0365, 0.03, -0.337)},
+	# MP5A2：镜座锚 = 机匣顶（爪式座位）；30 发弯匣比程序化版靠前 7cm
+	"mp5": {"grip": Vector3(0.0, -0.0192, -0.0439),
+		"mag": ["mag_curved", Vector3(0.0, -0.108, -0.261)], "mag_hand": Vector3(0.0, -0.13, -0.27),
+		"anchor": Vector3(0.066, -0.13, -0.447)},
+	# MP7A1：弹匣插在握把里，握把居中——整枪比程序化版靠后 13cm
+	"mp7": {"grip": Vector3(0.0, -0.042, 0.028),
+		"mag": ["mag_pdw", Vector3(0.0, -0.183, 0.014)], "mag_hand": Vector3(0.0, -0.19, 0.014),
+		"anchor": Vector3(0.028, -0.015, -0.153)},
+	# UZI：无导轨，镜座锚 = 顶盖（照门与拉机钮之间）；32 发弹匣插在握把里
+	"uzi": {"grip": Vector3(0.0, -0.0243, 0.0674),
+		"mag": ["mag_uzi", Vector3(0.0, -0.156, 0.049)], "mag_hand": Vector3(0.0, -0.165, 0.049),
+		"anchor": Vector3(0.034, 0.038, -0.133)},
+	# M14：无导轨，镜座锚 = 机匣顶（照门之前）；20 发匣在扳机护圈正前（程序化表
+	# 原值多叠了一次 Δ，换弹手锚改按模型真实位置）
+	"m14": {"grip": Vector3(0.0, -0.028, 0.155),
+		"mag": ["mag_dmr", Vector3(0.0, -0.12, -0.024)], "mag_hand": Vector3(0.0, -0.13, -0.024),
+		"anchor": Vector3(0.006, -0.06, -0.646)},
+	# M7 = XM7 / SIG MCX-SPEAR：全长顶导轨，镜座锚取机匣段中部
+	"rifle": {"grip": Vector3(0.0, -0.031, 0.0672),
+		"mag": ["mag_m7", Vector3(0.0, -0.062, -0.15)],
+		"anchor": Vector3(0.0627, -0.077, -0.599)},
+	# 雷明顿 870：管式供弹无弹匣；无导轨，镜座锚 = 机匣顶
+	"shotgun": {"grip": Vector3(0.0, 0.0024, 0.1206),
+		"anchor": Vector3(0.028, -0.04, -0.574)},
+	# 下列四把全长顶导轨：镜座锚取上机匣前段（真枪装红点/倍镜的常规位），
+	# 不取导轨正中（那会把镜挂到护木前端）
+	"m4a1": {"grip": Vector3(0.0, -0.0307, 0.07),
+		"mag": ["mag_stanag", Vector3(0.0, -0.12, -0.14)], "mag_hand": Vector3(0.0, -0.14, -0.14),
+		"anchor": Vector3(0.0574, -0.1, -0.5538)},
+	# MK4 = SIG MPX 式 9mm 冲锋枪（虚构型号，短消音器 + 折叠骨架托）
+	"mk4": {"grip": Vector3(0.0, -0.022, -0.0018),
+		"mag": ["mag_straight", Vector3(0.0, -0.12, -0.183)], "mag_hand": Vector3(0.0, -0.14, -0.183),
+		"anchor": Vector3(0.0692, -0.14, -0.4842)},
+	"scarh": {"grip": Vector3(0.0, -0.0301, 0.0605),
+		"mag": ["mag_wide", Vector3(0.0, -0.12, -0.15)], "mag_hand": Vector3(0.0, -0.14, -0.15),
+		"anchor": Vector3(0.0731, -0.09, -0.5375)},
+	# XM250：弹链袋挂机匣左下（与程序化 mag_pouch 位差 ≤1cm，锚点沿用）
+	"m250": {"grip": Vector3(0.0, -0.05, 0.07),
+		"mag": ["mag_pouch", Vector3(0.0, -0.053, -0.085)],
+		"anchor": Vector3(0.0579, -0.1, -0.5097)},
+}
+## 枪模在 vm 独立视口里只有一盏相机平行光 + 补光：烘焙贴图按真实反照率做，
+## 再加一档贴图自发光保暗处可读（程序化枪材质工厂同理，0.32~0.42）
+const BL_GUN_GLOW := 0.3
+
+
+static func _bl_gun(id: String) -> Node3D:
+	# HD_NO_BL 非空 = 强制程序化枪身（A/B 对照开关，同 HD_NO_MERGE 用法）
+	if not BL_GUNS.has(id) or OS.get_environment("HD_NO_BL") != "":
+		return null
+	var path := BL_GUN_DIR + id + ".glb"
+	var ps: PackedScene = load(path) if ResourceLoader.exists(path) else null
+	if ps == null:
+		push_warning("[烽火地带] 写实枪模缺失：%s（另一台电脑请 git lfs pull，暂用程序化枪模）" % path)
+		return null
+	var spec: Dictionary = BL_GUNS[id]
+	var root := Node3D.new()
+	# 模型挂在 pivot 下：HOLD_DELTA 只平移 root 的直接子节点（须为 Node3D）
+	var pivot := Node3D.new()
+	pivot.name = "model"
+	root.add_child(pivot)
+	var model: Node3D = ps.instantiate()
+	pivot.add_child(model)
+	_bl_dress(model)
+	var anchor := Node3D.new()
+	anchor.name = "grip_hold"
+	anchor.position = spec["grip"]
+	root.add_child(anchor)
+	if spec.has("mag"):
+		var mg := Node3D.new()
+		mg.name = str(spec["mag"][0])
+		mg.position = spec["mag"][1]
+		root.add_child(mg)
+	# 模型自带真实机瞄（准星/照门/护耳），_finish_gun 不再叠旧版机瞄片
+	root.set_meta("real_sights", true)
+	if spec.has("anchor"):
+		root.set_meta("scope_anchor", spec["anchor"])
+	return root
+
+
+## 写实枪模/瞄具材质：逐面覆盖（合并器取覆盖材质）——各向异性过滤、
+## render_priority 10（29f 防线）、贴图乘法自发光保 vm 世界暗处可读
+static func _bl_dress(model: Node) -> void:
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var m3 := mi as MeshInstance3D
+		m3.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for si in m3.mesh.get_surface_count():
+			var sm = m3.mesh.surface_get_material(si)
+			if sm is StandardMaterial3D:
+				var d: StandardMaterial3D = (sm as StandardMaterial3D).duplicate()
+				d.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+				d.render_priority = 10
+				d.emission_enabled = true
+				d.emission = Color(1, 1, 1)
+				d.emission_texture = d.albedo_texture
+				# 乘法：发光 = 贴图 × 能量（缺省 ADD 是「白色 + 贴图」，整把枪泛白）
+				d.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
+				d.emission_energy_multiplier = BL_GUN_GLOW
+				m3.set_surface_override_material(si, d)
+
+
+## 写实枪模可用（登记在册且文件已导入）——动画匣显隐等静态表据此切换：
+## 模型自带弹匣时动画盒隐藏，缺模型回退程序化枪时照旧显示
+static func _bl_ready(id: String) -> bool:
+	return BL_GUNS.has(id) and OS.get_environment("HD_NO_BL") == "" \
+			and ResourceLoader.exists(BL_GUN_DIR + id + ".glb")
+
+
+## 写实瞄具模型（holo/reddot/optic/sniper/thermal → optic_<kind>.glb），材质同写实枪
+static func _optic_model(kind: String) -> Node3D:
+	var path := BL_GUN_DIR + "optic_" + kind + ".glb"
+	if not ResourceLoader.exists(path):
+		return null
+	var ps: PackedScene = load(path)
+	if ps == null:
+		return null
+	var wrap := Node3D.new()
+	wrap.name = "optic"
+	var model: Node3D = ps.instantiate()
+	wrap.add_child(model)
+	_bl_dress(model)
+	return wrap
 
 
 ## 造实拍枪身根：先造一遍原程序化枪身量出长度与持握锚（grip_hold），实拍
@@ -2630,6 +2805,9 @@ static func _old5_build(id: String) -> Node3D:
 		var real := _ph_gun(id)
 		if real != null:
 			return real
+	var bl := _bl_gun(id)
+	if bl != null:
+		return bl
 	match id:
 		"pistol":
 			return _old5_pistol()
