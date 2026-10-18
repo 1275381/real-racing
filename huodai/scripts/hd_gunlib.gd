@@ -153,12 +153,16 @@ static func merge_unibody(root: Node3D) -> void:
 					mesh.surface_get_arrays(0))
 			# 段材质克隆关深度测试（vm 世界契约，见头注「表面恢复物理
 			# 深度」）；其余参数原样保留。透明段（镜玻璃）本就测深度，
-			# 行为不变；render_priority 保留 10（29f 防线参数不丢）
+			# 行为不变；render_priority 保底 10（29f 防线参数不丢）——
+			# 程序化枪材质出厂即 10（hd_guns 各材质工厂），实拍枪
+			# （PH_GUNS）GLTF 材质默认 0，克隆时统一抬到 ≥10
 			var mat0: Material = g[0]
 			var mat_use: Material = mat0
 			if mat0 is StandardMaterial3D:
 				var mc: StandardMaterial3D = mat0.duplicate()
 				mc.no_depth_test = false
+				if mc.render_priority < 10:
+					mc.render_priority = 10
 				mat_use = mc
 			am.surface_set_material(am.get_surface_count() - 1, mat_use)
 		var mi := MeshInstance3D.new()
