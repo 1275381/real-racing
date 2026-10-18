@@ -51,6 +51,7 @@ var pos := Vector3.ZERO
 var yaw := 0.0
 var pitch := 0.0
 var health := 100.0
+var armor := 0.0          # 护甲（护甲板 +50，上限 100；吸收 60% 伤害，吸多少扣多少）
 var dead := false
 var recoil_pitch := 0.0   # HDGuns 每发写入（视角上顶，rad）
 var recoil_yaw := 0.0     # HDGuns 每发写入（水平漂移，rad）
@@ -182,6 +183,7 @@ func _process(_delta: float) -> void:
 func enter(spawn: Vector3) -> void:
 	pos = spawn
 	health = 100.0
+	armor = 0.0
 	dead = false
 	recoil_pitch = 0.0
 	recoil_yaw = 0.0
@@ -286,14 +288,25 @@ func update(dt: float) -> void:
 	sync_vm()
 
 
+## 回血（医疗包/止痛药），上限 100
+func heal(v: float) -> void:
+	if dead:
+		return
+	health = minf(100.0, health + maxf(0.0, v))
+
+
 func eye_pos() -> Vector3:
 	return cam.global_position
 
 
-## 中弹：血量扣减，归零判死（died 只发一次）
+## 中弹：先过护甲（吸收 60%，吸多少扣多少护甲），余量扣血，归零判死（died 只发一次）
 func hit(dmg: float) -> void:
 	if dead:
 		return
+	if armor > 0.0:
+		var ab := minf(armor, dmg * HDData.ARMOR_ABSORB)
+		armor -= ab
+		dmg -= ab
 	health = maxf(0.0, health - dmg)
 	if health <= 0.0:
 		dead = true

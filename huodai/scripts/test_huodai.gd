@@ -92,6 +92,9 @@ func _run() -> void:
 		and absf(main.player.pos.z) <= HDData.MAP_HALF)
 
 	# 5. 命中判定：把 0 号兵放到面前 10m，aim 后 raycast_all 应报 soldier
+	#    （出生点随机后固定回西南角空地，面前 10 m 无遮挡）
+	main.player.enter(HDData.SPAWN_POINTS[0])
+	main.player.yaw = atan2(-HDData.SPAWN_POINTS[0].x, -HDData.SPAWN_POINTS[0].z)
 	var s0: Dictionary = main.soldiers.soldiers[0]
 	var fwd := Vector3(sin(main.player.yaw), 0.0, cos(main.player.yaw))
 	s0["pos"] = main.player.pos + fwd * 10.0
@@ -1058,6 +1061,7 @@ func _run() -> void:
 			and main.world.zone_at(-99.0, 26.0) == "mid"
 			and main.world.zone_at(84.0, 44.0) == "mid")
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	main._raid_t = HDData.DAM_OPEN_T + 1.0   # 大坝撤离点 12 分钟后才开（第三阶段）
 	main.player.enter(main.world.extract2_pos)
 	main._extract_t = 4.95
 	await frames(10)
@@ -1162,15 +1166,17 @@ func _run() -> void:
 	#  （背包上限），中位局战利品 ÷ 中档出发装备 KIT_REF 须落 1.2–1.6 倍——
 	#  撤离就赚、阵亡就亏；固定种子保证可复现
 	seed(20261018)
-	var mc_spots: Array = main.world.container_spots
+	var mc_spots: Array = main.loot._containers   # 按容器分类 roll（第三阶段：武器/医疗/杂物/保险箱）
 	var mc_tot: Array = []
 	for r in 2000:
 		var idxs: Array = range(mc_spots.size())
 		idxs.shuffle()
 		var tot := 0.0
 		for k in HDData.BACKPACK_MAX:
-			var sp: Vector3 = mc_spots[idxs[k]]["pos"]
-			tot += float(HDData.roll_loot(main.world.zone_at(sp.x, sp.z))["value"])
+			var c0: Dictionary = mc_spots[idxs[k]]
+			var sp: Vector3 = c0["pos"]
+			tot += float(HDData.roll_container(str(c0["cls"]), main.world.zone_at(sp.x, sp.z))["value"])
+			HDData.roll_bonus(str(c0["cls"]))   # 额外物资多半局内用掉，不计入门槛（照常耗一次随机数）
 		mc_tot.append(tot)
 	mc_tot.sort()
 	randomize()
@@ -1242,11 +1248,12 @@ func _run() -> void:
 	var c_spot: Vector3 = main.world.container_spots[2]["pos"]
 	for i in 130:
 		main.loot.update(0.016, c_spot, true)
-	var bag_min := INF
+	var bag_max := 0.0
 	for it in main.loot.backpack:
-		bag_min = minf(bag_min, float(it["value"]))
+		bag_max = maxf(bag_max, float(it["value"]))
 	check("满包开箱：新件更值钱自动交换（旧件落地不销毁）",
-		main.loot.backpack.size() == HDData.BACKPACK_MAX and main.loot.ground_count() == 1,
+		main.loot.backpack.size() == HDData.BACKPACK_MAX and main.loot.ground_count() >= 1
+			and bag_max > 1.0,
 		"bag=%d ground=%d" % [main.loot.backpack.size(), main.loot.ground_count()])
 	main._win_raid()
 
@@ -1508,6 +1515,139 @@ func _run() -> void:
 		and main.audio._pool3d[0] is AudioStreamPlayer3D)
 	main.soldiers.reset_all()
 	main._raid_live = false
+
+	# ===== 第三阶段：内容深度（改进方案第 5/6 节）=====
+	# §容器分类：四类都在图上；保险箱 5 s、只出蓝色及以上
+	var cls_n := {}
+	for c in main.loot._containers:
+		cls_n[str(c["cls"])] = int(cls_n.get(str(c["cls"]), 0)) + 1
+	check("容器四类齐全（武器/医疗/杂物/保险箱）", cls_n.has("weapon") and cls_n.has("medical")
+		and cls_n.has("crate") and cls_n.has("safe"), str(cls_n))
+	var safe_ok := true
+	for i in 200:
+		if int(HDData.roll_container("safe", ["wild", "mid", "center", "dam"][i % 4])["rarity"]) < 2:
+			safe_ok = false
+	check("保险箱只出蓝色及以上（200 次）", safe_ok)
+	check("保险箱搜索 5 s", float(HDData.CONTAINER_CLASS["safe"]["search"]) == 5.0)
+	var med_uses := 0
+	for i in 400:
+		if HDData.roll_bonus("medical").has("use"):
+			med_uses += 1
+	check("医疗箱约一半额外出药品（变卖物照出）", med_uses > 180 and med_uses < 260
+		and not HDData.roll_container("medical", "mid").has("use"), "n=%d/400" % med_uses)
+
+	# §随机出生：5 个出生点都在空地、离最近巡逻点 ≥30 m；开局在其中随机
+	var sp_ok := true
+	for sp in HDData.SPAWN_POINTS:
+		for ps in main.world.patrol_spots:
+			if Vector2(sp.x - ps["pos"].x, sp.z - ps["pos"].z).length() < 30.0:
+				sp_ok = false
+		for ob in main.world.obstacles:
+			if absf(sp.x - float(ob["cx"])) < float(ob["hx"]) + 0.6 \
+					and absf(sp.z - float(ob["cz"])) < float(ob["hz"]) + 0.6:
+				sp_ok = false
+	for sp in HDData.SPAWN_POINTS:
+		if absf(sp.x) > HDWorld.BOUND - 2.0 or absf(sp.z) > HDWorld.BOUND - 2.0:
+			sp_ok = false   # 必须在行动边界内（边界墙在 ±149）
+	check("出生点 ×5 都在边界内空地且离巡逻点 ≥30 m", sp_ok and HDData.SPAWN_POINTS.size() >= 4)
+	var seen_sp := {}
+	for i in 24:
+		main._start_mission({"primary": "rifle", "secondary": "pistol"})
+		seen_sp[str(main.world.spawn_pos)] = true
+	check("开局随机出生（24 局 ≥3 个不同点）", seen_sp.size() >= 3, "n=%d" % seen_sp.size())
+
+	# §物资：医疗包读条回 50 / 护甲板 +50 且吸收 60% / 弹药盒 +2 匣 / 止痛药缓回
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	for k in HDData.USE_KEYS:
+		main.loot.backpack.append(HDData.make_consumable(k))
+	main.player.health = 40.0
+	main._route_key(KEY_3)
+	for i in 200:
+		main._step_use(1.0 / 60.0)
+	check("医疗包读条 3 s 回 50 血（用掉一件）", absf(main.player.health - 90.0) < 0.5
+		and int(main.loot.use_counts()["medkit"]) == 0, "hp=%.1f" % main.player.health)
+	main._route_key(KEY_5)
+	for i in 130:
+		main._step_use(1.0 / 60.0)
+	check("护甲板 +50 护甲", absf(main.player.armor - 50.0) < 0.01, "armor=%.1f" % main.player.armor)
+	main.player.hit(20.0)
+	check("护甲吸收 60% 伤害", absf(main.player.health - 82.0) < 0.01
+		and absf(main.player.armor - 38.0) < 0.01,
+		"hp=%.1f armor=%.1f" % [main.player.health, main.player.armor])
+	var res0: int = main.guns.reserve
+	main._route_key(KEY_6)
+	for i in 100:
+		main._step_use(1.0 / 60.0)
+	check("弹药盒 +2 匣备弹", main.guns.reserve == res0 + 60, "reserve %d→%d" % [res0, main.guns.reserve])
+	main.player.health = 50.0
+	main._route_key(KEY_4)
+	for i in 600:
+		main._step_use(1.0 / 60.0)
+	check("止痛药 8 s 内缓回 20", absf(main.player.health - 70.0) < 0.5, "hp=%.1f" % main.player.health)
+	main._route_key(KEY_3)
+	check("没有医疗包时不读条", main._using.is_empty())
+
+	# §撤离点：大坝 12 分钟前不开 / 开后可撤；付费扣 ₵800（不足不能撤）；拉闸后东门开放并惊动附近敌人
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	main._extracts["paid"]["enabled"] = true
+	main._extracts["lever"]["enabled"] = true
+	main._sync_extract_vis()
+	main._raid_t = 100.0
+	main.player.enter(main.world.extract2_pos)
+	for i in 400:
+		main._step_mission(1.0 / 60.0)
+	check("大坝撤离点 12 分钟前不开放", main._raid_live and not main.hud.result_visible)
+	main._raid_t = HDData.DAM_OPEN_T + 0.5
+	main._step_mission(1.0 / 60.0)
+	check("12 分钟后大坝撤离点开放", bool(main._extracts["dam"]["open"]))
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	main._extracts["paid"]["enabled"] = true
+	main.stash.cash = 500
+	main.player.enter(main.world.paid_pos)
+	for i in 400:
+		main._step_mission(1.0 / 60.0)
+	check("付费撤离现金不足不能撤", main._raid_live and main.stash.cash == 500)
+	main.stash.cash = 2000
+	var ex_n0: int = int(main.stash.stats["extracts"])
+	for i in 400:
+		main._step_mission(1.0 / 60.0)
+		if not main._raid_live:
+			break
+	check("付费撤离成功扣 ₵800", not main._raid_live and main.stash.cash == 1200
+		and int(main.stash.stats["extracts"]) == ex_n0 + 1, "cash=%d" % main.stash.cash)
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(2)
+	main._extracts["lever"]["enabled"] = true
+	main._sync_extract_vis()
+	main.player.enter(main.world.lever_ext_pos)
+	for i in 60:
+		main._step_mission(1.0 / 60.0)
+	check("拉闸撤离未通电时不能撤", main._raid_live and main._extract_t == 0.0)
+	var near_guard: Dictionary = main.soldiers.soldiers[0]
+	near_guard["pos"] = HDData.LEVER_POS + Vector3(20.0, 0.0, 0.0)
+	near_guard["alert_t"] = 0.0
+	near_guard["dead"] = false
+	main.player.enter(HDData.LEVER_POS)
+	Input.action_press("hd_interact")
+	for i in 140:
+		main._step_mission(1.0 / 60.0)
+	Input.action_release("hd_interact")
+	check("按住 F 拉闸 → 东门撤离开放 + 附近敌人警觉", bool(main._extracts["lever"]["open"])
+		and float(near_guard["alert_t"]) > 0.0)
+
+	# §局时 25 分钟：耗尽未撤离 = 失踪（按阵亡结算）
+	main._start_mission({"primary": "pistol", "secondary": ""})
+	await frames(2)
+	var d_n0: int = int(main.stash.stats["deaths"])
+	main._raid_t = HDData.RAID_TIME - 0.01
+	main._step_mission(1.0 / 60.0)
+	check("局时耗尽 = 失踪（记阵亡）", not main._raid_live and int(main.stash.stats["deaths"]) == d_n0 + 1
+		and main.hud._result_title.text.contains("失踪"))
+	check("战绩累计局时（门槛 C：平均局时）", int(main.stash.stats.get("time_total", 0)) > 0)
+	main.soldiers.reset_all()
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

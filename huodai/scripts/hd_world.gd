@@ -256,9 +256,13 @@ const WILD_PROPS := [
 var obstacles: Array = []         # {cx,cz,hx,hz,top,bot}（onfoot push_out 契约）
 var container_spots: Array = []   # {pos: Vector3, zone: String}（HDLoot 据此生成）
 var patrol_spots: Array = []      # {pos: Vector3, zone: String}（AI 巡逻锚点）
-var spawn_pos := Vector3(-138.0, 0.0, 138.0)   # 行动出生点（西南角，离中心远）
+var spawn_pos := Vector3(-138.0, 0.0, 138.0)   # 本局出生点（main 每局从 HDData.SPAWN_POINTS 随机取）
 var extract_pos: Vector3 = HDData.EXTRACT_POS  # 主撤离点（绿信标）
 var extract2_pos: Vector3 = HDData.DAM_EXTRACT_POS   # 第二撤离点（大坝撤离广场，信标同款）
+var paid_pos: Vector3 = HDData.PAID_EXTRACT_POS      # 付费撤离（金色信标）
+var lever_ext_pos: Vector3 = HDData.LEVER_EXTRACT_POS   # 拉闸撤离（蓝色信标）
+var _extract_vis := {}            # id -> {mats:[StandardMaterial3D], light, col, nodes}
+var _lever_handle: Node3D         # 电闸手柄（拉下后转角）
 var dam: Node3D                   # 大坝硬结构（HDDam 实例：坝体/廊道/涂鸦/闸门排，视觉挂本类）
 var dam_base: Node3D              # 坝底工业区（HDDamBase 实例：厂房/堆场/工地 + 坝区点位）
 var dam_zones: Node3D             # 四新区（HDDamZones 实例：军营/大电/水泥厂/游客中心 + 新点位）
@@ -311,9 +315,13 @@ func build() -> void:
 	dam_zones = HDDAM_ZONES_SCRIPT.new()
 	add_child(dam_zones)
 	dam_zones.build(self)
-	# 撤离信标 ×2：主撤离（东侧绿标）+ 大坝广场第二撤离（93,-94），参数化复用同一生成器
-	_build_extract(extract_pos)
-	_build_extract(extract2_pos)
+	# 撤离信标 ×4：主撤离（东侧绿标）+ 大坝广场（定时开放）+ 付费（金）+ 拉闸（蓝）；
+	# 开放状态由 main 每局按规则切（set_extract_state）
+	_extract_vis["main"] = _build_extract(extract_pos, Color(0.25, 1.0, 0.45))
+	_extract_vis["dam"] = _build_extract(extract2_pos, Color(0.25, 1.0, 0.45))
+	_extract_vis["paid"] = _build_extract(paid_pos, Color(1.0, 0.78, 0.25))
+	_extract_vis["lever"] = _build_extract(lever_ext_pos, Color(0.3, 0.7, 1.0))
+	_build_lever(HDData.LEVER_POS)
 	# 地表植被最后撒：大坝/四新区的障碍物都已登记，才能避开建筑
 	_scatter_ground_cover()
 
@@ -346,6 +354,43 @@ func zone_at(x: float, z: float) -> String:
 ## 开局/离场逻辑不改——圈内距离判定与单点语义一致（test 断言 size==2）
 func extract_list() -> Array:
 	return [extract_pos, extract2_pos]
+
+
+## 全部撤离点定义（2026-10 第三阶段：主 / 大坝定时 / 付费 / 拉闸）
+func extract_defs() -> Array:
+	return [
+		{"id": "main", "pos": extract_pos, "name": "撤离"},
+		{"id": "dam", "pos": extract2_pos, "name": "大坝撤离"},
+		{"id": "paid", "pos": paid_pos, "name": "付费撤离"},
+		{"id": "lever", "pos": lever_ext_pos, "name": "拉闸撤离"},
+	]
+
+
+## 撤离信标状态：open 原色常亮 / closed 暗红（本局有但尚未开放）/ off 全灭（本局不开）
+func set_extract_state(id: String, state: String) -> void:
+	if not _extract_vis.has(id):
+		return
+	var v: Dictionary = _extract_vis[id]
+	var col: Color = v["col"]
+	var on := state != "off"
+	for n in v["nodes"]:
+		(n as Node3D).visible = on
+	if not on:
+		return
+	var c := col if state == "open" else Color(0.75, 0.18, 0.12)
+	for m in v["mats"]:
+		var sm := m as StandardMaterial3D
+		sm.emission = c
+		sm.albedo_color = c * 0.2
+	var lt := v["light"] as OmniLight3D
+	lt.light_color = c
+	lt.light_energy = 2.4 if state == "open" else 0.8
+
+
+## 电闸手柄：拉下（pulled）后向下转 100°
+func set_lever_pulled(pulled: bool) -> void:
+	if _lever_handle != null:
+		_lever_handle.rotation.z = deg_to_rad(100.0) if pulled else 0.0   # 朝屋内扳下
 
 
 ## 是否在靶馆矩形内（含墙体）
@@ -765,8 +810,9 @@ func _prop_place(name: String, x: float, z: float, rot_y: float, scl: Vector3,
 func _scatter_ground_cover() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20261017
-	var keep_out: Array = [spawn_pos, extract_pos, extract2_pos,
+	var keep_out: Array = [spawn_pos, extract_pos, extract2_pos, paid_pos, lever_ext_pos,
 			Vector3(120.0, 0.0, 154.0)]
+	keep_out.append_array(HDData.SPAWN_POINTS)
 	for spec in GROUND_COVER:
 		var ps := PBR.scene(str(spec["path"]))
 		if ps == null:
@@ -959,7 +1005,7 @@ func _fallback_mat(name: String) -> StandardMaterial3D:
 # ================= 撤离点 =================
 
 ## 撤离信标（参数化点位，主撤离/大坝第二撤离复用）：绿色发光柱 + 地面绿环 + 绿光点光
-func _build_extract(p: Vector3) -> void:
+func _build_extract(p: Vector3, col: Color = Color(0.25, 1.0, 0.45)) -> Dictionary:
 	var pole := MeshInstance3D.new()
 	var cm := CylinderMesh.new()
 	cm.top_radius = 0.12
@@ -967,15 +1013,15 @@ func _build_extract(p: Vector3) -> void:
 	cm.height = EXTRACT_BEACON_H
 	pole.mesh = cm
 	var pm := StandardMaterial3D.new()
-	pm.albedo_color = Color(0.05, 0.2, 0.09)
+	pm.albedo_color = col * 0.2
 	pm.emission_enabled = true
-	pm.emission = Color(0.25, 1.0, 0.45)
+	pm.emission = col
 	pm.emission_energy_multiplier = 2.2
 	cm.material = pm
 	pole.position = p + Vector3(1.6, EXTRACT_BEACON_H * 0.5, 1.2)
 	add_child(pole)
 	var light := OmniLight3D.new()
-	light.light_color = Color(0.35, 1.0, 0.5)
+	light.light_color = col
 	light.light_energy = 2.4
 	light.omni_range = 9.0
 	light.position = p + Vector3(1.6, EXTRACT_BEACON_H + 0.3, 1.2)
@@ -985,15 +1031,56 @@ func _build_extract(p: Vector3) -> void:
 	tm.inner_radius = 2.6
 	tm.outer_radius = 3.0
 	var rm := StandardMaterial3D.new()
-	rm.albedo_color = Color(0.08, 0.28, 0.13)
+	rm.albedo_color = col * 0.25
 	rm.emission_enabled = true
-	rm.emission = Color(0.25, 0.9, 0.42)
+	rm.emission = col
 	rm.emission_energy_multiplier = 1.1
 	tm.material = rm
 	ring.mesh = tm
 	ring.position = p + Vector3(0.0, 0.06, 0.0)
 	add_child(ring)
+	return {"mats": [pm, rm], "light": light, "col": col, "nodes": [pole, light, ring]}
 
+
+## 电闸（变电站主控楼内东墙）：配电箱 + 黄黑警示框 + 手柄（拉下后转角，set_lever_pulled）
+func _build_lever(p: Vector3) -> void:
+	var box := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.18, 0.9, 0.6)
+	var bmat := StandardMaterial3D.new()
+	bmat.albedo_color = Color(0.32, 0.35, 0.3)
+	bmat.roughness = 0.6
+	bmat.metallic = 0.5
+	bm.material = bmat
+	box.mesh = bm
+	box.position = Vector3(p.x + 0.8, 1.35, p.z)
+	add_child(box)
+	var frame := MeshInstance3D.new()
+	var fm := BoxMesh.new()
+	fm.size = Vector3(0.02, 1.0, 0.7)
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_color = Color(0.9, 0.72, 0.1)
+	fmat.emission_enabled = true
+	fmat.emission = Color(0.9, 0.72, 0.1)
+	fmat.emission_energy_multiplier = 0.4
+	fm.material = fmat
+	frame.mesh = fm
+	frame.position = Vector3(p.x + 0.9, 1.35, p.z)
+	add_child(frame)
+	_lever_handle = Node3D.new()
+	_lever_handle.position = Vector3(p.x + 0.68, 1.45, p.z)
+	add_child(_lever_handle)
+	var hm := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.025
+	cm.bottom_radius = 0.025
+	cm.height = 0.36
+	var hmat := StandardMaterial3D.new()
+	hmat.albedo_color = Color(0.75, 0.12, 0.08)
+	cm.material = hmat
+	hm.mesh = cm
+	hm.position = Vector3(0.0, 0.18, 0.0)
+	_lever_handle.add_child(hm)
 
 # ================= 室内靶馆 =================
 

@@ -36,6 +36,12 @@ var _raid_live := false
 var _raid_loadout: Dictionary = {}   # 本局实际带进来的主副武器（阵亡按它丢）
 var _step_acc := 0.0                 # 玩家脚步：累计步行距离（够一步就响一声）
 var _last_ppos := Vector3.ZERO
+## 第三阶段（改进方案第 5/6 节）：撤离点开放状态 / 拉闸进度 / 物资使用 / 局时提醒
+var _extracts := {}                  # id -> {"enabled": bool, "open": bool}
+var _lever_t := 0.0
+var _using := {}                     # 正在使用的物资 {kind, t, dur}
+var _regen_left := 0.0               # 止痛药待缓回血量
+var _warned := {}                    # 局时提醒（已提示的剩余秒档）
 
 func _ready() -> void:
 	_register_inputs()
@@ -95,6 +101,7 @@ func _ready() -> void:
 	hud.result_restart.connect(func(): _restart_current())
 	hud.result_lobby.connect(_back_to_lobby)
 	hud.inv_close.connect(_close_inventory)
+	hud.inv_use.connect(_on_inv_use)
 	hud.inv_drop.connect(_on_inv_drop)
 	hud.inv_move.connect(_on_inv_move)
 
@@ -188,7 +195,14 @@ func _start_mission(loadout: Dictionary) -> void:
 	loot.secure_cap = stash.secure_slots
 	hud.hide_inventory()
 	targets.reset_all()
+	# 随机出生（5 处地图边缘，改进方案第 6 节）
+	var sp: Vector3 = HDData.SPAWN_POINTS[randi() % HDData.SPAWN_POINTS.size()]
+	world.spawn_pos = Vector3(sp.x, world.ground_height(sp.x, sp.z), sp.z)
 	player.enter(world.spawn_pos)
+	_setup_extracts()
+	_using = {}
+	_regen_left = 0.0
+	_warned = {}
 	_last_ppos = player.pos
 	_step_acc = 0.0
 	# 面朝地图中心（出生在西南角，前向 = (sin yaw, 0, cos yaw) → yaw = atan2(dx, dz)）
@@ -206,7 +220,12 @@ func _start_mission(loadout: Dictionary) -> void:
 	hud.set_danger(false)
 	hud.set_extract(0.0, 1.0)
 	hud.set_backpack(0, HDData.BACKPACK_MAX, 0, loot.secure_cap)
-	hud.toast("搜刮变卖物 —— 集齐后前往绿标撤离点", Color(0.49, 0.89, 0.66))
+	var open_txt := "本局撤离：主撤离 · 大坝（12 分钟后）"
+	if bool(_extracts["paid"]["enabled"]):
+		open_txt += " · 付费（₵%d）" % HDData.PAID_PRICE
+	if bool(_extracts["lever"]["enabled"]):
+		open_txt += " · 拉闸（先去变电站拉电闸）"
+	hud.toast(open_txt + " —— 25 分钟内撤出", Color(0.49, 0.89, 0.66))
 	hud.toast("阵亡丢失随身装备与背包 · 贵重小件放进安全箱（Tab）", Color(1.0, 0.7, 0.36))
 	_apply_mode_visuals()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -290,7 +309,7 @@ func _lose_raid() -> Dictionary:
 		kept_v += int(float((it as Dictionary).get("value", 0)))
 	stash.deposit(kept)
 	var gear: Dictionary = stash.lose_carried(_raid_loadout)
-	stash.record_raid(false, _kills)
+	stash.record_raid(false, _kills, _raid_t)
 	hud.hide_inventory()
 	return {"gear": gear, "bag_n": bag.size(), "bag_v": bag_v,
 		"kept_n": kept.size(), "kept_v": kept_v}
@@ -315,8 +334,16 @@ func _gear_text(g: Dictionary) -> String:
 		HDHud._fmt(int(g.get("value", 0)))]
 
 func _on_player_died() -> void:
+	_fail_raid("行动失败")
+
+## 局时耗尽未撤离 = 失踪（MIA），按阵亡结算
+func _mia() -> void:
+	_fail_raid("行动超时 · 失踪")
+
+func _fail_raid(title: String) -> void:
 	if mode != Mode.MISSION or not _raid_live:
 		return
+	_using = {}
 	var r := _lose_raid()
 	hud.set_raid_visible(false)
 	var lines: Array = [[_gear_text(r["gear"]), HDHud.COL_LOSE]]
@@ -326,24 +353,28 @@ func _on_player_died() -> void:
 		lines.append(["安全箱保住 %d 件（₵%s）· 已入仓库" % [int(r["kept_n"]),
 			HDHud._fmt(int(r["kept_v"]))], HDHud.COL_OK])
 	hud.show_result(false, {
-		"kills": _kills, "value": 0.0,
+		"kills": _kills, "value": 0.0, "title": title,
 		"time_sec": _raid_t, "rank": "—", "lines": lines,
 	})
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
-func _win_raid() -> void:
+func _win_raid(via: String = "main") -> void:
 	_raid_live = false
+	_using = {}
 	hud.hide_inventory()
 	var value := float(loot.bag_value())
 	var bag := loot.drain()
 	bag.append_array(loot.drain_secure())
 	var n := stash.deposit(bag)
 	_reclaim_ammo()   # 撤离：战利品入库 + 剩余备弹写回库存
-	stash.record_raid(true, _kills)
+	stash.record_raid(true, _kills, _raid_t)
 	hud.set_raid_visible(false)
+	var lines: Array = []
+	if via == "paid":
+		lines.append(["付费撤离 · 已付 ₵%s" % HDHud._fmt(HDData.PAID_PRICE), HDHud.COL_ACCENT])
 	hud.show_result(true, {
 		"kills": _kills, "value": value, "deposited": n,
-		"time_sec": _raid_t, "rank": _rank_of(value),
+		"time_sec": _raid_t, "rank": _rank_of(value), "lines": lines,
 	})
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
@@ -448,11 +479,18 @@ func _process(delta: float) -> void:
 
 func _step_mission(dt: float) -> void:
 	_raid_t += dt
+	if _tick_raid_clock():
+		return
 	player.update(dt)
-	guns.update(dt)
+	if _using.is_empty():
+		guns.update(dt)          # 使用物资时收枪：不能开火/换弹
 	soldiers.update(dt, true)
 	loot.update(dt, player.pos, Input.is_action_pressed("hd_interact"))
 	targets.update(dt)
+	_step_lever(dt)
+	_step_use(dt)
+	hud.set_armor(player.armor)
+	hud.set_uses(loot.use_counts())
 	# 危险区横幅（中心与大坝同为高危红区；坝兵横幅走玩家 zone_at 实时裁决）
 	var pz: String = world.zone_at(player.pos.x, player.pos.z)
 	hud.set_danger(pz == "center" or pz == "dam")
@@ -463,16 +501,7 @@ func _step_mission(dt: float) -> void:
 	# 开镜分划
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
-	# 指南针：朝向 + 各撤离点方位与距离
-	var marks: Array = []
-	for ep_m in world.extract_list():
-		var epm: Vector3 = ep_m
-		var dxm := epm.x - player.pos.x
-		var dzm := epm.z - player.pos.z
-		marks.append({"bearing": _bearing(dxm, dzm),
-			"label": "撤离 %dm" % int(Vector2(dxm, dzm).length()),
-			"color": Color(0.49, 0.89, 0.66)})
-	hud.set_compass(_bearing(sin(player.yaw), cos(player.yaw)), marks)
+	hud.set_compass(_bearing(sin(player.yaw), cos(player.yaw)), _compass_marks())
 	# 玩家脚步（2D 轻声）：每走一步响一声，疾跑更响更密、蹲走几乎无声
 	var mv := Vector2(player.pos.x - _last_ppos.x, player.pos.z - _last_ppos.z).length()
 	_last_ppos = player.pos
@@ -482,17 +511,31 @@ func _step_mission(dt: float) -> void:
 		if _step_acc >= stride:
 			_step_acc = 0.0
 			audio.play_step(0.12 if player.crouching else (0.7 if player.sprinting else 0.32))
-	# 撤离读条：主撤离 + 大坝广场第二撤离（extract_list）取最近点，
-	# 圈内累计/离圈回退与单点语义一致（主撤离回归 test_huodai 步骤 8 不变）
+	# 撤离读条：只在本局启用且已开放的撤离点（主 / 大坝 12:00 后 / 付费 / 拉闸后）
+	# 取最近点，圈内累计/离圈回退；付费撤离现金不足不读条
 	var d := HDData.EXTRACT_R + 1.0
-	for ep_v in world.extract_list():
-		var ep: Vector3 = ep_v
-		d = minf(d, player.pos.distance_to(ep))
-	if d <= HDData.EXTRACT_R:
+	var best_id := ""
+	for def in world.extract_defs():
+		var eid := str(def["id"])
+		var e: Dictionary = _extracts.get(eid, {})
+		if not bool(e.get("enabled", false)) or not bool(e.get("open", false)):
+			continue
+		var dd := player.pos.distance_to(def["pos"])
+		if dd < d:
+			d = dd
+			best_id = eid
+	if d <= HDData.EXTRACT_R and best_id == "paid" and stash.cash < HDData.PAID_PRICE:
+		hud.set_prompt("付费撤离需 ₵%s —— 现金不足" % HDHud._fmt(HDData.PAID_PRICE), -1.0)
+		_extract_t = maxf(0.0, _extract_t - dt * 2.0)
+	elif d <= HDData.EXTRACT_R:
 		_extract_t += dt
 		if _extract_t >= HDData.EXTRACT_HOLD:
 			_extract_t = 0.0
-			_win_raid()
+			if best_id == "paid":
+				stash.cash -= HDData.PAID_PRICE
+				stash.save()
+				stash.changed.emit()
+			_win_raid(best_id)
 			return
 	else:
 		_extract_t = maxf(0.0, _extract_t - dt * 2.0)
@@ -501,6 +544,8 @@ func _step_mission(dt: float) -> void:
 ## 背包打开时：敌人与靶子照常推进、局时照走；玩家/枪/搜刮/撤离读条暂停
 func _step_world_only(dt: float) -> void:
 	_raid_t += dt
+	if _tick_raid_clock():
+		return
 	player.update(0.0)
 	soldiers.update(dt, true)
 	targets.update(dt)
@@ -517,6 +562,173 @@ func _step_range(dt: float) -> void:
 	hud.set_score(targets.score, targets.best)
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
+
+## ---- 第三阶段：局时 / 撤离点 / 电闸 / 物资 ----
+
+## 局时：剩余时间上 HUD；剩 5 分钟、1 分钟各提醒一次；耗尽 = 失踪。返回 true = 本帧已结算
+func _tick_raid_clock() -> bool:
+	var left := HDData.RAID_TIME - _raid_t
+	hud.set_raid_timer(left)
+	for w in [300, 60]:
+		if left <= float(w) and not _warned.has(w):
+			_warned[w] = true
+			hud.toast("撤离窗口还剩 %d 分钟 —— 超时未撤出 = 失踪" % (w / 60), Color(1.0, 0.35, 0.25))
+	if left <= 0.0:
+		_mia()
+		return true
+	# 大坝撤离点 12 分钟后开放
+	var dam: Dictionary = _extracts.get("dam", {})
+	if bool(dam.get("enabled", false)) and not bool(dam.get("open", false)) \
+			and _raid_t >= HDData.DAM_OPEN_T:
+		dam["open"] = true
+		_sync_extract_vis()
+		hud.toast("大坝撤离点已开放", Color(0.49, 0.89, 0.66))
+	return false
+
+## 每局撤离点：主撤离常开；大坝定时；付费 / 拉闸各按概率启用（每局组合不同）
+func _setup_extracts() -> void:
+	_extracts = {
+		"main": {"enabled": true, "open": true},
+		"dam": {"enabled": true, "open": false},
+		"paid": {"enabled": randf() < float(HDData.EXTRACT_ODDS["paid"]), "open": true},
+		"lever": {"enabled": randf() < float(HDData.EXTRACT_ODDS["lever"]), "open": false},
+	}
+	_lever_t = 0.0
+	world.set_lever_pulled(false)
+	_sync_extract_vis()
+
+func _sync_extract_vis() -> void:
+	for eid in _extracts:
+		var e: Dictionary = _extracts[eid]
+		var st := "off"
+		if bool(e["enabled"]):
+			st = "open" if bool(e["open"]) else "closed"
+		world.set_extract_state(str(eid), st)
+
+## 电闸：启用拉闸撤离的局，进变电站主控楼按住 F 2 s 拉下 → 东门撤离点开放，
+## 动静惊动 80 m 内敌人
+func _step_lever(dt: float) -> void:
+	var lev: Dictionary = _extracts.get("lever", {})
+	if not bool(lev.get("enabled", false)) or bool(lev.get("open", false)):
+		return
+	var lp := HDData.LEVER_POS
+	if Vector2(player.pos.x - lp.x, player.pos.z - lp.z).length() > 1.6:
+		_lever_t = 0.0
+		return
+	if Input.is_action_pressed("hd_interact"):
+		_lever_t += dt
+		if _lever_t >= HDData.LEVER_HOLD:
+			_pull_lever()
+			return
+	else:
+		_lever_t = maxf(0.0, _lever_t - dt)
+	hud.set_prompt("按住 F 拉闸 —— 打开变电站东门撤离（动静很大）", _lever_t / HDData.LEVER_HOLD)
+
+func _pull_lever() -> void:
+	_extracts["lever"]["open"] = true
+	_lever_t = 0.0
+	world.set_lever_pulled(true)
+	_sync_extract_vis()
+	soldiers.hear_shot(HDData.LEVER_POS + Vector3(0.0, 1.5, 0.0), HDData.LEVER_ALERT_R)
+	hud.set_prompt("", 0.0)
+	hud.toast("电闸已拉下 · 变电站东门撤离点开放 —— 附近敌人被惊动了", Color(0.3, 0.7, 1.0))
+
+## 指南针标记：本局启用的撤离点（开放 / 未开放倒计时 / 付费价 / 待拉闸）+ 电闸位置
+func _compass_marks() -> Array:
+	var marks: Array = []
+	for def in world.extract_defs():
+		var eid := str(def["id"])
+		var e: Dictionary = _extracts.get(eid, {})
+		if not bool(e.get("enabled", false)):
+			continue
+		var ep: Vector3 = def["pos"]
+		var dx := ep.x - player.pos.x
+		var dz := ep.z - player.pos.z
+		var dist := int(Vector2(dx, dz).length())
+		var col := Color(0.49, 0.89, 0.66)
+		var label := "%s %dm" % [str(def["name"]), dist]
+		if eid == "paid":
+			col = Color(1.0, 0.78, 0.25)
+			label = "付费 ₵%d · %dm" % [HDData.PAID_PRICE, dist]
+		elif eid == "lever":
+			col = Color(0.3, 0.7, 1.0)
+		if not bool(e.get("open", false)):
+			col = Color(0.62, 0.62, 0.62)
+			if eid == "dam":
+				var wait := maxf(0.0, HDData.DAM_OPEN_T - _raid_t)
+				label = "大坝 %d:%02d 后开放" % [int(wait) / 60, int(wait) % 60]
+			elif eid == "lever":
+				label = "拉闸撤离 · 未通电"
+		marks.append({"bearing": _bearing(dx, dz), "label": label, "color": col})
+	var lev: Dictionary = _extracts.get("lever", {})
+	if bool(lev.get("enabled", false)) and not bool(lev.get("open", false)):
+		var lp := HDData.LEVER_POS
+		marks.append({"bearing": _bearing(lp.x - player.pos.x, lp.z - player.pos.z),
+			"label": "电闸 %dm" % int(Vector2(lp.x - player.pos.x, lp.z - player.pos.z).length()),
+			"color": Color(0.3, 0.7, 1.0)})
+	return marks
+
+## 用物资（3/4/5/6 或背包「使用」）：读条期间收枪；医疗包满血/护甲满拒用
+func _use_item(kind: String) -> void:
+	if not _using.is_empty() or player.dead or not _raid_live:
+		return
+	var c: Dictionary = HDData.CONSUMABLES.get(kind, {})
+	if c.is_empty():
+		return
+	if int(loot.use_counts().get(kind, 0)) <= 0:
+		hud.feed("背包里没有%s" % str(c["name"]), Color(0.85, 0.87, 0.82))
+		return
+	if kind == "medkit" and player.health >= 100.0:
+		hud.feed("血量已满", Color(0.85, 0.87, 0.82))
+		return
+	if kind == "plate" and player.armor >= HDData.ARMOR_MAX:
+		hud.feed("护甲已满", Color(0.85, 0.87, 0.82))
+		return
+	_using = {"kind": kind, "t": 0.0, "dur": float(c["use_t"])}
+
+func _step_use(dt: float) -> void:
+	if _regen_left > 0.0:
+		var r := minf(_regen_left, HDData.PILLS_HEAL / HDData.PILLS_TIME * dt)
+		player.heal(r)
+		_regen_left -= r
+	if _using.is_empty():
+		return
+	_using["t"] = float(_using["t"]) + dt
+	var kind := str(_using["kind"])
+	var c: Dictionary = HDData.CONSUMABLES[kind]
+	hud.set_prompt("使用%s…" % str(c["name"]), float(_using["t"]) / float(_using["dur"]))
+	if float(_using["t"]) < float(_using["dur"]):
+		return
+	_using = {}
+	hud.set_prompt("", 0.0)
+	if not loot.consume(kind):
+		return
+	match kind:
+		"medkit":
+			player.heal(HDData.MEDKIT_HEAL)
+		"pills":
+			_regen_left += HDData.PILLS_HEAL
+		"plate":
+			player.armor = minf(HDData.ARMOR_MAX, player.armor + HDData.PLATE_ARMOR)
+		"ammo":
+			var mag := int(Guns.gun_by_id(guns.cur_id).get("mag", 30))
+			guns.reserve += mag * HDData.AMMO_BOX_MAGS
+	hud.feed("用掉 %s" % str(c["name"]), HDData.RARITY[int(c["rarity"])]["color"])
+	_refresh_bag_hud()
+
+func _on_inv_use(from_secure: bool, idx: int) -> void:
+	var lst: Array = loot.secure if from_secure else loot.backpack
+	if idx < 0 or idx >= lst.size():
+		return
+	var kind := str((lst[idx] as Dictionary).get("use", ""))
+	if kind == "":
+		hud.feed("这件不能用 —— 只能带出去卖", Color(0.85, 0.87, 0.82))
+		return
+	if from_secure:
+		hud.feed("先把它从安全箱取回背包再用", Color(0.85, 0.87, 0.82))
+		return
+	_close_inventory()
+	_use_item(kind)
 
 ## ---- 输入分发 ----
 func _unhandled_input(event: InputEvent) -> void:
@@ -560,6 +772,10 @@ func _route_key(code: int) -> void:
 	# 对局内：Tab 背包（只在实战；打开后的按键由 HUD 自处理并消费）
 	if code == KEY_TAB and mode == Mode.MISSION:
 		_open_inventory()
+		return
+	# 对局内：3/4/5/6 用医疗包 / 止痛药 / 护甲板 / 弹药盒
+	if mode == Mode.MISSION and code >= KEY_3 and code <= KEY_6:
+		_use_item(str(HDData.USE_KEYS[code - KEY_3]))
 		return
 	# 对局内：Esc 菜单
 	if code == KEY_ESCAPE:

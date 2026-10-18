@@ -110,6 +110,57 @@ const SECURE_MAX := SECURE_BASE + 2          # 安全箱上限 4 格
 const KIT_REF := 5400
 const SAVE_PATH := "user://huodai_save.json"
 
+## ---- 第三阶段：内容深度（2026-10 改进方案第 5/6 节）----
+const RAID_TIME := 1500.0                       # 局时 25 分钟；超时未撤离 = 失踪（视同阵亡）
+const DAM_OPEN_T := 720.0                       # 大坝撤离点 12 分钟后开放
+const PAID_EXTRACT_POS := Vector3(-140.0, 0.0, -90.0)   # 西缘付费撤离（买通司机；行动边界 ±148 内）
+const PAID_PRICE := 800                         # 付费撤离：撤离成功时从现金扣（不足不能用）
+const LEVER_EXTRACT_POS := Vector3(135.0, 0.0, -10.0)   # 变电站东门拉闸撤离
+const LEVER_POS := Vector3(124.6, 0.0, -19.0)   # 电闸：变电站主控楼内东墙
+const LEVER_HOLD := 2.0                         # 按住 F 拉闸秒数
+const LEVER_ALERT_R := 80.0                     # 拉闸动静惊动半径
+## 每局启用概率（主撤离常开、大坝定时开；付费/拉闸按概率出现 → 每局撤离点组合不同）
+const EXTRACT_ODDS := {"paid": 0.6, "lever": 0.6}
+## 随机出生点（行动边界 ±148 内的四周空地 5 处，离最近巡逻点 ≥30 m，开局不会贴脸；
+## 北缘是大坝坝体，不放出生点）
+const SPAWN_POINTS := [Vector3(-138.0, 0.0, 138.0), Vector3(10.0, 0.0, 140.0),
+	Vector3(140.0, 0.0, 95.0), Vector3(140.0, 0.0, -60.0), Vector3(-140.0, 0.0, -30.0)]
+
+## 局内物资：占背包格；局内按 3/4/5/6（或 Tab 背包「使用」）用掉；撤离带回按价值变卖
+const CONSUMABLES := {
+	"medkit": {"name": "医疗包", "icon": "医疗", "rarity": 1, "value": 180, "use_t": 3.0},
+	"pills": {"name": "止痛药", "icon": "医疗", "rarity": 0, "value": 60, "use_t": 1.2},
+	"plate": {"name": "护甲板", "icon": "防具", "rarity": 2, "value": 260, "use_t": 2.0},
+	"ammo": {"name": "弹药盒", "icon": "弹药", "rarity": 0, "value": 90, "use_t": 1.5},
+}
+const USE_KEYS := ["medkit", "pills", "plate", "ammo"]   # 键 3/4/5/6 依次对应
+const MEDKIT_HEAL := 50.0          # 医疗包：读条 3 s 后回 50
+const PILLS_HEAL := 20.0           # 止痛药：8 s 内缓回 20
+const PILLS_TIME := 8.0
+const PLATE_ARMOR := 50.0          # 护甲板：+50 护甲（上限 100）
+const ARMOR_MAX := 100.0
+const ARMOR_ABSORB := 0.6          # 护甲吸收 60% 伤害（吸多少扣多少护甲）
+const AMMO_BOX_MAGS := 2           # 弹药盒：当前枪 +2 匣备弹
+
+## 容器分类（改进方案第 5 节）：每个容器照旧出一件变卖物（保险箱搜 5 s、只出蓝色
+## 及以上），另按 use_p 概率**额外**再出一件物资——武器箱多出弹药盒/护甲板、医疗箱
+## 多出药品。物资是额外掉落、不顶替变卖物：经济门槛 A 不被稀释，背包也更快塞满，
+## 逼出「用掉还是扔掉」的取舍
+const CONTAINER_CLASS := {
+	"weapon": {"name": "武器箱", "search": 1.8, "use_p": 0.45, "pool": [["ammo", 60], ["plate", 40]]},
+	"medical": {"name": "医疗箱", "search": 1.8, "use_p": 0.55, "pool": [["medkit", 45], ["pills", 55]]},
+	"crate": {"name": "杂物箱", "search": 1.8, "use_p": 0.15,
+		"pool": [["medkit", 25], ["pills", 25], ["plate", 25], ["ammo", 25]]},
+	"safe": {"name": "保险箱", "search": 5.0, "use_p": 0.0, "pool": [], "min_rarity": 2},
+}
+## 各分区容器分类权重（保险箱只放高价值区；荒野没有）
+const CLASS_W := {
+	"center": [["safe", 20], ["weapon", 25], ["medical", 20], ["crate", 35]],
+	"dam": [["safe", 20], ["weapon", 25], ["medical", 20], ["crate", 35]],
+	"mid": [["safe", 6], ["weapon", 25], ["medical", 25], ["crate", 44]],
+	"wild": [["weapon", 20], ["medical", 25], ["crate", 55]],
+}
+
 ## 地图与分区（340m 见方；中心危险区半径 80m）
 const MAP_HALF := 170.0
 const DANGER_R := 80.0
@@ -145,6 +196,70 @@ static func roll_loot(zone: String) -> Dictionary:
 		"name": String(pick[0]), "icon": String(pick[1]),
 		"rarity": rid, "value": value,
 	}
+
+
+## 加权表 [[key, w], ...] 按 rng（缺省全局随机）取一个 key
+static func pick_weighted(table: Array, rng: RandomNumberGenerator = null) -> String:
+	var total := 0
+	for e in table:
+		total += int(e[1])
+	if total <= 0:
+		return str(table[0][0]) if not table.is_empty() else ""
+	var r := (rng.randi() if rng != null else randi()) % total
+	for e in table:
+		r -= int(e[1])
+		if r < 0:
+			return str(e[0])
+	return str(table[0][0])
+
+
+## 局内物资实物：{uid,name,icon,rarity,value,use}
+static func make_consumable(kind: String) -> Dictionary:
+	var c: Dictionary = CONSUMABLES.get(kind, CONSUMABLES["medkit"])
+	return {
+		"uid": "%d_%d" % [Time.get_ticks_msec(), randi() % 1000000],
+		"name": str(c["name"]), "icon": str(c["icon"]), "rarity": int(c["rarity"]),
+		"value": float(c["value"]), "use": kind,
+	}
+
+
+## 容器额外物资：按 use_p 掷一件（没掷中返回 {}）
+static func roll_bonus(cls: String) -> Dictionary:
+	var cc: Dictionary = CONTAINER_CLASS.get(cls, CONTAINER_CLASS["crate"])
+	if (cc["pool"] as Array).is_empty() or randf() >= float(cc["use_p"]):
+		return {}
+	return make_consumable(pick_weighted(cc["pool"]))
+
+
+## 按容器分类开箱的变卖物：保险箱品质下限蓝色，其余同分区 roll_loot
+static func roll_container(cls: String, zone: String) -> Dictionary:
+	var cc: Dictionary = CONTAINER_CLASS.get(cls, CONTAINER_CLASS["crate"])
+	var min_r := int(cc.get("min_rarity", 0))
+	if min_r <= 0:
+		return roll_loot(zone)
+	var w: Array = (RARITY_W.get(zone, RARITY_W["mid"]) as Array).duplicate()
+	for i in mini(min_r, w.size()):
+		w[i] = 0
+	var total := 0
+	for x in w:
+		total += int(x)
+	var rid := min_r
+	if total > 0:
+		var r := randi() % total
+		for i in w.size():
+			r -= int(w[i])
+			if r < 0:
+				rid = i
+				break
+	var it := roll_loot(zone)
+	var tier: Array = LOOT_NAMES[rid]
+	var pick: Array = tier[randi() % tier.size()]
+	var rar: Dictionary = RARITY[rid]
+	it["rarity"] = rid
+	it["name"] = String(pick[0])
+	it["icon"] = String(pick[1])
+	it["value"] = float(int(randf_range(float(rar["vmin"]), float(rar["vmax"]))))
+	return it
 
 
 ## 图标归一化：空 → 默认徽标；旧档 emoji → 中文徽标；其余原样放行（已是徽标文字）

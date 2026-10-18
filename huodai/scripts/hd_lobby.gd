@@ -398,9 +398,14 @@ func _refresh_all() -> void:
 
 func _render_top() -> void:
 	var st: Dictionary = _stash.stats
+	var raids := maxi(0, int(st.get("raids", 0)))
 	_record_label.text = "出击 %d · 撤离 %d · 阵亡 %d · 击杀 %d" % [
-		maxi(0, int(st.get("raids", 0))), maxi(0, int(st.get("extracts", 0))),
+		raids, maxi(0, int(st.get("extracts", 0))),
 		maxi(0, int(st.get("deaths", 0))), maxi(0, int(st.get("kills", 0)))]
+	if raids > 0:   # 门槛 C 两个数：撤离率 40–60%、平均局时 12–20 分钟
+		var avg := int(st.get("time_total", 0)) / raids
+		_record_label.text += " · 撤离率 %d%% · 平均局时 %d:%02d" % [
+			int(round(100.0 * float(st.get("extracts", 0)) / float(raids))), avg / 60, avg % 60]
 	var can: bool = _stash.can_check_in()
 	_daily_btn.text = ("C · 每日签到 +₵%s" % _fmt(HDData.DAILY_REWARD)) if can else "今日已签到"
 	_style_btn(_daily_btn, can, COL_ACCENT if can else _dim(0.35))

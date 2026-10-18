@@ -15,6 +15,7 @@ signal result_lobby
 signal inv_close
 signal inv_drop(from_secure: bool, idx: int)
 signal inv_move(from_secure: bool, idx: int)
+signal inv_use(from_secure: bool, idx: int)
 
 const COL_TEXT := Color(0.85, 0.87, 0.82)
 const COL_ACCENT := Color(1, 0.7, 0.36)
@@ -41,6 +42,10 @@ var _health_num: Label
 var _segs: Array = []
 var _bag_label: Label
 var _bag_pips: HBoxContainer
+var _uses_label: Label
+var _armor_row: HBoxContainer
+var _armor_segs: Array = []
+var _timer_label: Label
 var _bag_cap := -1
 var _pip_nodes: Array = []
 var _score_label: Label
@@ -177,6 +182,10 @@ func setup() -> void:
 	_bag_pips.add_theme_constant_override("separation", 3)
 	_bag_pips.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bag_box.add_child(_bag_pips)
+	# 物资快捷键（第三阶段）：3 医疗包 · 4 止痛药 · 5 护甲板 · 6 弹药盒
+	_uses_label = _mk_label("", 12, COL_TEXT)
+	bag_box.add_child(_uses_label)
+	bag_box.offset_top = -176
 
 	# 左下血条（分段色条）+ 数字
 	var hh := VBoxContainer.new()
@@ -191,6 +200,20 @@ func setup() -> void:
 	_raid.add_child(hh)
 	_health_num = _mk_label("100", 20, COL_TEXT)
 	hh.add_child(_health_num)
+	# 护甲条（蓝，有护甲才显示）
+	_armor_row = HBoxContainer.new()
+	_armor_row.add_theme_constant_override("separation", 3)
+	_armor_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_armor_row.visible = false
+	hh.add_child(_armor_row)
+	_armor_segs.clear()
+	for i in SEG_N:
+		var aseg := ColorRect.new()
+		aseg.custom_minimum_size = Vector2(26, 5)
+		aseg.color = Color(0.14, 0.18, 0.15, 0.9)
+		aseg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_armor_row.add_child(aseg)
+		_armor_segs.append(aseg)
 	var seg_row := HBoxContainer.new()
 	seg_row.add_theme_constant_override("separation", 3)
 	seg_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -203,6 +226,17 @@ func setup() -> void:
 		seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		seg_row.add_child(seg)
 		_segs.append(seg)
+
+	# 右上局时（第三阶段：25 分钟撤离窗口）
+	_timer_label = _mk_label("", 18, COL_TEXT)
+	_timer_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_timer_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_timer_label.offset_left = -300
+	_timer_label.offset_right = -24
+	_timer_label.offset_top = 14
+	_timer_label.offset_bottom = 40
+	_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_raid.add_child(_timer_label)
 
 	# 右上靶场计分（set_score 后常显）
 	_score_label = _mk_label("得分 0 · 最佳 0", 15, COL_TEXT)
@@ -468,6 +502,44 @@ func toast(text: String, color: Color = Color(1, 1, 1)) -> void:
 		oldn.queue_free()
 
 
+## 局时剩余（秒）：剩 5 分钟转橙、1 分钟转红；负数/靶场隐藏
+func set_raid_timer(left: float) -> void:
+	if _timer_label == null:
+		setup()
+	if left < 0.0 or _menu_kind == "range":
+		_timer_label.text = ""
+		return
+	var t := int(ceil(left))
+	_timer_label.text = "撤离窗口 %d:%02d" % [t / 60, t % 60]
+	var col := COL_TEXT
+	if left <= 60.0:
+		col = COL_LOSE
+	elif left <= 300.0:
+		col = COL_ACCENT
+	_timer_label.add_theme_color_override("font_color", col)
+
+
+## 护甲条（0 隐藏）
+func set_armor(a: float) -> void:
+	if _armor_row == null:
+		setup()
+	_armor_row.visible = a > 0.5
+	var filled := int(round(clampf(a / HDData.ARMOR_MAX, 0.0, 1.0) * float(_armor_segs.size())))
+	for i in _armor_segs.size():
+		(_armor_segs[i] as ColorRect).color = Color(0.35, 0.65, 1.0) if i < filled else Color(0.14, 0.18, 0.15, 0.9)
+
+
+## 物资件数快捷栏
+func set_uses(counts: Dictionary) -> void:
+	if _uses_label == null:
+		setup()
+	var parts: Array = []
+	for i in HDData.USE_KEYS.size():
+		var k: String = HDData.USE_KEYS[i]
+		parts.append("%d %s×%d" % [i + 3, str(HDData.CONSUMABLES[k]["name"]), int(counts.get(k, 0))])
+	_uses_label.text = " · ".join(PackedStringArray(parts))
+
+
 ## 指南针：heading 玩家朝向方位角（度，北 0 顺时针）；markers [{bearing, label, color}]
 func set_compass(heading: float, markers: Array) -> void:
 	if _compass == null:
@@ -633,7 +705,7 @@ func show_result(win: bool, s: Dictionary) -> void:
 		rank = _rank_for(value)
 	var mm := int(floor(tsec / 60.0))
 	var ss := int(tsec) - mm * 60
-	_result_title.text = "撤离成功" if win else "行动失败"
+	_result_title.text = str(s.get("title", "撤离成功" if win else "行动失败"))
 	_result_title.add_theme_color_override("font_color", COL_OK if win else COL_LOSE)
 	_result_rank.text = rank
 	if win:
@@ -688,6 +760,8 @@ func _input(event: InputEvent) -> void:
 				_inv_act_drop()
 			KEY_Z:
 				_inv_act_move()
+			KEY_U:
+				_inv_act_use()
 			KEY_LEFT:
 				_inv_step(-1, 0)
 			KEY_RIGHT:
@@ -781,6 +855,9 @@ func _build_inventory() -> void:
 	_inv_move_btn = _inv_btn("Z · 放入安全箱")
 	_inv_move_btn.pressed.connect(_inv_act_move)
 	btns.add_child(_inv_move_btn)
+	var buse := _inv_btn("U · 使用")
+	buse.pressed.connect(_inv_act_use)
+	btns.add_child(buse)
 	var bclose := _inv_btn("Tab · 关闭")
 	bclose.pressed.connect(func(): inv_close.emit())
 	btns.add_child(bclose)
@@ -900,6 +977,12 @@ func _inv_act_drop() -> void:
 	var lst: Array = _inv_sec if _inv_sel_secure else _inv_bag
 	if _inv_sel < lst.size():
 		inv_drop.emit(_inv_sel_secure, _inv_sel)
+
+
+func _inv_act_use() -> void:
+	var lst: Array = _inv_sec if _inv_sel_secure else _inv_bag
+	if _inv_sel < lst.size():
+		inv_use.emit(_inv_sel_secure, _inv_sel)
 
 
 func _inv_act_move() -> void:

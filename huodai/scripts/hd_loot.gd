@@ -38,7 +38,11 @@ const TYPES := [
 		"size": Vector3(1.0, 1.0, 1.0)},
 	{"id": "bag", "name": "行李袋", "color": Color(0.45, 0.52, 0.38),
 		"size": Vector3(1.25, 0.55, 0.6)},
+	{"id": "safe", "name": "保险箱", "color": Color(0.2, 0.21, 0.23),
+		"size": Vector3(0.75, 0.85, 0.62)},
 ]
+## 容器分类 → 外观类型（第三阶段：分类决定掉落，外观让玩家远远认得出）
+const CLASS_TYPE := {"weapon": 0, "medical": 1, "crate": 2, "safe": 4}
 ## crate.glb 实测 1.02 见方（原点在底面中心），按类型缩放到 size
 const CRATE_PATH := "res://assets/battle/props/crate.glb"
 const CRATE_DIM := 1.02
@@ -121,6 +125,27 @@ func move_secure(from_secure: bool, idx: int) -> bool:
 	return true
 
 
+## 用掉背包里一件指定物资（按 use 键匹配，取第一件）；没有返回 false
+func consume(kind: String) -> bool:
+	for i in backpack.size():
+		if str((backpack[i] as Dictionary).get("use", "")) == kind:
+			backpack.remove_at(i)
+			return true
+	return false
+
+
+## 背包里各物资件数 {kind: n}
+func use_counts() -> Dictionary:
+	var out := {}
+	for k in HDData.USE_KEYS:
+		out[k] = 0
+	for it in backpack:
+		var u := str((it as Dictionary).get("use", ""))
+		if out.has(u):
+			out[u] = int(out[u]) + 1
+	return out
+
+
 ## 背包里最便宜一件的下标（空 -1）
 func cheapest_idx() -> int:
 	var bi := -1
@@ -154,15 +179,25 @@ func reset_all() -> void:
 # ================= 生成 =================
 
 func _make_container(spot: Dictionary) -> void:
-	var type: Dictionary = TYPES[randi() % TYPES.size()]
 	var pos: Vector3 = spot["pos"]
+	# 分类按点位确定（同一张图每局一致，玩家能记住「哪里有保险箱」）
+	var crng := RandomNumberGenerator.new()
+	crng.seed = int(pos.x * 73.0) * 7919 + int(pos.z * 37.0)
+	var zone0 := String(_world.zone_at(pos.x, pos.z))
+	var cls := HDData.pick_weighted(HDData.CLASS_W.get(zone0, HDData.CLASS_W["mid"]), crng)
+	var ti: int = CLASS_TYPE.get(cls, 2)
+	if cls == "crate" and crng.randf() < 0.4:
+		ti = 3   # 杂物箱一部分是行李袋
+	var type: Dictionary = TYPES[ti]
 	var root := Node3D.new()
 	root.position = pos
 	root.rotation.y = randf() * TAU
 	add_child(root)
 	var size: Vector3 = type["size"]
-	# —— 箱体：crate.glb 按类型缩放 + 整体染色；失败退化程序化色箱 ——
-	if _crate_scene != null:
+	# —— 箱体：crate.glb 按类型缩放 + 整体染色；失败退化程序化色箱；保险箱单独建模 ——
+	if cls == "safe":
+		_make_safe_body(root, size)
+	elif _crate_scene != null:
 		var body: Node3D = _crate_scene.instantiate()
 		body.scale = Vector3(size.x / CRATE_DIM, size.y / CRATE_DIM, size.z / CRATE_DIM)
 		root.add_child(body)
@@ -209,9 +244,52 @@ func _make_container(spot: Dictionary) -> void:
 	_world.obstacles.append({"cx": pos.x, "cz": pos.z,
 		"hx": hx * cs + hz * sn, "hz": hx * sn + hz * cs,
 		"top": size.y, "bot": 0.0})
-	_containers.append({"pos": pos, "zone": spot["zone"], "type": type,
+	_containers.append({"pos": pos, "zone": spot["zone"], "type": type, "cls": cls,
 		"searched": false, "root": root, "lid_pivot": lid_pivot, "lamp": lamp,
 		"lamp_mat": lamp_mat, "open_t": 0.0, "phase": randf() * TAU})
+
+
+## 保险箱：深钢箱体 + 前面板凹框 + 密码转盘 + 把手（程序化，不用 crate.glb）
+func _make_safe_body(root: Node3D, size: Vector3) -> void:
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.2, 0.21, 0.23)
+	steel.metallic = 0.7
+	steel.roughness = 0.45
+	var body := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	bm.material = steel
+	body.mesh = bm
+	body.position = Vector3(0.0, size.y * 0.5, 0.0)
+	root.add_child(body)
+	var trim := StandardMaterial3D.new()
+	trim.albedo_color = Color(0.55, 0.5, 0.36)
+	trim.metallic = 0.9
+	trim.roughness = 0.3
+	var door := MeshInstance3D.new()
+	var dm := BoxMesh.new()
+	dm.size = Vector3(size.x * 0.82, size.y * 0.78, 0.02)
+	dm.material = steel
+	door.mesh = dm
+	door.position = Vector3(0.0, size.y * 0.5, size.z * 0.5 + 0.01)
+	root.add_child(door)
+	var dial := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.07
+	cm.bottom_radius = 0.07
+	cm.height = 0.04
+	cm.material = trim
+	dial.mesh = cm
+	dial.rotation.x = PI * 0.5
+	dial.position = Vector3(-0.08, size.y * 0.55, size.z * 0.5 + 0.04)
+	root.add_child(dial)
+	var handle := MeshInstance3D.new()
+	var hm := BoxMesh.new()
+	hm.size = Vector3(0.04, 0.16, 0.04)
+	hm.material = trim
+	handle.mesh = hm
+	handle.position = Vector3(0.18, size.y * 0.5, size.z * 0.5 + 0.04)
+	root.add_child(handle)
 
 
 ## 容器整体染色：克隆所有表面材质乘类型色（Wood 不在 TINTABLE，全染才分得清）
@@ -294,15 +372,16 @@ func _update_search(dt: float, player_pos: Vector3, interact_held: bool) -> void
 		prompt.emit("", 0.0)
 		return
 	var c: Dictionary = _containers[best_i]
-	var type: Dictionary = c["type"]
+	var cc: Dictionary = HDData.CONTAINER_CLASS.get(String(c.get("cls", "crate")), HDData.CONTAINER_CLASS["crate"])
+	var stime := float(cc.get("search", SEARCH_TIME))
 	if interact_held:
-		_progress = minf(_progress + dt / SEARCH_TIME, 1.0)
+		_progress = minf(_progress + dt / stime, 1.0)
 		if _progress >= 1.0:
 			_open(best_i, player_pos)
 			return
 	elif _progress > 0.0:
 		_progress = maxf(_progress - dt * PROGRESS_DROP, 0.0)   # 松手回退不即时清零
-	prompt.emit("按住 F 搜索 %s" % String(type["name"]), _progress)
+	prompt.emit("按住 F 搜索 %s" % String(cc["name"]), _progress)
 
 
 ## 开箱：灯灭盖开 → 按分区 roll 一件；背包未满入包 picked；满包则与最便宜
@@ -315,8 +394,18 @@ func _open(i: int, player_pos: Vector3 = Vector3.INF) -> void:
 	_active_i = -1
 	_progress = 0.0
 	var pos: Vector3 = c["pos"]
-	var item := HDData.roll_loot(String(_world.zone_at(pos.x, pos.z)))
+	var item := HDData.roll_container(String(c.get("cls", "crate")),
+			String(_world.zone_at(pos.x, pos.z)))
 	var drop_at: Vector3 = pos if player_pos == Vector3.INF else player_pos
+	# 额外物资（武器箱/医疗箱多出）：有空位进包，没空位落在脚下
+	var bonus := HDData.roll_bonus(String(c.get("cls", "crate")))
+	if not bonus.is_empty():
+		if backpack.size() < HDData.BACKPACK_MAX - 1:
+			backpack.append(bonus)
+			picked.emit(bonus)
+		else:
+			_spawn_ground(bonus, drop_at)
+			notice.emit("%s 留在脚下（背包快满了）" % String(bonus.get("name", "")), NOTICE_COL)
 	if backpack.size() < HDData.BACKPACK_MAX:
 		backpack.append(item)
 		picked.emit(item)

@@ -27,7 +27,7 @@ var grips_owned: Array = []           # 已购握把/护木 id 列表（GRIPS �
 var grip_fit: Dictionary = {}         # gun_id -> grip_id 或 "none"
 var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
-var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
+var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0}
 var daily_last: String = ""          # 最近一次签到的日期键（YYYY-MM-DD）
 var secure_slots: int = HDData.SECURE_BASE   # 安全箱格数（2 起，现金扩到 4；阵亡保留其中物品）
 
@@ -202,6 +202,7 @@ func _load() -> void:
 		"extracts": maxi(0, _to_i(st.get("extracts", 0))),
 		"deaths": maxi(0, _to_i(st.get("deaths", 0))),
 		"kills": maxi(0, _to_i(st.get("kills", 0))),
+		"time_total": maxi(0, _to_i(st.get("time_total", 0))),   # 累计局时（秒）：平均局时 = ÷ raids
 	}
 	daily_last = _to_s(d.get("daily_last", ""))
 
@@ -217,7 +218,7 @@ func _apply_defaults() -> void:
 	grip_fit = {}
 	ammo_inv = {}
 	loadout = {"primary": "rifle", "secondary": "pistol"}
-	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
+	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0}
 	daily_last = ""
 	secure_slots = HDData.SECURE_BASE
 
@@ -532,8 +533,9 @@ func deposit(bag: Array) -> int:
 	return n
 
 
-## 对局结算记战绩（撤离/阵亡/击杀）
-func record_raid(win: bool, kills: int) -> void:
+## 对局结算记战绩（撤离/阵亡/击杀/局时）——撤离率与平均局时是改进方案门槛 C
+func record_raid(win: bool, kills: int, secs: float = 0.0) -> void:
+	stats["time_total"] = maxi(0, _to_i(stats.get("time_total", 0))) + maxi(0, int(secs))
 	stats["raids"] = maxi(0, _to_i(stats.get("raids", 0))) + 1
 	if win:
 		stats["extracts"] = maxi(0, _to_i(stats.get("extracts", 0))) + 1
