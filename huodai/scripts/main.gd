@@ -64,7 +64,6 @@ func _ready() -> void:
 	guns.reserve_provider = _reserve_for
 	# M14 专属配件解锁态（2026-10）：查询闭包 + 环境变量（静态工厂视觉件用）
 	guns.m14_mods_provider = func(mid: String): return stash.m14_mods_on(mid)
-	_sync_m14_mods_env()
 	guns.hit_enemy.connect(_on_hit_enemy)
 
 	soldiers = HDSoldiers.new()
@@ -91,6 +90,7 @@ func _ready() -> void:
 	hud.result_lobby.connect(_back_to_lobby)
 
 	stash = HDStash.new()
+	_sync_m14_mods_env()   # stash 建好后才有解锁态（之前调会读空 stash 报脚本错）
 	lobby = HDLobby.new()
 	add_child(lobby)
 	lobby.setup(stash)
@@ -150,6 +150,8 @@ func _reserve_for(gun_id: String) -> int:
 ## M14 专属配件解锁态 → 环境变量（静态枪匠工厂 _ar_build 读它挂视觉件；
 ## stash.changed 时刷新——购买配件后下次建枪即带件）
 func _sync_m14_mods_env() -> void:
+	if stash == null:
+		return
 	var env := ""
 	for mid in stash.m14_mods:
 		env += str(mid) + ","

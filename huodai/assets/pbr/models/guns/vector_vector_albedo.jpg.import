@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cf8fk53ywr4sj"
-path="res://.godot/imported/vector_vector_albedo.jpg-a6481f7553938d9921de0848f7eb441b.ctex"
+path.s3tc="res://.godot/imported/vector_vector_albedo.jpg-a6481f7553938d9921de0848f7eb441b.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "2f34c3eba21cf107ac8102dad5b1f09f"
@@ -14,7 +15,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/pbr/models/guns/vector_vector_albedo.jpg"
-dest_files=["res://.godot/imported/vector_vector_albedo.jpg-a6481f7553938d9921de0848f7eb441b.ctex"]
+dest_files=["res://.godot/imported/vector_vector_albedo.jpg-a6481f7553938d9921de0848f7eb441b.s3tc.ctex"]
 
 [params]
 

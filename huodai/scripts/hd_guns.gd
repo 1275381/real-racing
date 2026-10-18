@@ -2640,9 +2640,13 @@ const BL_GUNS := {
 		"anchor": Vector3(0.034, 0.038, -0.133)},
 	# M14：无导轨，镜座锚 = 机匣顶（照门之前）；20 发匣在扳机护圈正前（程序化表
 	# 原值多叠了一次 Δ，换弹手锚改按模型真实位置）
+	# mods = 专属配件可换部件 {配件名: [装上时挂的部件, 未装时挂的部件]}（同目录
+	# <部件>.glb，与本体同坐标同倍率导出，原点叠放即对位）：扩容匣换 30 发长匣、
+	# 战术护木加挂下导轨 + 垂直前握把
 	"m14": {"grip": Vector3(0.0, -0.028, 0.155),
 		"mag": ["mag_dmr", Vector3(0.0, -0.12, -0.024)], "mag_hand": Vector3(0.0, -0.13, -0.024),
-		"anchor": Vector3(0.006, -0.06, -0.646)},
+		"anchor": Vector3(0.006, -0.06, -0.646),
+		"mods": {"extmag": ["m14_mag30", "m14_mag20"], "foregrip": ["m14_foregrip", ""]}},
 	# M7 = XM7 / SIG MCX-SPEAR：全长顶导轨，镜座锚取机匣段中部
 	"rifle": {"grip": Vector3(0.0, -0.031, 0.0672),
 		"mag": ["mag_m7", Vector3(0.0, -0.062, -0.15)],
@@ -2690,6 +2694,22 @@ static func _bl_gun(id: String) -> Node3D:
 	var model: Node3D = ps.instantiate()
 	pivot.add_child(model)
 	_bl_dress(model)
+	# 专属配件部件：解锁态读 HD_M14_MODS（静态工厂读不到实例 provider，与程序化
+	# M14 同一通道，main._sync_m14_mods_env 进局前写入）
+	if spec.has("mods"):
+		var on := OS.get_environment("HD_M14_MODS")
+		for mid in spec["mods"]:
+			var pick: String = spec["mods"][mid][0 if on.contains(str(mid)) else 1]
+			if pick == "":
+				continue
+			var pp := BL_GUN_DIR + pick + ".glb"
+			var part_ps: PackedScene = load(pp) if ResourceLoader.exists(pp) else null
+			if part_ps == null:
+				push_warning("[烽火地带] 写实枪配件缺失：%s" % pp)
+				continue
+			var part: Node3D = part_ps.instantiate()
+			pivot.add_child(part)
+			_bl_dress(part)
 	var anchor := Node3D.new()
 	anchor.name = "grip_hold"
 	anchor.position = spec["grip"]

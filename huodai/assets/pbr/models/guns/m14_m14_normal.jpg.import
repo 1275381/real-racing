@@ -3,18 +3,19 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bbubj8rl1bobk"
-path="res://.godot/imported/m14_m14_normal.jpg-a69af9eec25fcdeee7e28c08f6ac34b3.ctex"
+path.s3tc="res://.godot/imported/m14_m14_normal.jpg-a69af9eec25fcdeee7e28c08f6ac34b3.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
-"md5": "b2bd618d814d030877a833621310bb2a"
+"md5": "bfcfab0e2334a1e547366e8ea8307d0c"
 }
 
 [deps]
 
 source_file="res://assets/pbr/models/guns/m14_m14_normal.jpg"
-dest_files=["res://.godot/imported/m14_m14_normal.jpg-a69af9eec25fcdeee7e28c08f6ac34b3.ctex"]
+dest_files=["res://.godot/imported/m14_m14_normal.jpg-a69af9eec25fcdeee7e28c08f6ac34b3.s3tc.ctex"]
 
 [params]
 

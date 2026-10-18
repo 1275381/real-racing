@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dnqfeip2ul88p"
-path="res://.godot/imported/vector_vector_normal.jpg-6916e08eabc51c99de440d7c8c83900c.ctex"
+path.s3tc="res://.godot/imported/vector_vector_normal.jpg-6916e08eabc51c99de440d7c8c83900c.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "42dcc86896634e0bff85ea5fbf823a64"
@@ -14,7 +15,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/pbr/models/guns/vector_vector_normal.jpg"
-dest_files=["res://.godot/imported/vector_vector_normal.jpg-6916e08eabc51c99de440d7c8c83900c.ctex"]
+dest_files=["res://.godot/imported/vector_vector_normal.jpg-6916e08eabc51c99de440d7c8c83900c.s3tc.ctex"]
 
 [params]
 

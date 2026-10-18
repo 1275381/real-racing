@@ -630,9 +630,10 @@ def _setup_cycles():
     sc.world.light_settings.distance = 0.035
 
 
-def finish(name, out_path, ref, target, length=None, size=2048, preview_dir="", tex_dir=""):
+def finish(name, out_path, ref, target, length=None, size=2048, preview_dir="", tex_dir="", scale=None):
     """合并 → UV → 烘焙 → 合成 → 等比缩放平移（真枪 ref 点 → 游戏 target 点；
-    length 给定时按整枪 z 向长度缩放到该值）→ 导出 GLB"""
+    length 给定时按整枪 z 向长度缩放到该值；scale 给定时直接用该倍率——
+    配件/可换部件与本体共用本体倍率）→ 导出 GLB"""
     sc = bpy.context.scene
     quick = os.environ.get("QUICK", "") != ""
     size = int(os.environ.get("BAKE_SIZE", size))
@@ -724,7 +725,7 @@ def finish(name, out_path, ref, target, length=None, size=2048, preview_dir="", 
     # 缩放 + 平移到游戏枪身局部
     zs = [v.co.y for v in me.vertices]
     real_len = max(zs) - min(zs)
-    k = (length / real_len) if length else 1.0
+    k = scale if scale else ((length / real_len) if length else 1.0)
     M = Matrix.Translation(B(*target)) @ Matrix.Scale(k, 4) @ Matrix.Translation(-B(*ref))
     me.transform(M)
     me.update()
@@ -740,7 +741,7 @@ def finish(name, out_path, ref, target, length=None, size=2048, preview_dir="", 
     ys = [v.co.y for v in me.vertices]
     zz = [v.co.z for v in me.vertices]
     # Blender → 枪身局部：x=x, y=z, z=-y
-    print("[gun] %s k=%.4f verts=%d tris=%d aabb_x=[%.4f,%.4f] y=[%.4f,%.4f] z=[%.4f,%.4f] -> %s" % (
+    print("[gun] %s k=%.6f verts=%d tris=%d aabb_x=[%.4f,%.4f] y=[%.4f,%.4f] z=[%.4f,%.4f] -> %s" % (
         name, k, len(me.vertices), sum(len(p.vertices) - 2 for p in me.polygons),
         min(xs), max(xs), min(zz), max(zz), -max(ys), -min(ys), out_path))
     if preview_dir:

@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dmdc6iktqccrn"
-path="res://.godot/imported/mk4_mk4_orm.jpg-1d07068b8fb4fcf979f4a9146b7d504a.ctex"
+path.s3tc="res://.godot/imported/mk4_mk4_orm.jpg-1d07068b8fb4fcf979f4a9146b7d504a.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4e2fd845940b57d222d6dd77f2510fe3"
@@ -14,7 +15,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/pbr/models/guns/mk4_mk4_orm.jpg"
-dest_files=["res://.godot/imported/mk4_mk4_orm.jpg-1d07068b8fb4fcf979f4a9146b7d504a.ctex"]
+dest_files=["res://.godot/imported/mk4_mk4_orm.jpg-1d07068b8fb4fcf979f4a9146b7d504a.s3tc.ctex"]
 
 [params]
 

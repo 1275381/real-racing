@@ -3,18 +3,19 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cvmdjhmt0oiwx"
-path="res://.godot/imported/m14_m14_albedo.jpg-1fff12da5cfffef7e7c4685286f832fe.ctex"
+path.s3tc="res://.godot/imported/m14_m14_albedo.jpg-1fff12da5cfffef7e7c4685286f832fe.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
-"md5": "49b7a151d922491df0b87b5353282f0e"
+"md5": "169c4b48686cd2455a6b52d59f4eada5"
 }
 
 [deps]
 
 source_file="res://assets/pbr/models/guns/m14_m14_albedo.jpg"
-dest_files=["res://.godot/imported/m14_m14_albedo.jpg-1fff12da5cfffef7e7c4685286f832fe.ctex"]
+dest_files=["res://.godot/imported/m14_m14_albedo.jpg-1fff12da5cfffef7e7c4685286f832fe.s3tc.ctex"]
 
 [params]
 

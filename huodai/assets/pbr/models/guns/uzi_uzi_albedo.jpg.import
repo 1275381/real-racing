@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://baxq7n3l5dhvu"
-path="res://.godot/imported/uzi_uzi_albedo.jpg-ac96befb6f428a695c642c5f0164e99c.ctex"
+path.s3tc="res://.godot/imported/uzi_uzi_albedo.jpg-ac96befb6f428a695c642c5f0164e99c.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "38bfd0d6f43d4602dbd3f3996a1ef8e0"
@@ -14,7 +15,7 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/pbr/models/guns/uzi_uzi_albedo.jpg"
-dest_files=["res://.godot/imported/uzi_uzi_albedo.jpg-ac96befb6f428a695c642c5f0164e99c.ctex"]
+dest_files=["res://.godot/imported/uzi_uzi_albedo.jpg-ac96befb6f428a695c642c5f0164e99c.s3tc.ctex"]
 
 [params]
 
