@@ -2371,11 +2371,15 @@ static func _ar_mats() -> Dictionary:
 	# ---- M14 射手步枪专用五色（2026-10 商店枪，官方考证配色分区；mk 闭包
 	#      照 _smg_mats/_lmg_mats 先例，glow 0.32 同本工厂家族口径）----
 	#      m14walnut 胡桃木托 #6B4A32（emission=木纹暗部 #4E3524）/
-	#      m14fg 玻纤棕护木 #7A5C43 / m14steel 磷化深灰钢 #3A3D40
-	#      （emission=棱线高光 #5C6065 提金属棱）/ m14black 近黑细节件
-	#      #1F2124（消焰器/弹匣/照门）/ m14dark 哑光黑小件 #26282B
-	#      （背带环/快慢机/扳机，roughness 0.9 哑光）
-	var mk14 := func(c: Color, e: Color, rough := 0.55) -> StandardMaterial3D:
+	#      m14fg 玻纤棕护木 #7A5C43 / m14steel 磷化深灰钢 #3A3D40 /
+	#      m14black 近黑细节件 #1F2124（消焰器/弹匣/照门）/ m14dark 哑光黑
+	#      小件 #26282B（背带环/快慢机/扳机，roughness 0.9 哑光）
+	#      roughness 口径对齐本工厂老八色（全部不设=1.0 全粗糙）：m14steel
+	#      首轮判图自查曾设 0.5 半光泽——机匣后端面/护圈底梁正对镜头+vm_fill
+	#      的面宽镜面高光整面爆白（读作「白色异物」），提回 0.95 消 specular；
+	#      emission 同步收回家族比例 ≈1.1× albedo（首版 #5C6065=1.59× 抬底亮，
+	#      「棱线高光」意图降为微提，端面不再发白）
+	var mk14 := func(c: Color, e: Color, rough := 0.95) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
 		m.roughness = rough
@@ -2393,7 +2397,7 @@ static func _ar_mats() -> Dictionary:
 	var m14fg: StandardMaterial3D = mk14.call(Color(0.478, 0.361, 0.263),
 			Color(0.34, 0.26, 0.19), 0.75)
 	var m14steel: StandardMaterial3D = mk14.call(Color(0.227, 0.239, 0.251),
-			Color(0.361, 0.376, 0.396), 0.5)
+			Color(0.25, 0.262, 0.276), 0.95)
 	var m14black: StandardMaterial3D = mk14.call(Color(0.122, 0.129, 0.141),
 			Color(0.15, 0.16, 0.175), 0.6)
 	var m14dark: StandardMaterial3D = mk14.call(Color(0.149, 0.157, 0.169),

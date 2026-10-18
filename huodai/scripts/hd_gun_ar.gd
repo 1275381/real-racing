@@ -19,8 +19,8 @@ extends RefCounted
 ##   m4a1   基线 1266（git HEAD 机械清点：29 盒×24 + 10 柱×57）→ 推算 15058
 ##   akm    基线  819（27 盒×24 +  3 柱×57）→ 推算  8876
 ##   scarh  基线  900（28 盒×24 +  4 柱×57）→ 推算  9971
-##   m14    基线 1533（33 盒×24 + 13 柱×57）→ 公式推算 12971（目标 ≥10000，
-##          红线 12264 = 8× 基线，见 HDGunLib.POLY_MIN["m14"]）
+##   m14    基线 1557（34 盒×24 + 13 柱×57）→ 公式推算 13837（目标 ≥10000，
+##          红线 12456 = 8× 基线，见 HDGunLib.POLY_MIN["m14"]）
 ##   门槛 = 8× 基线，见 HDGunLib.POLY_MIN（test_huodai.gd #27 实测断言）。
 
 const GUN_LIB := preload("res://scripts/hd_gunlib.gd")
@@ -414,11 +414,12 @@ static func _m14(mats: Dictionary, root: Node3D) -> void:
 	var blk: StandardMaterial3D = mats["m14black"]    # ⑬ 近黑（消焰器/弹匣/照门）
 	var drk: StandardMaterial3D = mats["m14dark"]     # ⑬ 哑光黑（背带环/快慢机/扳机）
 	# ⑨ 长方形平顶深灰钢机匣（上体顶面为⑧照门座轨面）+ 下机匣（护圈/弹匣
-	#    井座，加兰德式一体布局）——大件 s16 倒角盒
+	#    井座，加兰德式一体布局）——大件 s16/s12 倒角盒；下机匣后端伸进②托
+	#    尾桥体内（端面埋入木托，不在 vm_fill 补光灯 6cm 死区裸露）
 	GUN_LIB.chamfer_box(root, stl, Vector3(0.052, 0.062, 0.30),
 			Vector3(0, 0.045, -0.04), Vector3.ZERO, 0.003, 16)
-	GUN_LIB.chamfer_box(root, stl, Vector3(0.048, 0.048, 0.22),
-			Vector3(0, 0.0, -0.05), Vector3.ZERO, 0.0025, 12)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.048, 0.048, 0.24),
+			Vector3(0, 0.0, -0.045), Vector3.ZERO, 0.0025, 12)
 	# ⑧ 导轨式照门座（机匣后上方）+ 大直径滚花规正轮×2（风偏/高低，48 段
 	#    高分段读滚花）+ 可放倒觇孔照门板（后仰 12°）
 	GUN_LIB.chamfer_box(root, blk, Vector3(0.034, 0.014, 0.08),
@@ -486,6 +487,15 @@ static func _m14(mats: Dictionary, root: Node3D) -> void:
 			Vector3(0, 0.002, 0.295), Vector3(-4, 0, 0), 0.003, 16)
 	GUN_LIB.chamfer_box(root, wln, Vector3(0.044, 0.055, 0.09),
 			Vector3(0, -0.022, 0.205), Vector3(-6, 0, 0), 0.0025, 12)
+	# ② 托尾桥（木托包机匣尾，M14 真车木托本就围住机匣后段）：从托体顶升至
+	#    照门座底（y 0.076 与机匣顶齐平），把上/下机匣后端面整个埋进木托——
+	#    2026-10 一轮自查判图硬伤：裸露后端面距 vm_fill 补光灯（挂握把锚
+	#    原点，枪身局部 (0,-0.006,0.1568)）仅 4.5cm、正入射近距爆白成「白色
+	#    大板」；桥体各面背向/侧向灯光，自身不进爆白死区（A/B 熄灯对照实证）。
+	#    桥宽 0.052 与上机匣同宽：窄于机匣会在两侧露出 2mm 端面边条、补光下
+	#    依旧爆白（二轮 A/B 实证后加宽盖满）
+	GUN_LIB.chamfer_box(root, wln, Vector3(0.052, 0.07, 0.09),
+			Vector3(0, 0.041, 0.115), Vector3.ZERO, 0.0025, 12)
 	# ② 后握把（握把颈部和缓收腰：14° 缓倾 + 窄截面 0.034×0.046，木纹同色
 	#    指棱×2 读检查纹）：grip() 顶锚=旋转支点，HOLD_DELTA 精算锚点
 	#    （见 hd_guns.gd m14 条目：Δ = MK4 基准 − 本锚 (0,-0.028,0.155)）
