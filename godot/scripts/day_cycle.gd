@@ -84,6 +84,15 @@ func apply(env) -> void:
 	var top := (day_top * day_w + dusk_top * dusk_w + night_top * night_w)
 	var mid := (day_mid * day_w + dusk_mid * dusk_w + night_mid * night_w)
 	var bot := (day_bot * day_w + dusk_bot * dusk_w + night_bot * night_w)
+	# ---- 太空层（火箭任务）：天空三段色压向黑（bot 保留一点深蓝 = 大气层辉光边）。
+	# night_f 取 max——星野免费：天空 shader 内置网格哈希星点 + 闪烁，night_f>0.01
+	# 即显，space_f→1 满天星；shader 月盘保留
+	var sf: float = float(env.get("space_f")) if env.get("space_f") != null else 0.0
+	if sf > 0.003:
+		top = top.lerp(Color("#000308"), sf)
+		mid = mid.lerp(Color("#00060d"), sf)
+		bot = bot.lerp(Color("#02040a"), sf)
+	night_f = maxf(night_f, sf)
 	# ---- 天气灰化（室内画面天气强度按 0 处理：不灰化/不起雾/不落地雪）----
 	var wi := 0.0 if indoor else weather_intensity
 	var dim := 0.0
@@ -124,11 +133,11 @@ func apply(env) -> void:
 			bot, fog_mul, vol_mul)
 	if _rain != null:
 		_rain.emitting = not indoor and weather == "rain" \
-				and weather_intensity > 0.03
+				and weather_intensity > 0.03 and sf < 0.5   # 太空无降雨
 		_rain.amount_ratio = lerpf(0.25, 1.0, wi)
 	if _snow != null:
 		_snow.emitting = not indoor and weather == "snow" \
-				and weather_intensity > 0.03
+				and weather_intensity > 0.03 and sf < 0.5
 	if _cam != null:
 		var cp: Vector3 = _cam.global_position
 		if _rain != null:

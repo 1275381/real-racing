@@ -1000,6 +1000,7 @@ func nav_pois() -> Array:
 		{"label": "天环中心", "pos": Vector2(-90, 476)},
 		{"label": "环球百货", "pos": Vector2(270, -60)},
 		{"label": "国际赛车场", "pos": Vector2(716, 2432)},
+		{"label": "火箭发射场", "pos": Vector2(1700, 0)},
 	]
 
 

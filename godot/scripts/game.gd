@@ -328,9 +328,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if onfoot.cycle_scope_zoom(1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1):
 			_sync_scope_hud()
 			hud.show_center("%.0f×" % onfoot.current_zoom(), "", 500)
-	# Z 键：趴下/起身（步行，大战场与漫游通用）
+	# Z 键：趴下/起身（步行，大战场与漫游通用）；太空/月面禁用——滑铲/趴下
+	# 预设地面摩擦与爬行步态，失重场景无意义（评审⑦：Z 触发点在此，不在 C/R 链）
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_Z and on_foot \
+			and (onfoot == null or onfoot.gravity_mode == "") \
 			and state in [ST.ROAM, ST.BATTLE]:
 		onfoot.toggle_prone()
 		_sync_scope_hud()
@@ -421,6 +423,8 @@ func _register_inputs() -> void:
 		"rr_start": [KEY_ENTER],
 		"rr_dual": [KEY_X],   # 双模车切换（原 O 与导航/领航员同键冲突，两动作会同时触发）
 		"rr_interact": [KEY_F],
+		"rr_rocket_auto": [KEY_V],   # 火箭自动驾驶（N 已被 rr_mute 占用且同键
+		"rr_rocket_home": [KEY_B],   # 双动作是历史坑；V/B 全脚本无占用已 grep 核实）
 		"rr_bomb": [KEY_SPACE],        # 大战场飞行投弹（驾车时仍为手刹）
 		"rr_debug": [KEY_I, KEY_F3],   # macOS 上 F3 会被 Mission Control 吃掉
 	}
@@ -608,6 +612,12 @@ var cargo_heist := "none"          # 劫案流程：none / chase 追赶 / flee �
 var _heist_hinted := false         # 未接任务驶入货仓的提示锁存
 var day_cycle: DayCycle            # 昼夜 + 天气
 var _headlight: SpotLight3D        # 玩家车头灯（夜色自动点亮）
+
+# ================= 火箭发射场（RR 快舟 · 地月往返） =================
+
+var rocket_ride := false           # 正在乘火箭（发射/太空/月球全链，车辆冻结）
+var rocket_site: RocketSite        # 发射场状态机（随漫游地图创建，enter_roam 接线）
+var _moon_fade := 0.0              # 月球淡入淡出协议（评审⑨：切 far 瞬间不能整球蹦现）
 
 
 ## 车型是否为惯性漂移车（漂移胎分区只对它们开放）
@@ -1838,6 +1848,7 @@ func enter_roam() -> void:
 	hud.add_map_marker(-1476.0, -570.0, "货")   # 截机任务·停靠货机
 	hud.add_map_marker(480.0, 2470.0, "赛")     # RR 国际赛车场
 	hud.add_map_marker(196.0, -492.0, "家")     # 湖畔别墅（出生的家）
+	hud.add_map_marker(1700.0, 0.0, "箭")       # RR 航天发射场（火箭任务）
 	hud.set_roam_tach()
 	# NPC 交通 + 行人 + 警察
 	if npc == null:
@@ -1887,6 +1898,17 @@ func enter_roam() -> void:
 				4000)
 	else:
 		hud.set_plane_panel(false)
+	# 火箭发射场接线（防上局残余相位）：地图若重建则换新实例，进漫游一律洗回
+	# idle；moon_query 总闸回落、太空层表现归零
+	rocket_site = freeroam.rocket_site
+	freeroam.moon_query = false
+	rocket_ride = false
+	_moon_fade = 0.0
+	env.space_f = 0.0
+	camera.far = 2800.0
+	if rocket_site != null:
+		rocket_site.game = self
+		rocket_site.reset_launch()
 	if _loading != null:
 		_loading.finish()
 		_loading = null
@@ -2277,6 +2299,26 @@ func exit_roam() -> void:
 		airliner_ride = false
 		if airport_traffic != null:
 			airport_traffic.abort_ride()
+	# 火箭任务复位（红线：不可把玩家永久卡在太空）——相位回 idle、火箭复位
+	# 台上、一级分离体删除、月面覆写总闸回落、太空层表现全部归零。月面下舱
+	# →回船→发射坪下舱走的是 onfoot.enter()，其复位清单已含 gravity_mode（评审②
+	# 主修复）；这里再清一遍只是双保险
+	if rocket_ride or (rocket_site != null and rocket_site.phase != "idle") \
+			or (onfoot != null and onfoot.gravity_mode != ""):
+		rocket_ride = false
+		if rocket_site != null:
+			rocket_site.reset_launch()
+			rocket_site.set_moon_fade(0.0)
+		if freeroam != null:
+			freeroam.moon_query = false
+		env.space_f = 0.0
+		camera.far = 2800.0
+		_moon_fade = 0.0
+		hud.set_plane_panel(false)   # 火箭复用战机仪表盘通道
+		if onfoot != null:
+			onfoot.gravity_mode = ""
+			onfoot.vy = 0.0
+			onfoot.eva_vel = Vector3.ZERO
 	if airport_traffic != null:
 		airport_traffic.set_process(false)
 	audio.set_pursuit_audio(false, 999.0, false, 999.0)   # 警笛/旋翼停止
@@ -2533,12 +2575,35 @@ func _process(dt_real: float) -> void:
 					else (0.7 if (v.input_brake > 0.9 and absf(v.vf) > 22.0
 					and v.surface == "road") else 0.0)))
 			fx.surface_effects(v)
-	# 战场里阴影跟随步行玩家（车藏在别处）
-	env.follow_shadow(onfoot.pos if state == ST.BATTLE else player.veh.pos)
+	# 战场里阴影跟随步行玩家（车藏在别处）；月面阴影（评审⑩）：乘火箭跟火箭，
+	# 步行重力模式（月面/失重）跟人——否则玩家在月面时阴影相机还停在 6km 外
+	# 的发射坪，月岩/坑缘全程无影。其余模式照旧（不动既有 BATTLE/漫游行为）
+	if state == ST.BATTLE:
+		env.follow_shadow(onfoot.pos)
+	elif rocket_ride and rocket_site != null:
+		env.follow_shadow(rocket_site.rocket_pos())
+	elif on_foot and onfoot != null and onfoot.gravity_mode != "":
+		env.follow_shadow(onfoot.pos)
+	else:
+		env.follow_shadow(player.veh.pos)
 	# 昼夜 + 天气推进（所有模式共享同一片天；车库初始页算室内，
 	# 天气在背后照常演变但不渲染——雨雪粒子/灰化/浓雾不进初始画面）
 	if day_cycle != null:
 		env.underground = camera.position.y < -2.0
+		# 太空层混合（一次性 set 会被下一帧冲掉，underground 旗标同款混进 apply 链）：
+		# 3500 出大气，2800~3800 平滑；far 滞回切换（>0.5 抬 9000 / <0.45 回 2800），
+		# 抬 far 的同一时刻月球仍全透明——淡入协议见 _moon_fade（评审⑨）
+		env.space_f = smoothstep(2800.0, 3800.0, camera.position.y)
+		if env.space_f > 0.5 and camera.far < 5000.0:
+			camera.far = 9000.0
+		elif env.space_f < 0.45 and camera.far > 5000.0:
+			camera.far = 2800.0
+		if camera.far > 5000.0:
+			_moon_fade = minf(_moon_fade + dt / 2.0, 1.0)   # 2s 缓入：先见星野后见月球
+		elif env.space_f < 0.55:
+			_moon_fade = maxf(_moon_fade - dt / 1.0, 0.0)   # 1s 缓出归零后 far 才回
+		if rocket_site != null:
+			rocket_site.set_moon_fade(_moon_fade)
 		day_cycle.indoor = state == ST.GARAGE
 		day_cycle.advance(dt)
 		day_cycle.apply(env)
@@ -2560,6 +2625,9 @@ func _process(dt_real: float) -> void:
 	if state == ST.ROAM:
 		freeroam.update_signals(_now_s)
 		freeroam.update_landmarks(dt)
+		# 发射场泛光灯（夜间开）与塔顶障碍灯呼吸
+		if rocket_site != null:
+			rocket_site.update_ambient(day_cycle.night_f, dt)
 
 	# 音效参数
 	var pv := player.veh
@@ -2578,6 +2646,12 @@ func _process(dt_real: float) -> void:
 	# 漫游战机：风噪按空速（车引擎保持怠速不干扰）
 	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty():
 		audio.update_wind(clampf(float(rplane["speed"]) / 93.0, 0.0, 1.0))
+	# 乘火箭：风噪按高度（出大气渐熄）、rumble 点火拉满/爬升随速度衰减
+	if state == ST.ROAM and rocket_ride and rocket_site != null:
+		audio.update_wind(clampf(rocket_site.rocket_pos().y / 4200.0, 0.0, 1.0))
+		audio.update_rumble(rocket_site.phase in ["ignition", "climb",
+				"moon_liftoff"] or rocket_site.rumble_active(),
+				rocket_site.rumble_mag())
 	audio.update_rumble(state in [ST.RACING, ST.ROAM] and pv.surface != "road", absf(pv.vf))
 
 	_record_player_line()
@@ -2590,7 +2664,8 @@ func _process(dt_real: float) -> void:
 	_update_camera(dt)
 	_update_hud(dt)
 	# 漫游战机仪表盘逐帧刷新
-	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty():
+	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty() \
+			and not rocket_ride:
 		var hdg := fposmod(540.0 - rad_to_deg(float(rplane["heading"])), 360.0)
 		var rpm_n := 0.12 + 0.88 * float(rplane["throttle"]) \
 				if not rplane["landed"] else 0.0
@@ -2598,6 +2673,9 @@ func _process(dt_real: float) -> void:
 				float(rplane["pos"].y), _roam_vs, hdg,
 				float(rplane["pitch"]), float(rplane["roll"]),
 				float(rplane["throttle"]), rpm_n, rplane["landed"])
+	# 火箭仪表盘（复用战机面板通道：速度/高度/升降率/姿态/油门）
+	elif state == ST.ROAM and rocket_ride and rocket_site != null:
+		rocket_site.update_hud(hud, _now_s)
 
 	# 调试：RR_DEBUG=1 时每秒打印一次状态（headless 验证用）
 	if OS.get_environment("RR_DEBUG") != "":
@@ -2628,14 +2706,17 @@ func _handle_hotkeys() -> void:
 		hud.toggle_debug()
 	if Input.is_action_just_pressed("rr_camera"):
 		if on_foot and onfoot != null \
-				and (state == ST.ROAM or state == ST.BATTLE):
+				and (state == ST.ROAM or state == ST.BATTLE) \
+				and onfoot.gravity_mode == "":   # 滑铲预设地面摩擦，失重场景禁用
 			onfoot.try_slide()   # 步行时 C = 滑铲
 		else:
 			cam_mode = (cam_mode + 1) % CAM_MODE_NAMES.size()
 			hud.show_center("镜头：" + CAM_MODE_NAMES[cam_mode], "", 800)
 	if Input.is_action_just_pressed("rr_rescue"):
-		if on_foot and onfoot != null and (state == ST.ROAM or state == ST.BATTLE):
-			onfoot.reload()   # 步行 R = 换弹（原来是把停着的车瞬移回路上，且没有手动换弹）
+		if on_foot and onfoot != null and (state == ST.ROAM or state == ST.BATTLE) \
+				and onfoot.gravity_mode != "zero":
+			onfoot.reload()   # 步行 R = 换弹（原来是把停着的车瞬移回路上，且没有手动换弹）；
+			#                太空 EVA 的 R 归制动专用（评审⑦），月面保留换弹
 		elif state != ST.BATTLE and not (plane_mode and state == ST.ROAM and not on_foot):
 			rescue()
 	if Input.is_action_just_pressed("rr_scope") and on_foot \
@@ -2646,6 +2727,12 @@ func _handle_hotkeys() -> void:
 		audio.ensure()
 		audio.set_muted(not audio.muted)
 		hud.show_center("已静音" if audio.muted else "声音开启", "", 700)
+	# 火箭任务：V 自动驾驶（地月转移/返航，随时接管）/ B 快速返场（防卡死兜底捷径）
+	if state == ST.ROAM and rocket_site != null and rocket_site.phase != "idle":
+		if Input.is_action_just_pressed("rr_rocket_auto"):
+			rocket_site.toggle_autopilot(self)
+		elif Input.is_action_just_pressed("rr_rocket_home"):
+			rocket_site.quick_return(self)
 	if Input.is_action_just_pressed("rr_pause"):
 		if state == ST.ROAM and map_open:
 			_close_map()
@@ -2672,14 +2759,19 @@ func _handle_hotkeys() -> void:
 				and airport_traffic.cargo_mission == "parked" \
 				and onfoot.pos.distance_to(airport_traffic.cargo_plane_pos) < 15.0:
 			cargo_i = true
-		if airliner_i >= 0:
+		# 火箭发射场链首（评审④a）：登乘/中止/EVA/回船/下舱全部在此消费 F——
+		# 出舱后链尾 _toggle_on_foot 才不会在太空里弹「离车辆太远」（评审遗留）
+		if rocket_site != null and rocket_site.handle_interact(self):
+			pass
+		elif airliner_i >= 0:
 			_airliner_board(airliner_i)
 		elif cargo_i:
 			airport_traffic.begin_cargo_mission()
 			cargo_heist = "chase"
 			hud.show_center("任务接取", "货机正在起飞 · 驾驶战机追上它夺走货物",
 					3500)
-		elif plane_mode and not on_foot and not rplane.is_empty():
+		elif plane_mode and not on_foot and not rplane.is_empty() \
+				and not rocket_ride:
 			_roam_exit_plane()   # 战机内按 F = 下机（需已降落贴地）
 		elif _landmark_interact():
 			pass
@@ -2713,10 +2805,15 @@ func _handle_hotkeys() -> void:
 				npc.trigger_wanted()
 				npc.escalate()
 			hud.show_center("货物到手！", "大量警察出动 · 飞远甩掉通缉", 3500)
-	# 漫游战机：F 登机/下机（站在班机舱门边时优先登班机，不重复触发）
+	# 漫游战机：F 登机/下机（站在班机舱门边时优先登班机，不重复触发）。
+	# 双守卫（评审④b）：乘火箭中不吃这记 F；火箭登船口旁的 F 已被链首消费——
+	# 否则同帧 else 分支会把刚登火箭的玩家拽去 _roam_exit_plane
 	if state == ST.ROAM and plane_mode \
 			and Input.is_action_just_pressed("rr_interact") \
 			and not shop_open and not gunshop_open and not map_open \
+			and not rocket_ride \
+			and not (on_foot and rocket_site != null \
+			and rocket_site.near_board_door(onfoot.pos)) \
 			and not (on_foot and airport_traffic != null \
 			and airport_traffic.near_service_door(onfoot.pos) >= 0):
 		if on_foot:
@@ -2824,7 +2921,16 @@ func _step_sim(h: float) -> void:
 		if shop_open or gunshop_open or map_open:
 			return   # 店里/大地图：冻结，退完继续
 		var pin := player.veh
-		if airliner_ride and airport_traffic != null:
+		if rocket_ride and rocket_site != null:
+			# 乘火箭中（评审⑤）：状态机推进 + NPC 同步走班机先例——玩家车如
+			# 班机般冻结在发射坪，else 车辆分支（_sample_input）不执行，
+			# orbit 的 W/S 加减速不会驱动坪上的车
+			rocket_site._update(h)
+			npc.player_pos = rocket_site.rocket_pos()
+			npc.player_vel = Vector3.ZERO
+			npc.player_speed = rocket_site.rocket_speed()
+			npc.player_on_foot = false
+		elif airliner_ride and airport_traffic != null:
 			# 乘班机中：班机照常飞，玩家无实体；到达后自动下机
 			airport_traffic._update_ride(h)
 			npc.player_pos = airport_traffic.ride_pos
@@ -2844,7 +2950,8 @@ func _step_sim(h: float) -> void:
 				hud.set_gun_name(Guns.gun_by_id(gun_equipped)["name"])
 				hud.show_center("已抵达 " + airport_traffic.ride_names[di],
 						"", 2500)
-		elif plane_mode and not on_foot and not rplane.is_empty():
+		elif plane_mode and not on_foot and not rplane.is_empty() \
+				and not rocket_ride:
 			_roam_exit_cd = maxf(0.0, _roam_exit_cd - h)
 			# 漫游战机：飞行物理，车辆冻结（位置同步给 NPC/警察逻辑）
 			_roam_plane_step(h)
@@ -2857,7 +2964,11 @@ func _step_sim(h: float) -> void:
 			npc.player_speed = float(rplane["speed"])
 			npc.player_on_foot = false
 		elif on_foot:
-			# 步行：第一人称移动/射击，车辆冻结在原地
+			# 步行：第一人称移动/射击，车辆冻结在原地。
+			# 火箭任务步行态（EVA/月面行走）继续推进状态机——距船>150m 警告与
+			# 长按 F 磁力回收的兜底不能一出舱就停摆（评审遗留修复）
+			if rocket_site != null and rocket_site.phase != "idle":
+				rocket_site._update(h)
 			if elev_ride and freeroam != null:
 				# 电梯：轿厢载人（塔 / 别墅共用状态机，坐标走活跃井）
 				var dir_mul := 1.0
@@ -2927,6 +3038,9 @@ func _step_sim(h: float) -> void:
 			elif freeroam != null and onfoot.pos.distance_to(
 					freeroam.wheel_board_pos()) < 14.0:
 				lm_hint = "F 乘坐摩天轮"
+			elif rocket_site != null and rocket_site.phase == "idle" \
+					and rocket_site.near_board_door(onfoot.pos):
+				lm_hint = "F 登乘火箭 · RR 快舟"
 			hud.set_board_hint(lm_hint != "", lm_hint)
 		else:
 			var inp_r: Dictionary
@@ -2964,6 +3078,9 @@ func _step_sim(h: float) -> void:
 						pin.pos.z - airport_traffic.cargo_plane_pos.z).length() < 22.0:
 					hud.set_board_hint(true,
 							"F 下车 · 下车后 F 接取截机任务")
+				elif rocket_site != null and rocket_site.phase == "idle" \
+						and Vector2(pin.pos.x - 1700.0, pin.pos.z).length() < 90.0:
+					hud.set_board_hint(true, "F 下车 · 南侧登船口乘 RR 快舟上太空")
 				else:
 					hud.set_board_hint(false)
 				inp_r = _sample_input(h)
@@ -3410,6 +3527,19 @@ func _update_camera(dt: float) -> void:
 		camera.fov = RRUtil.damp(camera.fov, 60.0, 3.0, dt)
 		return
 
+	# 乘火箭（评审④c）：相机分支放在班机/战机之前。点火瞬间外置慢环绕 3s，
+	# 其余船内固定舷窗机位 + 微震动——不用 lerp 追逐相机，高速爬升会甩尾
+	if state == ST.ROAM and rocket_ride and rocket_site != null:
+		var rk: Array = rocket_site.camera_pose()
+		camera.position = rk[0]
+		camera.look_at(rk[1], Vector3.UP)
+		var micro := 0.05 if rocket_site.phase in ["ignition", "climb"] else 0.012
+		if shake > 0.002 or micro > 0.0:
+			camera.position += Vector3(randf() - 0.5, randf() - 0.5,
+					randf() - 0.5) * (micro + shake * 0.15)
+		camera.fov = RRUtil.damp(camera.fov, 70.0, 3.0, dt)
+		return
+
 	# 班机载客飞行：追逐班机
 	if state == ST.ROAM and airliner_ride and airport_traffic != null:
 		var afwd := Vector3(sin(airport_traffic.ride_heading), 0,
@@ -3421,8 +3551,9 @@ func _update_camera(dt: float) -> void:
 		camera.fov = RRUtil.damp(camera.fov, 60.0, 2.0, dt)
 		return
 
-	# 漫游战机：同款追尾相机
-	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty():
+	# 漫游战机：同款追尾相机（乘火箭时不可达——rocket 相机分支在前）
+	if state == ST.ROAM and plane_mode and not on_foot and not rplane.is_empty() \
+			and not rocket_ride:
 		var rfwd := Vector3(sin(float(rplane["heading"])), 0,
 				cos(float(rplane["heading"])))
 		var rwant := Vector3(rplane["pos"]) - rfwd * 17.0 + Vector3(0, 7.0, 0)

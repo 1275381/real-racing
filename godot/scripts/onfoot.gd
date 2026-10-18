@@ -30,6 +30,16 @@ var active := false
 var pos := Vector3.ZERO
 var yaw := 0.0
 var pitch := 0.0
+# ---- 重力模式（火箭任务）："" 地球默认 / "moon" 月面 1/6 g（vy 积分软贴合）
+# / "zero" 太空失重（三维惯性，无任何重力项）。mode 出口双保险：onfoot.enter()
+# 的跨场次复位清单 + game.exit_roam 链各清一遍（评审②）
+var gravity_mode := ""
+var vy := 0.0                  # moon：垂直速度（-1.62·dt 积分）
+var eva_vel := Vector3.ZERO    # zero：三维惯性速度（松开输入不减速——停不下来）
+var _moon_hvel := Vector2.ZERO # moon：滞空水平速度（跳跃期间不衰减，抛物线步态）
+var _jump_hold := 0.0          # moon：可变跳高（按住空格持续加速的余时）
+var _space_was := false        # moon：空格松开沿（松开截断上升）
+var _eva_lean := 0.0           # zero：横向推力的轻倾角（漂浮方位感）
 var health := 100.0
 var ammo := MAG
 var reloading := 0.0
@@ -94,12 +104,20 @@ func enter(p: Vector3, head: float) -> void:
 	reloading = 0.0
 	scoped = false
 	# 跨场次状态复位：巡飞弹 input_block / 漫游门旁 fire_block / 趴下与后坐力
-	# 都会跨场残留（贴门退场再进战场 → 整场打不出枪；操控弹中阵亡 → 重生不能动）
+	# 都会跨场残留（贴门退场再进战场 → 整场打不出枪；操控弹中阵亡 → 重生不能动）。
+	# 重力模式同理（评审②主修复）：月面下舱→回船→发射坪下舱走的是 enter() 而非
+	# exit_roam——「moon」残留会让普通地面步行跳 5.4m
 	input_block = false
 	fire_block = false
 	prone = false
 	recoil_pitch = 0.0
 	recoil_yaw = 0.0
+	gravity_mode = ""
+	vy = 0.0
+	eva_vel = Vector3.ZERO
+	_moon_hvel = Vector2.ZERO
+	_jump_hold = 0.0
+	_eva_lean = 0.0
 	if _gun_id != "":
 		gun_ammo[_gun_id] = ammo
 	if cam != null:
@@ -127,9 +145,10 @@ func exit() -> void:
 		cam.fov = _base_fov
 
 
-## C 滑铲：移动中按下沿面朝方向急冲 0.7s，镜头压低 + FOV 拉开（冷却 1.2s）
+## C 滑铲：移动中按下沿面朝方向急冲 0.7s，镜头压低 + FOV 拉开（冷却 1.2s）。
+## 太空/月面禁用——铲行预设地面摩擦，失重场景无意义（评审⑦）
 func try_slide() -> void:
-	if not active or slide_cd > 0.0 or slide_t > 0.0:
+	if gravity_mode != "" or not active or slide_cd > 0.0 or slide_t > 0.0:
 		return
 	if move_speed < 0.5:
 		return   # 需在移动中才能铲
@@ -138,11 +157,10 @@ func try_slide() -> void:
 	slide_dir = Vector3(sin(yaw), 0, cos(yaw))
 
 
-## 装备指定枪械：换枪模 + 换数值 + 换弹匣（切枪自动满弹）
 ## Z 趴下：眼高压到 0.42、移速 35%、开镜散布再减半（卧姿最稳）；
-## 再按 Z 起身。滑铲中不可趴。
+## 再按 Z 起身。滑铲中不可趴；太空/月面禁用（评审⑦：地面姿态在失重下无意义）
 func toggle_prone() -> void:
-	if slide_t > 0.0:
+	if slide_t > 0.0 or gravity_mode != "":
 		return
 	prone = not prone
 
@@ -552,9 +570,10 @@ func _spawn_impact(p: Vector3) -> void:
 
 
 func _tick_fx(dt: float) -> void:
-	# 掉落弹匣：重力下坠 + 落地静止
+	# 掉落弹匣：重力下坠 + 落地静止（月面按 1.62 缩放；失重场景换弹被禁用）
 	if _falling_mag != null and _falling_mag.visible:
-		_falling_vel.y -= 9.8 * dt
+		var g := 1.62 if gravity_mode == "moon" else 9.8
+		_falling_vel.y -= g * dt
 		_falling_mag.position += _falling_vel * dt
 		_falling_mag.rotation_degrees.z += 140.0 * dt
 	_tracers.tick(dt)
@@ -682,7 +701,63 @@ func update(dt: float) -> void:
 		_reload_rot = Vector3.ZERO
 		_mag_mesh.visible = _mag_show
 		_falling = false
-	# 移动（C 滑铲：沿启动时朝向急冲，平方衰减；铲行中不接受转向输入）
+	# ---- 移动：按重力模式分派（"" 地球 / moon 月面 / zero 失重，火箭任务） ----
+	if gravity_mode == "zero":
+		_step_zero_g(dt)
+	elif gravity_mode == "moon":
+		_step_moon_g(dt)
+	else:
+		_step_earth_g(dt)
+	# 射击（左键按住 = 开枪 + 自动三倍开镜）
+	if Input.is_action_pressed("rr_fire") and not fire_block \
+			and fire_cd <= 0.0 and reloading <= 0.0:
+		if ammo > 0:
+			_shoot()
+		else:
+			_start_reload()
+	# 相机：第一人称 + 走路轻微点头 + 滑铲压低视线 + 开镜 FOV
+	var eye_target := EYE_H_SLIDE if slide_t > 0.0 \
+			else (EYE_H_PRONE if prone else EYE_H)
+	_eye_h = lerpf(_eye_h, eye_target, 1.0 - exp(-14.0 * dt))
+	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
+	cam.position = pos + Vector3(0, _eye_h + bob, 0)
+	# 后坐力叠加到视角：pitch 顶起由玩家压枪收回；停火 0.25s 后每秒回落 40%
+	recoil_cool += dt
+	if recoil_cool > 0.25 and recoil_pitch > 0.0:
+		recoil_pitch = maxf(0.0, recoil_pitch - deg_to_rad(45.0) * dt)
+		recoil_yaw = move_toward(recoil_yaw, 0.0, deg_to_rad(10.0) * dt)
+	recoil_pitch = minf(recoil_pitch, deg_to_rad(6.0))   # 上限防打天花板
+	cam.rotation = Vector3(pitch + recoil_pitch, yaw + recoil_yaw + PI,
+			_eva_lean)
+	var scope_div: float = current_zoom() if scoped else 1.0
+	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
+	if slide_t > 0.0 and not scoped:
+		target_fov += 10.0   # 滑铲速度感
+	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
+	# 开镜 = 枪模收到屏幕正中：枪顶（机瞄/瞄具）贴在准星正下方，镜内可见枪身。
+	# 原来瞄准位 x=0.09 且带 2° 偏航，枪停在屏幕中心右侧约 150px，
+	# 准星和枪上的瞄具对不上。3× 以上高倍镜开镜到位后隐藏枪模
+	#（镜筒贴脸会挡满半屏，FOV 一缩还会被放大好几倍），只看镜内画面
+	var aiming := scoped
+	_ads = move_toward(_ads, 1.0 if aiming else 0.0, dt * 5.0 * grip_ads_mul)
+	_gun_holder.visible = not (aiming and _ads > 0.9 and current_zoom() >= 3.0)
+	var ads_pos := Vector3(-GUN_SCALE * _sight_cx,
+			-0.012 - GUN_SCALE * _sight_top, GUN_ADS_Z)
+	var prone_drop := (-0.12 if prone else 0.0) * (1.0 - _ads)
+	_gun_holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) \
+			+ Vector3(0, prone_drop, 0) + _reload_off
+	# 换弹下倾动画（_reload_off/_reload_rot 原来算了没用上）
+	_gun_holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
+	# 枪口火光衰减
+	if _flash_t > 0.0:
+		_flash_t -= dt
+		if _flash_t <= 0.0:
+			_flash.visible = false
+			_flash_mesh.visible = false
+
+
+## 地球默认移动（原 update 内联段抽出，行为逐位不变）
+func _step_earth_g(dt: float) -> void:
 	slide_cd = maxf(0.0, slide_cd - dt)
 	var mf := 0.0
 	var ms := 0.0
@@ -735,8 +810,8 @@ func update(dt: float) -> void:
 		var lz: float = -sa * dx + ca * dz
 		var cx := clampf(lx, -ob["hx"], ob["hx"])
 		var cz := clampf(lz, -ob["hz"], ob["hz"])
-		var ddx := lx - cx
-		var ddz := lz - cz
+		var ddx: float = lx - cx
+		var ddz: float = lz - cz
 		var d2 := ddx * ddx + ddz * ddz
 		if d2 > 0.25:
 			continue
@@ -750,55 +825,115 @@ func update(dt: float) -> void:
 	pos.y = q["height"]
 	# 地图边界（飞抵远方城市后，按远城范围放行）
 	var lim := FreeroamMap.MAP_LIMIT
-	if fm != null and fm.has_method("far_city_contains") 			and fm.far_city_contains(pos.x, pos.z):
+	if fm != null and fm.has_method("far_city_contains") \
+			and fm.far_city_contains(pos.x, pos.z):
 		lim = FreeroamMap.WORLD_LIMIT
 	pos.x = clampf(pos.x, -lim, lim)
 	pos.z = clampf(pos.z, -lim, lim)
-	# 射击（左键按住 = 开枪 + 自动三倍开镜）
-	if Input.is_action_pressed("rr_fire") and not fire_block \
-			and fire_cd <= 0.0 and reloading <= 0.0:
-		if ammo > 0:
-			_shoot()
+
+
+## 太空 EVA 失重（gravity_mode=="zero"）：跳过一切地面贴合，pos 由三维 vel
+## 积分，无任何重力项——「停不下来」是核心手感。WASD 沿视线（含 pitch）推力
+## 3.5 m/s²（温和喷气背包），Space 上推 / Q 下推（六自由度对称），R 一键制动
+## （R 的换弹职责已在 game 侧让位，评审⑦）。松开输入不减速：真惯性。
+func _step_zero_g(dt: float) -> void:
+	var thrust := Vector3.ZERO
+	var fwd := Vector3(sin(yaw) * cos(pitch), sin(pitch),
+			cos(yaw) * cos(pitch))
+	var right := Vector3(-cos(yaw), 0, sin(yaw))
+	var lat := 0.0
+	if not input_block:
+		if Input.is_physical_key_pressed(KEY_W):
+			thrust += fwd * 3.5
+		if Input.is_physical_key_pressed(KEY_S):
+			thrust -= fwd * 3.5
+		if Input.is_physical_key_pressed(KEY_D):
+			thrust += right * 3.5
+			lat += 1.0
+		if Input.is_physical_key_pressed(KEY_A):
+			thrust -= right * 3.5
+			lat -= 1.0
+		if Input.is_physical_key_pressed(KEY_SPACE):
+			thrust += Vector3.UP * 3.5
+		if Input.is_physical_key_pressed(KEY_Q):
+			thrust -= Vector3.UP * 3.5
+		if Input.is_physical_key_pressed(KEY_R):
+			eva_vel = eva_vel.move_toward(Vector3.ZERO, 6.0 * dt)
+	eva_vel += thrust * dt
+	pos += eva_vel * dt
+	move_speed = 0.0   # 关走路点头 bob 与 FOV 冲刺
+	# 相机 roll 随横向推力轻倾 2°（漂浮方位感）
+	_eva_lean = lerpf(_eva_lean, -lat * 0.035, 1.0 - exp(-4.0 * dt))
+	# 边界：水平 ±16000（默认 ±2800 会拦腰截断月球轨道）、y 软上限 8000
+	pos.x = clampf(pos.x, -FreeroamMap.WORLD_LIMIT, FreeroamMap.WORLD_LIMIT)
+	pos.z = clampf(pos.z, -FreeroamMap.WORLD_LIMIT, FreeroamMap.WORLD_LIMIT)
+	pos.y = clampf(pos.y, -300.0, 8000.0)
+
+
+## 月面低重力行走（gravity_mode=="moon"）：保留 query 但改软贴合——vy 积分
+## -1.62·dt、低于月面高则贴合 vy=0。轻点跳（3.4 m/s）高约 3.6m；按住空格
+## 0.35s 续推到 4.45 m/s——满跳高 6.1m、滞空 5.5s（1/6g 真实物理，跳得高落得
+## 慢直接成立）；滞空期间水平速度不衰减（抛物线步态）；松开空格截断上升
+## （可变跳高防失控）。
+func _step_moon_g(dt: float) -> void:
+	var q: Dictionary = fm.query(pos.x, pos.z, _last_idx, pos.y)
+	_last_idx = q["idx"]
+	var ground: float = float(q["height"])
+	var grounded := pos.y <= ground + 0.03
+	var space_now := Input.is_physical_key_pressed(KEY_SPACE)
+	if grounded:
+		vy = 0.0
+		pos.y = ground   # 穹面缓坡贴合：下坡不悬空、上坡不埋进月壤
+		var mf := 0.0
+		var ms := 0.0
+		if not input_block:
+			if Input.is_physical_key_pressed(KEY_W):
+				mf += 1.0
+			if Input.is_physical_key_pressed(KEY_S):
+				mf -= 1.0
+			if Input.is_physical_key_pressed(KEY_D):
+				ms += 1.0
+			if Input.is_physical_key_pressed(KEY_A):
+				ms -= 1.0
+		# 走/跑速度沿用地面值——速度感差异全部交给垂直方向
+		if mf != 0.0 or ms != 0.0:
+			var run := Input.is_physical_key_pressed(KEY_SHIFT)
+			move_speed = (RUN if run else WALK) \
+					* clampf(Vector2(mf, ms).length(), 0.0, 1.0)
+			var fwd := Vector3(sin(yaw), 0, cos(yaw))
+			var right := Vector3(-cos(yaw), 0, sin(yaw))
+			var dir := (fwd * mf + right * ms).normalized()
+			pos += dir * move_speed * dt
+			_moon_hvel = Vector2(dir.x, dir.z) * move_speed
 		else:
-			_start_reload()
-	# 相机：第一人称 + 走路轻微点头 + 滑铲压低视线 + 开镜 FOV
-	var eye_target := EYE_H_SLIDE if slide_t > 0.0 \
-			else (EYE_H_PRONE if prone else EYE_H)
-	_eye_h = lerpf(_eye_h, eye_target, 1.0 - exp(-14.0 * dt))
-	var bob := sin(_bob_t) * 0.02 * minf(move_speed, 1.0)
-	cam.position = pos + Vector3(0, _eye_h + bob, 0)
-	# 后坐力叠加到视角：pitch 顶起由玩家压枪收回；停火 0.25s 后每秒回落 40%
-	recoil_cool += dt
-	if recoil_cool > 0.25 and recoil_pitch > 0.0:
-		recoil_pitch = maxf(0.0, recoil_pitch - deg_to_rad(45.0) * dt)
-		recoil_yaw = move_toward(recoil_yaw, 0.0, deg_to_rad(10.0) * dt)
-	recoil_pitch = minf(recoil_pitch, deg_to_rad(6.0))   # 上限防打天花板
-	cam.rotation = Vector3(pitch + recoil_pitch, yaw + recoil_yaw + PI, 0)
-	var scope_div: float = current_zoom() if scoped else 1.0
-	var target_fov: float = _base_fov / maxf(scope_div, 1.0)
-	if slide_t > 0.0 and not scoped:
-		target_fov += 10.0   # 滑铲速度感
-	cam.fov = lerpf(cam.fov, target_fov, 1.0 - exp(-14.0 * dt))
-	# 开镜 = 枪模收到屏幕正中：枪顶（机瞄/瞄具）贴在准星正下方，镜内可见枪身。
-	# 原来瞄准位 x=0.09 且带 2° 偏航，枪停在屏幕中心右侧约 150px，
-	# 准星和枪上的瞄具对不上。3× 以上高倍镜开镜到位后隐藏枪模
-	#（镜筒贴脸会挡满半屏，FOV 一缩还会被放大好几倍），只看镜内画面
-	var aiming := scoped
-	_ads = move_toward(_ads, 1.0 if aiming else 0.0, dt * 5.0 * grip_ads_mul)
-	_gun_holder.visible = not (aiming and _ads > 0.9 and current_zoom() >= 3.0)
-	var ads_pos := Vector3(-GUN_SCALE * _sight_cx,
-			-0.012 - GUN_SCALE * _sight_top, GUN_ADS_Z)
-	var prone_drop := (-0.12 if prone else 0.0) * (1.0 - _ads)
-	_gun_holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) \
-			+ Vector3(0, prone_drop, 0) + _reload_off
-	# 换弹下倾动画（_reload_off/_reload_rot 原来算了没用上）
-	_gun_holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
-	# 枪口火光衰减
-	if _flash_t > 0.0:
-		_flash_t -= dt
-		if _flash_t <= 0.0:
-			_flash.visible = false
-			_flash_mesh.visible = false
+			move_speed = 0.0
+			_moon_hvel = Vector2.ZERO
+		if space_now and not _space_was:
+			vy = 3.4
+			_jump_hold = 0.35
+			# 起跳瞬间给一点离地余量，防同帧又被贴合判定拉回
+			pos.y = ground + 0.05
+	else:
+		# 滞空：水平不衰减 + 可变跳高
+		pos.x += _moon_hvel.x * dt
+		pos.z += _moon_hvel.y * dt
+		if _jump_hold > 0.0 and space_now:
+			vy += 3.0 * dt
+			_jump_hold -= dt
+		elif not space_now and vy > 0.0:
+			vy = minf(vy, 1.6)   # 松开截断上升
+			_jump_hold = 0.0
+	_space_was = space_now
+	vy -= 1.62 * dt
+	pos.y += vy * dt
+	if pos.y < ground:
+		pos.y = ground   # 落地无伤
+		if vy < -0.5:
+			vy = 0.0
+	# 边界：月面轨道远超主城半径，按太空态放行
+	pos.x = clampf(pos.x, -FreeroamMap.WORLD_LIMIT, FreeroamMap.WORLD_LIMIT)
+	pos.z = clampf(pos.z, -FreeroamMap.WORLD_LIMIT, FreeroamMap.WORLD_LIMIT)
+	_eva_lean = lerpf(_eva_lean, 0.0, 1.0 - exp(-4.0 * dt))
 
 
 ## R 键手动换弹（弹匣未满、不在换弹中才生效）
@@ -809,6 +944,8 @@ func reload() -> void:
 func _start_reload() -> void:
 	if reloading > 0.0 or ammo >= _g.get("mag", 12):
 		return
+	if gravity_mode == "zero":
+		return   # 失重 EVA 禁用换弹：R 归制动专用，坠落的弹匣也不该出现在失重场景
 	reloading = _g.get("reload", 1.5)
 	audio.play_reload()
 

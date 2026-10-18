@@ -189,6 +189,20 @@ const FAR_CITY_HEADING := 0.75
 const FAR_CITY_HALF := 1050.0                    # 远城半径（边界钳制用）
 const WORLD_LIMIT := 16000.0                     # 战机可达世界边界
 
+# ---- 月球（火箭任务）：月心在世界东北上空，z=2600 在班机航线 z≈1650 以北 ----
+const MOON_C := Vector3(5200.0, 5000.0, 2600.0)
+const MOON_R := 600.0                            # 半径：3km 外视直径约 22.6°，巨物感
+const MOON_FLAT := 80.0                          # 静海基地着陆坪平底半径（query 同口径）
+
+## 月面 query 覆写总闸：只有火箭太空相位为真（rocket_site._update 维护）。
+## 战机 query 同样传 pos.y 且可飞抵月轴上空——裸分支会把战机瞬移抬上月面；
+## NPC 车 query 传的是 player_pos.y（EVA 时=5000+），但其水平位置距月轴 >2km
+## 永不命中。为假时一切照旧。
+var moon_query := false
+var rocket_site = null                           # RocketSite（发射场状态机，_make_rocket_site 建）
+var rocket_probe := PackedVector3Array()         # 发射场关键件世界坐标（headless 测试断言用，
+                                                 # 与 pillar_pts 同理：不依赖场景树回读）
+
 ## 铺装区（机场坪面/远城街道）：query 回退时表面按道路计算，不再当草地减速
 var road_pads: Array = []
 
@@ -329,6 +343,7 @@ var _prog_t0 := 0
 ## 与 _build_steps() 一一对应，顺序即产出契约
 const BUILD_STEPS := [
 	[60.0, "规划路网"],
+	[40.0, "建造航天发射场"],
 	[400.0, "铺设路面与高架"],
 	[280.0, "生成地形与海岸"],
 	[30.0, "排布路口与建筑"],
@@ -337,7 +352,8 @@ const BUILD_STEPS := [
 
 
 func _build_steps() -> Array:
-	return [_step_roads, _step_road_meshes, _step_zones, _step_buildings, _step_finish]
+	return [_step_roads, _step_rocket_site, _step_road_meshes, _step_zones,
+		_step_buildings, _step_finish]
 
 
 func _step_roads() -> void:
@@ -350,6 +366,38 @@ func _step_roads() -> void:
 	_build_airport(AIRPORT_POS, AIRPORT_HEADING)
 	_build_far_city()
 	print("[map] 路网采样 %d 点 %dms" % [n, Time.get_ticks_msec() - _build_t0])
+
+
+## RR 航天发射场（沙漠环线围合中心）：接入路 + 发射坪铺装 + 状态机与全套视觉。
+## 排在路面网格步骤之前——新路要照常铺面、进禁建区图与导航图。
+func _step_rocket_site() -> void:
+	_make_rocket_site()
+	print("[map] 航天发射场 %dms" % [Time.get_ticks_msec() - _build_t0])
+
+
+func _make_rocket_site() -> void:
+	# ---- 接入路：沙漠环线南段 (1650,460) 引约 470m 支线至停车广场（1700,140）----
+	# 环线该航点标高 4.0（ys 表第 9 位），支线顺坡降落到坪面 0.55
+	_make_road([Vector2(1650, 460), Vector2(1662, 320), Vector2(1690, 195),
+			Vector2(1700, 140)], [4.0, 2.8, 1.4, 0.55], false, 3.5, false,
+			"out/rocket_site", "out")
+	# ---- 发射坪 90×90（标高 0.5 垫高防积沙）+ 停车广场：铺装区登记 ----
+	# query 按 "road" 计不减速，可开车上坪（机场坪面同款先例）
+	road_pads.append({"c": Vector2(1700, 0), "fx": 1.0, "fz": 0.0,
+			"hf": 45.0, "hl": 45.0, "y": 0.5})
+	road_pads.append({"c": Vector2(1700, 142), "fx": 1.0, "fz": 0.0,
+			"hf": 30.0, "hl": 20.0, "y": 0.45})
+	# ---- 发射场全套视觉 + 状态机（rocket_site.gd / rocket_visual.gd）----
+	var site := RocketSite.new()
+	site.name = "RocketSite"
+	add_child(site)
+	site.build(self)
+	rocket_site = site
+	# headless 断言锚点（发射台顶 / 登船口 / 勤务塔顶 / 月面坪）
+	rocket_probe.append(Vector3(1700, 2.55, 0))
+	rocket_probe.append(Vector3(1700, 2.55, 9.5))
+	rocket_probe.append(Vector3(1687, 63.4, 0))
+	rocket_probe.append(MOON_C + Vector3(0, MOON_R, 0))
 
 
 func _step_road_meshes() -> void:
@@ -984,6 +1032,16 @@ func query(x: float, z: float, hint, vy: float = -1.0e9) -> Dictionary:
 		# 这里再返回 0 的话车会从山体内部穿过去，进入某条路的判定范围时
 		# 又被一帧抬升几十米
 		_scratch["height"] = terrain_height(x, z)
+		# 月面覆写（总闸 moon_query，见字段注释）：顶半球穹面与月球 mesh 严格
+		# 同式 y = 月心 + sqrt(r²-d²)，着陆坪（d<80）平底——站在月面 600m
+		# 曲率半径使地平线肉眼可见地下弯
+		if moon_query and vy > 3400.0:
+			var mdx := x - MOON_C.x
+			var mdz := z - MOON_C.z
+			var md2 := mdx * mdx + mdz * mdz
+			if md2 < MOON_R * MOON_R:
+				_scratch["height"] = (MOON_C.y + MOON_R) if md2 < MOON_FLAT * MOON_FLAT \
+						else MOON_C.y + sqrt(MOON_R * MOON_R - md2)
 		# 铺装区覆写（机场坪面/远城街道/地下车库地坪/货机坡道）：草地按道路计
 		# 多层重叠时取面积最小（最具体）的一层；vy 差 3m 以上不匹配（地下/地表互不误判）
 		var best_pad = null

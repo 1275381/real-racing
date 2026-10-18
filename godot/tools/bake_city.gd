@@ -110,6 +110,9 @@ func _init() -> void:
 	f.close()
 	print("[bake] 路 %d 条 / 采样 %d / 楼 %d 栋 → %d 体块 + %d 天线 / 桥墩 %d"
 			% [roads.size(), m.n, bld.size(), doc["bld_boxes"], doc["bld_ants"],
-			doc["pillar_n"]])
+				doc["pillar_n"]])
 	print("[bake] 已写出 %s" % OUT)
+	# 发射场带来灯光/粒子节点：退出前手动释放，渲染 RID 不拖到引擎关闭之后
+	# （否则 PagedAllocator/Leaked instance 报错，退出码不稳）
+	m.free()
 	quit()

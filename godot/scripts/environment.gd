@@ -559,6 +559,9 @@ func set_ground_visible(v: bool) -> void:
 var _fog_base_near := 240.0
 var _fog_base_far := 1650.0
 var underground := false         # 相机处于地下（车库）：关体积雾、压雾距
+var space_f := 0.0               # 太空层混合系数（game 按相机高度写入，2800~3800 平滑）
+var _space_fx_off := false       # 太空滞回闩（>0.5 关体积雾/SSAO，<0.45 恢复）
+var _space_fx_prev := false
 
 func set_fog_range(near: float, far: float) -> void:
 	_fog_base_near = near
@@ -597,9 +600,24 @@ func set_atmosphere(amb_col: Color, amb_e: float, fog_col: Color,
 	_env.ambient_light_color = amb_col
 	_env.ambient_light_energy = amb_e
 	_env.fog_light_color = fog_col
-	_env.fog_depth_begin = _fog_base_near * fog_mul
-	_env.fog_depth_end = _fog_base_far * fog_mul
-	_env.volumetric_fog_density = 0.0025 * vol_mul
+	# 太空层（space_f）：雾必须【推远】而非乘 0——DEPTH 模式下 fog_density 是
+	# 「到 fog_depth_end 时的不透明度」，直接砍 end 会把地平线硬边提前搬到脚下；
+	# begin 同步推过远裁剪面（9000），月球与脚下大地全程不被雾糊。夜间浓雾的
+	# fog_mul（缩小雾距）只在浓雾天生效，space_f 优先接管远端。
+	_env.fog_depth_begin = lerpf(_fog_base_near * fog_mul, 11000.0, space_f)
+	_env.fog_depth_end = lerpf(_fog_base_far * fog_mul, 16000.0, space_f)
+	# 体积雾密度语义下乘 (1-space_f) 是真关（密度 0.0025·0=0）
+	_env.volumetric_fog_density = 0.0025 * vol_mul * (1.0 - space_f)
+	# 滞后开关：space_f 过 0.5 关死体积雾/SSAO（高空俯瞰城是 55 帧攻坚敏感区），
+	# 跌破 0.45 才恢复——防过渡带内反复开关抖动
+	if space_f > 0.5:
+		_space_fx_off = true
+	elif space_f < 0.45:
+		_space_fx_off = false
+	if _space_fx_off != _space_fx_prev:
+		_space_fx_prev = _space_fx_off
+		_env.volumetric_fog_enabled = not _space_fx_off
+		_env.ssao_enabled = not _space_fx_off
 
 
 ## 地面覆雪（0..1，向白色过渡；主题切换不影响——每次按基准色重算）
