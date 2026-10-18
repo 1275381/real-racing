@@ -65,6 +65,11 @@ var _t := 0.0
 var _world                       # HDWorld（zone_at / obstacles 用）
 var _crate_scene: PackedScene
 var _body_mat_cache := {}        # 类型 id -> StandardMaterial3D（程序化箱体/盖子共用）
+## 第四阶段性能（绘制调用 < 800）：容器的网格/材质全部按类型共享——旧版每个容器
+## 各自 duplicate 染色材质、各自一张盖子/灯泡网格、各自一枚灯材质，60 个容器
+## 实测吃掉约 360 次绘制调用（渲染器自动实例化要求「同网格同材质」）
+var _share := {}                 # 键 -> Mesh / Material
+var _lamp_sets := {}             # 灯材质键 -> {"mat", "phase"}（呼吸按 3 个相位组错开）
 
 
 ## 在 world.container_spots 每点生成容器（外观 + 指示灯 + 占位障碍登记）
@@ -260,24 +265,36 @@ func _make_container(spot: Dictionary) -> void:
 	lid_pivot.position = Vector3(0.0, size.y, -size.z * 0.5)
 	root.add_child(lid_pivot)
 	var lid := MeshInstance3D.new()
-	var lm := BoxMesh.new()
-	lm.size = Vector3(size.x * 0.96, 0.06, size.z * 0.96)
-	lm.material = _type_mat(type)
-	lid.mesh = lm
+	var lkey := "lid|%s|%s" % [str(type["id"]), str(size)]
+	if not _share.has(lkey):
+		var lm := BoxMesh.new()
+		lm.size = Vector3(size.x * 0.96, 0.06, size.z * 0.96)
+		lm.material = _type_mat(type)
+		_share[lkey] = lm
+	lid.mesh = _share[lkey]
 	lid.position = Vector3(0.0, 0.03, size.z * 0.5)
 	lid_pivot.add_child(lid)
 	# —— 顶部琥珀色未搜指示灯（emission 小球，呼吸） ——
 	var lamp := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.06
-	sm.height = 0.12
-	lamp.mesh = sm
-	var lamp_mat := StandardMaterial3D.new()
-	lamp_mat.albedo_color = Color(0.16, 0.12, 0.06)
-	lamp_mat.emission_enabled = true
-	lamp_mat.emission = VAULT_LAMP if cls == "vault" else (AIRDROP_LAMP if cls == "airdrop" else AMBER)
-	lamp_mat.emission_energy_multiplier = LAMP_BASE
-	sm.material = lamp_mat
+	if not _share.has("lamp_mesh"):
+		var sm := SphereMesh.new()
+		sm.radius = 0.06
+		sm.height = 0.12
+		sm.radial_segments = 12
+		sm.rings = 6
+		_share["lamp_mesh"] = sm
+	lamp.mesh = _share["lamp_mesh"]
+	var lcol: Color = VAULT_LAMP if cls == "vault" else (AIRDROP_LAMP if cls == "airdrop" else AMBER)
+	var lk := "lamp|%s|%d" % [lcol.to_html(), _containers.size() % 3]
+	if not _lamp_sets.has(lk):
+		var lmat := StandardMaterial3D.new()
+		lmat.albedo_color = Color(0.16, 0.12, 0.06)
+		lmat.emission_enabled = true
+		lmat.emission = lcol
+		lmat.emission_energy_multiplier = LAMP_BASE
+		_lamp_sets[lk] = {"mat": lmat, "phase": float(_containers.size() % 3) * TAU / 3.0}
+	var lamp_mat: StandardMaterial3D = _lamp_sets[lk]["mat"]
+	lamp.material_override = lamp_mat
 	lamp.position = Vector3(0.0, size.y + 0.12, size.z * 0.2)
 	root.add_child(lamp)
 	# —— 占位障碍登记进 world.obstacles（旋转取保守 AABB） ——
@@ -337,45 +354,48 @@ func _make_airdrop_body(root: Node3D, size: Vector3) -> void:
 
 ## 保险箱：深钢箱体 + 前面板凹框 + 密码转盘 + 把手（程序化，不用 crate.glb）
 func _make_safe_body(root: Node3D, size: Vector3) -> void:
-	var steel := StandardMaterial3D.new()
-	steel.albedo_color = Color(0.2, 0.21, 0.23)
-	steel.metallic = 0.7
-	steel.roughness = 0.45
-	var body := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	bm.material = steel
-	body.mesh = bm
-	body.position = Vector3(0.0, size.y * 0.5, 0.0)
-	root.add_child(body)
-	var trim := StandardMaterial3D.new()
-	trim.albedo_color = Color(0.55, 0.5, 0.36)
-	trim.metallic = 0.9
-	trim.roughness = 0.3
-	var door := MeshInstance3D.new()
-	var dm := BoxMesh.new()
-	dm.size = Vector3(size.x * 0.82, size.y * 0.78, 0.02)
-	dm.material = steel
-	door.mesh = dm
-	door.position = Vector3(0.0, size.y * 0.5, size.z * 0.5 + 0.01)
-	root.add_child(door)
-	var dial := MeshInstance3D.new()
-	var cm := CylinderMesh.new()
-	cm.top_radius = 0.07
-	cm.bottom_radius = 0.07
-	cm.height = 0.04
-	cm.material = trim
-	dial.mesh = cm
-	dial.rotation.x = PI * 0.5
-	dial.position = Vector3(-0.08, size.y * 0.55, size.z * 0.5 + 0.04)
-	root.add_child(dial)
-	var handle := MeshInstance3D.new()
-	var hm := BoxMesh.new()
-	hm.size = Vector3(0.04, 0.16, 0.04)
-	hm.material = trim
-	handle.mesh = hm
-	handle.position = Vector3(0.18, size.y * 0.5, size.z * 0.5 + 0.04)
-	root.add_child(handle)
+	if not _share.has("safe_steel"):
+		var steel0 := StandardMaterial3D.new()
+		steel0.albedo_color = Color(0.2, 0.21, 0.23)
+		steel0.metallic = 0.7
+		steel0.roughness = 0.45
+		_share["safe_steel"] = steel0
+		var trim0 := StandardMaterial3D.new()
+		trim0.albedo_color = Color(0.55, 0.5, 0.36)
+		trim0.metallic = 0.9
+		trim0.roughness = 0.3
+		_share["safe_trim"] = trim0
+	var steel: StandardMaterial3D = _share["safe_steel"]
+	var trim: StandardMaterial3D = _share["safe_trim"]
+	var parts := [
+		["body", steel, size, Vector3(0.0, size.y * 0.5, 0.0), false],
+		["door", steel, Vector3(size.x * 0.82, size.y * 0.78, 0.02),
+			Vector3(0.0, size.y * 0.5, size.z * 0.5 + 0.01), false],
+		["dial", trim, Vector3(0.07, 0.04, 0.0), Vector3(-0.08, size.y * 0.55, size.z * 0.5 + 0.04), true],
+		["handle", trim, Vector3(0.04, 0.16, 0.04), Vector3(0.18, size.y * 0.5, size.z * 0.5 + 0.04), false],
+	]
+	for pt in parts:
+		var key := "safe|%s|%s" % [str(pt[0]), str(pt[2])]
+		if not _share.has(key):
+			var mesh: PrimitiveMesh
+			if bool(pt[4]):
+				var cm := CylinderMesh.new()
+				cm.top_radius = (pt[2] as Vector3).x
+				cm.bottom_radius = (pt[2] as Vector3).x
+				cm.height = (pt[2] as Vector3).y
+				mesh = cm
+			else:
+				var bm := BoxMesh.new()
+				bm.size = pt[2]
+				mesh = bm
+			mesh.material = pt[1]
+			_share[key] = mesh
+		var mi := MeshInstance3D.new()
+		mi.mesh = _share[key]
+		mi.position = pt[3]
+		if bool(pt[4]):
+			mi.rotation.x = PI * 0.5
+		root.add_child(mi)
 
 
 ## 容器整体染色：克隆所有表面材质乘类型色（Wood 不在 TINTABLE，全染才分得清）
@@ -385,9 +405,12 @@ func _tint_all(body: Node3D, color: Color) -> void:
 		for si in mi.mesh.get_surface_count():
 			var m := mi.mesh.surface_get_material(si)
 			if m is StandardMaterial3D:
-				var t: StandardMaterial3D = (m as StandardMaterial3D).duplicate()
-				t.albedo_color = (m as StandardMaterial3D).albedo_color * color
-				mi.set_surface_override_material(si, t)
+				var key := "tint|%d|%s" % [m.get_instance_id(), color.to_html()]
+				if not _share.has(key):
+					var t: StandardMaterial3D = (m as StandardMaterial3D).duplicate()
+					t.albedo_color = (m as StandardMaterial3D).albedo_color * color
+					_share[key] = t
+				mi.set_surface_override_material(si, _share[key])
 
 
 func _type_mat(type: Dictionary) -> StandardMaterial3D:
@@ -587,9 +610,7 @@ func _update_lids(dt: float) -> void:
 
 ## 未搜指示灯琥珀呼吸（相位错开），已搜的 update 前已 visible=false
 func _update_lamps() -> void:
-	for c in _containers:
-		if bool(c["searched"]):
-			continue
-		var mat: StandardMaterial3D = c["lamp_mat"]
-		mat.emission_energy_multiplier = LAMP_BASE \
-				+ LAMP_AMP * sin(_t * 2.6 + float(c["phase"]))
+	for lk in _lamp_sets:
+		var ls: Dictionary = _lamp_sets[lk]
+		(ls["mat"] as StandardMaterial3D).emission_energy_multiplier = LAMP_BASE \
+				+ LAMP_AMP * sin(_t * 2.6 + float(ls["phase"]))

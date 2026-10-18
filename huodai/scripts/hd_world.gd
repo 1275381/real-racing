@@ -19,6 +19,7 @@ const HDDAM_BASE_SCRIPT := preload("res://scripts/hd_dam_base.gd")
 ## 四新区件（军营/大电/水泥厂/游客中心）同由路径 preload：新 class_name
 ## HDDamZones 在 --headless -s 回归下同样不进全局类名缓存，走路径最稳
 const HDDAM_ZONES_SCRIPT := preload("res://scripts/hd_dam_zones.gd")
+const BATCH := preload("res://scripts/hd_batch.gd")
 const PBR := preload("res://scripts/hd_pbr.gd")   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 ## 实拍 HDRI 天空（Poly Haven kloofendal_43d_clear_puresky，CC0）：天空本身 +
 ## 环境光 + 反射都取它；Git LFS 没拉到时回退物理天空（另一台电脑不崩）
@@ -265,6 +266,7 @@ var _extract_vis := {}            # id -> {mats:[StandardMaterial3D], light, col
 var _lever_handle: Node3D         # 电闸手柄（拉下后转角）
 var dam: Node3D                   # 大坝硬结构（HDDam 实例：坝体/廊道/涂鸦/闸门排，视觉挂本类）
 var dam_base: Node3D              # 坝底工业区（HDDamBase 实例：厂房/堆场/工地 + 坝区点位）
+var batch_stats := {}             # 静态合批结果 {merged, meshes}（性能探针/测试读）
 var dam_zones: Node3D             # 四新区（HDDamZones 实例：军营/大电/水泥厂/游客中心 + 新点位）
 
 var _built := false
@@ -324,6 +326,9 @@ func build() -> void:
 	_build_lever(HDData.LEVER_POS)
 	# 地表植被最后撒：大坝/四新区的障碍物都已登记，才能避开建筑
 	_scatter_ground_cover()
+	# 静态陈设合批（第四阶段性能门槛 D：出生点绘制调用 < 800）——必须最后做：
+	# 之前的装配/PBR 换皮都要先落定
+	batch_stats = BATCH.run(self)
 
 
 ## 进靶馆模式：雾拉近/环境光稍暗/夕阳压弱（室内氛围）；回大厅/行动恢复。
@@ -1039,6 +1044,8 @@ func _build_extract(p: Vector3, col: Color = Color(0.25, 1.0, 0.45)) -> Dictiona
 	ring.mesh = tm
 	ring.position = p + Vector3(0.0, 0.06, 0.0)
 	add_child(ring)
+	pole.set_meta("no_batch", true)   # 局内按开关改色/显隐：不进静态合批
+	ring.set_meta("no_batch", true)
 	return {"mats": [pm, rm], "light": light, "col": col, "nodes": [pole, light, ring]}
 
 
@@ -1068,6 +1075,7 @@ func _build_lever(p: Vector3) -> void:
 	frame.position = Vector3(p.x + 0.9, 1.35, p.z)
 	add_child(frame)
 	_lever_handle = Node3D.new()
+	_lever_handle.set_meta("no_batch", true)   # 拉闸时转动：不进静态合批
 	_lever_handle.position = Vector3(p.x + 0.68, 1.45, p.z)
 	add_child(_lever_handle)
 	var hm := MeshInstance3D.new()

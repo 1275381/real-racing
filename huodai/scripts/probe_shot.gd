@@ -209,6 +209,10 @@ func _shot_pair(path: String) -> void:
 	var ia1: Image = root.get_texture().get_image()
 	if ia1 == null:
 		return
+	# 枪域剪影：vm 独立视口清屏透明，alpha 就是枪模真实轮廓（拍 a 的同帧取）
+	var va: Image = null
+	if _m != null and _m.player.vm_viewport != null:
+		va = _m.player.vm_viewport.get_texture().get_image()
 	var tag: String = path.get_file().get_basename()
 	ia1.save_png(path)
 	shots_saved += 1
@@ -229,6 +233,32 @@ func _shot_pair(path: String) -> void:
 	var inter := mx.duplicate()
 	for i in mx.size():
 		inter[i] = 1 if (mx[i] == 1 and my[i] == 1) else 0
+	# 差分只认枪剪影（外扩 2 像素）以内：写实枪模金属高光的辉光光晕会在枪周围
+	# 地面/墙面上抬亮度 0.03/通道，0.08 阈值把整片地板圈进差分、再被灯带切成
+	# 几块——2026-10 MP7 ADS 0.40 帧「稳定判裂 [34238,2217,912,548]」实为光晕
+	# 误报（肉眼与剪影都是完整一把枪）。剪影外的差分一律不计
+	if va != null:
+		var sw: int = m1["sw"]
+		var sh: int = m1["sh"]
+		var vw := va.get_width()
+		var vh := va.get_height()
+		for y in sh:
+			for x in sw:
+				var i2 := y * sw + x
+				if inter[i2] == 0:
+					continue
+				var hit := false
+				for oy in [-2, 0, 2]:
+					for ox in [-2, 0, 2]:
+						var px := clampi(int(float(x * 2 + ox) * vw / (sw * 2.0)), 0, vw - 1)
+						var py := clampi(int(float(y * 2 + oy) * vh / (sh * 2.0)), 0, vh - 1)
+						if va.get_pixel(px, py).a > 0.05:
+							hit = true
+							break
+					if hit:
+						break
+				if not hit:
+					inter[i2] = 0
 	var res := _bfs(inter, m1["sw"], m1["sh"])
 	var split: bool = res["n"] >= 2
 	var msg: String
@@ -312,6 +342,7 @@ func _initialize() -> void:
 	root.add_child(main)
 	print("[probe] 探针启动：存档已备份、main.tscn 已入树（卡死排查锚点）")
 	await frames(30)
+	main.stash.tutorial_done = true   # 摆拍不要首局引导卡遮左上角（新档默认会弹；stash 在 main 就绪后才有）
 	shot("res://out/shot_lobby.png")
 
 	# ---- 大厅三页整页截图（三页签改造图证）：出发大厅 / 改枪台 / 交易行 ----
@@ -522,6 +553,10 @@ func _initialize() -> void:
 	shot("res://out/shot_dam_new4.png")
 	main.player.dead = false
 
+	# 摆拍局不是真实对局：先置「已结算」再转靶场——2026-10 起局内转靶场 = 放弃
+	# 行动视同阵亡（丢主副武器），不置位会把 rifle 丢掉、主槽退成侦察手枪
+	# （下文「两发后余弹 28」读到手枪 12 发匣 → ammo=10 的根因）
+	main._raid_live = false
 	main._enter_range()
 	await frames(40)
 	shot("res://out/shot_range.png")
@@ -822,7 +857,14 @@ func _initialize() -> void:
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(20)
 	Input.action_press("hd_lean_right")
-	await frames(14)
+	# 等到位再判（2026-10 改进方案第 8 节：修偶发失败 lean_cur 0.70 < 0.9）——
+	# 旧版固定等 14 帧：主循环按真实帧时长推进 lean（6/s），高帧率机器 14 帧
+	# 只有 0.1 s、lean 才 0.6–0.7。改成按条件等（上限 2 s，到不了照样判失败）
+	for i in 240:
+		if main.player.lean_cur > 0.9:
+			break
+		await frames(1)
+	await frames(2)
 	check("探头截图帧 lean_cur>0.9", main.player.lean_cur > 0.9,
 		"lean=%.2f" % main.player.lean_cur)
 	shot("res://out/shot_lean.png")

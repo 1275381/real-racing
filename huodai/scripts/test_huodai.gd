@@ -2024,6 +2024,22 @@ func _run() -> void:
 	check("H 跳过引导（记为完成）", main._tut == -1 and ST.tutorial_done)
 	main._raid_live = false
 
+	# ===== 第四阶段：静态陈设合批（门槛 D 的结构性前提；绘制调用本身见 probe_perf.gd）=====
+	var bs4: Dictionary = main.world.batch_stats
+	check("静态合批生效（≥2000 件并入、物件数压到 1/8 以下）", int(bs4.get("merged", 0)) >= 2000
+		and int(bs4.get("meshes", 99999)) * 8 <= int(bs4.get("merged", 0)), str(bs4))
+	var beacons_ok := true
+	for eid in main.world._extract_vis:
+		for nd in (main.world._extract_vis[eid] as Dictionary)["nodes"]:
+			if not is_instance_valid(nd) or not (nd as Node).is_inside_tree():
+				beacons_ok = false
+	check("撤离信标未被合批吞掉（局内还要改色/显隐）", beacons_ok)
+	main.world.set_lever_pulled(true)
+	var lever_ok: bool = is_instance_valid(main.world._lever_handle) \
+			and main.world._lever_handle.is_inside_tree() and absf(main.world._lever_handle.rotation.z) > 1.0
+	main.world.set_lever_pulled(false)
+	check("电闸手柄未被合批（拉闸还能转）", lever_ok)
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)

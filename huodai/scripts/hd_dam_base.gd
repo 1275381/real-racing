@@ -908,6 +908,7 @@ func _build_smoke(w) -> void:
 			mi.scale = Vector3(r, r, r)
 			if k >= PUFF_FADE:
 				mi.material_override = _mats["smoke2"]
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # 半透明烟团不投影（省阴影绘制）
 			w.add_child(mi)
 
 
