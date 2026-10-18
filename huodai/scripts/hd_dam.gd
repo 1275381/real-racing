@@ -217,6 +217,8 @@ func _make_meshes() -> void:
 
 
 ## 摆盒：共用单位 BoxMesh + 实例 scale 定尺寸（网格构成红线：唯一 mesh 数收敛）
+## 2026-10 性能：摆件一律不投影（spawn 朝坝阴影 pass 是 16→36 帧元凶之一；
+## 130~280m 远景阴影本就看不清，坝体明暗靠面朝向+AO 表达足够）
 func _box(root, size: Vector3, pos: Vector3, mat: StandardMaterial3D,
 		rot_x := 0.0, rot_z := 0.0, rot_y := 0.0) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
@@ -224,6 +226,7 @@ func _box(root, size: Vector3, pos: Vector3, mat: StandardMaterial3D,
 	mi.scale = size
 	mi.position = pos
 	mi.rotation = Vector3(rot_x, rot_y, rot_z)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.set_surface_override_material(0, mat)
 	root.add_child(mi)
 	return mi
@@ -237,6 +240,7 @@ func _inst(root, mesh: Mesh, pos: Vector3, mat: StandardMaterial3D,
 	mi.position = pos
 	mi.rotation.x = rot_x
 	mi.scale = scl
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.set_surface_override_material(0, mat)
 	root.add_child(mi)
 	return mi

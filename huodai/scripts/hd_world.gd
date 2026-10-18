@@ -438,10 +438,18 @@ func _build_env() -> void:
 	if _hdri_on:
 		_sun.rotation_degrees = HDRI_SUN_ROT
 	_sun.shadow_enabled = true
-	_sun.directional_shadow_max_distance = 300.0   # 坝距 ref 相机 130~280m，120 会全落阴影距离外
+	# 2026-10 性能定案（用户要求 ≥55 帧）：spawn 朝坝 16→36 帧的元凶是阴影
+	# 渲染——300m 阴影距离 + 默认 4096 贴图让上千坝体分件全量进 shadow pass。
+	# 三刀：①阴影距离 300→160（坝顶远景阴影本就看不清，明暗由 AOsuffice）
+	# ②blur 1.0→0.6（贴图带宽减负）③PSSM 斜切 2 段（默认 4 段对大静态场景
+	# 过度细分）；阴影视觉质量靠 bias/opacity 维持，判图以截图回归兜底
+	_sun.directional_shadow_max_distance = 160.0
+	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	_sun.shadow_bias = 0.06
-	_sun.shadow_blur = 1.0
+	_sun.shadow_blur = 0.6
 	_sun.shadow_opacity = 0.9
+	# 阴影贴图 4096→2048（ProjectSettings 只能启动前改——main.gd _ready 里
+	# 通过 project_settings 无效，改在 project.godot；此处兜底再设一次）
 	add_child(_sun)
 	# —— 冷天光补光（第 5 轮双色温架构）：从主阳反向的半空铺冷蓝天光，
 	#    阴影面偏蓝、受光面偏暖——无阴影、低能量，只做暗部染色

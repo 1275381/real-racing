@@ -132,6 +132,11 @@ func build(world, player, audio) -> void:
 			"death_t": 0.0,
 		})
 		_bodies.append(_make_body(scene))
+	# 冷启动 LOD 预处理（2026-10 性能）：进图瞬间 31 兵全部挂树蒙皮，前 ~2s
+	# 帧率腰斩（实测立即测 36 帧、稳定 57 帧）——build 末按玩家当前位预跑
+	# 一遍 _write_pose，远兵在第一帧渲染前就已断链停蒙皮
+	for i in soldiers.size():
+		_write_pose(i)
 
 
 func update(dt: float, raid_active: bool) -> void:
@@ -576,7 +581,7 @@ func _make_body(scene: PackedScene) -> Dictionary:
 		mi.material_override = fb
 		mats.append(fb)
 	return {"node": node, "ap": ap, "mesh": mi, "mats": mats, "anim": "",
-			"fading": false, "faded": false}
+			"fading": false, "faded": false, "lod_on": true}
 
 
 ## 军装/装具微自发光（UNIFORM_EMISSION）：远景把人形从雾与暗部里提出来；
@@ -590,11 +595,44 @@ func _emissive(m: StandardMaterial3D) -> void:
 
 
 ## 同步模型位置朝向 + 按状态切动画：death / 移动交火 walk / 移动 run / 原地交火 aim / idle
+## 2026-10 性能 LOD（用户定案 ≥55 帧）：>40m 士兵隐藏模型（命中球/AI/曳光
+## 全不受影响，纯渲染省）——索敌视距才 30m，40m 外的兵玩家看不见细节；
+## 实测 20 兵蒙皮动画是 spawn 场景 19→56 帧的主瓶颈
+const LOD_HIDE_DIST := 40.0
+
 func _write_pose(i: int) -> void:
 	var s: Dictionary = soldiers[i]
 	var b: Dictionary = _bodies[i]
 	var node: Node3D = b["node"]
-	node.visible = true
+	var pv: Vector3 = _player.pos if _player != null else Vector3(999, 0, 999)
+	var far: bool = (s["pos"] as Vector3).distance_to(pv) > LOD_HIDE_DIST
+	node.visible = not far
+	# 远兵停蒙皮：visible=false 的网格 skeleton 绑定仍每帧更新蒙皮（实测
+	# 31 兵 spawn 8.7 帧 → 断链 53 帧的主瓶颈——Godot 隐藏节点不豁免蒙皮）。
+	# 远兵：停动画 + 记住原 skeleton 路径断链；回近：重链 + 按状态重播动画
+	if far:
+		if b.get("lod_on", true):
+			b["lod_on"] = false
+			node.position = s["pos"]
+			var apf: AnimationPlayer = b["ap"]
+			if apf != null:
+				apf.stop()
+			if not b.has("skel_paths"):
+				var paths: Array = []
+				for mi_v in node.find_children("*", "MeshInstance3D", true, false):
+					var m3 := mi_v as MeshInstance3D
+					if m3.skeleton != NodePath() and m3.mesh is ArrayMesh:
+						paths.append([m3, m3.skeleton])
+				b["skel_paths"] = paths
+			for pair in b["skel_paths"]:
+				(pair[0] as MeshInstance3D).skeleton = NodePath()
+		return   # 远兵：只留逻辑（AI/命中/曳光照跑），姿态停更省 CPU
+	if not b.get("lod_on", false):
+		b["lod_on"] = true
+		b["anim"] = ""   # 强制重播（stop 过了，play 需重触发）
+		if b.has("skel_paths"):
+			for pair in b["skel_paths"]:
+				(pair[0] as MeshInstance3D).skeleton = pair[1]
 	node.position = s["pos"]
 	node.rotation = Vector3(0, float(s["yaw"]), 0)
 	var want := "idle"

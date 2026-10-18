@@ -18,4 +18,4 @@ window/size/viewport_height=810
 
 ; 渲染器用默认 Forward+（曾误抄赛车工程的 mobile/gl_compatibility，画质最差）
 anti_aliasing/quality/msaa_3d=2
-lights_and_shadows/directional_shadow/size=4096
+lights_and_shadows/directional_shadow/size=2048
