@@ -38,6 +38,8 @@
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
+# 墙钟看门狗 300s（健康全程 ≈92s）：卡死自行还原存档 quit(1)，不留无输出 124 强杀
+# 存档自愈：启动时若见 .probe_bak（上次被强杀未还原）先复位再备份，防真实档被顶掉
 extends SceneTree
 
 var checks: int = 0     # 附加验收断言计数（软断言：只记档打印，不中断后续截图）
@@ -45,6 +47,11 @@ var fails: int = 0
 var shots_saved: int = 0   # 实存截图数（headless 下跳过保存，只跑断言链）
 var save_bak := ""      # 非空 = 探针前有真实存档，收尾还原（探针装瞄具会触发 save()）
 var _m                  # main 引用（shot() 收暂停菜单护栏用，_initialize 里赋值）
+var _done := false      # 收尾旗：看门狗据此不误杀正常收尾
+const WATCHDOG_SEC := 300.0   # 全程墙钟上限（健康全程 ≈92s，5 倍冗余）——
+                              # 卡死时自行收尾还原存档并 quit(1)，不留给
+                              # harness 超时强杀（强杀会孤儿化 probe_bak，
+                              # 2026-10-18 10:04 实证）
 
 func frames(n: int) -> void:
 	for i in n:
@@ -257,17 +264,53 @@ func drive(n: int) -> void:
 		_m.guns.update(0.016)
 		await process_frame
 
+## 墙钟看门狗（2026-10-18 10:04 卡死案）：探针健康全程 ≈92s，超过
+## WATCHDOG_SEC 仍未收尾即认定卡死——打诊断行、还原存档、quit(1)。
+## 让 harness 侧看到的是「有诊断的快速失败」而非「无输出的 124 强杀」
+## （强杀走不到收尾还原，probe_bak 孤儿化，二次强杀顶掉真实存档）
+func _watchdog() -> void:
+	var deadline := Time.get_ticks_msec() + int(WATCHDOG_SEC * 1000.0)
+	while Time.get_ticks_msec() < deadline:
+		await create_timer(5.0).timeout
+		if _done:
+			return
+	if _done:
+		return
+	print("[probe] 看门狗超时（%.0fs 未跑完）——强制收尾还原存档" % WATCHDOG_SEC)
+	_restore_save()
+	quit(1)
+
+
+## 收尾存档还原（正常收尾与看门狗共用）：删摆拍档、探针前真实档还位
+func _restore_save() -> void:
+	var gp := ProjectSettings.globalize_path("user://huodai_save.json")
+	if FileAccess.file_exists(gp):
+		DirAccess.remove_absolute(gp)
+	if save_bak != "":
+		DirAccess.rename_absolute(save_bak, gp)
+
+
 func _initialize() -> void:
+	_watchdog()
 	var save := "user://huodai_save.json"
+	var gp0 := ProjectSettings.globalize_path(save)
+	# 自愈（2026-10-18 10:04 harness 超时强杀实证）：bak 在 = 上一次探针没走
+	# 收尾还原就死了，bak 里才是探针前真实档、当前文件可能是摆拍档——先复位
+	# 再备份，否则连续两次强杀会把真实存档永久顶掉
+	if FileAccess.file_exists(gp0 + ".probe_bak"):
+		if FileAccess.file_exists(gp0):
+			DirAccess.remove_absolute(gp0)
+		DirAccess.rename_absolute(gp0 + ".probe_bak", gp0)
 	if FileAccess.file_exists(save):
-		save_bak = ProjectSettings.globalize_path(save) + ".probe_bak"
+		save_bak = gp0 + ".probe_bak"
 		if FileAccess.file_exists(save_bak):
 			DirAccess.remove_absolute(save_bak)
-		DirAccess.rename_absolute(ProjectSettings.globalize_path(save), save_bak)
+		DirAccess.rename_absolute(gp0, save_bak)
 	DirAccess.make_dir_recursive_absolute("res://out")
 	var main = load("res://main.tscn").instantiate()
 	_m = main
 	root.add_child(main)
+	print("[probe] 探针启动：存档已备份、main.tscn 已入树（卡死排查锚点）")
 	await frames(30)
 	shot("res://out/shot_lobby.png")
 
@@ -959,9 +1002,8 @@ func _initialize() -> void:
 
 	print("[probe] 探针完成：实存 %d/73 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
-	var gp := ProjectSettings.globalize_path(save)
-	DirAccess.remove_absolute(gp)
-	if save_bak != "":
-		DirAccess.rename_absolute(save_bak, gp)
+	# （与看门狗强制收尾共用 _restore_save）
+	_done = true
+	_restore_save()
 	main.free()
 	quit(0)
