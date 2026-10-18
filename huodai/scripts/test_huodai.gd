@@ -777,7 +777,9 @@ func _run() -> void:
 	#      例外：美术写实化换上的实拍扫描枪（HDGuns.PH_GUNS：手枪/狙击）——
 	#      多部件真实模型关深度测试会让机匣内部件透到表面；枪模已整体在
 	#      own_world_3d 独立视口（81309a1），vm 世界没有掩体可吞，深度测试
-	#      开着才画得对。这些网格反向断言「深度测试开着」，其余枪照旧锁防线
+	#      开着才画得对。这些网格反向断言「深度测试开着」，其余枪照旧锁防线。
+	#      一体成型后实拍件并进 unibody（合并器取逐面覆盖材质），与全枪册同走
+	#      上面 ndt=false+priority≥10 断言；按名豁免只在 HD_NO_MERGE 分件态生效
 	var ph_names: Array = []
 	for ph_id in HDGuns.PH_GUNS:
 		ph_names.append_array(HDGuns.PH_GUNS[ph_id]["keep"])

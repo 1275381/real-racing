@@ -189,7 +189,14 @@ static func _collect_meshes(node: Node3D, root: Node3D,
 				var mi := c3 as MeshInstance3D
 				var m: Mesh = mi.mesh
 				for s in m.get_surface_count():
-					var mat: Material = m.surface_get_material(s)
+					# 取实际生效的材质（引擎同序：整件覆盖 > 逐面覆盖 > 网格自带）——
+					# 实拍枪（HDGuns.PH_GUNS）的材质挂在逐面覆盖上，只读网格自带
+					# 会退回导入原材质，丢掉 _ph_gun 设的各向异性过滤
+					var mat: Material = mi.material_override
+					if mat == null:
+						mat = mi.get_surface_override_material(s)
+					if mat == null:
+						mat = m.surface_get_material(s)
 					# 段切分：与当前末段材质相同→并入；不同（或无段）→新开
 					var st: SurfaceTool = null
 					if segs.size() > 0 and segs[segs.size() - 1][0] == mat:
