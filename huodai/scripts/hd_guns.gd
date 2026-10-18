@@ -56,7 +56,8 @@ const HAND_HOLD_OFF := Vector3(0.0, -0.095, 0.03)  # 托新匣掌心（匣底正
 ## 每发后坐力（度）：[基础上抬, 连发累增系数, 水平漂移幅度]（onfoot 同表）。
 ## 2026-10 扩充七枪：vector 最柔（Super V 卖点）/ akm·scarh 大后坐（7.62 世界观）；
 ## mk4 同 mp5 档（4.6×30 低后坐轻弹，缺键会吃 [0.4,0.2,0.25] 兜底后坐爆炸）；
-## m250 机枪（6.8×51 弹链）：机枪更沉档（比 lmg 略收——重枪管+消音器压制）
+## m250 机枪（6.8×51 弹链）：机枪更沉档（比 lmg 略收——重枪管+消音器压制）；
+## m14 半自动 DMR（7.62 NATO）：高单发后坐最沉档、水平漂移最窄
 const RECOIL := {
 	"pistol": [0.22, 0.14, 0.08],
 	"smg": [0.13, 0.06, 0.09],
@@ -74,6 +75,9 @@ const RECOIL := {
 	"mk4": [0.12, 0.05, 0.08],
 	"m250": [0.16, 0.06, 0.10],
 	"mp7": [0.10, 0.05, 0.07],
+	# m14 大口径半自动（7.62 NATO DMR 高单发）：单发推力比 scarh 全自动档
+	# 更沉、水平漂移收窄（半自动无连发累增，精度优先）
+	"m14": [0.30, 0.10, 0.06],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -713,12 +717,15 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 实拍枪自带真实机瞄（准星/照门是模型的一部分），不再叠旧版机瞄片——
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
-	elif gun_id == "mp7" and s_kind == "iron":
+	elif (gun_id == "mp7" or gun_id == "m14") and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
 		# iron 后照门横条（0.05×0.022 暗块悬浮轨上、无自发光渲染成黑板）
 		# 正压在觇孔上读成「无特征纯黑大盒」，故 iron 时跳过；装镜走下方
 		# else 照常挂镜体，其余枪分支零改动
+		# m14 同例（2026-10 并册）：「大麦粒」柱状准星 + 导轨式照门座带
+		# 规正轮/觇孔板为考证建模件（_ar_m14 ⑦⑧），叠 iron 兜底片会悬浮
+		# 在枪顶与真实照门叠影
 		pass
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
@@ -1179,6 +1186,9 @@ const HOLD_DELTA := {
 	# mp7 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _smg_mp7 握把顶锚
 	# grip(pos=(0,-0.042,0.028)) = (0, -0.022+0.042, -0.0018-0.028)
 	"mp7": Vector3(0, 0.020, -0.0298),
+	# m14 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_m14 握把顶锚
+	# grip(pos=(0,-0.028,0.155)) = (0, -0.022+0.028, -0.0018-0.155)
+	"m14": Vector3(0, 0.006, -0.1568),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2205,7 +2215,9 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14"]
+# m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
+# hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2247,6 +2259,14 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 逐字保留（原走 _ → {} 缺省分支，现显式化后仅 show 翻转）
 			return {"pos": Vector3(0.02, -0.14, -0.16),
 					"size": Vector3(0.055, 0.17, 0.09), "show": false}
+		"m14":
+			# 特征⑩ 黑色磷化 20 发钢直匣微前倾：真匣是枪身建模件（mag_dmr
+			# 独立命名节点 + curved_mag 三段 5° 微弧），动画匣隐（照 scarh
+			# 「匣形由枪身件表达」先例）；pos=换弹手锚（枪身局部匣中
+			# (0,-0.095,-0.085)+Δ(0,0.006,-0.1568) 后 ×0.62 ≈ (0,-0.055,-0.150)）、
+			# size=匣外形（掉匣替身缩放基准，同 scarh 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.055, -0.150),
+					"size": Vector3(0.042, 0.15, 0.072), "show": false}
 	return {}
 
 
@@ -2261,6 +2281,10 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			return Vector3(0.07, -0.04, -0.40)
 		"scarh":
 			return Vector3(0.09, -0.08, -0.45)
+		"m14":
+			# 机匣顶 0.076 / 照门觇孔板顶 0.110——镜座挂机匣中段（真实
+			# 准星/照门为建模件，iron 不叠兜底机瞄片，见 _finish_gun）
+			return Vector3(0.08, -0.05, -0.40)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 
@@ -2270,7 +2294,9 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 ## 材质工厂：dark/wood/steel/fde/walnut 五种参数照抄 hd_guns.gd 的
 ## _build_gun_visual 材质段（一律 no_depth_test + render_priority 10 +
 ## 微自发光保暗处可读）；另加本文件新枪专用三种：polymer 纯黑聚合物（M4A1
-## 全黑件）/ blued 深灰蓝钢（AKM 冲压机匣）/ bakelite 橙棕电木（AKM 握把）
+## 全黑件）/ blued 深灰蓝钢（AKM 冲压机匣）/ bakelite 橙棕电木（AKM 握把）；
+## 再加 M14 射手步枪专用五色（m14walnut/m14fg/m14steel/m14black/m14dark，
+## 官方考证配色分区，见函数内 m14 段注释）
 static func _ar_mats() -> Dictionary:
 	# 2026-10 判图收敛：glow 0.55→0.42（顶灯/vm_sun 直射下深色面整片翻白
 	# ——「白盘/发光白面/串色」案，同 _smg_mats 头注）；steel/fde/walnut
@@ -2342,9 +2368,40 @@ static func _ar_mats() -> Dictionary:
 	bakelite.emission_enabled = true
 	bakelite.emission = Color(0.28, 0.155, 0.078)
 	bakelite.emission_energy_multiplier = 0.32
+	# ---- M14 射手步枪专用五色（2026-10 商店枪，官方考证配色分区；mk 闭包
+	#      照 _smg_mats/_lmg_mats 先例，glow 0.32 同本工厂家族口径）----
+	#      m14walnut 胡桃木托 #6B4A32（emission=木纹暗部 #4E3524）/
+	#      m14fg 玻纤棕护木 #7A5C43 / m14steel 磷化深灰钢 #3A3D40
+	#      （emission=棱线高光 #5C6065 提金属棱）/ m14black 近黑细节件
+	#      #1F2124（消焰器/弹匣/照门）/ m14dark 哑光黑小件 #26282B
+	#      （背带环/快慢机/扳机，roughness 0.9 哑光）
+	var mk14 := func(c: Color, e: Color, rough := 0.55) -> StandardMaterial3D:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.roughness = rough
+		m.metallic_specular = 0.1
+		m.no_depth_test = true
+		m.render_priority = 10
+		m.emission_enabled = true
+		m.emission = e
+		m.emission_energy_multiplier = 0.32
+		return m
+	# 注：Callable.call() 回 Variant——这里必须显式注类型（:= 推断自 Variant
+	# 会被「warning treated as error」拦下，见 _smg_mats 的 mp7mag 先例）
+	var m14walnut: StandardMaterial3D = mk14.call(Color(0.42, 0.29, 0.196),
+			Color(0.306, 0.208, 0.141), 0.8)
+	var m14fg: StandardMaterial3D = mk14.call(Color(0.478, 0.361, 0.263),
+			Color(0.34, 0.26, 0.19), 0.75)
+	var m14steel: StandardMaterial3D = mk14.call(Color(0.227, 0.239, 0.251),
+			Color(0.361, 0.376, 0.396), 0.5)
+	var m14black: StandardMaterial3D = mk14.call(Color(0.122, 0.129, 0.141),
+			Color(0.15, 0.16, 0.175), 0.6)
+	var m14dark: StandardMaterial3D = mk14.call(Color(0.149, 0.157, 0.169),
+			Color(0.17, 0.18, 0.195), 0.9)
 	return {"dark": dark, "steel": steel, "wood": wood, "fde": fde,
 			"walnut": walnut, "polymer": polymer, "blued": blued,
-			"bakelite": bakelite}
+			"bakelite": bakelite, "m14walnut": m14walnut, "m14fg": m14fg,
+			"m14steel": m14steel, "m14black": m14black, "m14dark": m14dark}
 
 
 ## ================= 枪匠·机枪册（m250，SIG XM250 体系） =================

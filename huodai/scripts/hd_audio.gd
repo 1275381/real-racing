@@ -33,7 +33,7 @@ const TAIL_OFFSET := 0.018    # 混响尾起振偏移(秒)：与膛口爆裂错�
 ##   gain 总响度（play_shot 里 linear_to_db(gain*0.9)，沿用旧轨音量基准）。
 ## 单枪总时长 = TAIL_OFFSET + tail.dur，全部 ≤0.5s（短枪更短，狙击最长）。
 ## 性格：手枪短促尖 / SMG 干脆 / 步枪饱满 / AKM 略闷 / SCAR-H 厚 /
-## 霰弹宽轰 / 狙击长尾重轰 / M250 沉重 / 汤姆逊老式。
+## M14 更厚（半自动 DMR）/ 霰弹宽轰 / 狙击长尾重轰 / M250 沉重 / 汤姆逊老式。
 const SHOT_TUNE := {
 	# 手枪：短促尖——click 最亮、boom 短高、尾音收得快
 	"pistol": {
@@ -155,6 +155,15 @@ const SHOT_TUNE := {
 		"boom": {"freq": 92.0, "dur": 0.080, "tri": 0.65, "gain": 0.80},
 		"tail": {"dur": 0.33, "bright": 0.25, "gain": 0.34},
 		"gain": 0.94,
+	},
+	# M14：更厚——7.62 NATO 半自动 DMR 比赛级长枪管满装药（参考 scarh 档
+	# 加厚：boom 更沉更长、tail 长枪管余响再长一档、click 稍钝）
+	"m14": {
+		"click": {"freq": 3000.0, "dur": 0.009, "gain": 0.46},
+		"crack": {"dur": 0.054, "gain": 0.90},
+		"boom": {"freq": 98.0, "dur": 0.072, "tri": 0.60, "gain": 0.74},
+		"tail": {"dur": 0.31, "bright": 0.28, "gain": 0.34},
+		"gain": 0.93,
 	},
 }
 

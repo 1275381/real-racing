@@ -1,7 +1,8 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 红点镜大窗两连拍
 # （shot_reddot_hip 腰射大窗造型 / shot_reddot_ads 开镜红点居窗）→ 换弹手部 →
-# 汤姆逊腰射 → 十把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/mk4/m250/mp7.png）→
+# 汤姆逊腰射 → 十一把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/
+# mk4/m250/mp7/m14.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 大厅三页整页（shot_page_depart 出发大厅 / shot_page_bench 改枪台·选中枪+已拥有未装镜
 # 让「换装」钮可见 / shot_page_market 交易行四段分区全貌）→
@@ -27,11 +28,13 @@
 # ·pair / shot_cover_ads_full ADS 1.0·pair / shot_cover_lean_l·lean_r 探头 /
 # shot_cover_fire_ads 开火火光帧 / shot_cover_reload_mid 换弹 0.55·pair /
 # shot_cover_glass_ads 幕墙对照 / shot_cover_strafe_s06 真横移第 6 帧 /
-# shot_cover_m250_ads 长枪 ADS——①②③⑦ 各带 _b 图，两组 a/b 隐枪差分取
-# 稳定交集判裂，修后门槛全部「稳定完整（大域 1）」）
-# （共 70 张：35 处 shot() 调用 + 逐枪美照循环 15 把（全量在册：十把新枪
+# shot_cover_m250_ads 长枪 ADS / shot_gun_m14_cover 商店枪 M14 贴墙——①②③⑦⑪
+# 各带 _b 图，两组 a/b 隐枪差分取稳定交集判裂，修后门槛全部「稳定完整（大域 1）」；
+# m14 贴掩体 pair 直接回应「注意枪身分裂」：一体成型+独立视口下掩体帧枪体必须完整）
+# （共 73 张：36 处 shot() 调用 + 逐枪美照循环 16 把（全量在册：十一把新枪
 # + 旧五枪，2026-10 判图补图）+ scope 瞄具系列 6 张（2026-10 判图补图）
-# + 矩阵段 14 张——旧注释「29/31/33/35/40/43/45/59 张」随图集扩充滚动订正；
+# + 矩阵段 16 张（含 pair 的 _b 图）——旧注释「29/31/33/35/40/43/45/59/70 张」
+# 随图集扩充滚动订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -560,13 +563,15 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~18：十五把在册枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~18：十六把在册枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型。
-	# 2026-10 判图补图：循环从十把新枪扩到全量在册 15 把（旧五枪
-	# pistol/smg/rifle/shotgun/sniper 并入——此前枪照缺图无法验收）
+	# 2026-10 判图补图：循环从十把新枪扩到全量在册 16 把（旧五枪
+	# pistol/smg/rifle/shotgun/sniper 并入 + 商店枪 M14 并册——此前枪照
+	# 缺图无法验收）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
-			"m250", "mp7", "pistol", "smg", "rifle", "shotgun", "sniper"]:
+			"m250", "mp7", "m14", "pistol", "smg", "rifle", "shotgun",
+			"sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -925,12 +930,34 @@ func _initialize() -> void:
 	_set_ads_mx(1.0)
 	await frames(2)
 	shot("res://out/shot_cover_m250_ads.png")
+	# ⑪ m14 ADS 1.0 正贴（2026-10 商店枪 M14 并册「注意枪身分裂」验收）：
+	#    一体成型 unibody + vm 独立视口下掩体帧枪体必须完整——走 pair 判裂
+	#    （两组 a/b 隐枪差分取稳定交集，大域 ≥2 = 稳定裂即 FAIL）；换枪重进
+	#    MISSION 走 guns.enter 同槽换 id 重建链，顺带复核新枪挂载公共链
+	main.stash.guns_owned.append("m14")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "m14", "secondary": "pistol"}
+	main._start_mission({"primary": "m14", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm3: Dictionary = main.soldiers.soldiers[i]
+		sm3["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm3["engaged"] = false
+		sm3["moving"] = false
+		sm3["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	await shot("res://out/shot_gun_m14_cover.png", false, true)
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx
 
-	print("[probe] 探针完成：实存 %d/59 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/73 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	var gp := ProjectSettings.globalize_path(save)
 	DirAccess.remove_absolute(gp)
