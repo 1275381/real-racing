@@ -15,6 +15,9 @@
 #       + viewmodel 独立视口架构回归（29g）：own_world_3d 子视口在位/枪架
 #         父链在 vm 世界/muzzle_world 与主相机数学连续（mm 级）/HIDE_ZOOM
 #         藏枪照旧/闪光镜像灯与曳光掉匣件各归其位
+#       + 射速回归（三源定案修复）：半自动 tap 门（按住 60 帧只 1 弹）/
+#         追赶式结转冷却（全自动长程射速=表值 rpm，帧量化九档根治）/
+#         desc「N发每分」机读一致/切枪清冷却+切枪帧不丢拍
 # 运行：cd huodai && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s scripts/test_huodai.gd
 #      （以 huodai/ 为工作目录跑 -s scripts/test_huodai.gd；仓库根视角旧路径 -s huodai/test_huodai.gd 已废）
 extends SceneTree
@@ -1271,6 +1274,105 @@ func _run() -> void:
 	check("存档 v1→v2：已买枪/瞄具保留 + 补永久手枪", st_m.owns_gun("akm")
 		and st_m.owns_gun("rifle") and st_m.owns_gun("pistol") and st_m.owns_scope("holo"))
 	main.stash.save()   # 写回测试主档
+	# §射速回归（射速问题三源定案修复：假半自动/帧量化九档/表值错位）：
+	#   ① 半自动三枪（pistol/m14/sniper，表 auto=false）按住 60 帧（1s）只
+	#      发 1 弹——修复前无 tap 边沿门，pistol 按住 1s 连放 4 发（假半自动）；
+	#   ② 全自动长程射速 = 表值：vector 表 1200rpm（修复前帧量化压到 900）、
+	#      mp5 表 800（前 720）——追赶式结转冷却（fire_cd -= dt / += cd 配对）
+	#      让晚过门的帧量逐发补回，300 帧（5s）发数对表值 ±2；
+	#   ③ desc 写明「N发每分」的枪（m250/mp7），cd 换算 RPM 与文案一致 ±1%；
+	#   ④ 切枪清冷却 + 切枪当帧不丢拍（修复前 _equip 不清 fire_cd、切枪帧
+	#      提前 return 丢 1 拍开火）
+	var semi_bad: Array = []
+	for semi_gid in ["pistol", "m14", "sniper"]:
+		main._start_mission({"primary": semi_gid, "secondary": "smg"})
+		await frames(8)
+		main.guns.ammo = 10
+		main.guns.update(1.0 / 60.0)   # 空转一帧：清上一段的 _fire_prev 边沿态
+		var semi_a0: int = main.guns.ammo
+		Input.action_press("hd_fire")
+		for i in 60:
+			main.guns.update(1.0 / 60.0)
+		Input.action_release("hd_fire")
+		var semi_shots: int = semi_a0 - main.guns.ammo
+		if semi_shots != 1:
+			semi_bad.append("%s=%d发" % [semi_gid, semi_shots])
+		main.guns.update(1.0 / 60.0)   # 松手帧：归位 _fire_prev
+	check("半自动三枪按住 60 帧只发 1 弹（tap 边沿门）", semi_bad.is_empty(),
+		str(semi_bad))
+	check("半自动标志落位（pistol/m14/sniper auto=false，全自动枪缺省 true）",
+		not bool(Guns.gun_by_id("pistol").get("auto", true))
+			and not bool(Guns.gun_by_id("m14").get("auto", true))
+			and not bool(Guns.gun_by_id("sniper").get("auto", true))
+			and bool(Guns.gun_by_id("rifle").get("auto", true))
+			and bool(Guns.gun_by_id("vector").get("auto", true))
+			and bool(Guns.gun_by_id("mp5").get("auto", true))
+			and bool(Guns.gun_by_id("lmg").get("auto", true)))
+	# 全自动长程射速：vector 1200rpm（cd 0.05——用户定案保留高射速特色）
+	main._start_mission({"primary": "vector", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999   # 给足弹防中途自动换弹打断节拍
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var vec_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("vector 长程射速达表值 1200rpm（修复前帧量化 900）",
+		absf(vec_shots - 100.0) <= 2.0, "shots=%d/300帧（5s）" % vec_shots)
+	# mp5 800rpm（cd 0.075=4.5 帧/发：结转冷却 4/5 帧交替，长程精确）
+	main._start_mission({"primary": "mp5", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var mp5_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("mp5 长程射速达表值 800rpm（修复前帧量化 720）",
+		absf(mp5_shots - 66.7) <= 2.2, "shots=%d/300帧（5s）" % mp5_shots)
+	# desc「N发每分」机读：cd 换算 RPM 与文案一致（±1%）——m250 0.109→550.5
+	# vs「550」、mp7 0.063→952.4 vs「950」（修复前帧量化实际 514.3/900）
+	var rpm_re := RegEx.new()
+	rpm_re.compile("(\\d+)发每分")
+	var rpm_bad: Array = []
+	for g_def in Guns.GUNS:
+		var rpm_m: RegExMatch = rpm_re.search(str(g_def["desc"]))
+		if rpm_m == null:
+			continue
+		var claim := float(rpm_m.get_string(1))
+		var actual := 60.0 / float(g_def["cd"])
+		if absf(actual - claim) / claim > 0.01:
+			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
+	check("desc「N发每分」与 cd 换算一致（±1%，两处）", rpm_bad.is_empty(),
+		str(rpm_bad))
+	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
+	main._start_mission({"primary": "sniper", "secondary": "pistol"})
+	await frames(8)
+	main.guns.update(1.0 / 60.0)
+	main.guns.try_fire()
+	check("狙击开火后冷却在走（tap 语义不受影响）", main.guns.fire_cd > 1.0,
+		"fire_cd=%.2f" % main.guns.fire_cd)
+	main.guns.update(1.0 / 60.0)
+	main.guns.switch_slot()
+	check("切枪清冷却（新枪首发不被旧枪冷却拖住）", main.guns.fire_cd == 0.0,
+		"fire_cd=%.3f" % main.guns.fire_cd)
+	# 切枪当帧开火门照常（修复前切枪帧提前 return 丢 1 拍）：按下开火与切枪
+	# 同帧 → 本帧已切回 sniper（tap 边沿成立）即开 1 发——比较切枪前后
+	# primary 槽弹数（ammo 字段随 _equip 换到新枪的弹匣，跨枪直减会错账）
+	var sniper_before: int = int(main.guns._slots["primary"]["ammo"])
+	Input.action_press("hd_fire")
+	Input.action_press("hd_slot1")   # 切回 primary=sniper（同帧开火门在切枪后执行）
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	Input.action_release("hd_slot1")
+	check("切枪当帧不丢拍（tap 开火门先于切枪 return）",
+		sniper_before - main.guns.ammo == 1,
+		"primary槽=%d 切后ammo=%d" % [sniper_before, main.guns.ammo])
+	main.guns.update(1.0 / 60.0)
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

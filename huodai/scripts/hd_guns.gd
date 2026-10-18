@@ -35,6 +35,10 @@ const MAG_REST_T := 4.0                            # 落地弹匣停留秒数（
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
 const RD_WIN_W := 0.06     # 红点镜玻璃窗宽（枪身局部 m）——无框反射式大窗
 const RD_WIN_H := 0.045    # 红点镜玻璃窗高：窗顶=全镜最高件（_local_aabb 顶即窗顶）
+const FIRE_GATE := 1e-6    # 开火门残差容差（秒）：60·cd 为整数帧的枪（如 vector
+                           # 0.05=3 帧）IEEE 双精度 3f 与 cd 差 ~1e-18，曾把节拍
+                           # 多推 1 帧（1200rpm 掉到 900）；容差远小于任何非整除
+                           # 余量（最小 ~0.008），只吸收残差不偷跑
 
 ## 换弹手部动画（reload 进度 prog 关键帧，照 _reload_off/_reload_rot 的插值
 ## 模式，不引入新状态机）：0.15-0.30 手入画伸匣 → 0.30-0.55 握匣下拉拔出
@@ -116,6 +120,8 @@ var _im_i := 0
 var _slot1_prev := false   # 切枪/换弹键边沿检测（只按 is_action_pressed）
 var _slot2_prev := false
 var _reload_prev := false
+var _fire_prev := false    # 开火键边沿检测：半自动/栓动（表 auto=false）只认
+                           # tap 边沿开火——按住不连发（假半自动根治）
 
 
 func setup(player, world, audio, tracers) -> void:
@@ -195,7 +201,11 @@ func update(dt: float) -> void:
 	# 这条不变量，而它成立的唯一前提是 vm 相机 transform == 主相机 transform
 	if player.has_method("sync_vm"):
 		player.sync_vm()
-	fire_cd = maxf(0.0, fire_cd - dt)
+	# 追赶式冷却：不 clamp 到 0、允许负结转（try_fire 里 += cd 配对）——
+	# 逐帧减法 + 帧门曾把实际射速压到 ceil(60·cd) 帧的离散档（60fps 下全册
+	# 只剩九档射速、多枪撞档），结转后晚过门多等的帧量在下一发补回，长程
+	# 射速收敛到表值 1/cd。闲置不攒盈余（松手/换弹/没弹 clamp，见开火门处）
+	fire_cd -= dt
 	var slot_before := _cur_slot
 	# R 换弹 / Digit1·Digit2 切枪：边沿检测（只按 is_action_pressed，onfoot 同款读法）
 	var r_now := Input.is_action_pressed("hd_reload")
@@ -210,6 +220,22 @@ func update(dt: float) -> void:
 	if s2_now and not _slot2_prev:
 		_equip("secondary")
 	_slot2_prev = s2_now
+	# 开火门（置于此、先于切枪 return：切枪当帧不丢拍——_equip 已把
+	# cur_id/_g/ammo 全部换就绪，开火只读这些；弹匣/摆位才留给下一帧）：
+	# 全自动 = 按住连发；半自动/栓动（表 auto=false）只认 tap 边沿开火，
+	# 按住不连发。没弹自动换弹。门带 FIRE_GATE 残差容差；闲置（不可触发/
+	# 换弹/没弹）时冷却 clamp 归零——松手重置节拍，负盈余不攒出偷跑
+	var fire_pressed := Input.is_action_pressed("hd_fire")
+	var fire_tap := fire_pressed and not _fire_prev
+	_fire_prev = fire_pressed
+	var fire_ok := fire_pressed if bool(_g.get("auto", true)) else fire_tap
+	if fire_ok and fire_cd <= FIRE_GATE and reloading <= 0.0:
+		if ammo > 0:
+			try_fire()
+		else:
+			start_reload()
+	elif not fire_ok or reloading > 0.0 or ammo <= 0:
+		fire_cd = maxf(fire_cd, 0.0)
 	if _cur_slot != slot_before:
 		return   # 本帧切了枪：弹匣/摆位留给下一帧，别去摆旧枪
 	var g := _cur_gun()
@@ -222,12 +248,6 @@ func update(dt: float) -> void:
 			dt * ADS_SPEED * _mod_muls().y)
 	player.ads = _ads
 	player.zoom = current_zoom()
-	# 开火（按住 = 全自动连发）：没弹自动换
-	if Input.is_action_pressed("hd_fire") and fire_cd <= 0.0 and reloading <= 0.0:
-		if ammo > 0:
-			try_fire()
-		else:
-			start_reload()
 	# 换弹动画：枪体下倾 → 0.25~0.55 旧匣脱落坠地（手跟到脱离点甩开）
 	# → 0.55~0.85 新匣滑入（0.55~0.75 手托匣上抬 / 0.75~0.85 手压拍合）→ 手离场
 	var mag: MeshInstance3D = g["mag"]
@@ -306,7 +326,10 @@ func try_fire() -> void:
 	if player == null or player.dead or player.cam == null:
 		return
 	ammo -= 1
-	fire_cd = float(_g.get("cd", 0.13))
+	# 结转式重置：+= 而非 =——进门前晚到的帧量（fire_cd 为负）在此补回，
+	# 长程实际射速收敛到表值 1/cd（帧量化丢的拍逐发找平；闲置期已被
+	# update 的 clamp 归零，不会把松手攒的负值结转成爆发）
+	fire_cd += float(_g.get("cd", 0.13))
 	var g := _cur_gun()
 	if not g.is_empty():
 		# 枪口火光：发光片贴枪口 + 瞬时点光（onfoot 同款 0.05s）；点光同位：
@@ -517,6 +540,9 @@ func _equip(slot: String) -> void:
 	ammo = int(s["ammo"])
 	reserve = int(s["reserve"])
 	reloading = 0.0
+	# 切枪不继承上一把枪的剩余冷却（此前 _equip 只清 reloading 不清
+	# fire_cd：狙击开一枪立刻切枪，新枪按住要等旧枪 ~1.2s 冷却走完才首发）
+	fire_cd = 0.0
 	_falling = false
 	_mag_landed = false
 	_hide_hand()

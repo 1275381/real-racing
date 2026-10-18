@@ -2,12 +2,14 @@ class_name Guns
 ## 枪械店目录：15 种枪械数值/价格。
 ## stats 约定：dmg 单发伤害 / cd 开火间隔 / mag 弹匣 / reload 换弹秒数 /
 ## pellets 弹丸数（霰弹）/ spread 散布弧度 / range 射程 /
-## builtin_scope 枪自带的瞄具（没另装瞄具时用它；没有该字段 = 机瞄）
+## builtin_scope 枪自带的瞄具（没另装瞄具时用它；没有该字段 = 机瞄）/
+## auto 缺省 true=全自动（按住连发）；false=半自动/栓动（只认 tap 边沿，
+## 按住不连发，cd = 两发 tap 的最小间隔）
 
 const GUNS := [
 	{"id": "pistol", "name": "侦察手枪", "desc": "伤害 25 · 半自动 · 12 发", "price": 0,
 		"dmg": 25.0, "cd": 0.25, "mag": 12, "reload": 1.2, "pellets": 1,
-		"spread": 0.012, "range": 120.0},
+		"spread": 0.012, "range": 120.0, "auto": false},
 	{"id": "smg", "name": "汤姆逊冲锋枪", "desc": "伤害 15 · 全自动 · 35 发 · .45 ACP · 木质枪托/护木", "price": 800,
 		"dmg": 15.0, "cd": 0.08, "mag": 35, "reload": 1.6, "pellets": 1,
 		"spread": 0.02, "range": 150.0},
@@ -19,7 +21,7 @@ const GUNS := [
 		"spread": 0.055, "range": 60.0},
 	{"id": "sniper", "name": "狙击步枪", "desc": "伤害 100 · 自带 6× 密位镜 · 5 发", "price": 3000,
 		"dmg": 100.0, "cd": 1.2, "mag": 5, "reload": 2.4, "pellets": 1,
-		"spread": 0.0, "range": 400.0,
+		"spread": 0.0, "range": 400.0, "auto": false,
 		"builtin_scope": {"id": "builtin_sniper", "name": "原厂 6× 镜", "zoom": 6.0,
 			"kind": "sniper"}},
 	# ---- 枪械店扩充（2026-10）：七把新枪默认不拥有、现金购买；无 builtin_scope，
@@ -43,10 +45,10 @@ const GUNS := [
 		"dmg": 15.0, "cd": 0.08, "mag": 30, "reload": 1.7, "pellets": 1,
 		"spread": 0.013, "range": 240.0},
 	{"id": "scarh", "name": "SCAR-H 战斗步枪", "desc": "伤害 26 · 全自动 · 20 发 · 7.62 NATO · 沙色/长护木/侧折托", "price": 2400,
-		"dmg": 26.0, "cd": 0.14, "mag": 20, "reload": 2.0, "pellets": 1,
+		"dmg": 26.0, "cd": 0.1, "mag": 20, "reload": 2.0, "pellets": 1,
 		"spread": 0.016, "range": 280.0},
 	{"id": "mk4", "name": "MK4 冲锋枪", "desc": "伤害 16 · 全自动 · 40 发 · 4.6×30mm", "price": 1200,
-		"dmg": 16.0, "cd": 0.075, "mag": 40, "reload": 1.7, "pellets": 1,
+		"dmg": 16.0, "cd": 0.063, "mag": 40, "reload": 1.7, "pellets": 1,
 		"spread": 0.018, "range": 160.0},
 	# ---- 机枪册（2026-10）：M250 弹链机枪（SIG XM250 考证），商店购入 ----
 	{"id": "m250", "name": "M250 机枪", "desc": "伤害 24 · 全自动 · 75 发弹链 · 6.8×51mm · 550发每分 · FDE 沙黄", "price": 3200,
@@ -63,7 +65,7 @@ const GUNS := [
 	# price 3000 与狙击同档（desc 与数值逐项一致）
 	{"id": "m14", "name": "M14 射手步枪", "desc": "伤害 32 · 半自动 · 20 发 · 7.62×51mm NATO · 胡桃木全托 DMR · 全场最远射程", "price": 3000,
 		"dmg": 32.0, "cd": 0.28, "mag": 20, "reload": 2.2, "pellets": 1,
-		"spread": 0.012, "range": 320.0},
+		"spread": 0.012, "range": 320.0, "auto": false},
 ]
 
 ## M14 专属配件解锁态（2026-10 用户定案）：护木（GRIPS 表 GripMods 生效
