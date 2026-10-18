@@ -3527,8 +3527,9 @@ func _update_camera(dt: float) -> void:
 		camera.fov = RRUtil.damp(camera.fov, 60.0, 3.0, dt)
 		return
 
-	# 乘火箭（评审④c）：相机分支放在班机/战机之前。点火瞬间外置慢环绕 3s，
-	# 其余船内固定舷窗机位 + 微震动——不用 lerp 追逐相机，高速爬升会甩尾
+	# 乘火箭（评审④c）：相机分支放在班机/战机之前。全程第三人称——
+	# 点火外置慢环绕起手 → 刚性追尾机位（camera_pose 内公式直求，不 lerp，
+	# 高速爬升不甩尾；低空/月面有地形兜底）+ 微震动
 	if state == ST.ROAM and rocket_ride and rocket_site != null:
 		var rk: Array = rocket_site.camera_pose()
 		camera.position = rk[0]

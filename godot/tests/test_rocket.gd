@@ -168,6 +168,10 @@ func _initialize() -> void:
 	check(game.rocket_ride and rs.phase == "countdown", "重新登乘")
 	step_sim(11.5)   # 倒计时 10s + 点火 1.2s
 	check(rs.phase == "climb", "点火后进入爬升（%s）" % rs.phase)
+	var pose_climb: Array = rs.camera_pose()
+	check((pose_climb[0] as Vector3).distance_to(rs.pos) > 100.0,
+			"第三人称·点火段外置环绕机位（距箭体 %.0fm）"
+			% (pose_climb[0] as Vector3).distance_to(rs.pos))
 	check(game.player.veh.pos.distance_to(car_pos) < 0.05,
 			"乘船期间玩家车冻结在发射坪（%.2fm）"
 			% game.player.veh.pos.distance_to(car_pos))
@@ -178,6 +182,12 @@ func _initialize() -> void:
 	step_proc(30)
 	check(game.camera.far > 8000.0, "space_f>0.5：far 抬 9000（%.0f）" % game.camera.far)
 	check(game.env.space_f > 0.5, "env.space_f 已混合（%.2f）" % game.env.space_f)
+	check(rs.autopilot and rs.auto_kind == "moon",
+			"入轨默认自动导航开启（目标月球 kind=%s）" % rs.auto_kind)
+	var pose_orbit: Array = rs.camera_pose()
+	check((pose_orbit[0] as Vector3 - rs.pos).dot(rs._fwd()) < -40.0,
+			"第三人称·追尾机位在箭体后方（纵向 %.0fm）"
+			% (pose_orbit[0] as Vector3 - rs.pos).dot(rs._fwd()))
 
 	# ================= ④ EVA 失重 =================
 	rs.handle_interact(game)
@@ -256,6 +266,29 @@ func _initialize() -> void:
 	check(game.camera.far == 2800.0 and game.env.space_f < 0.01 and not fm.moon_query,
 			"返场后太空层全复位（far=%.0f space_f=%.2f moon_query=%s）"
 			% [game.camera.far, game.env.space_f, str(fm.moon_query)])
+
+	# ================= ⑧ 零输入全自动登月（自动导航验收） =================
+	game.onfoot.pos = Vector3(1700.0, 2.55, 9.5)
+	await tap_f()
+	check(rs.phase == "countdown" and game.rocket_ride, "再次登乘（全自动链）")
+	var reached := false
+	var saw_orbit := false
+	var saw_auto := false
+	for i in int(220.0 * 60.0):
+		step_sim(1.0 / 60.0)
+		if rs.phase == "orbit":
+			saw_orbit = true
+			saw_auto = saw_auto or rs.autopilot
+		if rs.phase == "moon_landed":
+			reached = true
+			break
+	check(saw_orbit and reached, "零输入自动登月：发射→巡航→月面（%s）" % rs.phase)
+	check(absf(rs.pos.y - 5600.0) < 0.6, "自动着陆静海基地坪面（%.2f）" % rs.pos.y)
+	check(saw_auto and rs.auto_kind == "moon",
+			"巡航段自动驾驶保持开启（kind=%s）" % rs.auto_kind)
+	await frames(1)
+	await tap_key(KEY_B)
+	check(rs.phase == "idle" and game.on_foot, "B 返场清理（phase=%s）" % rs.phase)
 
 	# ================= ⑦ 四断点 exit_roam 复位（红线回归） =================
 	await _test_exit_reset("climb")

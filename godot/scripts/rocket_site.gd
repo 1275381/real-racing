@@ -3,11 +3,12 @@ extends Node3D
 ## 「RR 快舟」发射状态机（结构与班机乘坐链 airport_traffic._update_ride 同构）：
 ## idle（立台上）→ countdown（T-10 播报/脐带臂摆开/地灯逐盏）→ ignition（夹持攒势
 ## 1.2s 后释放）→ climb（垂直爬升 + 重力转弯）→ stage2（MECO 一级分离 + 二级点火）
-## → orbit（太空巡航：W/S 加减速、方向键调姿、F 出舱 EVA、V 自动驾驶、B 快速返场）
-## → moon_descent（距月面 <400m 自动垂直缓降）→ moon_landed（F 下舱月面低重力行走）
-## → moon_liftoff（回船自动起飞离月）→ orbit 返航 → descent（发射坪上空 400m 转垂直）
-## → pad_landed（F 下舱回发射场）。
-## 防卡死总闸：任何相位 Esc 走 game.exit_roam 的 rocket 复位链；本类不持久化任何状态。
+## → orbit（太空巡航：入轨默认自动导航飞月球，任意行驶键接管手动，F 出舱 EVA，
+## V 切自动驾驶，B 快速返场）→ moon_descent（距月面 <400m 自动垂直缓降）
+## → moon_landed（F 下舱月面低重力行走）→ moon_liftoff（回船自动起飞离月）
+## → orbit 自动导航返航 → descent（发射坪上空 400m 转垂直）→ pad_landed（F 下舱）。
+## 乘船全程第三人称追尾视角（见 camera_pose）。防卡死总闸：任何相位 Esc 走
+## game.exit_roam 的 rocket 复位链；本类不持久化任何状态。
 
 const PAD_C := Vector2(1700.0, 0.0)        # 发射坪中心（沙漠环线围合中心）
 const PAD_TOP := Vector3(1700.0, 2.55, 0.0) # 火箭基座世界位（发射台顶面）
@@ -174,7 +175,7 @@ func _board(g) -> void:
 	count_t = 10.0
 	last_sec = -1
 	g.hud.show_center("RR 快舟 · 发射准备",
-			"再按 F 中止发射 · 点火后自动进入太空", 3200)
+			"再按 F 中止发射 · 点火后自动导航飞往月球", 3200)
 
 
 func _board_from_eva(g) -> void:
@@ -185,7 +186,7 @@ func _board_from_eva(g) -> void:
 		g.onfoot.exit()
 	g.hud.set_onfoot(false)
 	g.hud.set_scope(false)
-	g.hud.show_center("已回船", "V 自动驾驶 · B 快速返场", 1800)
+	g.hud.show_center("已回船", "自动导航继续 · B 快速返场", 1800)
 
 
 func _start_eva(g) -> void:
@@ -419,7 +420,12 @@ func _step_stage2(h: float) -> void:
 	if t >= 2.2:
 		phase = "orbit"
 		t = 0.0
-		_msg("已进入太空", "↑↓←→ 调姿 · W/S 加减速 · F 出舱 · V 自动驾驶", 4200)
+		# 入轨默认自动导航：登乘后不碰任何键也能一路飞到月面（任意行驶键接管）
+		autopilot = true
+		auto_kind = "moon"
+		auto_target = MOON_ABOVE
+		_msg("已进入太空 · 自动导航",
+				"正飞往月球静海基地 · 任意方向键接管手动 · F 出舱 · B 快速返场", 4200)
 
 
 func _step_orbit(h: float) -> void:
@@ -591,21 +597,43 @@ func _step_moon_liftoff(h: float) -> void:
 		speed = 40.0
 		heading = atan2(PAD_TOP.x - pos.x, PAD_TOP.z - pos.z)
 		pitch = 0.25
-		_msg("回到太空巡航", "V 自动驾驶返航 · B 快速返场", 3000)
+		autopilot = true
+		auto_kind = "home"
+		auto_target = PAD_ABOVE
+		_msg("回到太空巡航 · 自动导航返航", "任意方向键接管手动 · B 快速返场", 3000)
 
 
 # ===================== 视觉 / HUD 应用 =====================
 
-## 相机机位：点火瞬间外置慢环绕 3s（ignition 起）→ 其余一律船内固定舷窗机位
-## （箭体局部 (0,44,2.9) 朝外看——不用 lerp 追逐相机，高速爬升会甩尾）。
-## 返回 [机位世界坐标, 注视点]
+## 相机机位（全程第三人称）：点火起外置慢环绕 ~3s 看全箭体与发射场，随后
+## 1.8s 平滑并入刚性追尾机位（机头反方向 82m 抬 24m 看向箭体前上方）。
+## 机位每帧由公式直接求值——不是 lerp 追逐，高速爬升不会甩尾；追尾俯仰
+## 限幅 [-14°, 38°] 保证低空不把镜头压进地面，另以地形高度兜底（月面
+## 起飞/着陆瞬间镜头不钻进月壤）。返回 [机位世界坐标, 注视点]
 func camera_pose() -> Array:
-	if phase == "ignition" or (phase == "climb" and t < 1.8):
-		var ang := t * 0.7 + 0.6
-		var c := pos + Vector3(cos(ang) * 130.0, 62.0, sin(ang) * 130.0)
-		return [c, pos + Vector3(0, 34.0, 0)]
-	var eye := local_to_world(Vector3(0, 44.0, 3.6))
-	var look := local_to_world(Vector3(0, 41.0, 44.0))
+	# 环绕段计时：点火 1.2s + 爬升段接力（相位切换 t 归零，补 1.2 基数连续转）
+	var ot := t if phase == "ignition" else 1.2 + t
+	var ang := ot * 0.7 + 0.6
+	var orb_c := pos + Vector3(cos(ang) * 130.0, 62.0, sin(ang) * 130.0)
+	var orb_l := pos + Vector3(0, 34.0, 0)
+	# 刚性追尾：机头反方向后上方；俯仰限幅后 back 永不垂直，look_at 不退化
+	var pitch_cam := clampf(pitch, -0.25, 0.66)
+	var back := Vector3(cos(pitch_cam) * sin(heading), sin(pitch_cam),
+			cos(pitch_cam) * cos(heading))
+	var eye := pos - back * 82.0 + Vector3(0, 24.0, 0)
+	var look := pos + Vector3(0, 42.0, 0) + back * 24.0   # 注视点抬高：巡航时月球进入画面上半
+	if fm != null:
+		# 地形兜底：垂直姿态近距离月面/地面时，镜头可能算到表面以下
+		var fl: Dictionary = fm.query(pos.x, pos.z, null, pos.y)
+		var fy: float = float(fl["height"]) + 8.0
+		if eye.y < fy:
+			eye.y = fy
+	if phase == "ignition" or (phase == "climb" and ot < 3.0):
+		return [orb_c, orb_l]
+	if phase == "climb" and ot < 4.8:
+		# 环绕 → 追尾并轨（两者都是逐帧确定值，直接混合无滞后）
+		var k := smoothstep(0.0, 1.0, (ot - 3.0) / 1.8)
+		return [orb_c.lerp(eye, k), orb_l.lerp(look, k)]
 	return [eye, look]
 
 
