@@ -58,10 +58,10 @@ func _run() -> void:
 	check("冷启动大厅可见", main.lobby.lobby_visible)
 	check("初始现金 0", main.stash.cash == 0)
 
-	# 2. 每日签到：首领 1500，再领 0
+	# 2. 每日签到：首领 DAILY_REWARD（经济重定价后 300），再领 0
 	var got: int = main.stash.check_in()
-	check("签到得 1500", got == 1500, "got=%d" % got)
-	check("现金入账", main.stash.cash == 1500)
+	check("签到得 %d" % HDData.DAILY_REWARD, got == HDData.DAILY_REWARD, "got=%d" % got)
+	check("现金入账", main.stash.cash == HDData.DAILY_REWARD)
 	check("同日二刷拒绝", main.stash.check_in() == 0)
 
 	# 3. 开箱 roll：150 次全部落在档位区间内
@@ -138,7 +138,6 @@ func _run() -> void:
 		"bag=%d" % main.loot.backpack.size())
 
 	# 8. 撤离：挪到撤离点快进读条 → 入库 + 战绩
-	main._bag_value = 5000.0   # 便于断言档位（实际值由第 7 步开箱决定）
 	main.player.enter(main.world.extract_pos)
 	main._extract_t = 4.95
 	await frames(10)
@@ -150,16 +149,35 @@ func _run() -> void:
 		"rifle=%d pistol=%d guns.reserve=%d" % [main.stash.ammo_of("rifle"),
 			main.stash.ammo_of("pistol"), main.guns.reserve])
 
-	# 9. 死亡：重开一局后打空血 → LOSE + 丢包（备弹不丢——弹药非战利品）
+	# 9. 死亡：重开一局后打空血 → LOSE + 丢包 + 带入即风险（2026-10 改进方案第 1 节：
+	#    主武器出拥有集、所带备弹清零，侦察手枪永久不丢，出发配置修复为单枪）
 	main._restart_current()
 	await frames(10)
 	main.player.hit(9999.0)
 	check("阵亡结算 LOSE", main.hud.result_visible and main.stash.stats["deaths"] == 1)
 	check("死亡丢背包", main.loot.backpack.is_empty())
-	check("死亡备弹照常保留", main.stash.ammo_of("rifle") == 125
-			and main.stash.ammo_of("pistol") == 60,
-		"rifle=%d pistol=%d" % [main.stash.ammo_of("rifle"),
-			main.stash.ammo_of("pistol")])
+	check("阵亡丢失带入主武器（步枪出拥有集）", not main.stash.owns_gun("rifle"))
+	check("侦察手枪永久不丢", main.stash.owns_gun("pistol"))
+	check("阵亡所带备弹清零（置 0 不删键，防首读再送礼）",
+		main.stash.ammo_inv.get("rifle", -1) == 0 and main.stash.ammo_inv.get("pistol", -1) == 0,
+		"rifle=%s pistol=%s" % [str(main.stash.ammo_inv.get("rifle")),
+			str(main.stash.ammo_inv.get("pistol"))])
+	check("出发配置修复为侦察手枪单枪（副武器空槽）",
+		str(main.stash.loadout.get("primary")) == "pistol"
+			and str(main.stash.loadout.get("secondary")) == "",
+		str(main.stash.loadout))
+	check("阵亡结算页列出损失明细", main.hud._result_lines.get_child_count() >= 2)
+	main._restart_current()   # 结算后 R 再来：已结算，不得二次扣（阵亡数不变）
+	await frames(4)
+	check("结算后再来不二次结算", main.stash.stats["deaths"] == 1
+		and str(main.guns.cur_id) == "pistol")
+	# 夹具复位：后续步骤沿用旧五枪 + rifle 125 / pistol 60 的账目
+	main.stash.guns_owned = ["pistol", "smg", "rifle", "shotgun", "sniper"]
+	main.stash.set_ammo("rifle", 125)
+	main.stash.set_ammo("pistol", 60)
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main.stash.save()
+	main._raid_live = false   # 夹具局直接置「已结算」：不丢装备、不记战绩
 
 	# 10. 靶场：进场 + 计分
 	main._enter_range()
@@ -209,7 +227,8 @@ func _run() -> void:
 	check("靶场离场回大厅模式复位", main.mode == main.Mode.LOBBY
 			and main.lobby.lobby_visible)
 
-	# 11. 经济：买瞄具 → 装配 → 倍率生效
+	# 11. 经济：买瞄具 → 装配 → 倍率生效（重定价后签到只有 300，先补足现金）
+	main.stash.cash = maxi(main.stash.cash, 700)
 	var cash_before: int = main.stash.cash
 	if cash_before >= 700:
 		check("买红点镜", main.stash.buy_scope("reddot")
@@ -1037,7 +1056,6 @@ func _run() -> void:
 			and main.world.zone_at(84.0, 44.0) == "mid")
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	main.player.enter(main.world.extract2_pos)
-	main._bag_value = 100.0
 	main._extract_t = 4.95
 	await frames(10)
 	check("第二撤离点读条撤出 WIN（大坝广场）", main.hud.result_visible
@@ -1136,6 +1154,123 @@ func _run() -> void:
 	check("红点镜 ADS 窗中心过屏幕中心（相机纵轴 ±3mm）", rd_ads
 			and absf(rd_h.position.x) < 0.003 and absf(wc_y) < 0.003,
 			"ads=%.2f wc=(%.4f, %.4f)" % [main.player.ads, rd_h.position.x, wc_y])
+
+	# §经济门槛 A（改进方案第 2 节 / 衡量指标第 1 行）：2,000 局 × 随机 12 箱
+	#  （背包上限），中位局战利品 ÷ 中档出发装备 KIT_REF 须落 1.2–1.6 倍——
+	#  撤离就赚、阵亡就亏；固定种子保证可复现
+	seed(20261018)
+	var mc_spots: Array = main.world.container_spots
+	var mc_tot: Array = []
+	for r in 2000:
+		var idxs: Array = range(mc_spots.size())
+		idxs.shuffle()
+		var tot := 0.0
+		for k in HDData.BACKPACK_MAX:
+			var sp: Vector3 = mc_spots[idxs[k]]["pos"]
+			tot += float(HDData.roll_loot(main.world.zone_at(sp.x, sp.z))["value"])
+		mc_tot.append(tot)
+	mc_tot.sort()
+	randomize()
+	var mc_med: float = mc_tot[1000]
+	var mc_ratio := mc_med / float(HDData.KIT_REF)
+	check("经济门槛 A：中位局 ÷ 中档装备 ∈ [1.2, 1.6]", mc_ratio >= 1.2 and mc_ratio <= 1.6,
+		"P10=₵%d P50=₵%d P90=₵%d ratio=%.2f" % [int(mc_tot[200]), int(mc_med),
+			int(mc_tot[1800]), mc_ratio])
+
+	# §带入即风险：带 AKM + 红点镜 + 200 发出发，背包 1 件、安全箱 1 件 → 阵亡
+	main.stash.cash = 99999
+	main.stash.buy_gun("akm")
+	main.stash.buy_scope("reddot")
+	main.stash.equip_scope("akm", "reddot")
+	main.stash.set_ammo("akm", 200)
+	main.stash.loadout = {"primary": "akm", "secondary": "pistol"}
+	var risk_v: int = main.stash.carried_value(main.stash.loadout)
+	check("出发风险估值 = 枪 + 镜 + 备弹（手枪不计枪价）",
+		risk_v == 1700 + 700 + 200 * 6 + main.stash.ammo_of("pistol") * 2, "v=%d" % risk_v)
+	main._start_mission(main.stash.loadout)
+	await frames(6)
+	check("安全箱格数随存档", main.loot.secure_cap == main.stash.secure_slots)
+	main.loot.backpack.append({"uid": "t_bag", "name": "测试零件", "icon": "", "rarity": 2, "value": 300})
+	main.loot.secure.append({"uid": "t_sec", "name": "测试金条", "icon": "", "rarity": 4, "value": 3000})
+	main.player.hit(9999.0)
+	await frames(2)
+	check("阵亡丢 AKM + 所装红点镜", not main.stash.owns_gun("akm")
+		and not main.stash.owns_scope("reddot"))
+	check("阵亡 AKM 备弹清零", main.stash.ammo_inv.get("akm", -1) == 0)
+	check("安全箱物品阵亡保留入库", main.stash._find_uid("t_sec") >= 0)
+	check("背包物品阵亡丢失", main.stash._find_uid("t_bag") < 0)
+
+	# §放弃行动 = 阵亡：局内 Esc「放弃」回大厅也丢装备、记阵亡
+	main.stash.buy_gun("akm")
+	main.stash.loadout = {"primary": "akm", "secondary": "pistol"}
+	main._start_mission(main.stash.loadout)
+	await frames(4)
+	var deaths0: int = int(main.stash.stats["deaths"])
+	main._back_to_lobby()
+	check("放弃行动视同阵亡（记阵亡 + 丢枪）", int(main.stash.stats["deaths"]) == deaths0 + 1
+		and not main.stash.owns_gun("akm"))
+
+	# §单枪出发 + Tab 背包：弃件落地 → 按住 F 捡回 → 移入安全箱 → 满包开箱自动交换
+	main._start_mission({"primary": "pistol", "secondary": ""})
+	await frames(4)
+	check("单枪出发（副武器空槽只装一把）", main.guns._slots.size() == 1
+		and str(main.guns.cur_id) == "pistol")
+	for i in HDData.BACKPACK_MAX:
+		main.loot.backpack.append({"uid": "f%02d" % i, "name": "废料", "icon": "",
+			"rarity": 0, "value": 20 + i})
+	main._route_key(KEY_TAB)
+	check("Tab 打开背包（鼠标放出）", main.hud.inv_visible
+		and Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE)
+	main._on_inv_drop(false, 0)
+	check("弃件：背包 -1 · 地上 +1", main.loot.backpack.size() == HDData.BACKPACK_MAX - 1
+		and main.loot.ground_count() == 1)
+	main._close_inventory()
+	var gpos: Vector3 = main.loot._ground[0]["pos"]
+	for i in 30:
+		main.loot.update(0.016, gpos, true)
+	check("地上物品按住 F 捡回", main.loot.backpack.size() == HDData.BACKPACK_MAX
+		and main.loot.ground_count() == 0)
+	main._on_inv_move(false, 0)
+	check("移入安全箱", main.loot.secure.size() == 1
+		and main.loot.backpack.size() == HDData.BACKPACK_MAX - 1)
+	main.loot.backpack.append({"uid": "f_cheap", "name": "废料", "icon": "", "rarity": 0, "value": 1})
+	for it in main.loot.backpack:
+		it["value"] = 1
+	var c_spot: Vector3 = main.world.container_spots[2]["pos"]
+	for i in 130:
+		main.loot.update(0.016, c_spot, true)
+	var bag_min := INF
+	for it in main.loot.backpack:
+		bag_min = minf(bag_min, float(it["value"]))
+	check("满包开箱：新件更值钱自动交换（旧件落地不销毁）",
+		main.loot.backpack.size() == HDData.BACKPACK_MAX and main.loot.ground_count() == 1,
+		"bag=%d ground=%d" % [main.loot.backpack.size(), main.loot.ground_count()])
+	main._win_raid()
+
+	# §安全箱扩容：2→3 格 ₵4,000（不足拦截）· 上限 4 格
+	main.stash.secure_slots = HDData.SECURE_BASE
+	main.stash.cash = 3999
+	check("安全箱扩容现金不足拦截", not main.stash.buy_secure_upgrade()
+		and main.stash.secure_slots == HDData.SECURE_BASE and main.stash.cash == 3999)
+	main.stash.cash = 14000
+	check("安全箱扩容 2→3→4 扣款", main.stash.buy_secure_upgrade()
+		and main.stash.buy_secure_upgrade() and main.stash.secure_slots == HDData.SECURE_MAX
+		and main.stash.cash == 0 and not main.stash.buy_secure_upgrade())
+
+	# §存档 v1→v2 迁移：现金与仓库物品价值 ÷10，已买枪/瞄具保留
+	var fv1 := FileAccess.open(HDData.SAVE_PATH, FileAccess.WRITE)
+	fv1.store_string(JSON.stringify({"v": 1, "cash": 15000,
+		"items": [{"uid": "m1", "name": "金条", "icon": "贵金属", "rarity": 4, "value": 42000}],
+		"guns_owned": ["rifle", "akm"], "scopes_owned": ["holo"],
+		"loadout": {"primary": "akm", "secondary": "rifle"}}))
+	fv1.close()
+	var st_m := HDStash.new()
+	check("存档 v1→v2：现金 ÷10", st_m.cash == 1500, "cash=%d" % st_m.cash)
+	check("存档 v1→v2：仓库物品价值 ÷10", st_m.items.size() == 1
+		and int(st_m.items[0]["value"]) == 4200)
+	check("存档 v1→v2：已买枪/瞄具保留 + 补永久手枪", st_m.owns_gun("akm")
+		and st_m.owns_gun("rifle") and st_m.owns_gun("pistol") and st_m.owns_scope("holo"))
+	main.stash.save()   # 写回测试主档
 
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()

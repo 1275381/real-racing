@@ -4,12 +4,17 @@ extends Node3D
 ## 每个容器点生成一个箱体（crate.glb 或程序化箱体）+ 顶部琥珀色未搜指示灯
 ## （呼吸辉光，15-20m 外靠光点找箱子）；2.2m 内最近未搜容器出「按住 F 搜索」
 ## 提示，按住 1.8s 开箱 → HDData.roll_loot(world.zone_at(...)) 按分区 roll 品质，
-## 背包(12 格)未满入包 emit picked，满则 emit full_warn；已搜容器灯灭盖开。
+## 背包(12 格)未满入包 emit picked；已搜容器灯灭盖开。
 ## 驱动链与网页版一致：本模块不监听键盘，interact_held 由上层每帧喂入。
+## 2026-10 改进方案第 1/5 节：
+##   安全箱 secure（secure_cap 格，阵亡保留，main 按 stash.secure_slots 设）；
+##   地面物品 _ground：背包弃件丢在脚下、满包开箱的落选件也落地，F 可再捡；
+##   满包开箱 = 新件比背包最便宜的一件值钱就自动交换（旧件落地），否则新件落地
+##   ——旧版满包直接把 roll 出的东西销毁。
 
 signal prompt(text: String, progress: float)   # 每帧发（无目标发 ("",0)）
 signal picked(item: Dictionary)
-signal full_warn()
+signal notice(text: String, color: Color)      # 满包交换/落地等提示（main 转 toast）
 
 const SEARCH_TIME := 1.8         # 按住 F 开箱所需秒数
 const SEARCH_RADIUS := 2.2       # 进入提示的最近距离（XZ 平面）
@@ -19,6 +24,9 @@ const LID_ANGLE := -1.9          # 盖子后翻角度（rad）
 const AMBER := Color(1.0, 0.66, 0.3)   # 未搜指示灯琥珀色
 const LAMP_BASE := 1.3           # 指示灯呼吸基准亮度
 const LAMP_AMP := 0.6            # 呼吸幅度
+const GROUND_R := 1.6            # 地面物品拾取半径（XZ，优先于容器）
+const GROUND_TIME := 0.35        # 按住 F 拾取地面物品秒数
+const NOTICE_COL := Color(1.0, 0.55, 0.3)
 
 ## 容器类型（弹药箱/医疗柜/木箱/行李袋，颜色区分）；size 为占地全尺寸
 const TYPES := [
@@ -36,6 +44,11 @@ const CRATE_PATH := "res://assets/battle/props/crate.glb"
 const CRATE_DIM := 1.02
 
 var backpack: Array = []         # {uid,name,rarity,value,icon}
+var secure: Array = []           # 安全箱（阵亡保留）
+var secure_cap: int = HDData.SECURE_BASE
+
+var _ground: Array = []          # 地面物品 {item, pos, node}
+var _ground_i := -1              # 当前提示的地面物品下标
 
 var _containers: Array = []      # {pos,zone,type,searched,root,lid_pivot,lamp,lamp_mat,open_t,phase}
 var _active_i := -1              # 当前提示容器下标（-1 无）
@@ -70,6 +83,56 @@ func drain() -> Array:
 	return out
 
 
+## 取走安全箱内容并清空（撤离/阵亡都入库）
+func drain_secure() -> Array:
+	var out: Array = secure.duplicate()
+	secure.clear()
+	return out
+
+
+## 当前随身价值（背包 + 安全箱）
+func bag_value() -> int:
+	var sum := 0
+	for it in backpack + secure:
+		sum += int(float((it as Dictionary).get("value", 0)))
+	return sum
+
+
+## 背包弃件 / 安全箱取出丢地：from_secure 选列表，idx 越界忽略；落在 at 附近地面
+func drop_item(from_secure: bool, idx: int, at: Vector3) -> Dictionary:
+	var lst: Array = secure if from_secure else backpack
+	if idx < 0 or idx >= lst.size():
+		return {}
+	var it: Dictionary = lst[idx]
+	lst.remove_at(idx)
+	_spawn_ground(it, at)
+	return it
+
+
+## 背包 ⇄ 安全箱：目标满则拒绝（false）
+func move_secure(from_secure: bool, idx: int) -> bool:
+	var src: Array = secure if from_secure else backpack
+	var dst: Array = backpack if from_secure else secure
+	var cap := HDData.BACKPACK_MAX if from_secure else secure_cap
+	if idx < 0 or idx >= src.size() or dst.size() >= cap:
+		return false
+	dst.append(src[idx])
+	src.remove_at(idx)
+	return true
+
+
+## 背包里最便宜一件的下标（空 -1）
+func cheapest_idx() -> int:
+	var bi := -1
+	var bv := INF
+	for i in backpack.size():
+		var v := float((backpack[i] as Dictionary).get("value", 0))
+		if v < bv:
+			bv = v
+			bi = i
+	return bi
+
+
 ## 重开行动：全部容器回未搜态、关盖、复燃指示灯、清空背包与提示
 func reset_all() -> void:
 	for c in _containers:
@@ -78,6 +141,11 @@ func reset_all() -> void:
 		(c["lid_pivot"] as Node3D).rotation.x = 0.0
 		(c["lamp"] as MeshInstance3D).visible = true
 	backpack.clear()
+	secure.clear()
+	for g in _ground:
+		(g["node"] as Node3D).queue_free()
+	_ground.clear()
+	_ground_i = -1
 	_active_i = -1
 	_progress = 0.0
 	prompt.emit("", 0.0)
@@ -171,6 +239,40 @@ func _type_mat(type: Dictionary) -> StandardMaterial3D:
 # ================= 搜索状态机 =================
 
 func _update_search(dt: float, player_pos: Vector3, interact_held: bool) -> void:
+	# 地面物品优先（弃件/落选件就在脚下，比容器近才有意义）
+	var gi := -1
+	var gd2 := GROUND_R * GROUND_R
+	for i in _ground.size():
+		var gp: Vector3 = _ground[i]["pos"]
+		var gdx := player_pos.x - gp.x
+		var gdz := player_pos.z - gp.z
+		var g2 := gdx * gdx + gdz * gdz
+		if g2 < gd2 and absf(player_pos.y - gp.y) < 2.0:
+			gd2 = g2
+			gi = i
+	if gi >= 0:
+		if gi != _ground_i:
+			_ground_i = gi
+			_active_i = -1
+			_progress = 0.0
+		var it: Dictionary = _ground[gi]["item"]
+		var txt := "按住 F 拾取 %s（₵%d）" % [String(it.get("name", "")), int(float(it.get("value", 0)))]
+		if backpack.size() >= HDData.BACKPACK_MAX:
+			var ci := cheapest_idx()
+			txt = "背包已满 · 按住 F 用 %s 换下 %s" % [String(it.get("name", "")),
+					String((backpack[ci] as Dictionary).get("name", ""))]
+		if interact_held:
+			_progress = minf(_progress + dt / GROUND_TIME, 1.0)
+			if _progress >= 1.0:
+				_pick_ground(gi)
+				return
+		else:
+			_progress = 0.0
+		prompt.emit(txt, _progress)
+		return
+	if _ground_i >= 0:
+		_ground_i = -1
+		_progress = 0.0
 	# 最近未搜容器（XZ 平面 < SEARCH_RADIUS）
 	var best_i := -1
 	var best_d2 := SEARCH_RADIUS * SEARCH_RADIUS
@@ -196,15 +298,16 @@ func _update_search(dt: float, player_pos: Vector3, interact_held: bool) -> void
 	if interact_held:
 		_progress = minf(_progress + dt / SEARCH_TIME, 1.0)
 		if _progress >= 1.0:
-			_open(best_i)
+			_open(best_i, player_pos)
 			return
 	elif _progress > 0.0:
 		_progress = maxf(_progress - dt * PROGRESS_DROP, 0.0)   # 松手回退不即时清零
 	prompt.emit("按住 F 搜索 %s" % String(type["name"]), _progress)
 
 
-## 开箱：灯灭盖开 → 按分区 roll 一件；背包未满入包 picked，满则 full_warn
-func _open(i: int) -> void:
+## 开箱：灯灭盖开 → 按分区 roll 一件；背包未满入包 picked；满包则与最便宜
+## 一件比价——新件更值钱就交换（旧件落地），否则新件落在箱前地上（可再捡）
+func _open(i: int, player_pos: Vector3 = Vector3.INF) -> void:
 	var c: Dictionary = _containers[i]
 	c["searched"] = true
 	c["open_t"] = 0.0001   # 开盖动画启动（_update_lids 接管）
@@ -213,11 +316,87 @@ func _open(i: int) -> void:
 	_progress = 0.0
 	var pos: Vector3 = c["pos"]
 	var item := HDData.roll_loot(String(_world.zone_at(pos.x, pos.z)))
+	var drop_at: Vector3 = pos if player_pos == Vector3.INF else player_pos
 	if backpack.size() < HDData.BACKPACK_MAX:
 		backpack.append(item)
 		picked.emit(item)
+		return
+	var ci := cheapest_idx()
+	var old: Dictionary = backpack[ci]
+	if float(item.get("value", 0)) > float(old.get("value", 0)):
+		backpack[ci] = item
+		_spawn_ground(old, drop_at)
+		picked.emit(item)
+		notice.emit("背包已满 · 换下 %s（₵%d，已丢在脚下）" % [String(old.get("name", "")),
+				int(float(old.get("value", 0)))], NOTICE_COL)
 	else:
-		full_warn.emit()
+		_spawn_ground(item, drop_at)
+		notice.emit("背包已满 · %s（₵%d）不如包里的值钱，留在地上" % [String(item.get("name", "")),
+				int(float(item.get("value", 0)))], NOTICE_COL)
+
+
+## 拾取地面物品：背包有空直接入包；满包与最便宜一件交换（旧件落在原处）
+func _pick_ground(gi: int) -> void:
+	var g: Dictionary = _ground[gi]
+	var it: Dictionary = g["item"]
+	var gpos: Vector3 = g["pos"]
+	(g["node"] as Node3D).queue_free()
+	_ground.remove_at(gi)
+	_ground_i = -1
+	_progress = 0.0
+	if backpack.size() < HDData.BACKPACK_MAX:
+		backpack.append(it)
+	else:
+		var ci := cheapest_idx()
+		var old: Dictionary = backpack[ci]
+		backpack[ci] = it
+		_spawn_ground(old, gpos)
+		notice.emit("换下 %s（₵%d，留在地上）" % [String(old.get("name", "")),
+				int(float(old.get("value", 0)))], NOTICE_COL)
+	picked.emit(it)
+
+
+## 地面物品外观：帆布小包 + 顶部品质色发光条（远处靠色条认品质）
+func _spawn_ground(it: Dictionary, at: Vector3) -> void:
+	var p := at
+	if _ground.size() > 0:   # 同点多件错开一点，免得叠成一团
+		var a := float(_ground.size()) * 2.4
+		p += Vector3(cos(a), 0.0, sin(a)) * 0.35
+	p.y = _world.ground_height(p.x, p.z, at.y) if _world != null else at.y
+	var root := Node3D.new()
+	root.position = p
+	root.rotation.y = randf() * TAU
+	add_child(root)
+	var bag := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.32, 0.14, 0.24)
+	var bmat := StandardMaterial3D.new()
+	bmat.albedo_color = Color(0.36, 0.33, 0.24)
+	bmat.roughness = 0.95
+	bm.material = bmat
+	bag.mesh = bm
+	bag.position = Vector3(0.0, 0.07, 0.0)
+	root.add_child(bag)
+	var rid := clampi(int(it.get("rarity", 0)), 0, 6)
+	var rcol: Color = HDData.RARITY[rid]["color"]
+	var strip := MeshInstance3D.new()
+	var sm := BoxMesh.new()
+	sm.size = Vector3(0.33, 0.02, 0.05)
+	var smat := StandardMaterial3D.new()
+	smat.albedo_color = rcol * 0.4
+	smat.emission_enabled = true
+	smat.emission = rcol
+	smat.emission_energy_multiplier = 1.6
+	sm.material = smat
+	strip.mesh = sm
+	strip.position = Vector3(0.0, 0.15, 0.0)
+	root.add_child(strip)
+	_ground.append({"item": it, "pos": p, "node": root})
+
+
+## 地面物品数（测试/HUD 用）
+func ground_count() -> int:
+	return _ground.size()
 
 
 func _update_lids(dt: float) -> void:

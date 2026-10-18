@@ -10,7 +10,9 @@ extends RefCounted
 
 signal changed
 
-const SAVE_VERSION := 1
+## 存档版本：2 = 2026-10 经济重定价（战利品 ÷10）。v1 档读入时迁移：现金与仓库
+## 物品价值同样 ÷10，已买的枪/瞄具/弹药/配件原样保留；其余版本不符仍回默认档
+const SAVE_VERSION := 2
 
 ## 默认拥有集：恰旧五枪（新枪默认不拥有、只走现金购买）。
 ## GUNS 扩充后绝不能再「遍历 GUNS 全送」——那是经济白送事故点
@@ -27,6 +29,7 @@ var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
 var daily_last: String = ""          # 最近一次签到的日期键（YYYY-MM-DD）
+var secure_slots: int = HDData.SECURE_BASE   # 安全箱格数（2 起，现金扩到 4；阵亡保留其中物品）
 
 
 func _init() -> void:
@@ -57,6 +60,7 @@ func _serialize() -> Dictionary:
 		"loadout": loadout,
 		"stats": stats,
 		"daily_last": daily_last,
+		"secure_slots": secure_slots,
 	}
 
 
@@ -73,10 +77,13 @@ func _load() -> void:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return                       # 损坏 → 保持默认档
 	var d: Dictionary = parsed
-	if _to_i(d.get("v", 0)) != SAVE_VERSION:
+	var ver := _to_i(d.get("v", 0))
+	if ver != SAVE_VERSION and ver != 1:
 		wipe()                       # 版本不符 → 重置
 		return
-	cash = maxi(0, _to_i(d.get("cash", 0)))
+	# v1 → v2 迁移（经济重定价）：现金与仓库物品价值 ÷10，其余字段照常读
+	var div := 10 if ver == 1 else 1
+	cash = maxi(0, int(round(float(_to_i(d.get("cash", 0))) / float(div))))
 
 	# 仓库变卖物（uid 去重 + 逐字段归一化）
 	items = []
@@ -88,6 +95,8 @@ func _load() -> void:
 			var norm := _norm_item(it)
 			if str(norm["uid"]) == "" or _find_uid(str(norm["uid"])) >= 0:
 				continue
+			if div > 1:
+				norm["value"] = maxi(1, int(round(float(norm["value"]) / float(div))))
 			items.append(norm)
 
 	# 枪械拥有（无效 id 过滤；清空回默认五枪——不再回退 GUNS 全集）
@@ -102,6 +111,8 @@ func _load() -> void:
 			if valid_guns.has(gid) and not owned.has(gid):
 				owned.append(gid)
 	guns_owned = owned if not owned.is_empty() else DEFAULT_GUNS.duplicate()
+	if not guns_owned.has(HDData.PERMANENT_GUN):
+		guns_owned.insert(0, HDData.PERMANENT_GUN)   # 侦察手枪永久拥有
 
 	# 极致备弹库存（老档缺字段 → 空表：各枪首读按「首次礼物」规则送满额，见 ammo_of）
 	ammo_inv = {}
@@ -169,17 +180,20 @@ func _load() -> void:
 			if Guns.M14_MODS.has(mid) and not m14_mods.has(mid):
 				m14_mods.append(mid)
 
-	# 出发配置（主副不可同枪）
+	# 出发配置（主副不可同枪；副武器可空——阵亡丢枪后只剩一把时）
 	var lo := _to_dict(d.get("loadout", null))
 	var p := str(lo.get("primary", "rifle"))
 	var s := str(lo.get("secondary", "pistol"))
 	if not valid_guns.has(p):
 		p = "rifle"
-	if not valid_guns.has(s):
+	if s != "" and not valid_guns.has(s):
 		s = "pistol"
 	if p == s:
 		s = "pistol" if p != "pistol" else "rifle"
 	loadout = {"primary": p, "secondary": s}
+	repair_loadout()
+	secure_slots = clampi(_to_i(d.get("secure_slots", HDData.SECURE_BASE)),
+			HDData.SECURE_BASE, HDData.SECURE_MAX)
 
 	# 战绩
 	var st := _to_dict(d.get("stats", null))
@@ -205,6 +219,7 @@ func _apply_defaults() -> void:
 	loadout = {"primary": "rifle", "secondary": "pistol"}
 	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
 	daily_last = ""
+	secure_slots = HDData.SECURE_BASE
 
 
 ## 今日（自然日）尚未签到 = 可领
@@ -300,8 +315,7 @@ func buy_ammo(gun_id: String, n: int) -> bool:
 	return true
 
 
-## 局终回收：把局内剩余备弹写回库存（撤离/死亡/放弃回大厅同收敛于此；
-## 弹药不属于战利品——死亡也保留）
+## 撤离回收：把局内剩余备弹写回库存（阵亡/放弃走 lose_carried 清零，不回收）
 func set_ammo(gun_id: String, n: int) -> void:
 	ammo_inv[gun_id] = maxi(0, n)
 	save()
@@ -398,6 +412,92 @@ func buy_m14_mod(id: String) -> bool:
 
 func m14_mods_on(id: String) -> bool:
 	return m14_mods.has(id)
+
+
+## ---- 带入即风险（2026-10）----
+
+## 一套出发装备的价值：主副武器价 + 其所装瞄具价 + 所带备弹（库存 × 单价）。
+## 侦察手枪不计（永久）；大厅风险提示与阵亡结算共用
+func carried_value(lo: Dictionary) -> int:
+	var sum := 0
+	for slot in ["primary", "secondary"]:
+		var gid := str(lo.get(slot, ""))
+		if gid == "":
+			continue
+		if gid != HDData.PERMANENT_GUN:
+			sum += maxi(0, _to_i(Guns.gun_by_id(gid).get("price", 0)))
+			var sid := str(scope_fit.get(gid, "iron"))
+			if sid != "iron" and owns_scope(sid):
+				sum += maxi(0, _to_i(Guns.scope_by_id(sid).get("price", 0)))
+		sum += maxi(0, _to_i(ammo_inv.get(gid, 0))) \
+				* maxi(0, _to_i(HDData.AMMO_PRICE.get(gid, 0)))
+	return sum
+
+
+## 阵亡/放弃：带进局的装备全部丢失——主副武器（侦察手枪除外）出拥有集、
+## 其所装瞄具出拥有集、两枪所带备弹清零（置 0 不删键：缺键会被当首读再送礼）。
+## 返回 {"guns": [...名], "scopes": [...名], "ammo": 发数, "value": ₵}；
+## 丢失后修出发配置（repair_loadout），存盘发 changed
+func lose_carried(lo: Dictionary) -> Dictionary:
+	var out := {"guns": [], "scopes": [], "ammo": 0, "value": carried_value(lo)}
+	for slot in ["primary", "secondary"]:
+		var gid := str(lo.get(slot, ""))
+		if gid == "":
+			continue
+		out["ammo"] = int(out["ammo"]) + maxi(0, _to_i(ammo_inv.get(gid, 0)))
+		ammo_inv[gid] = 0
+		if gid == HDData.PERMANENT_GUN:
+			continue
+		var sid := str(scope_fit.get(gid, "iron"))
+		if sid != "iron" and scopes_owned.has(sid):
+			scopes_owned.erase(sid)
+			(out["scopes"] as Array).append(str(Guns.scope_by_id(sid).get("name", sid)))
+		scope_fit.erase(gid)
+		if guns_owned.has(gid):
+			guns_owned.erase(gid)
+			(out["guns"] as Array).append(str(Guns.gun_by_id(gid).get("name", gid)))
+	repair_loadout()
+	save()
+	changed.emit()
+	return out
+
+
+## 出发配置修复：未拥有的枪从槽里清掉——主武器空则顶上副武器（再空则侦察
+## 手枪），副武器允许空槽。不自动从仓库挑别的枪装上（那会让玩家没选过的枪
+## 也带进局承担风险）
+func repair_loadout() -> void:
+	var p := str(loadout.get("primary", ""))
+	var s := str(loadout.get("secondary", ""))
+	if not guns_owned.has(p):
+		p = ""
+	if not guns_owned.has(s):
+		s = ""
+	if p == "":
+		p = s if s != "" else HDData.PERMANENT_GUN
+		s = "" if p == s else s
+	if s == p:
+		s = ""
+	loadout = {"primary": p, "secondary": s}
+
+
+## 安全箱扩容价（已满 4 格返回 0）
+func secure_up_price() -> int:
+	var k := secure_slots - HDData.SECURE_BASE
+	if k < 0 or k >= (HDData.SECURE_UP_PRICE as Array).size():
+		return 0
+	return int(HDData.SECURE_UP_PRICE[k])
+
+
+## 安全箱扩容一格：已满/现金不足 false 不扣款
+func buy_secure_upgrade() -> bool:
+	var price := secure_up_price()
+	if price <= 0 or cash < price:
+		return false
+	cash -= price
+	secure_slots += 1
+	save()
+	changed.emit()
+	return true
 
 
 ## 变卖全部 items 加现金，返回总额

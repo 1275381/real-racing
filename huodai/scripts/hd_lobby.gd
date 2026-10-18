@@ -113,6 +113,11 @@ func handle_key(code: int) -> bool:
 			_check_in()
 		KEY_G:
 			_fire_range()
+		KEY_U:
+			# 安全箱扩容只在交易行消费（④ 仓库段标题行有同名按钮）
+			if _tab != 2:
+				return false
+			_buy_secure()
 		KEY_B:
 			# 分级守卫：B（循环购弹挡位）只在交易行③ 极致备弹区内消费——
 			# ③区内=换挡；交易行他段=弹指路 hint 后不消费（←/→ 可达③区，指路不误导）；
@@ -440,7 +445,8 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	for i in 2:
 		var key: String = slot_defs[i][0]
 		var gid := str(_stash.loadout.get(key, "rifle"))
-		var g := Guns.gun_by_id(gid)
+		var g := Guns.gun_by_id(gid) if gid != "" else \
+				{"name": "空槽", "desc": "阵亡丢枪后留空 · 可单枪出发，选中后从下方装入"}
 		var sel := _cur0 == i
 		var card := PanelContainer.new()
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -454,7 +460,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 		vb.add_child(_mk_label(("「装入此槽」· " if focus_here else "") + str(slot_defs[i][1]),
 				11, COL_OK))
 		card.gui_input.connect(_on_deploy_row_input.bind(-1, i))
-		vb.add_child(_mk_label(String(g.get("name", gid)), 18, COL_ACCENT))
+		vb.add_child(_mk_label(String(g.get("name", gid)), 18, COL_ACCENT if gid != "" else _dim(0.45)))
 		vb.add_child(_mk_label(String(g.get("desc", "")), 12, _dim(0.6)))
 		slots.add_child(card)
 
@@ -502,7 +508,10 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	var bwrap := VBoxContainer.new()
 	bwrap.alignment = BoxContainer.ALIGNMENT_CENTER
 	bwrap.add_child(btn)
-	var dnote := _mk_label("实战消耗极致备弹 · 局终回收余弹", 11, COL_LOW)
+	# 带入即风险（2026-10）：出发前讲清楚这一局押上了什么
+	var risk_v: int = _stash.carried_value(_stash.loadout)
+	var dnote := _mk_label("阵亡/放弃丢失：主副武器（侦察手枪除外）· 所装瞄具 · 所带备弹 —— 本次押上 ₵%s · 安全箱 %d 格保留" % [
+			_fmt(risk_v), _stash.secure_slots], 11, COL_LOW)
 	dnote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bwrap.add_child(dnote)
 	main.add_child(bwrap)
@@ -567,7 +576,7 @@ func _deploy_sel_id() -> String:
 	var guns: Array = Guns.GUNS
 	var rows := _deploy_rows()
 	var sel_id := str(_stash.loadout.get("primary", "rifle"))
-	if _cur0 == 1:
+	if _cur0 == 1 and str(_stash.loadout.get("secondary", "")) != "":
 		sel_id = str(_stash.loadout.get("secondary", "pistol"))
 	elif _cur0 >= 2 and _cur0 < 2 + rows:
 		var gidx: int = _deploy_page * DEPLOY_PAGE + (_cur0 - 2)
@@ -618,8 +627,13 @@ func _load_gun(id: String) -> void:
 func _fire_deploy() -> void:
 	var p := str(_stash.loadout.get("primary", ""))
 	var s := str(_stash.loadout.get("secondary", ""))
-	if p == "" or s == "" or p == s:
+	if p == "" or p == s:
 		show_hint("主副武器不可相同")
+		return
+	if not _stash.guns_owned.has(p) or (s != "" and not _stash.guns_owned.has(s)):
+		_stash.repair_loadout()      # 丢失的枪不能再带进局
+		_refresh_all()
+		show_hint("出发配置里有已丢失的枪械，已调整 —— 再确认一次")
 		return
 	hide_lobby()
 	deploy_requested.emit({"primary": p, "secondary": s})
@@ -665,6 +679,14 @@ func _render_warehouse_strip(pg: VBoxContainer) -> void:
 	whead.add_child(_mk_label("总资产 ₵%s（含现金） · 仓库 %d/%d 格" % [
 			_fmt(items_sum + maxi(0, _stash.cash)), items.size(), HDData.BACKPACK_MAX],
 			12, COL_ACCENT))
+	# 安全箱扩容（2026-10 带入即风险：阵亡保留格数，2 → 4）
+	var up_price: int = _stash.secure_up_price()
+	var sbtn := _mk_btn(("U · 安全箱扩容 %d→%d 格 ₵%s" % [_stash.secure_slots,
+			_stash.secure_slots + 1, _fmt(up_price)]) if up_price > 0 else
+			"安全箱已满 %d 格" % _stash.secure_slots, 12)
+	_style_btn(sbtn, up_price > 0, COL_OK if up_price > 0 else _dim(0.3), 14)
+	sbtn.pressed.connect(_buy_secure)
+	whead.add_child(sbtn)
 	var sell := _mk_btn("Enter 一键变卖全部", 12)
 	_style_btn(sell, not items.is_empty(), COL_ACCENT if not items.is_empty() else _dim(0.3), 14)
 	sell.pressed.connect(_sell_all)
@@ -723,6 +745,17 @@ func _loot_cell(it: Dictionary) -> PanelContainer:
 	hb.add_child(nm)
 	hb.add_child(_mk_label("₵ " + _fmt(_to_int(it.get("value", 0))), 11, COL_OK))
 	return cell
+
+
+func _buy_secure() -> void:
+	var price: int = _stash.secure_up_price()
+	if price <= 0:
+		show_hint("安全箱已扩到上限 %d 格" % _stash.secure_slots)
+		return
+	if _stash.buy_secure_upgrade():
+		show_hint("安全箱扩容到 %d 格（-₵%s）· 阵亡时其中物品保留" % [_stash.secure_slots, _fmt(price)])
+	else:
+		show_hint("现金不足：安全箱扩容需 ₵%s" % _fmt(price))
 
 
 func _sell_all() -> void:

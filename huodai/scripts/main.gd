@@ -29,8 +29,11 @@ var tracers   # TracerPool（无 class_name，preload）
 
 var _kills: int = 0
 var _raid_t: float = 0.0
-var _bag_value: float = 0.0
 var _extract_t: float = 0.0
+## 带入即风险（2026-10）：局内且未结算 = 放弃/重开视同阵亡；结算后置 false
+## （结算页 R/Enter 再走 _restart_current/_back_to_lobby 不会二次结算）
+var _raid_live := false
+var _raid_loadout: Dictionary = {}   # 本局实际带进来的主副武器（阵亡按它丢）
 
 func _ready() -> void:
 	_register_inputs()
@@ -77,7 +80,7 @@ func _ready() -> void:
 	add_child(loot)
 	loot.build(world)
 	loot.picked.connect(_on_loot_picked)
-	loot.full_warn.connect(func(): hud.toast("背包已满 —— 先撤离或弃件", Color(1.0, 0.55, 0.3)))
+	loot.notice.connect(func(text: String, col: Color): hud.toast(text, col))
 	loot.prompt.connect(func(text: String, prog: float): hud.set_prompt(text, prog))
 
 	hud = HDHud.new()
@@ -88,6 +91,9 @@ func _ready() -> void:
 	hud.menu_abort.connect(_back_to_lobby)
 	hud.result_restart.connect(func(): _restart_current())
 	hud.result_lobby.connect(_back_to_lobby)
+	hud.inv_close.connect(_close_inventory)
+	hud.inv_drop.connect(_on_inv_drop)
+	hud.inv_move.connect(_on_inv_move)
 
 	stash = HDStash.new()
 	_sync_m14_mods_env()   # stash 建好后才有解锁态（之前调会读空 stash 报脚本错）
@@ -157,8 +163,8 @@ func _sync_m14_mods_env() -> void:
 		env += str(mid) + ","
 	OS.set_environment("HD_M14_MODS", env)
 
-## 局终回收：把两把枪剩余备弹写回库存并存档——撤离/死亡/放弃回大厅三路同收敛；
-## 弹药不属于战利品，死亡也保留（「买多少就用多少」）
+## 撤离回收：把两把枪剩余备弹写回库存并存档（「买多少就用多少」）。
+## 阵亡/放弃不走这里——所带备弹随装备一起丢（stash.lose_carried 清零）
 func _reclaim_ammo() -> void:
 	var snap := guns.slot_snapshots()
 	for slot in snap.keys():
@@ -170,11 +176,14 @@ func _start_mission(loadout: Dictionary) -> void:
 	mode = Mode.MISSION
 	_kills = 0
 	_raid_t = 0.0
-	_bag_value = 0.0
 	_extract_t = 0.0
 	paused = false
+	_raid_live = true
+	_raid_loadout = loadout.duplicate()
 	soldiers.reset_all()
 	loot.reset_all()
+	loot.secure_cap = stash.secure_slots
+	hud.hide_inventory()
 	targets.reset_all()
 	player.enter(world.spawn_pos)
 	# 面朝地图中心（出生在西南角，前向 = (sin yaw, 0, cos yaw) → yaw = atan2(dx, dz)）
@@ -191,15 +200,17 @@ func _start_mission(loadout: Dictionary) -> void:
 	hud.set_score_visible(false)   # 计分条只属于靶场
 	hud.set_danger(false)
 	hud.set_extract(0.0, 1.0)
+	hud.set_backpack(0, HDData.BACKPACK_MAX, 0, loot.secure_cap)
 	hud.toast("搜刮变卖物 —— 集齐后前往绿标撤离点", Color(0.49, 0.89, 0.66))
+	hud.toast("阵亡丢失随身装备与背包 · 贵重小件放进安全箱（Tab）", Color(1.0, 0.7, 0.36))
 	_apply_mode_visuals()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _enter_range() -> void:
-	# 从实战转靶场（暂停菜单「2 重开靶场」）= 行动局终：行动剩余备弹先入库——
-	# 否则这批发弹既没打掉也没回账，凭空蒸发；靶场练习弹另发、与库存无关
-	if mode == Mode.MISSION:
-		_reclaim_ammo()
+	# 从实战转靶场（暂停菜单「2 重开靶场」）= 放弃行动，视同阵亡（装备与背包丢失）；
+	# 靶场练习弹另发、与库存无关
+	_abandon_if_live()
+	hud.hide_inventory()
 	mode = Mode.RANGE
 	paused = false
 	soldiers.reset_all()
@@ -227,10 +238,10 @@ func _enter_range() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _back_to_lobby() -> void:
-	# 放弃/结算回大厅：实战剩余备弹先入库（撤离·死亡路径已回收，此处幂等）；
+	# 放弃回大厅 = 视同阵亡（局内未结算时）；结算页回大厅已结算过，不再处理；
 	# 靶场离场绝不回收——练习弹是虚拟弹药，回写库存=靶场无限刷弹漏洞
-	if mode == Mode.MISSION:
-		_reclaim_ammo()
+	_abandon_if_live()
+	hud.hide_inventory()
 	mode = Mode.LOBBY
 	paused = false
 	hud.set_raid_visible(false)
@@ -244,10 +255,9 @@ func _back_to_lobby() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func _restart_current() -> void:
-	# 重开=放弃当局：实战剩余备弹先入库再重装（防「重开退款」漏洞）；
+	# 局内重开 = 放弃当局，视同阵亡（之后按修复后的出发配置重开）；
 	# 靶场重开不回收——练习弹与库存无关，直接重发一轮满额
-	if mode == Mode.MISSION:
-		_reclaim_ammo()
+	_abandon_if_live()
 	if mode == Mode.RANGE:
 		_enter_range()
 	else:
@@ -260,38 +270,85 @@ func _apply_mode_visuals() -> void:
 		world.set_indoor(indoor)
 
 ## ---- 结算 ----
-func _on_player_died() -> void:
-	if mode != Mode.MISSION:
-		return
-	var lost := loot.drain()
-	_reclaim_ammo()   # 死亡丢包但不丢弹药：剩余备弹照常写回库存
+
+## 行动失败（阵亡/放弃）：背包丢失、安全箱入库、带进局的装备丢失（侦察手枪
+## 除外）、记一次阵亡。返回结算明细供结算页/提示用
+func _lose_raid() -> Dictionary:
+	_raid_live = false
+	var bag_v := 0
+	var bag := loot.drain()
+	for it in bag:
+		bag_v += int(float((it as Dictionary).get("value", 0)))
+	var kept := loot.drain_secure()
+	var kept_v := 0
+	for it in kept:
+		kept_v += int(float((it as Dictionary).get("value", 0)))
+	stash.deposit(kept)
+	var gear: Dictionary = stash.lose_carried(_raid_loadout)
 	stash.record_raid(false, _kills)
+	hud.hide_inventory()
+	return {"gear": gear, "bag_n": bag.size(), "bag_v": bag_v,
+		"kept_n": kept.size(), "kept_v": kept_v}
+
+## 局内未结算时的放弃/重开/转靶场：视同阵亡，顶部提示损失
+func _abandon_if_live() -> void:
+	if mode != Mode.MISSION or not _raid_live:
+		return
+	var r := _lose_raid()
+	hud.toast("放弃行动（视同阵亡）· " + _gear_text(r["gear"]), Color(1.0, 0.35, 0.25))
+
+## 「M4A1、3.5× 光学镜、备弹 300 发（₵5,400）」
+func _gear_text(g: Dictionary) -> String:
+	var parts: Array = []
+	parts.append_array(g.get("guns", []))
+	parts.append_array(g.get("scopes", []))
+	if int(g.get("ammo", 0)) > 0:
+		parts.append("备弹 %d 发" % int(g["ammo"]))
+	if parts.is_empty():
+		return "随身无装备损失"
+	return "丢失 %s（₵%s）" % ["、".join(PackedStringArray(parts)),
+		HDHud._fmt(int(g.get("value", 0)))]
+
+func _on_player_died() -> void:
+	if mode != Mode.MISSION or not _raid_live:
+		return
+	var r := _lose_raid()
 	hud.set_raid_visible(false)
+	var lines: Array = [[_gear_text(r["gear"]), HDHud.COL_LOSE]]
+	lines.append(["背包丢失 %d 件（₵%s）" % [int(r["bag_n"]), HDHud._fmt(int(r["bag_v"]))],
+		HDHud.COL_LOSE])
+	if int(r["kept_n"]) > 0:
+		lines.append(["安全箱保住 %d 件（₵%s）· 已入仓库" % [int(r["kept_n"]),
+			HDHud._fmt(int(r["kept_v"]))], HDHud.COL_OK])
 	hud.show_result(false, {
-		"kills": _kills, "value": _bag_value,
-		"time_sec": _raid_t, "rank": _rank_of(_bag_value),
-		"lost": lost.size(),
+		"kills": _kills, "value": 0.0,
+		"time_sec": _raid_t, "rank": "—", "lines": lines,
 	})
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func _win_raid() -> void:
+	_raid_live = false
+	hud.hide_inventory()
+	var value := float(loot.bag_value())
 	var bag := loot.drain()
+	bag.append_array(loot.drain_secure())
 	var n := stash.deposit(bag)
 	_reclaim_ammo()   # 撤离：战利品入库 + 剩余备弹写回库存
 	stash.record_raid(true, _kills)
 	hud.set_raid_visible(false)
 	hud.show_result(true, {
-		"kills": _kills, "value": _bag_value, "deposited": n,
-		"time_sec": _raid_t, "rank": _rank_of(_bag_value),
+		"kills": _kills, "value": value, "deposited": n,
+		"time_sec": _raid_t, "rank": _rank_of(value),
 	})
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
+## 评级阈值随经济重定价 ÷10（中位局约 ₵7,400）
 func _rank_of(v: float) -> String:
-	if v >= 300000.0:
-		return "S"
-	if v >= 100000.0:
-		return "A"
 	if v >= 30000.0:
+		return "S"
+	if v >= 10000.0:
+		return "A"
+	if v >= 3000.0:
 		return "B"
 	return "C"
 
@@ -306,10 +363,40 @@ func _on_soldier_killed(info: Dictionary) -> void:
 	hud.toast("击杀 · %dm" % int(dist), Color(1.0, 0.7, 0.36))
 
 func _on_loot_picked(item: Dictionary) -> void:
-	_bag_value += float(item.get("value", 0.0))
-	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX)
+	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX, loot.secure.size(), loot.secure_cap)
 	var col: Color = HDData.RARITY[int(item.get("rarity", 0))]["color"]
 	hud.toast("拾取 %s %s +₵%d" % [item.get("icon", ""), item.get("name", ""), int(item.get("value", 0))], col)
+
+## ---- Tab 背包（2026-10 改进方案第 5 节：弃件 / 安全箱）----
+## 打开时世界照常运转（敌人照打），玩家原地不动、不能开火——整理背包是有风险的
+func _open_inventory() -> void:
+	hud.set_prompt("", 0.0)
+	hud.show_inventory(loot.backpack, loot.secure, loot.secure_cap)
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+func _close_inventory() -> void:
+	hud.hide_inventory()
+	if mode == Mode.MISSION and not hud.result_visible and not hud.menu_visible:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _on_inv_drop(from_secure: bool, idx: int) -> void:
+	var fwd := Vector3(sin(player.yaw), 0.0, cos(player.yaw))
+	var it: Dictionary = loot.drop_item(from_secure, idx, player.pos + fwd * 0.7)
+	if not it.is_empty():
+		hud.toast("丢弃 %s（₵%d）· 走近按住 F 可捡回" % [String(it.get("name", "")),
+			int(float(it.get("value", 0)))], Color(0.85, 0.87, 0.82))
+	_refresh_bag_hud()
+
+func _on_inv_move(from_secure: bool, idx: int) -> void:
+	if not loot.move_secure(from_secure, idx):
+		hud.toast("背包已满" if from_secure else "安全箱已满（大厅交易行可扩容）",
+			Color(1.0, 0.55, 0.3))
+	_refresh_bag_hud()
+
+func _refresh_bag_hud() -> void:
+	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX, loot.secure.size(), loot.secure_cap)
+	if hud.inv_visible:
+		hud.refresh_inventory(loot.backpack, loot.secure, loot.secure_cap)
 
 ## ---- 每帧 ----
 func _process(delta: float) -> void:
@@ -326,6 +413,9 @@ func _process(delta: float) -> void:
 		return   # 结算页冻结战场
 	if hud.menu_visible:
 		return   # 暂停菜单
+	if mode == Mode.MISSION and hud.inv_visible:
+		_step_world_only(dt)   # 背包打开：世界照常，玩家不动
+		return
 	if mode == Mode.MISSION:
 		_step_mission(dt)
 	elif mode == Mode.RANGE:
@@ -344,7 +434,7 @@ func _step_mission(dt: float) -> void:
 	# 弹药/血量/背包同步
 	hud.set_ammo(guns.ammo, guns.reserve)
 	hud.set_health(player.health, 100.0)
-	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX)
+	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX, loot.secure.size(), loot.secure_cap)
 	# 开镜分划
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
@@ -362,6 +452,16 @@ func _step_mission(dt: float) -> void:
 			return
 	else:
 		_extract_t = maxf(0.0, _extract_t - dt * 2.0)
+	hud.set_extract(_extract_t, HDData.EXTRACT_HOLD)
+
+## 背包打开时：敌人与靶子照常推进、局时照走；玩家/枪/搜刮/撤离读条暂停
+func _step_world_only(dt: float) -> void:
+	_raid_t += dt
+	player.update(0.0)
+	soldiers.update(dt, true)
+	targets.update(dt)
+	hud.set_health(player.health, 100.0)
+	_extract_t = maxf(0.0, _extract_t - dt * 2.0)
 	hud.set_extract(_extract_t, HDData.EXTRACT_HOLD)
 
 func _step_range(dt: float) -> void:
@@ -412,6 +512,10 @@ func _route_key(code: int) -> void:
 	# 大厅：全部转发给 lobby
 	if lobby.lobby_visible:
 		lobby.handle_key(code)
+		return
+	# 对局内：Tab 背包（只在实战；打开后的按键由 HUD 自处理并消费）
+	if code == KEY_TAB and mode == Mode.MISSION:
+		_open_inventory()
 		return
 	# 对局内：Esc 菜单
 	if code == KEY_ESCAPE:

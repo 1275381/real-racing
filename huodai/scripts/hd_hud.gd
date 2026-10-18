@@ -12,6 +12,9 @@ signal menu_range
 signal menu_abort
 signal result_restart
 signal result_lobby
+signal inv_close
+signal inv_drop(from_secure: bool, idx: int)
+signal inv_move(from_secure: bool, idx: int)
 
 const COL_TEXT := Color(0.85, 0.87, 0.82)
 const COL_ACCENT := Color(1, 0.7, 0.36)
@@ -25,6 +28,7 @@ const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩
 
 var menu_visible: bool = false
 var result_visible: bool = false
+var inv_visible: bool = false
 
 var _base: Control
 var _raid: Control
@@ -56,6 +60,19 @@ var _result: Control
 var _result_title: Label
 var _result_rank: Label
 var _result_stats: Label
+var _result_lines: VBoxContainer
+var _inv: Control
+var _inv_title: Label
+var _inv_grid: GridContainer
+var _inv_sec_label: Label
+var _inv_sec_row: HBoxContainer
+var _inv_detail: Label
+var _inv_move_btn: Button
+var _inv_bag: Array = []
+var _inv_sec: Array = []
+var _inv_cap := 2
+var _inv_sel := 0
+var _inv_sel_secure := false
 var _ads_on := false                # true = 开镜（准星隐藏 + 覆盖层）
 var _pulse_t := 0.0
 
@@ -292,10 +309,15 @@ func setup() -> void:
 	_result_stats = _mk_label("", 15, COL_TEXT)
 	_result_stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rv.add_child(_result_stats)
+	_result_lines = VBoxContainer.new()
+	_result_lines.add_theme_constant_override("separation", 4)
+	rv.add_child(_result_lines)
 	var rhint := _mk_label("R 再来一局 · Enter 回大厅", 13, _dim(0.55))
 	rhint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rv.add_child(rhint)
 	_base.add_child(_result)
+
+	_build_inventory()
 
 	# ---- 分辨率自适应：按视口高度整体缩放，窗口尺寸变化实时跟进 ----
 	var vp := get_viewport()
@@ -359,7 +381,7 @@ func set_health(hp: float, max_hp: float) -> void:
 		seg.color = col if i < filled else Color(0.14, 0.18, 0.15, 0.9)
 
 
-func set_backpack(n: int, cap: int) -> void:
+func set_backpack(n: int, cap: int, sn: int = -1, scap: int = 0) -> void:
 	if _bag_pips == null:
 		setup()
 	var c := maxi(1, cap)
@@ -381,6 +403,8 @@ func set_backpack(n: int, cap: int) -> void:
 		var pip2 := _pip_nodes[i] as ColorRect
 		pip2.color = Color(1.0, 0.7, 0.36, 0.95) if i < nn else Color(0.14, 0.18, 0.15, 0.9)
 	_bag_label.text = "背包 %d/%d" % [nn, c]
+	if scap > 0:
+		_bag_label.text += " · 安全箱 %d/%d · Tab 整理" % [maxi(0, sn), scap]
 
 
 ## 开镜覆盖层：kind 画分划，on 开关；on=true 时准星隐藏（ads>0.5 由 main 判定）
@@ -503,8 +527,8 @@ func _apply_menu_texts() -> void:
 		_menu_esc.text = "Esc 恢复练习 · 游戏内 Q/E 左右探头"
 	else:
 		_menu_title.text = "行动暂停"
-		_menu_sub.text = "PAUSED · 战术行动中断"
-		rows = ["1 · 重开行动", "2 · 重开靶场", "3 · 放弃行动（回大厅）"]
+		_menu_sub.text = "PAUSED · 离开行动将丢失随身装备与背包（安全箱保留）"
+		rows = ["1 · 重开行动（视同阵亡）", "2 · 重开靶场（视同阵亡）", "3 · 放弃行动（视同阵亡 · 回大厅）"]
 		_menu_esc.text = "Esc 恢复战斗 · 游戏内 Q/E 左右探头"
 	for i in _menu_rows.size():
 		var row := _menu_rows[i] as Label
@@ -541,8 +565,19 @@ func show_result(win: bool, s: Dictionary) -> void:
 	_result_title.text = "撤离成功" if win else "行动失败"
 	_result_title.add_theme_color_override("font_color", COL_OK if win else COL_LOSE)
 	_result_rank.text = rank
-	_result_stats.text = "击杀 %d\n带出价值 ₵%s\n用时 %d:%02d" % [
-		kills, _fmt(int(round(value))), mm, ss]
+	if win:
+		_result_stats.text = "击杀 %d\n带出价值 ₵%s\n用时 %d:%02d" % [
+			kills, _fmt(int(round(value))), mm, ss]
+	else:
+		_result_stats.text = "击杀 %d\n用时 %d:%02d" % [kills, mm, ss]
+	# 附加明细行（阵亡损失 / 安全箱保住等）：[[文字, 颜色], ...]
+	for ch in _result_lines.get_children():
+		_result_lines.remove_child(ch)
+		ch.queue_free()
+	for ln in s.get("lines", []):
+		var row := _mk_label(str(ln[0]), 14, ln[1] if ln.size() > 1 else COL_TEXT)
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_result_lines.add_child(row)
 	hide_menu()
 	result_visible = true
 	_result.visible = true
@@ -554,13 +589,13 @@ func hide_result() -> void:
 		_result.visible = false
 
 
-## 按带出价值评级（show_result 未传 rank 时的兜底阈值）
+## 按带出价值评级（show_result 未传 rank 时的兜底阈值；经济重定价后 ÷10）
 static func _rank_for(v: float) -> String:
-	if v >= 100000.0:
+	if v >= 10000.0:
 		return "S"
-	if v >= 30000.0:
+	if v >= 3000.0:
 		return "A"
-	if v >= 8000.0:
+	if v >= 800.0:
 		return "B"
 	return "C"
 
@@ -574,7 +609,26 @@ func _input(event: InputEvent) -> void:
 	if not k.pressed or k.echo:
 		return
 	var code := k.keycode
-	if menu_visible:
+	if inv_visible:
+		match code:
+			KEY_TAB, KEY_ESCAPE:
+				inv_close.emit()
+			KEY_X:
+				_inv_act_drop()
+			KEY_Z:
+				_inv_act_move()
+			KEY_LEFT:
+				_inv_step(-1, 0)
+			KEY_RIGHT:
+				_inv_step(1, 0)
+			KEY_UP:
+				_inv_step(0, -1)
+			KEY_DOWN:
+				_inv_step(0, 1)
+			_:
+				return
+		get_viewport().set_input_as_handled()
+	elif menu_visible:
 		match code:
 			KEY_1:
 				hide_menu()
@@ -606,6 +660,199 @@ func _input(event: InputEvent) -> void:
 			_:
 				return
 		get_viewport().set_input_as_handled()
+
+
+# ================= Tab 背包 =================
+
+## 背包面板：12 格背包（4×3）+ 安全箱行 + 选中详情 + 丢弃/移入安全箱按钮。
+## 鼠标点格选中、按钮执行；键盘 ←→↑↓ 选 · X 丢弃 · Z 移入/取出安全箱 · Tab/Esc 关
+func _build_inventory() -> void:
+	_inv = Control.new()
+	_inv.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_inv.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.04, 0.03, 0.55)   # 半透：世界仍在跑，看得见周围
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_inv.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_inv.add_child(cc)
+	var panel := PanelContainer.new()
+	var psb := _sb_flat(Color(0.04, 0.07, 0.05, 0.94), Color(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 0.55), 1)
+	psb.set_content_margin_all(18)
+	panel.add_theme_stylebox_override("panel", psb)
+	cc.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	panel.add_child(v)
+	_inv_title = _mk_label("背包", 18, COL_ACCENT)
+	v.add_child(_inv_title)
+	v.add_child(_mk_label("阵亡丢失背包与随身装备 · 安全箱里的物品阵亡保留 · 整理时敌人不会停手", 12, _dim(0.55)))
+	_inv_grid = GridContainer.new()
+	_inv_grid.columns = 4
+	_inv_grid.add_theme_constant_override("h_separation", 6)
+	_inv_grid.add_theme_constant_override("v_separation", 6)
+	v.add_child(_inv_grid)
+	_inv_sec_label = _mk_label("安全箱", 14, COL_OK)
+	v.add_child(_inv_sec_label)
+	_inv_sec_row = HBoxContainer.new()
+	_inv_sec_row.add_theme_constant_override("separation", 6)
+	v.add_child(_inv_sec_row)
+	_inv_detail = _mk_label("", 13, COL_TEXT)
+	v.add_child(_inv_detail)
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 10)
+	v.add_child(btns)
+	var bdrop := _inv_btn("X · 丢到地上")
+	bdrop.pressed.connect(_inv_act_drop)
+	btns.add_child(bdrop)
+	_inv_move_btn = _inv_btn("Z · 放入安全箱")
+	_inv_move_btn.pressed.connect(_inv_act_move)
+	btns.add_child(_inv_move_btn)
+	var bclose := _inv_btn("Tab · 关闭")
+	bclose.pressed.connect(func(): inv_close.emit())
+	btns.add_child(bclose)
+	_base.add_child(_inv)
+
+
+func _inv_btn(txt: String) -> Button:
+	var b := Button.new()
+	b.text = txt
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 13)
+	b.add_theme_color_override("font_color", COL_TEXT)
+	var sb := _sb_flat(Color(0.08, 0.12, 0.09, 0.95), Color(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 0.6), 1)
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 5
+	sb.content_margin_bottom = 5
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", sb)
+	b.add_theme_stylebox_override("pressed", sb)
+	return b
+
+
+func show_inventory(bag: Array, sec: Array, cap: int) -> void:
+	if _inv == null:
+		setup()
+	inv_visible = true
+	_inv.visible = true
+	_inv_sel = 0
+	_inv_sel_secure = false
+	refresh_inventory(bag, sec, cap)
+
+
+func hide_inventory() -> void:
+	inv_visible = false
+	if _inv != null:
+		_inv.visible = false
+
+
+func refresh_inventory(bag: Array, sec: Array, cap: int) -> void:
+	_inv_bag = bag
+	_inv_sec = sec
+	_inv_cap = cap
+	var lst: Array = _inv_sec if _inv_sel_secure else _inv_bag
+	if lst.is_empty():
+		# 当前一侧空了：落到另一侧
+		_inv_sel_secure = not _inv_sel_secure and not _inv_sec.is_empty()
+		lst = _inv_sec if _inv_sel_secure else _inv_bag
+	_inv_sel = clampi(_inv_sel, 0, maxi(0, lst.size() - 1))
+	var bag_v := 0
+	for it in bag:
+		bag_v += int(float((it as Dictionary).get("value", 0)))
+	var sec_v := 0
+	for it in sec:
+		sec_v += int(float((it as Dictionary).get("value", 0)))
+	_inv_title.text = "背包 %d/%d · ₵%s" % [bag.size(), HDData.BACKPACK_MAX, _fmt(bag_v)]
+	_inv_sec_label.text = "安全箱 %d/%d · ₵%s（阵亡保留）" % [sec.size(), cap, _fmt(sec_v)]
+	for ch in _inv_grid.get_children():
+		_inv_grid.remove_child(ch)
+		ch.queue_free()
+	for i in HDData.BACKPACK_MAX:
+		var it: Dictionary = bag[i] if i < bag.size() else {}
+		_inv_grid.add_child(_inv_cell(it, false, i))
+	for ch in _inv_sec_row.get_children():
+		_inv_sec_row.remove_child(ch)
+		ch.queue_free()
+	for i in cap:
+		var it2: Dictionary = sec[i] if i < sec.size() else {}
+		_inv_sec_row.add_child(_inv_cell(it2, true, i))
+	var cur: Dictionary = {}
+	if _inv_sel < lst.size():
+		cur = lst[_inv_sel]
+	if cur.is_empty():
+		_inv_detail.text = "背包空空 —— 搜箱子去"
+	else:
+		var rid := clampi(int(cur.get("rarity", 0)), 0, 6)
+		_inv_detail.text = "%s · %s · ₵%s" % [String(cur.get("name", "")),
+				String(HDData.RARITY[rid]["name"]), _fmt(int(float(cur.get("value", 0))))]
+		_inv_detail.add_theme_color_override("font_color", HDData.RARITY[rid]["color"])
+	_inv_move_btn.text = "Z · 取回背包" if _inv_sel_secure else "Z · 放入安全箱"
+
+
+func _inv_cell(it: Dictionary, secure: bool, idx: int) -> PanelContainer:
+	var cell := PanelContainer.new()
+	cell.custom_minimum_size = Vector2(150, 50)
+	cell.mouse_filter = Control.MOUSE_FILTER_STOP
+	var sel := secure == _inv_sel_secure and idx == _inv_sel and not it.is_empty()
+	var col := _dim(0.18)
+	if not it.is_empty():
+		col = HDData.RARITY[clampi(int(it.get("rarity", 0)), 0, 6)]["color"]
+	var sb := _sb_flat(Color(0.05 + col.r * 0.08, 0.07 + col.g * 0.08, 0.06 + col.b * 0.08, 0.9),
+			COL_ACCENT if sel else Color(col.r, col.g, col.b, 0.7), 3 if sel else 1)
+	sb.set_content_margin_all(5)
+	cell.add_theme_stylebox_override("panel", sb)
+	var hb := VBoxContainer.new()
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_theme_constant_override("separation", 0)
+	cell.add_child(hb)
+	if it.is_empty():
+		hb.add_child(_mk_label("（空）" if not secure else "（空 · 保险格）", 11, _dim(0.3)))
+	else:
+		var nm := _mk_label("%s %s" % [HDData.norm_icon(String(it.get("icon", ""))), String(it.get("name", ""))], 12, col)
+		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		nm.custom_minimum_size = Vector2(138, 0)
+		hb.add_child(nm)
+		hb.add_child(_mk_label("₵" + _fmt(int(float(it.get("value", 0)))), 11, COL_OK))
+		cell.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				_inv_sel_secure = secure
+				_inv_sel = idx
+				refresh_inventory(_inv_bag, _inv_sec, _inv_cap))
+	return cell
+
+
+func _inv_act_drop() -> void:
+	var lst: Array = _inv_sec if _inv_sel_secure else _inv_bag
+	if _inv_sel < lst.size():
+		inv_drop.emit(_inv_sel_secure, _inv_sel)
+
+
+func _inv_act_move() -> void:
+	var lst: Array = _inv_sec if _inv_sel_secure else _inv_bag
+	if _inv_sel < lst.size():
+		inv_move.emit(_inv_sel_secure, _inv_sel)
+
+
+## 键盘选格：背包 4 列网格内移动；↓ 出最后一行进安全箱行，↑ 回网格
+func _inv_step(dx: int, dy: int) -> void:
+	if _inv_sel_secure:
+		if dy < 0:
+			_inv_sel_secure = false
+			_inv_sel = clampi(_inv_bag.size() - 1, 0, HDData.BACKPACK_MAX - 1)
+		else:
+			_inv_sel = clampi(_inv_sel + dx, 0, maxi(0, _inv_sec.size() - 1))
+	else:
+		var n := _inv_sel + dx + dy * 4
+		if dy > 0 and n >= _inv_bag.size() and not _inv_sec.is_empty():
+			_inv_sel_secure = true
+			_inv_sel = 0
+		else:
+			_inv_sel = clampi(n, 0, maxi(0, _inv_bag.size() - 1))
+	refresh_inventory(_inv_bag, _inv_sec, _inv_cap)
 
 
 # ================= 每帧衰减 =================

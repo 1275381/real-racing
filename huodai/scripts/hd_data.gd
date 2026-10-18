@@ -3,15 +3,18 @@ class_name HDData
 ## 数值移植自网页版 js/fps（loot.js 品质表 / gunsData 弹药储备 / lobby 签到），
 ## 枪械与瞄具表不在此处：直接用 guns.gd 的 class_name Guns（GUNS/SCOPES/gun_by_id）。
 
-## 七档品质：id 即数组下标 0..6；weight 为荒野/中心两套权重的键
+## 七档品质：id 即数组下标 0..6；weight 为荒野/中心两套权重的键。
+## 2026-10 经济重定价（改进方案第 2 节，用户定案「战利品除以 10、枪价不动」）：
+## 价值整体 ÷10——中位一局战利品 ≈ 中档出发装备（KIT_REF）的 1.2–1.6 倍，
+## 撤离就赚、阵亡就亏（回归 test_huodai 2,000 局蒙特卡洛断言此比值）
 const RARITY := [
-	{"id": 0, "name": "白色", "color": Color(0.85, 0.85, 0.85), "vmin": 200.0, "vmax": 500.0},
-	{"id": 1, "name": "绿色", "color": Color(0.35, 0.82, 0.43), "vmin": 800.0, "vmax": 1500.0},
-	{"id": 2, "name": "蓝色", "color": Color(0.23, 0.63, 1.0), "vmin": 2500.0, "vmax": 5000.0},
-	{"id": 3, "name": "紫色", "color": Color(0.66, 0.42, 1.0), "vmin": 8000.0, "vmax": 15000.0},
-	{"id": 4, "name": "金色", "color": Color(1.0, 0.79, 0.3), "vmin": 25000.0, "vmax": 60000.0},
-	{"id": 5, "name": "红色", "color": Color(1.0, 0.35, 0.25), "vmin": 100000.0, "vmax": 180000.0},
-	{"id": 6, "name": "至臻", "color": Color(0.35, 1.0, 0.85), "vmin": 300000.0, "vmax": 500000.0},
+	{"id": 0, "name": "白色", "color": Color(0.85, 0.85, 0.85), "vmin": 20.0, "vmax": 50.0},
+	{"id": 1, "name": "绿色", "color": Color(0.35, 0.82, 0.43), "vmin": 80.0, "vmax": 150.0},
+	{"id": 2, "name": "蓝色", "color": Color(0.23, 0.63, 1.0), "vmin": 250.0, "vmax": 500.0},
+	{"id": 3, "name": "紫色", "color": Color(0.66, 0.42, 1.0), "vmin": 800.0, "vmax": 1500.0},
+	{"id": 4, "name": "金色", "color": Color(1.0, 0.79, 0.3), "vmin": 2500.0, "vmax": 6000.0},
+	{"id": 5, "name": "红色", "color": Color(1.0, 0.35, 0.25), "vmin": 10000.0, "vmax": 18000.0},
+	{"id": 6, "name": "至臻", "color": Color(0.35, 1.0, 0.85), "vmin": 30000.0, "vmax": 50000.0},
 ]
 
 ## 分区开箱品质权重（荒野穷、中心富；dam 坝区介于 mid/center）：[白,绿,蓝,紫,金,红,彩]
@@ -92,8 +95,19 @@ const AMMO_PRICE := {
 ## 大厅购买挡位（发数；B 键循环），总价 = 挡位 × 单价
 const AMMO_TIERS := [30, 90, 300]
 
-const DAILY_REWARD := 1500   # 每日签到金额（₵）
+const DAILY_REWARD := 300    # 每日签到金额（₵；经济重定价后 1500→300，否则一天白送一把枪）
 const BACKPACK_MAX := 12     # 背包格数
+
+## ---- 带入即风险（2026-10 改进方案第 1 节，用户定案「阵亡丢失随身装备」）----
+## 出发时主副武器、其所装瞄具、所带备弹 = 局内装备：撤离带回，阵亡/放弃全丢；
+## 侦察手枪永久（免费、不会丢），保证输光也能再出发；安全箱里的物品阵亡保留
+const PERMANENT_GUN := "pistol"
+const SECURE_BASE := 2                       # 安全箱初始格数
+const SECURE_UP_PRICE := [4000, 10000]       # 扩容价：2→3 格 / 3→4 格（₵）
+const SECURE_MAX := SECURE_BASE + 2          # 安全箱上限 4 格
+## 中档出发装备参考价（M4A1 1,800 + 3.5× 光学镜 1,800 + 300 发 ×₵6）：
+## 经济门槛 A = 中位局战利品 ÷ KIT_REF 落在 1.2–1.6
+const KIT_REF := 5400
 const SAVE_PATH := "user://huodai_save.json"
 
 ## 地图与分区（340m 见方；中心危险区半径 80m）
@@ -125,7 +139,7 @@ static func roll_loot(zone: String) -> Dictionary:
 	var pick: Array = tier[randi() % tier.size()]
 	var rar: Dictionary = RARITY[rid]
 	var value := randf_range(float(rar["vmin"]), float(rar["vmax"]))
-	value = float(int(value / 10.0) * 10)   # 10₵ 取整，好看
+	value = float(int(value))   # 整数取整（重定价后白色 20–50，按 10 取整只剩 4 个值）
 	return {
 		"uid": "%d_%d" % [Time.get_ticks_msec(), randi() % 1000000],
 		"name": String(pick[0]), "icon": String(pick[1]),
