@@ -1858,6 +1858,172 @@ func _run() -> void:
 	main.soldiers.reset_all()
 	main._raid_live = false
 
+	# ===== 第四阶段：保险 / 耐久维修 / 消音器 =====
+	var ST = main.stash
+	ST.cash = 90000
+	ST.buy_gun("m4a1")
+	ST.buy_scope("optic35")
+	ST.equip_scope("m4a1", "optic35")
+	ST.loadout = {"primary": "m4a1", "secondary": "pistol"}
+	var lo4 := {"primary": "m4a1", "secondary": "pistol"}
+	var cv4: int = ST.carried_value(lo4)
+	check("保险费 = 押上价值 × 30%", ST.insurance_price(lo4) == int(ceil(cv4 * 0.3)),
+		"cv=%d ip=%d" % [cv4, ST.insurance_price(lo4)])
+	var c4: int = ST.cash
+	main._start_mission({"primary": "m4a1", "secondary": "pistol", "insured": true})
+	await frames(2)
+	check("投保出发：扣保险费 + 本局已投保", main._raid_insured and ST.cash == c4 - ST.insurance_price(lo4),
+		"cash %d → %d" % [c4, ST.cash])
+	main._raid_live = false
+	# 退回概率：投保每件 50%（200 次蒙特卡洛 35–65%）；不投保 0
+	seed(4242)
+	var back_n := 0
+	for k in 200:
+		if not ST.guns_owned.has("m4a1"):
+			ST.guns_owned.append("m4a1")
+		var g4: Dictionary = ST.lose_carried(lo4, true)
+		if ST.guns_owned.has("m4a1"):
+			back_n += 1
+	check("投保：阵亡每件约 50% 退回（200 次 35–65%）", back_n >= 70 and back_n <= 130, "back=%d/200" % back_n)
+	if not ST.guns_owned.has("m4a1"):
+		ST.guns_owned.append("m4a1")
+	ST.lose_carried(lo4, false)
+	check("不投保：阵亡必丢", not ST.guns_owned.has("m4a1"))
+	# 耐久：本局开火磨损 → 撤离写回；耐久低变散；卡壳；维修
+	ST.buy_gun("m4a1")
+	ST.loadout = {"primary": "m4a1", "secondary": "pistol"}
+	ST.set_ammo("m4a1", 300)
+	main._start_mission({"primary": "m4a1", "secondary": "pistol"})
+	await frames(2)
+	main.guns._equip("primary")
+	for k in 40:
+		main.guns.fire_cd = 0.0
+		main.guns.reloading = 0.0
+		if main.guns.ammo <= 0:
+			main.guns.ammo = 30
+		main.guns.try_fire()
+	var wear40: float = float(main._raid_wear.get("m4a1", 0.0))
+	check("开火磨损：40 发 = 2.0 耐久", absf(wear40 - 40.0 * HDData.DUR_PER_SHOT) < 0.01, "wear=%.2f" % wear40)
+	check("耐久 98：还没到磨损线，倍率 1.0", absf(main.guns._dur_mul() - 1.0) < 0.001)
+	main._win_raid()
+	check("撤离写回耐久（100 → 98）", absf(ST.dur_of("m4a1") - 98.0) < 0.01, "dur=%.2f" % ST.dur_of("m4a1"))
+	ST.durability["m4a1"] = 0.0
+	main._start_mission({"primary": "m4a1", "secondary": "pistol"})
+	await frames(2)
+	main.guns._equip("primary")
+	check("耐久 0：散布/后坐 ×1.6", absf(main.guns._dur_mul() - (1.0 + HDData.DUR_WORN_MUL)) < 0.01,
+		"mul=%.2f" % main.guns._dur_mul())
+	seed(99)
+	var jams := [0]
+	main.guns.jammed.connect(func(): jams[0] += 1)
+	var ammo_before: int = main.guns.ammo
+	var shots_ok := 0
+	for k in 300:
+		main.guns.fire_cd = 0.0
+		main.guns.reloading = 0.0
+		if main.guns.ammo <= 0:
+			main.guns.ammo = 30
+		var a0: int = main.guns.ammo
+		main.guns.try_fire()
+		if main.guns.ammo < a0:
+			shots_ok += 1
+	check("耐久 < 25：会卡壳且卡壳不耗弹", jams[0] > 0 and shots_ok + jams[0] == 300,
+		"jams=%d shots=%d" % [jams[0], shots_ok])
+	main._raid_live = false
+	main._raid_wear = {}
+	var rp: int = ST.repair_price("m4a1")
+	var c5: int = ST.cash
+	check("维修价 = 枪价 × 25% × 缺损", rp == int(ceil(float(Guns.gun_by_id("m4a1")["price"]) * 0.25)),
+		"price=%d" % rp)
+	main.lobby.show_lobby()
+	main.lobby.set_tab(1)
+	for i in Guns.GUNS.size():
+		if str(Guns.GUNS[i]["id"]) == "m4a1":
+			main.lobby._gun_idx = i
+	main.lobby._refresh_all()
+	check("改枪台 R 键维修", main.lobby.handle_key(KEY_R) and ST.dur_of("m4a1") == 100.0
+		and ST.cash == c5 - rp)
+	# 消音器：改枪台 V 购买并装上 → 惊动半径 20 m；再按 V 拆下
+	var c6: int = ST.cash
+	main.lobby.handle_key(KEY_V)
+	check("改枪台 V 购买消音器并装上", ST.suppressed("m4a1") and ST.cash == c6 - HDData.SUP_PRICE)
+	check("改枪台 3D 预览已建（枪模在转台上）", main.lobby._pv_pivot != null
+		and main.lobby._pv_pivot.get_child_count() == 1 and main.lobby._pv_key.begins_with("m4a1|"))
+	check("霰弹枪不能装消音器", not ST.sup_allowed("shotgun"))
+	main._start_mission({"primary": "m4a1", "secondary": "pistol"})
+	await frames(2)
+	main.guns._equip("primary")
+	check("消音器上枪：枪模挂筒 + 枪口前移", bool(main.guns._guns["primary"].get("sup", false)))
+	var lis: Dictionary = main.soldiers.soldiers[0]
+	for sv in main.soldiers.soldiers:
+		if sv != lis:
+			sv["dead"] = true
+	main.player.enter(Vector3(-40.0, 0.0, 120.0))
+	main.player.yaw = 0.0
+	main.player.update(0.016)
+	lis["dead"] = false
+	lis["alert_t"] = 0.0
+	lis["state"] = "patrol"
+	lis["pos"] = Vector3(-40.0, 0.0, 120.0) + Vector3(0, 0, -40.0)   # 身后 40 m（子弹不掠过）
+	main._on_player_fired()
+	check("消音器：40 m 外听不到枪声", float(lis["alert_t"]) <= 0.0)
+	ST.toggle_sup("m4a1")
+	main._on_player_fired()
+	check("拆下消音器：40 m 外听得到", float(lis["alert_t"]) > 0.0)
+	ST.toggle_sup("m4a1")
+	main.soldiers.reset_all()
+	main._raid_live = false
+	ST.lose_carried({"primary": "m4a1", "secondary": "pistol"}, false)
+	check("阵亡：消音器随枪丢", not ST.sup_owned.has("m4a1"))
+	# 出发页 I 键投保 → 出发随 loadout 带上 insured
+	ST.buy_gun("m4a1")
+	ST.loadout = {"primary": "m4a1", "secondary": "pistol"}
+	main.lobby.show_lobby()
+	main.lobby.set_tab(0)
+	main.lobby._insure = false
+	check("出发页 I 键勾选投保", main.lobby.handle_key(KEY_I) and main.lobby._insure)
+	var c7: int = ST.cash
+	var ip7: int = ST.insurance_price(ST.loadout)
+	main.lobby._fire_deploy()
+	await frames(2)
+	check("出发钮带保险出发（扣费 + 本局投保）", main._raid_insured and ST.cash == c7 - ip7)
+	main._raid_live = false
+	main.lobby._insure = false
+
+	# ===== 第四阶段：首局引导（搜箱 → 看指南针 → 撤离；H 跳过）=====
+	main.lobby.hide_lobby()
+	ST.tutorial_done = false
+	main._start_mission({"primary": "pistol", "secondary": ""})
+	await frames(2)
+	check("首局：引导第 1 步出现（HUD 卡 + 指南针箱子标记）", main._tut == 0
+		and main.hud._tut_panel.visible
+		and main._compass_marks().any(func(mk): return str(mk["label"]).begins_with("箱子")))
+	main._on_loot_picked(HDData.make_consumable("pills"))
+	check("搜到东西 → 第 2 步", main._tut == 1)
+	var ep: Vector3 = main.world.extract_pos
+	main.player.enter(ep + Vector3(-60.0, 0.0, 0.0))
+	main.player.yaw = atan2(ep.x - main.player.pos.x, ep.z - main.player.pos.z) + PI   # 背对
+	for i in 60:
+		main._step_tut(1.0 / 60.0)
+	check("背对撤离点不算看过指南针", main._tut == 1)
+	main.player.yaw = atan2(ep.x - main.player.pos.x, ep.z - main.player.pos.z)
+	for i in 60:
+		main._step_tut(1.0 / 60.0)
+	check("对准撤离点 0.6 s → 第 3 步", main._tut == 2)
+	main._win_raid()
+	check("撤离 → 引导完成并存档，下局不再出现", ST.tutorial_done and main._tut == -1
+		and not main.hud._tut_panel.visible)
+	main._start_mission({"primary": "pistol", "secondary": ""})
+	await frames(2)
+	check("完成后开局无引导", main._tut == -1)
+	main._raid_live = false
+	ST.tutorial_done = false
+	main._start_mission({"primary": "pistol", "secondary": ""})
+	await frames(2)
+	main._route_key(KEY_H)
+	check("H 跳过引导（记为完成）", main._tut == -1 and ST.tutorial_done)
+	main._raid_live = false
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)

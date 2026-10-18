@@ -211,6 +211,26 @@ const CLASS_W := {
 	"wild": [["weapon", 20], ["medical", 25], ["crate", 55]],
 }
 
+## ---- 第四阶段：持续消耗（改进方案第 1/2/3 节：保险、枪械耐久维修、消音器）----
+## 保险：出发前付所带装备价值的 30%；阵亡时每件（枪/镜/消音器/备弹）各按 50% 概率退回
+const INSURE_RATE := 0.3
+const INSURE_RETURN := 0.5
+## 耐久：每发 -0.05（约 2,000 发打坏）；低于 60 散布/后坐逐步变大（0 时 ×1.6）；
+## 低于 25 每发 4% 卡壳（0.9 s 打不响）。改枪台维修：满修 = 枪价 × 25%
+const DUR_PER_SHOT := 0.05
+const DUR_WORN := 60.0
+const DUR_WORN_MUL := 0.6
+const JAM_DUR := 25.0
+const JAM_P := 0.04
+const JAM_TIME := 0.9
+const REPAIR_RATE := 0.25
+const REPAIR_BASE_MIN := 400      # 枪价低于此（侦察手枪免费）按此价算维修费
+## 消音器：按枪购买、可拆装；开枪惊动半径 60 → 20 m，代价伤害 ×0.92；霰弹枪不能装
+const SUP_PRICE := 1200
+const SUP_HEAR_R := 20.0
+const SUP_DMG_MUL := 0.92
+const SUP_BLOCK := ["shotgun"]
+
 ## 地图与分区（340m 见方；中心危险区半径 80m）
 const MAP_HALF := 170.0
 const DANGER_R := 80.0

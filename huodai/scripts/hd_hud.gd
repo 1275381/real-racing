@@ -46,6 +46,10 @@ var _uses_label: Label
 var _armor_row: HBoxContainer
 var _armor_segs: Array = []
 var _timer_label: Label
+var _tut_panel: PanelContainer      # 首局引导（第四阶段）：左上步骤卡
+var _tut_title: Label
+var _tut_text: Label
+var _tut_dots: Label
 var _bag_cap := -1
 var _pip_nodes: Array = []
 var _score_label: Label
@@ -237,6 +241,33 @@ func setup() -> void:
 	_timer_label.offset_bottom = 40
 	_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_raid.add_child(_timer_label)
+
+	# 左上首局引导卡（搜箱 → 看指南针 → 撤离；H 跳过）
+	_tut_panel = PanelContainer.new()
+	var tsb := _sb_flat(Color(0.02, 0.05, 0.03, 0.84), Color(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 0.75), 1)
+	tsb.content_margin_left = 16
+	tsb.content_margin_right = 16
+	tsb.content_margin_top = 10
+	tsb.content_margin_bottom = 10
+	tsb.set_corner_radius_all(6)
+	_tut_panel.add_theme_stylebox_override("panel", tsb)
+	_tut_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tut_panel.position = Vector2(24, 18)
+	_tut_panel.custom_minimum_size = Vector2(340, 0)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 4)
+	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tut_panel.add_child(tv)
+	_tut_title = _mk_label("", 15, COL_ACCENT)
+	tv.add_child(_tut_title)
+	_tut_text = _mk_label("", 16, COL_TEXT)
+	_tut_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tut_text.custom_minimum_size = Vector2(320, 0)
+	tv.add_child(_tut_text)
+	_tut_dots = _mk_label("", 12, Color(COL_TEXT.r, COL_TEXT.g, COL_TEXT.b, 0.55))
+	tv.add_child(_tut_dots)
+	_tut_panel.visible = false
+	_raid.add_child(_tut_panel)
 
 	# 右上靶场计分（set_score 后常显）
 	_score_label = _mk_label("得分 0 · 最佳 0", 15, COL_TEXT)
@@ -517,6 +548,21 @@ func set_raid_timer(left: float) -> void:
 	elif left <= 300.0:
 		col = COL_ACCENT
 	_timer_label.add_theme_color_override("font_color", col)
+
+
+## 首局引导卡：step 0..total-1；step < 0 隐藏
+func set_tutorial(step: int, total: int, text: String) -> void:
+	if _tut_panel == null:
+		setup()
+	_tut_panel.visible = step >= 0
+	if step < 0:
+		return
+	_tut_title.text = "新手引导 · 第 %d/%d 步" % [step + 1, total]
+	_tut_text.text = text
+	var dots := ""
+	for i in total:
+		dots += ("● " if i < step else ("◉ " if i == step else "○ "))
+	_tut_dots.text = dots + "   H 跳过引导"
 
 
 ## 护甲条（0 隐藏）
@@ -1254,7 +1300,7 @@ class CompassBar extends Control:
 		offset_left = -W * 0.5
 		offset_right = W * 0.5
 		offset_top = 6
-		offset_bottom = 6 + H + 18
+		offset_bottom = 6 + H + 44
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	func _wrap(d: float) -> float:
@@ -1291,7 +1337,8 @@ class CompassBar extends Control:
 			a += 5
 		# 中央朝向指针 + 读数
 		draw_colored_polygon(PackedVector2Array([Vector2(cx - 6, H + 7), Vector2(cx + 6, H + 7), Vector2(cx, H + 1)]), Color(1.0, 0.7, 0.36))
-		# 标记（撤离点等）
+		# 标记（撤离点等）：先画三角，标签按横向位置排布，撞上就换下一行（最多 3 行）
+		var labels: Array = []
 		for m in markers:
 			var md := _wrap(float(m["bearing"]) - heading)
 			var col2: Color = m.get("color", Color(0.49, 0.89, 0.66))
@@ -1304,8 +1351,16 @@ class CompassBar extends Control:
 			if f != null:
 				var lbl := str(m.get("label", ""))
 				var tw3 := f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
-				var lx := clampf(x2 - tw3 * 0.5, 0.0, W - tw3)
-				draw_string(f, Vector2(lx, H + 16), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, col2)
+				labels.append({"x": clampf(x2 - tw3 * 0.5, 0.0, W - tw3), "w": tw3, "t": lbl, "c": col2})
+		labels.sort_custom(func(p, q): return float(p["x"]) < float(q["x"]))
+		var row_end := [-INF, -INF, -INF]
+		for lb in labels:
+			var row := 0
+			while row < 2 and float(lb["x"]) < float(row_end[row]) + 6.0:
+				row += 1
+			row_end[row] = float(lb["x"]) + float(lb["w"])
+			draw_string(f, Vector2(float(lb["x"]), H + 16 + row * 13), str(lb["t"]),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, lb["c"])
 
 
 ## 受击方向弧：准星外圈 120 px 半径的红色弧段，指向来袭方向（相对视线），1.4 s 淡出

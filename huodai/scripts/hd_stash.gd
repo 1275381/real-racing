@@ -30,6 +30,10 @@ var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0}
 var daily_last: String = ""          # 最近一次签到的日期键（YYYY-MM-DD）
 var secure_slots: int = HDData.SECURE_BASE   # 安全箱格数（2 起，现金扩到 4；阵亡保留其中物品）
+var durability: Dictionary = {}       # gun_id -> 耐久 0..100（缺键 = 全新 100）
+var sup_owned: Array = []             # 已买消音器的枪 id（消音器按枪买，随枪丢）
+var sup_off: Array = []               # 已买但拆下的枪 id（拆装免费）
+var tutorial_done := false            # 首局引导已完成/跳过（老档有出击记录视为已完成）
 
 
 func _init() -> void:
@@ -61,6 +65,10 @@ func _serialize() -> Dictionary:
 		"stats": stats,
 		"daily_last": daily_last,
 		"secure_slots": secure_slots,
+		"durability": durability,
+		"sup_owned": sup_owned,
+		"sup_off": sup_off,
+		"tutorial_done": tutorial_done,
 	}
 
 
@@ -206,6 +214,24 @@ func _load() -> void:
 	}
 	daily_last = _to_s(d.get("daily_last", ""))
 
+	# 第四阶段：耐久（0..100，缺键=全新）/ 消音器（按枪，随枪丢）/ 首局引导
+	durability = {}
+	var raw_dur := _to_dict(d.get("durability", null))
+	for dk in raw_dur.keys():
+		if valid_guns.has(str(dk)) and guns_owned.has(str(dk)):
+			durability[str(dk)] = clampf(float(raw_dur[dk]), 0.0, 100.0)
+	sup_owned = []
+	sup_off = []
+	for key2 in ["sup_owned", "sup_off"]:
+		var raw_sup: Variant = d.get(key2, null)
+		if typeof(raw_sup) != TYPE_ARRAY:
+			continue
+		for id in raw_sup:
+			var sg := str(id)
+			if valid_guns.has(sg) and guns_owned.has(sg) and not (get(key2) as Array).has(sg):
+				(get(key2) as Array).append(sg)
+	tutorial_done = bool(d.get("tutorial_done", false)) or int(stats["raids"]) > 0
+
 
 ## 默认资产：恰旧五枪全有 / 现金 0 / 仓库空 / rifle+pistol
 func _apply_defaults() -> void:
@@ -221,6 +247,10 @@ func _apply_defaults() -> void:
 	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0}
 	daily_last = ""
 	secure_slots = HDData.SECURE_BASE
+	durability = {}
+	sup_owned = []
+	sup_off = []
+	tutorial_done = false
 
 
 ## 今日（自然日）尚未签到 = 可领
@@ -430,37 +460,145 @@ func carried_value(lo: Dictionary) -> int:
 			var sid := str(scope_fit.get(gid, "iron"))
 			if sid != "iron" and owns_scope(sid):
 				sum += maxi(0, _to_i(Guns.scope_by_id(sid).get("price", 0)))
+		if sup_owned.has(gid):
+			sum += HDData.SUP_PRICE   # 拆下的消音器也随枪带着（随枪丢）
 		sum += maxi(0, _to_i(ammo_inv.get(gid, 0))) \
 				* maxi(0, _to_i(HDData.AMMO_PRICE.get(gid, 0)))
 	return sum
 
 
+## 保险费 = 所带装备价值 × 30%（向上取整）
+func insurance_price(lo: Dictionary) -> int:
+	return int(ceil(float(carried_value(lo)) * HDData.INSURE_RATE))
+
+
 ## 阵亡/放弃：带进局的装备全部丢失——主副武器（侦察手枪除外）出拥有集、
-## 其所装瞄具出拥有集、两枪所带备弹清零（置 0 不删键：缺键会被当首读再送礼）。
-## 返回 {"guns": [...名], "scopes": [...名], "ammo": 发数, "value": ₵}；
+## 其所装瞄具/消音器随枪丢、两枪所带备弹清零（置 0 不删键：缺键会被当首读再送礼）。
+## insured（出发时投了保）：每件（枪/镜/消音器/备弹）各按 INSURE_RETURN 概率退回不丢。
+## 返回 {"guns","scopes","sups","ammo","value", "back": [退回件名], "back_value"}；
 ## 丢失后修出发配置（repair_loadout），存盘发 changed
-func lose_carried(lo: Dictionary) -> Dictionary:
-	var out := {"guns": [], "scopes": [], "ammo": 0, "value": carried_value(lo)}
+func lose_carried(lo: Dictionary, insured: bool = false) -> Dictionary:
+	var out := {"guns": [], "scopes": [], "sups": 0, "ammo": 0, "value": carried_value(lo),
+		"back": [], "back_value": 0}
+	var keep := func() -> bool: return insured and randf() < HDData.INSURE_RETURN
 	for slot in ["primary", "secondary"]:
 		var gid := str(lo.get(slot, ""))
 		if gid == "":
 			continue
-		out["ammo"] = int(out["ammo"]) + maxi(0, _to_i(ammo_inv.get(gid, 0)))
-		ammo_inv[gid] = 0
+		var n_ammo := maxi(0, _to_i(ammo_inv.get(gid, 0)))
+		if n_ammo > 0 and keep.call():
+			(out["back"] as Array).append("备弹 %d 发" % n_ammo)
+			out["back_value"] = int(out["back_value"]) + n_ammo * maxi(0, _to_i(HDData.AMMO_PRICE.get(gid, 0)))
+		else:
+			out["ammo"] = int(out["ammo"]) + n_ammo
+			ammo_inv[gid] = 0
 		if gid == HDData.PERMANENT_GUN:
 			continue
+		var gname := str(Guns.gun_by_id(gid).get("name", gid))
 		var sid := str(scope_fit.get(gid, "iron"))
 		if sid != "iron" and scopes_owned.has(sid):
-			scopes_owned.erase(sid)
-			(out["scopes"] as Array).append(str(Guns.scope_by_id(sid).get("name", sid)))
-		scope_fit.erase(gid)
+			var sname := str(Guns.scope_by_id(sid).get("name", sid))
+			if keep.call():
+				(out["back"] as Array).append(sname)
+				out["back_value"] = int(out["back_value"]) + _to_i(Guns.scope_by_id(sid).get("price", 0))
+			else:
+				scopes_owned.erase(sid)
+				scope_fit.erase(gid)
+				(out["scopes"] as Array).append(sname)
+		if sup_owned.has(gid):
+			if keep.call():
+				(out["back"] as Array).append("%s 消音器" % gname)
+				out["back_value"] = int(out["back_value"]) + HDData.SUP_PRICE
+			else:
+				sup_owned.erase(gid)
+				sup_off.erase(gid)
+				out["sups"] = int(out["sups"]) + 1
 		if guns_owned.has(gid):
-			guns_owned.erase(gid)
-			(out["guns"] as Array).append(str(Guns.gun_by_id(gid).get("name", gid)))
+			if keep.call():
+				(out["back"] as Array).append(gname)
+				out["back_value"] = int(out["back_value"]) + _to_i(Guns.gun_by_id(gid).get("price", 0))
+			else:
+				guns_owned.erase(gid)
+				durability.erase(gid)
+				(out["guns"] as Array).append(gname)
+				# 枪没了，没退回的配件也跟着没了（退回的镜/消音器留在仓库，可装别的枪）
+				if scope_fit.has(gid):
+					scope_fit.erase(gid)
+				if sup_owned.has(gid):
+					sup_owned.erase(gid)   # 消音器按枪买：枪丢了就算退回也无处可装，按价折现
+					sup_off.erase(gid)
+					cash += HDData.SUP_PRICE
+	out["value"] = maxi(0, int(out["value"]) - int(out["back_value"]))
 	repair_loadout()
 	save()
 	changed.emit()
 	return out
+
+
+## ---- 耐久 / 维修 ----
+
+func dur_of(gid: String) -> float:
+	return clampf(float(durability.get(gid, 100.0)), 0.0, 100.0)
+
+
+## 局终结算磨损（开火发数 × DUR_PER_SHOT）；未拥有的枪忽略
+func wear(gid: String, amount: float) -> void:
+	if amount <= 0.0 or not guns_owned.has(gid):
+		return
+	durability[gid] = maxf(0.0, dur_of(gid) - amount)
+
+
+## 满修价：缺多少修多少（枪价 × 25% × 缺损比例；最低按 REPAIR_BASE_MIN 计价）
+func repair_price(gid: String) -> int:
+	var base := maxi(HDData.REPAIR_BASE_MIN, _to_i(Guns.gun_by_id(gid).get("price", 0)))
+	return int(ceil(float(base) * HDData.REPAIR_RATE * (100.0 - dur_of(gid)) / 100.0))
+
+
+func repair(gid: String) -> bool:
+	var price := repair_price(gid)
+	if price <= 0 or not guns_owned.has(gid) or cash < price:
+		return false
+	cash -= price
+	durability[gid] = 100.0
+	save()
+	changed.emit()
+	return true
+
+
+## ---- 消音器（按枪买，可拆装）----
+
+func sup_allowed(gid: String) -> bool:
+	return gid != "" and not (gid in HDData.SUP_BLOCK)
+
+
+## 该枪当前装着消音器（买了且没拆）
+func suppressed(gid: String) -> bool:
+	return sup_owned.has(gid) and not sup_off.has(gid)
+
+
+func buy_sup(gid: String) -> bool:
+	if sup_owned.has(gid) or not sup_allowed(gid) or not guns_owned.has(gid) \
+			or cash < HDData.SUP_PRICE:
+		return false
+	cash -= HDData.SUP_PRICE
+	sup_owned.append(gid)
+	sup_off.erase(gid)
+	save()
+	changed.emit()
+	return true
+
+
+## 拆/装（已买的才行）；返回装上后的状态
+func toggle_sup(gid: String) -> bool:
+	if not sup_owned.has(gid):
+		return false
+	if sup_off.has(gid):
+		sup_off.erase(gid)
+	else:
+		sup_off.append(gid)
+	save()
+	changed.emit()
+	return suppressed(gid)
 
 
 ## 出发配置修复：未拥有的枪从槽里清掉——主武器空则顶上副武器（再空则侦察

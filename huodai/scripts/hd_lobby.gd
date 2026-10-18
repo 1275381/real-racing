@@ -24,6 +24,11 @@ extends CanvasLayer
 ## 预装镜会被静默覆盖=装了白装）；未拥有镜行内「去购买」一键跳交易行②区对应行。
 ## 操作失败（钱不足等）用底部 show_hint() 提示（不用 HUD toast），提示带金额明细。
 ## 按 1440×810 设计，_apply_ui_scale 按视口高度整体缩放（全屏大屏不缩字）。
+## 2026-10 第四阶段卡片式改版（改进方案第 7 节「卡片式布局、字号放大、鼠标优先」）：
+## 页签挪到顶栏大按钮；出发页 = 本局装备卡（耐久条/消音器/备弹）+ 3×2 武器卡 +
+## 出发栏（押上金额 / 投保勾选 I / 出发 CTA / 战绩卡）；改枪台中列 = 3D 枪械预览
+## （独立世界 SubViewport 转台，可拖动）+ 数据条 + 维修 R / 消音器 V；交易行枪械 4 列
+## 卡片。光标模型、确认链与全部键位不变（回归测试按原状态机断言）。
 
 signal deploy_requested(loadout: Dictionary)
 signal range_requested
@@ -33,6 +38,8 @@ const COL_TEXT := Color(0.85, 0.87, 0.82)
 const COL_ACCENT := Color(1, 0.7, 0.36)
 const COL_OK := Color(0.49, 0.89, 0.66)
 const COL_LOW := Color(1.0, 0.48, 0.27)   # 实战消耗警示色（与 HUD.COL_LOW 同值）：出发 CTA 专用
+const COL_CARD := Color(0.075, 0.1, 0.085, 0.9)       # 卡片底（第四阶段卡片式改版）
+const COL_CARD_SEL := Color(0.13, 0.16, 0.12, 0.96)   # 光标所在卡片底
 const TAB_TITLES := ["出发大厅", "改枪台", "交易行"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
 const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
@@ -56,6 +63,16 @@ var _market_scope := 0              # 交易行②区选中瞄具（0=机瞄行�
 var _market_ammo_gun := 0           # 交易行③区购弹对象枪
 var _market_m14_mod := 0            # 交易行⑤区选中 M14 配件（2026-10）
 var _hint_t := 0.0
+var _insure := false                # 出发页「投保」勾选（出发时随 loadout 发给 main 扣费）
+## 改枪台 3D 预览（常驻复用的 SubViewport；main 注入枪模工厂）
+var gun_preview_provider: Callable = Callable()
+var _pv_box: SubViewportContainer
+var _pv_vp: SubViewport
+var _pv_pivot: Node3D
+var _pv_cam: Camera3D
+var _pv_key := ""
+var _pv_yaw := 0.55
+var _pv_drag := false
 
 var _root: Control
 var _pages: Array = []              # 三个页 VBoxContainer（随 TAB_TITLES 自动生成）
@@ -139,6 +156,18 @@ func handle_key(code: int) -> bool:
 				return false
 			else:
 				return false
+		KEY_I:
+			if _tab != 0:
+				return false
+			_toggle_insure()
+		KEY_R:
+			if _tab != 1:
+				return false
+			_repair_sel()
+		KEY_V:
+			if _tab != 1:
+				return false
+			_sup_sel()
 		KEY_ENTER, KEY_KP_ENTER:
 			_confirm()
 		KEY_LEFT:
@@ -155,6 +184,11 @@ func handle_key(code: int) -> bool:
 
 
 func _process(dt: float) -> void:
+	# 改枪台预览转台：没在拖就慢转
+	if _pv_pivot != null and _pv_box != null and _pv_box.is_inside_tree():
+		if not _pv_drag:
+			_pv_yaw += dt * 0.35
+		_pv_pivot.rotation.y = _pv_yaw
 	if _hint_label != null and _hint_t > 0.0:
 		_hint_t = maxf(0.0, _hint_t - dt)
 		_hint_label.modulate.a = clampf(_hint_t / 0.4, 0.0, 1.0)
@@ -190,94 +224,125 @@ func _build() -> void:
 	bg.color = COL_BG
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(bg)
+	# 顶部暖光晕（卡片式改版：纯色底太平，顶上压一层琥珀渐变出层次）
+	var glow := TextureRect.new()
+	var gt := GradientTexture2D.new()
+	gt.fill_from = Vector2(0.5, 0.0)
+	gt.fill_to = Vector2(0.5, 1.0)
+	var gg := Gradient.new()
+	gg.set_color(0, Color(COL_ACCENT.r, COL_ACCENT.g * 0.8, COL_ACCENT.b * 0.5, 0.10))
+	gg.set_color(1, Color(0, 0, 0, 0))
+	gt.gradient = gg
+	glow.texture = gt
+	glow.stretch_mode = TextureRect.STRETCH_SCALE
+	glow.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	glow.offset_bottom = 360
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(glow)
 
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	box.add_theme_constant_override("separation", 0)
 	_root.add_child(box)
 
-	# ---- 顶栏：LOGO / 战绩 / 每日签到 / 现金 ----
+	# ---- 顶栏：LOGO / 三大页签（鼠标优先，大按钮）/ 每日签到 / 现金 ----
 	var top := PanelContainer.new()
 	top.add_theme_stylebox_override("panel", _bar_style(true))
 	var th := HBoxContainer.new()
-	th.add_theme_constant_override("separation", 26)
+	th.add_theme_constant_override("separation", 14)
 	top.add_child(th)
 	box.add_child(top)
 
 	var logo_box := VBoxContainer.new()
-	logo_box.add_theme_constant_override("separation", 0)
-	logo_box.add_child(_mk_label("烽火地带", 22, COL_ACCENT))
-	logo_box.add_child(_mk_label("TACTICAL OPERATION · 战术行动", 10, _dim(0.5)))
+	logo_box.add_theme_constant_override("separation", -2)
+	logo_box.add_child(_mk_label("烽火地带", 28, COL_ACCENT))
+	logo_box.add_child(_mk_label("TACTICAL OPERATION · 战术行动", 11, _dim(0.5)))
 	th.add_child(logo_box)
+	var sp0 := Control.new()
+	sp0.custom_minimum_size = Vector2(28, 0)
+	th.add_child(sp0)
 
-	_record_label = _mk_label("", 13, _dim(0.72))
-	_record_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	th.add_child(_record_label)
+	_tab_btns.clear()
+	for i in TAB_TITLES.size():
+		var b := _mk_btn("%d  %s" % [i + 1, TAB_TITLES[i]], 18)
+		b.custom_minimum_size = Vector2(150, 46)
+		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var idx := i
+		b.pressed.connect(func(): set_tab(idx))
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		th.add_child(b)
+		_tab_btns.append(b)
 
 	var sp1 := Control.new()
 	sp1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	th.add_child(sp1)
 
-	_daily_btn = _mk_btn("", 13)
+	_daily_btn = _mk_btn("", 15)
 	_daily_btn.pressed.connect(_check_in)
 	_daily_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_daily_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	th.add_child(_daily_btn)
 
-	_cash_label = _mk_label("₵ 0", 22, COL_OK)
-	_cash_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_cash_label.custom_minimum_size = Vector2(150, 0)
+	var cash_box := VBoxContainer.new()
+	cash_box.add_theme_constant_override("separation", -4)
+	cash_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var cash_cap := _mk_label("现金", 11, _dim(0.5))
+	cash_cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	cash_box.add_child(cash_cap)
+	_cash_label = _mk_label("₵ 0", 28, COL_OK)
+	_cash_label.custom_minimum_size = Vector2(170, 0)
 	_cash_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	th.add_child(_cash_label)
+	cash_box.add_child(_cash_label)
+	th.add_child(cash_box)
 
-	# ---- 中部面板：三页签内容 ----
-	var mid := CenterContainer.new()
+	# ---- 中部：三页签内容（满宽卡片区） ----
+	var mid := MarginContainer.new()
 	mid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	mid.add_theme_constant_override("margin_left", 28)
+	mid.add_theme_constant_override("margin_right", 28)
+	mid.add_theme_constant_override("margin_top", 16)
+	mid.add_theme_constant_override("margin_bottom", 10)
 	box.add_child(mid)
-	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _page_panel_style())
-	mid.add_child(panel)
 	var holder := VBoxContainer.new()
-	holder.custom_minimum_size = Vector2(980, 430)
-	panel.add_child(holder)
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	mid.add_child(holder)
 	_pages.clear()
 	for i in TAB_TITLES.size():
 		var pg := VBoxContainer.new()
 		pg.add_theme_constant_override("separation", 10)
+		pg.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		pg.visible = false
 		holder.add_child(pg)
 		_pages.append(pg)
 
-	# ---- 底栏：页签 + 靶场入口 ----
+	# ---- 底栏：战绩速览 + 靶场入口 ----
 	var bottom := PanelContainer.new()
 	bottom.add_theme_stylebox_override("panel", _bar_style(false))
 	var bh := HBoxContainer.new()
 	bh.add_theme_constant_override("separation", 8)
 	bottom.add_child(bh)
 	box.add_child(bottom)
-
-	_tab_btns.clear()
-	for i in TAB_TITLES.size():
-		var b := _mk_btn(TAB_TITLES[i], 13)
-		var idx := i
-		b.pressed.connect(func(): set_tab(idx))
-		bh.add_child(b)
-		_tab_btns.append(b)
+	_record_label = _mk_label("", 13, _dim(0.62))
+	_record_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bh.add_child(_record_label)
 	var sp2 := Control.new()
 	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bh.add_child(sp2)
 	# 靶场入口（与出发 CTA 分流）：绿色=安全免费，文案自曝「练习·不耗弹药」——
 	# 用户反馈「出发实战和靶场分不清」，入口语义在两处各自点破
-	var rb := _mk_btn("G · 练习靶场 · 不耗弹药", 13)
-	_style_btn(rb, false, COL_OK, 14)
+	var rb := _mk_btn("G · 练习靶场 · 不耗弹药", 15)
+	_style_btn(rb, false, COL_OK, 16)
+	rb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	rb.pressed.connect(_fire_range)
 	bh.add_child(rb)
 
 	# ---- 底部提示条 ----
-	_hint_label = _mk_label("", 14, COL_ACCENT)
+	_hint_label = _mk_label("", 16, COL_ACCENT)
 	_hint_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_hint_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_hint_label.offset_top = -92
-	_hint_label.offset_bottom = -66
+	_hint_label.offset_bottom = -64
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_root.add_child(_hint_label)
 
@@ -380,6 +445,9 @@ func _on_bench_equip_pressed(idx: int) -> void:
 func _refresh_all() -> void:
 	if _root == null or _stash == null:
 		return
+	# 常驻 3D 预览先摘下（页面子树整体重建会把它一起释放）
+	if _pv_box != null and _pv_box.get_parent() != null:
+		_pv_box.get_parent().remove_child(_pv_box)
 	_render_top()
 	for i in _pages.size():
 		var pg := _pages[i] as VBoxContainer
@@ -393,7 +461,7 @@ func _refresh_all() -> void:
 	for i in _tab_btns.size():
 		var b := _tab_btns[i] as Button
 		var act: bool = i == _tab
-		_style_btn(b, act, COL_ACCENT if act else _dim(0.35))
+		_style_btn(b, act, COL_ACCENT if act else _dim(0.4), 20)
 
 
 func _render_top() -> void:
@@ -433,129 +501,402 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	_cur0 = posmod(_cur0, n)
 
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 16)
+	cols.add_theme_constant_override("separation", 20)
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pg.add_child(cols)
 
-	var main := VBoxContainer.new()
-	main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	main.size_flags_stretch_ratio = 2.4
-	main.add_theme_constant_override("separation", 10)
-	cols.add_child(main)
-
-	# 主/副武器槽（聚焦槽 = 装入目标）
-	var slots := HBoxContainer.new()
-	slots.add_theme_constant_override("separation", 12)
-	main.add_child(slots)
-	var slot_defs := [["primary", "主武器 · 1"], ["secondary", "副武器 · 2"]]
+	# —— 左：本局装备（主/副武器槽卡；聚焦槽 = 装入目标）——
+	var left := _col(cols, 372)
+	left.add_child(_sec_head("本局装备", "点卡片选装入槽"))
 	for i in 2:
-		var key: String = slot_defs[i][0]
-		var gid := str(_stash.loadout.get(key, "rifle"))
-		var g := Guns.gun_by_id(gid) if gid != "" else \
-				{"name": "空槽", "desc": "阵亡丢枪后留空 · 可单枪出发，选中后从下方装入"}
-		var sel := _cur0 == i
-		var card := PanelContainer.new()
-		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		card.add_theme_stylebox_override("panel",
-				_panel_style(sel, COL_ACCENT if sel else _dim(0.25)))
-		var vb := VBoxContainer.new()
-		vb.add_theme_constant_override("separation", 2)
-		vb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到卡片本身
-		card.add_child(vb)
-		var focus_here := _slot_focus == key
-		vb.add_child(_mk_label(("「装入此槽」· " if focus_here else "") + str(slot_defs[i][1]),
-				11, COL_OK))
-		card.gui_input.connect(_on_deploy_row_input.bind(-1, i))
-		vb.add_child(_mk_label(String(g.get("name", gid)), 18, COL_ACCENT if gid != "" else _dim(0.45)))
-		vb.add_child(_mk_label(String(g.get("desc", "")), 12, _dim(0.6)))
-		slots.add_child(card)
+		left.add_child(_slot_card(i))
+	var sec_card := _card(false, _dim(0.18))
+	var sec_v := _card_vbox(sec_card, 2)
+	sec_v.add_child(_mk_label("安全箱 %d 格 · 阵亡保留其中物品" % _stash.secure_slots, 14, COL_OK))
+	sec_v.add_child(_mk_label("局内 Tab 打开背包，Z 把贵重小件放进安全箱", 12, _dim(0.55)))
+	left.add_child(sec_card)
+	left.add_child(_intel_card())
 
-	# 候选枪列表（只画当前页；未拥有显示价格；装入/购买走行内「装备/购买」显式按钮）
+	# —— 中：选择武器（3 × 2 卡片网格，翻页）——
+	var midc := VBoxContainer.new()
+	midc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	midc.add_theme_constant_override("separation", 10)
+	cols.add_child(midc)
 	var owned_n := 0
 	for g0 in guns:
 		if _stash.guns_owned.has(str(g0["id"])):
 			owned_n += 1
-	main.add_child(_mk_label("候选枪（已拥有 %d/%d）· 第 %d/%d 页" % [
-			owned_n, guns.size(), _deploy_page + 1, _deploy_pages()], 11, COL_OK))
+	var mh := _sec_head("选择武器", "")
+	var pprev := _mk_btn("◀", 15)
+	_style_btn(pprev, false, _dim(0.6), 10)
+	pprev.pressed.connect(_deploy_flip.bind(-1))
+	pprev.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	mh.add_child(pprev)
+	var pl := _mk_label("第 %d/%d 页 · 已拥有 %d/%d" % [_deploy_page + 1, _deploy_pages(),
+			owned_n, guns.size()], 14, _dim(0.7))
+	pl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	mh.add_child(pl)
+	var pnext := _mk_btn("▶", 15)
+	_style_btn(pnext, false, _dim(0.6), 10)
+	pnext.pressed.connect(_deploy_flip.bind(1))
+	pnext.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	mh.add_child(pnext)
+	midc.add_child(mh)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	midc.add_child(grid)
 	var first: int = _deploy_page * DEPLOY_PAGE
 	for r in rows:
-		var g2: Dictionary = guns[first + r]
-		var id2 := str(g2["id"])
-		var owned: bool = _stash.guns_owned.has(id2)
-		var sel2 := _cur0 == 2 + r
-		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel",
-				_panel_style(sel2, COL_ACCENT if sel2 else _dim(0.22)))
-		var hb := HBoxContainer.new()
-		hb.add_theme_constant_override("separation", 14)
-		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
-		row.add_child(hb)
-		hb.add_child(_mk_label(String(g2.get("name", id2)), 15, COL_TEXT if owned else _dim(0.55)))
-		var desc := _mk_label(String(g2.get("desc", "")), 12, _dim(0.6))
-		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		hb.add_child(desc)
-		if owned:
-			hb.add_child(_mk_label("已拥有", 13, COL_OK))
-			hb.add_child(_mk_equip_btn(id2, _deploy_page, 2 + r))
-		else:
-			# 购买入口已统一迁到交易行（按 3 进）：未拥有只置灰展示，不可点击购买
-			hb.add_child(_mk_label("₵ " + _fmt(_to_int(g2.get("price", 0))), 13, _dim(0.4)))
-			hb.add_child(_mk_label("交易行有售", 11, _dim(0.4)))
-		row.gui_input.connect(_on_deploy_row_input.bind(_deploy_page, 2 + r))
-		main.add_child(row)
+		grid.add_child(_gun_card(first + r, 2 + r))
+	# 光标所指武器速览（数据条）
+	midc.add_child(_gun_brief(_deploy_sel_id()))
 
-	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流；
-	# 下挂一行消耗提示——实战吃库存极致备弹，与靶场免费弹划清界限）
+	# —— 右：出发（押上 / 保险 / 出发 CTA / 战绩）——
+	var right := _col(cols, 352)
+	right.add_child(_sec_head("出发", ""))
+	var risk_v: int = _stash.carried_value(_stash.loadout)
+	var rc := _card(false, Color(COL_LOW.r, COL_LOW.g, COL_LOW.b, 0.45))
+	var rv := _card_vbox(rc, 2)
+	rv.add_child(_mk_label("本次押上（阵亡/放弃即丢）", 13, _dim(0.6)))
+	rv.add_child(_mk_label("₵ " + _fmt(risk_v), 30, COL_LOW))
+	var rnote := _mk_label("主副武器（侦察手枪除外）· 所装瞄具与消音器 · 所带备弹", 12, _dim(0.55))
+	rnote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rv.add_child(rnote)
+	right.add_child(rc)
+	right.add_child(_insure_card(risk_v))
+	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流）
 	var di := 2 + rows
 	var dsel := _cur0 == di
-	var btn := _mk_btn("出发 · 实战行动", 17)
-	_style_btn(btn, dsel, COL_LOW if dsel else _dim(0.5), 60)
+	var btn := _mk_btn("出发 · 实战行动", 24)
+	btn.custom_minimum_size = Vector2(0, 66)
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_style_btn(btn, true, COL_LOW if dsel else Color(COL_LOW.r, COL_LOW.g, COL_LOW.b, 0.75), 20)
+	if dsel:
+		var hsb: StyleBoxFlat = btn.get_theme_stylebox("normal").duplicate()
+		hsb.bg_color = Color(0.38, 0.14, 0.06, 0.95)
+		hsb.set_border_width_all(3)
+		btn.add_theme_stylebox_override("normal", hsb)
 	btn.pressed.connect(_fire_deploy)
-	var bwrap := VBoxContainer.new()
-	bwrap.alignment = BoxContainer.ALIGNMENT_CENTER
-	bwrap.add_child(btn)
-	# 带入即风险（2026-10）：出发前讲清楚这一局押上了什么
-	var risk_v: int = _stash.carried_value(_stash.loadout)
-	var dnote := _mk_label("阵亡/放弃丢失：主副武器（侦察手枪除外）· 所装瞄具 · 所带备弹 —— 本次押上 ₵%s · 安全箱 %d 格保留" % [
-			_fmt(risk_v), _stash.secure_slots], 11, COL_LOW)
+	right.add_child(btn)
+	var dnote := _mk_label("25 分钟内撤出 · 实战消耗库存极致备弹", 12, _dim(0.55))
 	dnote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bwrap.add_child(dnote)
-	main.add_child(bwrap)
-	var hint := _mk_label("←/→ 选择 · ↑↓ 跨页 · 点击行=直接装备（未拥有指路按 3） · 回车/「装备」钮 装入聚焦槽 · 未拥有枪购买按 3 进交易行 · G 练习靶场（免费弹） · 1/2/3 切页签",
-			12, _dim(0.5))
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	main.add_child(hint)
+	right.add_child(dnote)
+	var rsp := Control.new()
+	rsp.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rsp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right.add_child(rsp)
+	right.add_child(_records_card())
 
-	# 右侧：光标所指武器速览（枪行光标要换算回全局枪表下标）
-	var sel_id := _deploy_sel_id()
-	var sg := Guns.gun_by_id(sel_id)
-	var owned_sel: bool = _stash.guns_owned.has(sel_id)
-	var side := VBoxContainer.new()
-	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side.add_theme_constant_override("separation", 8)
-	cols.add_child(side)
-	var info := PanelContainer.new()
-	info.add_theme_stylebox_override("panel", _panel_style(false, _dim(0.2)))
-	side.add_child(info)
-	var iv := VBoxContainer.new()
-	iv.add_theme_constant_override("separation", 4)
-	info.add_child(iv)
-	iv.add_child(_mk_label(String(sg.get("name", sel_id)), 16, COL_ACCENT))
-	var cd := float(sg.get("cd", 0.0))
+	var hint := _mk_label("鼠标：点卡片装备 · ◀▶ 翻页   键盘：←/→ 选择 · ↑↓ 跨页 · 回车 装入/出发 · I 投保 · 1/2/3 切页签 · G 靶场",
+			13, _dim(0.45))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pg.add_child(hint)
+
+
+## 出发页翻页（◀/▶ 钮）：光标回到当页第一把枪
+func _deploy_flip(d: int) -> void:
+	_deploy_page = posmod(_deploy_page + d, _deploy_pages())
+	_cur0 = 2
+	_refresh_all()
+
+
+## 主/副武器槽卡（聚焦槽 = 装入目标）：大字枪名 + 瞄具/消音器 + 耐久条 + 备弹
+func _slot_card(i: int) -> PanelContainer:
+	var key: String = ["primary", "secondary"][i]
+	var gid := str(_stash.loadout.get(key, ""))
+	var sel := _cur0 == i
+	var focus_here := _slot_focus == key
+	var card := _card(sel, COL_ACCENT if sel else (COL_OK.darkened(0.35) if focus_here else _dim(0.2)))
+	card.custom_minimum_size = Vector2(0, 150)
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.gui_input.connect(_on_deploy_row_input.bind(-1, i))
+	var vb := _card_vbox(card, 4)
+	var head := HBoxContainer.new()
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(_mk_label(["主武器 · 1", "副武器 · 2"][i], 13, COL_OK))
+	var hsp := Control.new()
+	hsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hsp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(hsp)
+	if focus_here:
+		head.add_child(_chip("装入此槽", COL_OK))
+	vb.add_child(head)
+	if gid == "":
+		vb.add_child(_mk_label("空槽", 24, _dim(0.45)))
+		var e := _mk_label("阵亡丢枪后留空 · 可单枪出发，选中后从中间装入", 12, _dim(0.55))
+		e.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(e)
+		return card
+	var g := Guns.gun_by_id(gid)
+	vb.add_child(_mk_label(String(g.get("name", gid)), 24, COL_ACCENT))
+	var att: Array = []
+	var sid := str(_stash.scope_fit.get(gid, "iron"))
+	if g.has("builtin_scope"):
+		att.append("自带 %.0f× 镜" % float(g["builtin_scope"].get("zoom", 1.0)))
+	elif sid != "iron":
+		att.append(String(Guns.scope_by_id(sid).get("name", sid)))
+	else:
+		att.append("机瞄")
+	if _stash.suppressed(gid):
+		att.append("消音器")
+	vb.add_child(_mk_label(" · ".join(PackedStringArray(att)), 14, COL_TEXT))
+	vb.add_child(_dur_row(gid))
+	vb.add_child(_mk_label("%s %d 发" % [HDData.AMMO_NAME, _stash.ammo_of(gid)], 13, HDData.AMMO_COLOR))
+	return card
+
+
+## 出发页候选枪卡：枪名 / 简介 / 状态 + 「装备」钮；点卡=选中+直接装备（既有链）
+func _gun_card(gi: int, cur_idx: int) -> PanelContainer:
+	var g: Dictionary = Guns.GUNS[gi]
+	var id2 := str(g["id"])
+	var owned: bool = _stash.guns_owned.has(id2)
+	var sel := _cur0 == cur_idx
+	var card := _card(sel, COL_ACCENT if sel else _dim(0.2))
+	card.custom_minimum_size = Vector2(0, 128)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.gui_input.connect(_on_deploy_row_input.bind(_deploy_page, cur_idx))
+	var vb := _card_vbox(card, 4)
+	vb.add_child(_mk_label(String(g.get("name", id2)), 20, COL_TEXT if owned else _dim(0.5)))
+	var desc := _mk_label(String(g.get("desc", "")), 13, _dim(0.55))
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.max_lines_visible = 2
+	vb.add_child(desc)
+	# 卡内速览：伤害 / 射速 数据条 + 已拥有枪的耐久
+	var mx := _gun_maxima()
+	var cd := float(g.get("cd", 0.0))
+	var dmg := float(g.get("dmg", 0.0)) * float(g.get("pellets", 1))
+	vb.add_child(_stat_row("伤害", dmg / mx["dmg"], "%.0f" % dmg))
+	vb.add_child(_stat_row("射速", ((1.0 / cd) if cd > 0.0 else 0.0) / mx["rate"],
+			"%.1f/s" % ((1.0 / cd) if cd > 0.0 else 0.0)))
+	if owned:
+		vb.add_child(_dur_row(id2))
+	var fill := Control.new()
+	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(fill)
+	var bot := HBoxContainer.new()
+	bot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(bot)
+	var st := ""
+	var stc := COL_OK
+	if str(_stash.loadout.get("primary", "")) == id2:
+		st = "主武器"
+	elif str(_stash.loadout.get("secondary", "")) == id2:
+		st = "副武器"
+	elif owned:
+		st = "已拥有"
+	else:
+		st = "₵ %s · 交易行有售" % _fmt(_to_int(g.get("price", 0)))
+		stc = _dim(0.45)
+	var stl := _mk_label(st, 13, stc)
+	stl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bot.add_child(stl)
+	if owned:
+		bot.add_child(_mk_equip_btn(id2, _deploy_page, cur_idx))
+	return card
+
+
+## 武器速览数据条（出发页光标所指 / 改枪台选中枪）：伤害 / 射速 / 弹匣 / 射程
+func _gun_brief(gid: String) -> PanelContainer:
+	var g := Guns.gun_by_id(gid)
+	var card := _card(false, _dim(0.16))
+	var vb := _card_vbox(card, 6)
+	var head := HBoxContainer.new()
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(_mk_label(String(g.get("name", gid)), 17, COL_ACCENT))
+	var hs := Control.new()
+	hs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hs.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(hs)
+	var owned: bool = _stash.guns_owned.has(gid)
+	head.add_child(_mk_label("已拥有" if owned else "₵ " + _fmt(_to_int(g.get("price", 0))),
+			14, COL_OK if owned else _dim(0.5)))
+	vb.add_child(head)
+	var mx := _gun_maxima()
+	var cd := float(g.get("cd", 0.0))
 	var rate := (1.0 / cd) if cd > 0.0 else 0.0
-	iv.add_child(_mk_label("伤害 %s · 射速 %.1f/s" % [str(sg.get("dmg", "--")), rate],
-			12, COL_TEXT))
-	iv.add_child(_mk_label("弹匣 %s · 射程 %sm · 单价 ₵%d/发" % [
-			str(sg.get("mag", "--")), str(sg.get("range", "--")),
-			_to_int(HDData.AMMO_PRICE.get(sel_id, 0))], 12, COL_TEXT))
-	var price2 := _to_int(sg.get("price", 0))
-	iv.add_child(_mk_label("身价：" + ("已拥有" if owned_sel else "₵ " + _fmt(price2)),
-			12, COL_OK))
-	# 极致备弹行（金色标识，只读）：余量来自 stash 库存（首读缺键即送满额礼物）；
-	# 购买入口统一在交易行③区（B 换挡 空格 购买），出发页不再消费 B/空格；
-	# 尾注报键位补「想买弹无路标」断裂——摸底指出出发页看得到余量却不知去哪买
-	var ammo_n: int = _stash.ammo_of(sel_id)
-	iv.add_child(_mk_label("%s 余 %d 发 · 买弹按 3 进交易行" % [HDData.AMMO_NAME, ammo_n],
+	var dmg := float(g.get("dmg", 0.0)) * float(g.get("pellets", 1))
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 22)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(grid)
+	for row in [["伤害", dmg / mx["dmg"], "%.0f" % dmg], ["射速", rate / mx["rate"], "%.1f/s" % rate],
+			["弹匣", float(g.get("mag", 0)) / mx["mag"], str(g.get("mag", "--"))],
+			["射程", float(g.get("range", 0)) / mx["range"], "%sm" % str(g.get("range", "--"))]]:
+		grid.add_child(_stat_row(str(row[0]), float(row[1]), str(row[2])))
+	vb.add_child(_mk_label("单价 ₵%d/发 · %s 余 %d 发 · 买弹按 3 进交易行" % [
+			_to_int(HDData.AMMO_PRICE.get(gid, 0)), HDData.AMMO_NAME, _stash.ammo_of(gid)],
 			13, HDData.AMMO_COLOR))
+	return card
+
+
+## 全枪册各项最大值（数据条归一化用）
+func _gun_maxima() -> Dictionary:
+	var mx := {"dmg": 1.0, "rate": 1.0, "mag": 1.0, "range": 1.0}
+	for g in Guns.GUNS:
+		var cd := float(g.get("cd", 0.0))
+		mx["dmg"] = maxf(mx["dmg"], float(g.get("dmg", 0.0)) * float(g.get("pellets", 1)))
+		mx["rate"] = maxf(mx["rate"], (1.0 / cd) if cd > 0.0 else 0.0)
+		mx["mag"] = maxf(mx["mag"], float(g.get("mag", 0)))
+		mx["range"] = maxf(mx["range"], float(g.get("range", 0)))
+	return mx
+
+
+func _stat_row(name: String, frac: float, val: String) -> HBoxContainer:
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var nl := _mk_label(name, 13, _dim(0.6))
+	nl.custom_minimum_size = Vector2(34, 0)
+	hb.add_child(nl)
+	var bar := Bar.new()
+	bar.frac = frac
+	bar.col = COL_ACCENT
+	bar.custom_minimum_size = Vector2(120, 8)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(bar)
+	var vl := _mk_label(val, 13, COL_TEXT)
+	vl.custom_minimum_size = Vector2(54, 0)
+	vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hb.add_child(vl)
+	return hb
+
+
+## 耐久行：数据条（≥60 绿 / 25–60 黄 / <25 红）+ 百分比
+func _dur_row(gid: String) -> HBoxContainer:
+	var d: float = _stash.dur_of(gid)
+	var col := COL_OK if d >= HDData.DUR_WORN else (COL_ACCENT if d >= HDData.JAM_DUR else COL_LOW)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(_mk_label("耐久", 13, _dim(0.6)))
+	var bar := Bar.new()
+	bar.frac = d / 100.0
+	bar.col = col
+	bar.custom_minimum_size = Vector2(100, 8)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(bar)
+	hb.add_child(_mk_label("%d%%" % int(d), 13, col))
+	return hb
+
+
+## 保险卡（点击/按 I 勾选）：付押上价值 30%，阵亡每件 50% 概率退回
+func _insure_card(risk_v: int) -> PanelContainer:
+	var ip: int = _stash.insurance_price(_stash.loadout)
+	var affordable: bool = ip > 0 and _stash.cash >= ip
+	if not affordable:
+		_insure = false
+	var card := _card(_insure, COL_OK if _insure else _dim(0.22))
+	card.gui_input.connect(_on_insure_input)
+	var vb := _card_vbox(card, 2)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(_mk_label("☑" if _insure else "☐", 22, COL_OK if _insure else _dim(0.55)))
+	var tl := _mk_label("投保 ₵%s" % _fmt(ip) if ip > 0 else "无需投保", 18,
+			COL_OK if _insure else (COL_TEXT if affordable else _dim(0.45)))
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(tl)
+	row.add_child(_chip("按 I", _dim(0.6)))
+	vb.add_child(row)
+	var sub := "付押上价值的 30% · 阵亡时每件装备 50% 概率退回"
+	if risk_v <= 0:
+		sub = "只带侦察手枪出发：没有可保的装备"
+	elif not affordable:
+		sub = "现金不足（需 ₵%s）· 阵亡时每件 50%% 概率退回" % _fmt(ip)
+	var sl := _mk_label(sub, 12, _dim(0.55))
+	sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(sl)
+	return card
+
+
+func _on_insure_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_toggle_insure()
+
+
+func _toggle_insure() -> void:
+	var ip: int = _stash.insurance_price(_stash.loadout)
+	if ip <= 0:
+		show_hint("只带侦察手枪出发：没有可保的装备")
+		_insure = false
+	elif not _insure and _stash.cash < ip:
+		show_hint("现金不足：投保需 ₵%s，现有 ₵%s" % [_fmt(ip), _fmt(maxi(0, _stash.cash))])
+	else:
+		_insure = not _insure
+		show_hint(("已投保 · 出发时扣 ₵%s · 阵亡每件 50%% 概率退回" % _fmt(ip)) if _insure
+				else "已取消投保")
+	_refresh_all()
+
+
+## 本局情报：撤离点开放规则 / 局内事件 / 首领 —— 出发前就知道这张图会发生什么
+func _intel_card() -> PanelContainer:
+	var card := _card(false, _dim(0.16))
+	var vb := _card_vbox(card, 3)
+	vb.add_child(_mk_label("本局情报", 14, COL_OK))
+	for ln in [
+		["撤离", "主撤离常开 · 大坝 12:00 后 · 付费/拉闸随机出现"],
+		["10:00", "空投（红烟标记）· 守军增援赶来"],
+		["对手", "搜刮者 2 队 × 3 人 · 抢箱子也打守军"],
+		["首领", "军火商（中心）· 坝区指挥官（大坝）"],
+	]:
+		var hb := HBoxContainer.new()
+		hb.add_theme_constant_override("separation", 8)
+		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var k := _mk_label(str(ln[0]), 12, COL_ACCENT)
+		k.custom_minimum_size = Vector2(40, 0)
+		hb.add_child(k)
+		var v := _mk_label(str(ln[1]), 12, _dim(0.62))
+		v.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hb.add_child(v)
+		vb.add_child(hb)
+	return card
+
+
+## 战绩卡（衡量指标：撤离率 40–60%、平均局时 12–20 分钟）
+func _records_card() -> PanelContainer:
+	var st: Dictionary = _stash.stats
+	var raids := maxi(0, int(st.get("raids", 0)))
+	var ex := maxi(0, int(st.get("extracts", 0)))
+	var avg := int(st.get("time_total", 0)) / raids if raids > 0 else 0
+	var card := _card(false, _dim(0.16))
+	var vb := _card_vbox(card, 6)
+	vb.add_child(_mk_label("战绩", 14, COL_OK))
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 18)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(grid)
+	var cells := [
+		["出击", str(raids)], ["撤离", str(ex)], ["阵亡", str(maxi(0, int(st.get("deaths", 0))))],
+		["击杀", str(maxi(0, int(st.get("kills", 0))))],
+		["撤离率", ("%d%%" % int(round(100.0 * float(ex) / float(raids)))) if raids > 0 else "--"],
+		["平均局时", ("%d:%02d" % [avg / 60, avg % 60]) if raids > 0 else "--"],
+	]
+	for c in cells:
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", -2)
+		cv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cv.add_child(_mk_label(str(c[1]), 26, COL_TEXT))
+		cv.add_child(_mk_label(str(c[0]), 12, _dim(0.5)))
+		grid.add_child(cv)
+	return card
 
 
 ## 出发页行内「装备」键两态（只发给已拥有枪）：已在主/副任一槽=「已装备」置灰
@@ -640,8 +981,10 @@ func _fire_deploy() -> void:
 		_refresh_all()
 		show_hint("出发配置里有已丢失的枪械，已调整 —— 再确认一次")
 		return
+	var ins := _insure and _stash.insurance_price(_stash.loadout) > 0 \
+			and _stash.cash >= _stash.insurance_price(_stash.loadout)
 	hide_lobby()
-	deploy_requested.emit({"primary": p, "secondary": s})
+	deploy_requested.emit({"primary": p, "secondary": s, "insured": ins})
 
 
 func _fire_range() -> void:
@@ -683,16 +1026,16 @@ func _render_warehouse_strip(pg: VBoxContainer) -> void:
 	whead.add_child(wsp)
 	whead.add_child(_mk_label("总资产 ₵%s（含现金） · 仓库 %d/%d 格" % [
 			_fmt(items_sum + maxi(0, _stash.cash)), items.size(), HDData.BACKPACK_MAX],
-			12, COL_ACCENT))
+			14, COL_ACCENT))
 	# 安全箱扩容（2026-10 带入即风险：阵亡保留格数，2 → 4）
 	var up_price: int = _stash.secure_up_price()
 	var sbtn := _mk_btn(("U · 安全箱扩容 %d→%d 格 ₵%s" % [_stash.secure_slots,
 			_stash.secure_slots + 1, _fmt(up_price)]) if up_price > 0 else
-			"安全箱已满 %d 格" % _stash.secure_slots, 12)
+			"安全箱已满 %d 格" % _stash.secure_slots, 14)
 	_style_btn(sbtn, up_price > 0, COL_OK if up_price > 0 else _dim(0.3), 14)
 	sbtn.pressed.connect(_buy_secure)
 	whead.add_child(sbtn)
-	var sell := _mk_btn("Enter 一键变卖全部", 12)
+	var sell := _mk_btn("Enter 一键变卖全部", 14)
 	_style_btn(sell, not items.is_empty(), COL_ACCENT if not items.is_empty() else _dim(0.3), 14)
 	sell.pressed.connect(_sell_all)
 	whead.add_child(sell)
@@ -735,7 +1078,7 @@ func _loot_cell(it: Dictionary) -> PanelContainer:
 	var rar: Dictionary = HDData.RARITY[rid]
 	var rcol: Color = rar["color"]
 	var cell := PanelContainer.new()
-	cell.custom_minimum_size = Vector2(140, 44)
+	cell.custom_minimum_size = Vector2(150, 46)
 	var sb := _panel_style(false, rcol, 4)
 	sb.bg_color = Color(0.05 + rcol.r * 0.1, 0.07 + rcol.g * 0.1, 0.06 + rcol.b * 0.1, 0.8)
 	cell.add_theme_stylebox_override("panel", sb)
@@ -744,11 +1087,11 @@ func _loot_cell(it: Dictionary) -> PanelContainer:
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到格卡片（切④段）
 	cell.add_child(hb)
 	hb.add_child(_mk_label(HDData.norm_icon(String(it.get("icon", ""))), 16, rcol))
-	var nm := _mk_label(String(it.get("name", "战利品")), 11, rcol)
+	var nm := _mk_label(String(it.get("name", "战利品")), 13, rcol)
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	hb.add_child(nm)
-	hb.add_child(_mk_label("₵ " + _fmt(_to_int(it.get("value", 0))), 11, COL_OK))
+	hb.add_child(_mk_label("₵ " + _fmt(_to_int(it.get("value", 0))), 13, COL_OK))
 	return cell
 
 
@@ -792,19 +1135,27 @@ func _render_bench(pg: VBoxContainer) -> void:
 	_scope_idx = posmod(_scope_idx, entries.size())
 
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 16)
+	cols.add_theme_constant_override("separation", 20)
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pg.add_child(cols)
 
-	# 左列：枪械（↑↓ 选枪）；行尾 tag 显示真实装配状态——自带镜枪=自带 N×（与
-	# 局内 _scope_for/scope_zoom 的 builtin 优先语义一致）/已装 X 镜/机瞄
-	var left := VBoxContainer.new()
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.add_theme_constant_override("separation", 6)
-	cols.add_child(left)
-	left.add_child(_mk_label("枪械（↑↓ 选枪）", 12, COL_OK))
+	# 左列：枪械（↑↓ 选枪，滚动列表）；行尾 tag 显示真实装配状态——自带镜枪=自带 N×
+	# （与局内 _scope_for/scope_zoom 的 builtin 优先语义一致）/已装 X 镜/机瞄
+	var left := _col(cols, 300)
+	left.add_child(_sec_head("枪械", "↑↓ 选枪"))
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	left.add_child(scroll)
+	var lv := VBoxContainer.new()
+	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lv.add_theme_constant_override("separation", 6)
+	scroll.add_child(lv)
+	var sel_card: Control = null
 	for i in guns.size():
 		var g: Dictionary = guns[i]
 		var id2 := str(g["id"])
+		var owned: bool = _stash.guns_owned.has(id2)
 		var tag := "机瞄"
 		if g.has("builtin_scope"):
 			tag = "自带 %.0f×" % float(g["builtin_scope"].get("zoom", 1.0))
@@ -812,93 +1163,283 @@ func _render_bench(pg: VBoxContainer) -> void:
 			var sc := Guns.scope_by_id(str(_stash.scope_fit.get(id2, "")))
 			if not sc.is_empty():
 				tag = String(sc.get("name", "已装镜"))
+		if _stash.suppressed(id2):
+			tag += " · 消音"
 		var sel := _bench_col == 0 and i == _gun_idx
-		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel",
-				_panel_style(sel, COL_ACCENT if sel else _dim(0.22)))
+		var row := _card(sel, COL_ACCENT if sel else (_dim(0.3) if i == _gun_idx else _dim(0.16)), 7)
+		row.gui_input.connect(_on_bench_row_input.bind(0, i))
 		var hb := HBoxContainer.new()
-		hb.add_theme_constant_override("separation", 10)
-		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
+		hb.add_theme_constant_override("separation", 8)
+		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(hb)
-		hb.add_child(_mk_label(String(g.get("name", id2)), 14, COL_TEXT))
+		hb.add_child(_mk_label(String(g.get("name", id2)), 15,
+				(COL_ACCENT if i == _gun_idx else COL_TEXT) if owned else _dim(0.42)))
 		var sp := Control.new()
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 弹性占位不截胡点击
+		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		hb.add_child(sp)
-		hb.add_child(_mk_label(tag, 12, COL_OK))
-		row.gui_input.connect(_on_bench_row_input.bind(0, i))
-		left.add_child(row)
+		hb.add_child(_mk_label(tag if owned else "未拥有", 12, COL_OK if owned else _dim(0.4)))
+		lv.add_child(row)
+		if i == _gun_idx:
+			sel_card = row
+	if sel_card != null:
+		scroll.ensure_control_visible.call_deferred(sel_card)
 
-	# 右列：瞄具列表（机瞄/五镜），现金常显在标题，钱不足一眼可见
-	var right := VBoxContainer.new()
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right.add_theme_constant_override("separation", 6)
-	cols.add_child(right)
+	# 中列：3D 枪械预览（拖动旋转）+ 数据条 + 维护（耐久维修 / 消音器）
+	var midc := VBoxContainer.new()
+	midc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	midc.add_theme_constant_override("separation", 10)
+	cols.add_child(midc)
+	var pv_card := _card(false, _dim(0.16), 6)
+	pv_card.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	pv_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var pvv := VBoxContainer.new()
+	pvv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pv_card.add_child(pvv)
+	midc.add_child(pv_card)   # 先进树：预览枪模量包围盒/摆相机都在树内做
+	var pvh := HBoxContainer.new()
+	pvh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pvv.add_child(pvh)
+	pvh.add_child(_mk_label(String(gun.get("name", gun_id)), 22, COL_ACCENT))
+	var pvs := Control.new()
+	pvs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pvs.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pvh.add_child(pvs)
+	pvh.add_child(_mk_label("拖动旋转", 12, _dim(0.45)))
+	_ensure_preview()
+	_pv_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pvv.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pvv.add_child(_pv_box)
+	_update_preview(gun_id)
+	midc.add_child(_gun_brief(gun_id))
+	var svc := HBoxContainer.new()
+	svc.add_theme_constant_override("separation", 10)
+	midc.add_child(svc)
+	svc.add_child(_repair_card(gun_id))
+	svc.add_child(_sup_card(gun_id))
+
+	# 右列：瞄具（机瞄/五镜），现金常显在标题，钱不足一眼可见
+	var right := _col(cols, 380)
 	var is_builtin: bool = gun.has("builtin_scope")
-	var title := "瞄具 —— 为「%s」选配（现金 ₵%s）" % [
-			String(gun.get("name", gun_id)), _fmt(maxi(0, _stash.cash))]
+	right.add_child(_sec_head("瞄具", "现金 ₵%s" % _fmt(maxi(0, _stash.cash))))
 	if is_builtin:
-		title += "（自带 %.0f× 原厂镜 · 不可改装）" % float(gun["builtin_scope"].get("zoom", 1.0))
-	right.add_child(_mk_label(title, 12, COL_OK))
+		right.add_child(_mk_label("「%s」自带 %.0f× 原厂镜 · 不可改装" % [
+				String(gun.get("name", gun_id)), float(gun["builtin_scope"].get("zoom", 1.0))],
+				13, _dim(0.6)))
 	for i in entries.size():
 		var e: Dictionary = entries[i]
 		var sid := str(e["id"])
 		var sel2 := _bench_col == 1 and i == _scope_idx
-		var row2 := PanelContainer.new()
-		row2.add_theme_stylebox_override("panel",
-				_panel_style(sel2, COL_ACCENT if sel2 else _dim(0.22)))
+		var row2 := _card(sel2, COL_ACCENT if sel2 else _dim(0.18), 7)
+		row2.custom_minimum_size = Vector2(0, 58)
+		row2.gui_input.connect(_on_bench_row_input.bind(1, i))
 		var hb2 := HBoxContainer.new()
-		hb2.add_theme_constant_override("separation", 10)
-		hb2.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
+		hb2.add_theme_constant_override("separation", 8)
+		hb2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row2.add_child(hb2)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", 0)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hb2.add_child(tv)
 		var unowned_sc: bool = sid != "iron" and not _stash.owns_scope(sid)
-		hb2.add_child(_mk_label(String(e.get("name", sid)), 14,
-				_dim(0.5) if unowned_sc else COL_TEXT))
+		tv.add_child(_mk_label(String(e.get("name", sid)), 16, _dim(0.5) if unowned_sc else COL_TEXT))
 		# 自带镜枪的机瞄行=原厂镜在位：默认文案「回车卸下」与守卫拦截矛盾，就地改写
 		var desc_txt := String(e.get("desc", ""))
 		if is_builtin and sid == "iron":
 			desc_txt = "原厂镜在位（默认）"
-		var desc := _mk_label(desc_txt, 12, _dim(0.6))
-		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		hb2.add_child(desc)
-		hb2.add_child(_mk_label(_scope_tag(gun_id, sid, e), 12, _scope_tag_col(gun_id, sid)))
-		hb2.add_child(_mk_bench_action(gun_id, e, i))
-		row2.gui_input.connect(_on_bench_row_input.bind(1, i))
+		var desc := _mk_label(desc_txt, 12, _dim(0.55))
+		desc.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		desc.custom_minimum_size = Vector2(150, 0)
+		tv.add_child(desc)
+		var tg := _mk_label(_scope_tag(gun_id, sid, e), 12, _scope_tag_col(gun_id, sid))
+		tg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hb2.add_child(tg)
+		var act := _mk_bench_action(gun_id, e, i)
+		act.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hb2.add_child(act)
 		right.add_child(row2)
+	right.add_child(_mk_label("已拥有瞄具 %d/%d · 单持：同镜装他枪自动卸下" % [
+			_stash.scopes_owned.size(), Guns.SCOPES.size()], 12, _dim(0.5)))
 
-	# 右列底部死区：当前装配摘要面板（装配状态一目了然 + 单持语义说明）
-	var gap := Control.new()
-	gap.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right.add_child(gap)
-	var fit_sid := str(_stash.scope_fit.get(gun_id, "iron"))
-	var fit_txt := "机瞄（未装镜 · 1.0×）"
-	if is_builtin:
-		fit_txt = "自带 %s · %.0f×（不可改装）" % [
-				str(gun["builtin_scope"].get("name", "原厂镜")),
-				float(gun["builtin_scope"].get("zoom", 1.0))]
-	elif fit_sid != "iron":
-		var fsc := Guns.scope_by_id(fit_sid)
-		if not fsc.is_empty():
-			fit_txt = "%s · %.1f×" % [str(fsc.get("name", fit_sid)), float(fsc.get("zoom", 1.0))]
-	var sum_panel := PanelContainer.new()
-	sum_panel.add_theme_stylebox_override("panel", _panel_style(false, _dim(0.2)))
-	right.add_child(sum_panel)
-	var sv := VBoxContainer.new()
-	sv.add_theme_constant_override("separation", 4)
-	sv.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到面板卡片
-	sum_panel.add_child(sv)
-	sv.add_child(_mk_label("当前装配", 12, COL_OK))
-	sv.add_child(_mk_label("%s · 瞄具：%s" % [String(gun.get("name", gun_id)), fit_txt],
-			13, COL_TEXT))
-	sv.add_child(_mk_label("已拥有瞄具 %d/%d" % [
-			_stash.scopes_owned.size(), Guns.SCOPES.size()], 12, COL_TEXT))
-	sv.add_child(_mk_label("单持：同镜装他枪自动卸下", 11, _dim(0.5)))
-
-	var hint := _mk_label("←→ 换列 · ↑↓ 选项 · 回车/行内按钮 换装·卸下（瞄具单持：同镜装他枪自动卸下） · 未拥有瞄具点『去购买』直达交易行（按 3） · 点击行=直接装备",
-			12, _dim(0.5))
+	var hint := _mk_label("鼠标：点枪 / 点镜直接装备 · 拖动预览旋转   键盘：←→ 换列 · ↑↓ 选 · 回车 换装 · R 维修 · V 消音器",
+			13, _dim(0.45))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
+
+
+## 维修卡：耐久条 + 「R · 维修 ₵N」（满耐久/未拥有置灰）
+func _repair_card(gid: String) -> PanelContainer:
+	var owned: bool = _stash.guns_owned.has(gid)
+	var card := _card(false, _dim(0.16))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var vb := _card_vbox(card, 6)
+	vb.add_child(_mk_label("耐久 · 维修", 14, COL_OK))
+	if not owned:
+		vb.add_child(_mk_label("未拥有", 13, _dim(0.45)))
+		return card
+	vb.add_child(_dur_row(gid))
+	var price: int = _stash.repair_price(gid)
+	var b := _mk_btn(("R · 维修 ₵%s" % _fmt(price)) if price > 0 else "耐久已满", 14)
+	_style_btn(b, price > 0, COL_ACCENT if price > 0 else _dim(0.3), 14)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	b.pressed.connect(_repair_sel)
+	vb.add_child(b)
+	vb.add_child(_mk_label("低于 60% 变散 · 低于 25% 会卡壳", 11, _dim(0.45)))
+	return card
+
+
+## 消音器卡：未买「V · 购买 ₵1,200」/ 已买「V · 拆下 / 装上」/ 霰弹枪不能装
+func _sup_card(gid: String) -> PanelContainer:
+	var owned: bool = _stash.guns_owned.has(gid)
+	var on: bool = _stash.suppressed(gid)
+	var card := _card(on, COL_OK if on else _dim(0.16))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var vb := _card_vbox(card, 6)
+	vb.add_child(_mk_label("消音器" + (" · 已装" if on else ""), 14, COL_OK))
+	if not _stash.sup_allowed(gid):
+		vb.add_child(_mk_label("该枪不能装消音器", 13, _dim(0.45)))
+		return card
+	if not owned:
+		vb.add_child(_mk_label("先在交易行买枪", 13, _dim(0.45)))
+		return card
+	var bought: bool = _stash.sup_owned.has(gid)
+	var b := _mk_btn("V · 拆下" if on else ("V · 装上" if bought else
+			"V · 购买 ₵%s" % _fmt(HDData.SUP_PRICE)), 14)
+	_style_btn(b, not on, COL_OK if on else COL_ACCENT, 14)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	b.pressed.connect(_sup_sel)
+	vb.add_child(b)
+	vb.add_child(_mk_label("枪声惊动 60→20 m · 伤害 ×0.92 · 随枪丢", 11, _dim(0.45)))
+	return card
+
+
+## 改枪台 R：维修当前选中枪
+func _repair_sel() -> void:
+	var gid := str(Guns.GUNS[posmod(_gun_idx, Guns.GUNS.size())]["id"])
+	var name := String(Guns.gun_by_id(gid).get("name", gid))
+	if not _stash.guns_owned.has(gid):
+		show_hint("「%s」未拥有" % name)
+		return
+	var price: int = _stash.repair_price(gid)
+	if price <= 0:
+		show_hint("「%s」耐久已满" % name)
+		return
+	if _stash.repair(gid):
+		show_hint("已维修「%s」耐久 100%% −₵%s" % [name, _fmt(price)])
+	else:
+		show_hint("现金不足：维修需 ₵%s，现有 ₵%s" % [_fmt(price), _fmt(maxi(0, _stash.cash))])
+
+
+## 改枪台 V：消音器 购买 / 拆装（当前选中枪）
+func _sup_sel() -> void:
+	var gid := str(Guns.GUNS[posmod(_gun_idx, Guns.GUNS.size())]["id"])
+	var name := String(Guns.gun_by_id(gid).get("name", gid))
+	if not _stash.sup_allowed(gid):
+		show_hint("「%s」不能装消音器" % name)
+	elif not _stash.guns_owned.has(gid):
+		show_hint("「%s」未拥有 —— 按 3 进交易行购买" % name)
+	elif _stash.sup_owned.has(gid):
+		var on: bool = _stash.toggle_sup(gid)
+		show_hint("「%s」消音器已%s" % [name, "装上 · 枪声只惊动 20 m 内" if on else "拆下"])
+	elif _stash.buy_sup(gid):
+		show_hint("已为「%s」购买并装上消音器 −₵%s" % [name, _fmt(HDData.SUP_PRICE)])
+	else:
+		show_hint("现金不足：消音器需 ₵%s，现有 ₵%s" % [_fmt(HDData.SUP_PRICE), _fmt(maxi(0, _stash.cash))])
+
+
+## ---- 改枪台 3D 预览（SubViewport 独立世界：转台灯光 + 当前枪模，拖动旋转）----
+## 预览控件常驻复用（_refresh_all 每次重建页面前先摘下来）；枪模按「枪|镜|消音」
+## 键缓存，换枪/换镜/装消音器才重建
+func _ensure_preview() -> void:
+	if _pv_box != null:
+		return
+	_pv_box = SubViewportContainer.new()
+	_pv_box.stretch = true
+	_pv_box.custom_minimum_size = Vector2(0, 236)
+	_pv_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pv_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	_pv_box.mouse_default_cursor_shape = Control.CURSOR_DRAG
+	_pv_box.gui_input.connect(_on_preview_input)
+	_pv_vp = SubViewport.new()
+	_pv_vp.own_world_3d = true
+	_pv_vp.transparent_bg = true
+	_pv_vp.msaa_3d = Viewport.MSAA_4X
+	_pv_box.add_child(_pv_vp)
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CLEAR_COLOR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.62, 0.64, 0.6)
+	env.ambient_light_energy = 0.75
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	var we := WorldEnvironment.new()
+	we.environment = env
+	_pv_vp.add_child(we)
+	for ld in [[Vector3(-32, 38, 0), 1.7, Color(1.0, 0.95, 0.88)],
+			[Vector3(-12, -140, 0), 0.9, Color(0.75, 0.85, 1.0)],
+			[Vector3(-70, 160, 0), 0.35, Color(1, 1, 1)]]:
+		var dl := DirectionalLight3D.new()
+		dl.rotation_degrees = ld[0]
+		dl.light_energy = float(ld[1])
+		dl.light_color = ld[2]
+		_pv_vp.add_child(dl)
+	_pv_pivot = Node3D.new()
+	_pv_vp.add_child(_pv_pivot)
+	_pv_cam = Camera3D.new()
+	_pv_cam.fov = 26.0
+	_pv_vp.add_child(_pv_cam)
+	_pv_cam.current = true
+
+
+func _update_preview(gid: String) -> void:
+	var key := "%s|%s|%s" % [gid, str(_stash.scope_fit.get(gid, "iron")), str(_stash.suppressed(gid))]
+	if key == _pv_key:
+		return
+	_pv_key = key
+	for c in _pv_pivot.get_children():
+		_pv_pivot.remove_child(c)
+		c.queue_free()
+	if not gun_preview_provider.is_valid():
+		return
+	var gun: Node3D = gun_preview_provider.call(gid)
+	if gun == null:
+		return
+	_pv_pivot.add_child(gun)
+	var bb := _aabb_of(gun)
+	gun.position = -bb.get_center()
+	# 侧视转台：相机在 +X 侧平视枪身，按枪长取距离（横向视场约 50°，留 15% 边）
+	var length := maxf(bb.size.z, maxf(bb.size.x, bb.size.y))
+	var d := length * 1.2 + 0.2
+	var cp := Vector3(d, length * 0.16, 0.0)
+	_pv_cam.transform = Transform3D(Basis.looking_at(-cp, Vector3.UP), cp)
+
+
+func _aabb_of(root: Node3D) -> AABB:
+	var out := AABB()
+	var first := true
+	for mi_v in root.find_children("*", "MeshInstance3D", true, false):
+		var mi := mi_v as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var xf := Transform3D.IDENTITY   # 相对 root 的变换（逐级往上乘，不依赖进树）
+		var n: Node = mi
+		while n != null and n != root:
+			if n is Node3D:
+				xf = (n as Node3D).transform * xf
+			n = n.get_parent()
+		var bb: AABB = xf * mi.mesh.get_aabb()
+		out = bb if first else out.merge(bb)
+		first = false
+	return out
+
+
+func _on_preview_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			_pv_drag = mb.pressed
+	elif event is InputEventMouseMotion and _pv_drag:
+		_pv_yaw += (event as InputEventMouseMotion).relative.x * 0.012
 
 
 ## 改枪台右列行内动作：自带镜枪=置灰「原厂镜专属」标签（守卫拦截换装，光标域 1+5 不变）·
@@ -1040,13 +1581,6 @@ func _goto_market_scope(idx: int) -> void:
 
 # ================= 交易行页 =================
 
-## 交易行 = 全游戏唯一购买入口 + 仓库去向（页签 3）。四段分区：
-## ① 枪械（GUNS 全表列出，含未拥有）② 瞄具（机瞄+五镜共 6 档，多枪通用·单持）
-## ③ 极致备弹（选枪 + 挡位购买）④ 仓库·战利品（原仓库页并入，变卖在此成交）。
-## 光标沿用既有模型：←/→ 跨段（同改枪台换列，域 4 回绕）· 段内 ↑↓ 选条目
-## （③ 区条目=购弹对象枪；④ 段无条目 no-op）·
-## 回车/行内「购买」钮成交（buy_gun/buy_scope/buy_ammo/sell_all 既有链）；
-## 鼠标点击行=只选中。B/空格只在③区内消费（见 handle_key 分级守卫）
 func _render_market(pg: VBoxContainer) -> void:
 	var guns: Array = Guns.GUNS
 	_market_gun = posmod(_market_gun, guns.size())
@@ -1055,46 +1589,56 @@ func _render_market(pg: VBoxContainer) -> void:
 	_market_scope = posmod(_market_scope, entries.size())
 
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 16)
+	cols.add_theme_constant_override("separation", 20)
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pg.add_child(cols)
 
-	# ① 枪械区（左列）：已拥有置灰「已拥有」· 未拥有「₵N + 购买」钮
+	# ① 枪械区（左，4 列卡片网格）：已拥有置灰「已拥有」· 未拥有「₵N + 购买」钮
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.size_flags_stretch_ratio = 1.15
-	left.add_theme_constant_override("separation", 4)
+	left.size_flags_stretch_ratio = 1.35
+	left.add_theme_constant_override("separation", 8)
 	cols.add_child(left)
-	left.add_child(_mk_sec_title(0, "① 枪械 · %d 把（↑↓ 选 · 回车/「购买」钮成交）" % guns.size()))
+	left.add_child(_mk_sec_title(0, "① 枪械 · %d 把" % guns.size()))
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	left.add_child(grid)
 	for i in guns.size():
 		var mg: Dictionary = guns[i]
 		var mid := str(mg["id"])
 		var mowned: bool = _stash.guns_owned.has(mid)
 		var msel := _market_sec == 0 and i == _market_gun
-		var mrow := PanelContainer.new()
-		mrow.add_theme_stylebox_override("panel",
-				_panel_style(msel, COL_ACCENT if msel else _dim(0.22), 3))
-		var mhb := HBoxContainer.new()
-		mhb.add_theme_constant_override("separation", 10)
-		mhb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
-		mrow.add_child(mhb)
-		mhb.add_child(_mk_label(String(mg.get("name", mid)), 13,
-				_dim(0.45) if mowned else COL_TEXT))
-		var msp := Control.new()
-		msp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		msp.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 弹性占位不截胡点击
-		mhb.add_child(msp)
-		if mowned:
-			mhb.add_child(_mk_label("已拥有", 12, _dim(0.4)))
-		else:
-			mhb.add_child(_mk_label("₵ " + _fmt(_to_int(mg.get("price", 0))), 12, COL_ACCENT))
-			mhb.add_child(_mk_market_buy_btn(0, i))
+		var mrow := _card(msel, COL_ACCENT if msel else _dim(0.18), 6)
+		mrow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mrow.custom_minimum_size = Vector2(0, 66)
 		mrow.gui_input.connect(_on_market_row_input.bind(0, i))
-		left.add_child(mrow)
+		var mv := VBoxContainer.new()
+		mv.add_theme_constant_override("separation", 2)
+		mv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mrow.add_child(mv)
+		var nm := _mk_label(String(mg.get("name", mid)), 14, _dim(0.45) if mowned else COL_TEXT)
+		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		mv.add_child(nm)
+		var mhb := HBoxContainer.new()
+		mhb.add_theme_constant_override("separation", 6)
+		mhb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mv.add_child(mhb)
+		if mowned:
+			mhb.add_child(_mk_label("已拥有", 13, _dim(0.4)))
+		else:
+			var pl := _mk_label("₵ " + _fmt(_to_int(mg.get("price", 0))), 14, COL_ACCENT)
+			pl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			pl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			mhb.add_child(pl)
+			mhb.add_child(_mk_market_buy_btn(0, i))
+		grid.add_child(mrow)
 
-	# 右列：② 瞄具区 + ③ 极致备弹区
+	# 右列：② 瞄具区 + ③ 极致备弹区 + ⑤ M14 配件
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right.add_theme_constant_override("separation", 4)
+	right.add_theme_constant_override("separation", 6)
 	cols.add_child(right)
 
 	# ② 瞄具区：机瞄行默认拥有仅展示；五镜已拥有置灰 / 未拥有「购买」
@@ -1104,89 +1648,82 @@ func _render_market(pg: VBoxContainer) -> void:
 		var msid := str(me["id"])
 		var msowned: bool = _stash.owns_scope(msid)
 		var mssel := _market_sec == 1 and i == _market_scope
-		var msrow := PanelContainer.new()
-		msrow.add_theme_stylebox_override("panel",
-				_panel_style(mssel, COL_ACCENT if mssel else _dim(0.22), 4))
+		var msrow := _card(mssel, COL_ACCENT if mssel else _dim(0.18), 4)
+		msrow.custom_minimum_size = Vector2(0, 42)
+		msrow.gui_input.connect(_on_market_row_input.bind(1, i))
 		var mshb := HBoxContainer.new()
 		mshb.add_theme_constant_override("separation", 8)
-		mshb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到行卡片
+		mshb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		msrow.add_child(mshb)
-		mshb.add_child(_mk_label(String(me.get("name", msid)), 13,
+		mshb.add_child(_mk_label(String(me.get("name", msid)), 15,
 				_dim(0.45) if msowned else COL_TEXT))
-		mshb.add_child(_mk_label("默认 · 多枪通用" if msid == "iron" else "多枪通用 · 单持",
-				11, _dim(0.5)))
-		var mssp := Control.new()
-		mssp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mssp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		mshb.add_child(mssp)
+		var mdesc := _mk_label("默认 · 多枪通用" if msid == "iron" else String(me.get("desc", "")), 12, _dim(0.5))
+		mdesc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mdesc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mdesc.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		mshb.add_child(mdesc)
 		if msowned:
-			mshb.add_child(_mk_label("已拥有", 12, _dim(0.4)))
+			var owl := _mk_label("已拥有", 13, _dim(0.4))
+			owl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			mshb.add_child(owl)
 		else:
-			mshb.add_child(_mk_label("₵ " + _fmt(_to_int(me.get("price", 0))), 12, COL_ACCENT))
+			var spl := _mk_label("₵ " + _fmt(_to_int(me.get("price", 0))), 14, COL_ACCENT)
+			spl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			mshb.add_child(spl)
 			mshb.add_child(_mk_market_buy_btn(1, i))
-		msrow.gui_input.connect(_on_market_row_input.bind(1, i))
 		right.add_child(msrow)
 
 	# ③ 极致备弹区：段内 ↑↓ 选枪（◀/▶ 鼠标同款）· B 换挡 · 空格/「购 N 发」钮成交
 	var ammo_id := _market_ammo_gun_id()
 	var ag := Guns.gun_by_id(ammo_id)
 	var msel3 := _market_sec == 2
-	var ammo_panel := PanelContainer.new()
-	ammo_panel.add_theme_stylebox_override("panel",
-			_panel_style(msel3, COL_ACCENT if msel3 else _dim(0.22), 6))
+	var ammo_panel := _card(msel3, COL_ACCENT if msel3 else _dim(0.18), 8)
 	ammo_panel.gui_input.connect(_on_market_ammo_panel_input)
 	right.add_child(ammo_panel)
 	var av := VBoxContainer.new()
-	av.add_theme_constant_override("separation", 4)
+	av.add_theme_constant_override("separation", 6)
 	av.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到面板卡片
 	ammo_panel.add_child(av)
 	var ahead := HBoxContainer.new()
 	ahead.add_theme_constant_override("separation", 6)
 	ahead.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	av.add_child(ahead)
-	# ③ 徽章标题（段序可读性 + 显式化「给哪把枪补弹」）；「↑↓ 选枪」贴右
-	ahead.add_child(_mk_sec_title(2, "③ %s —— 给「%s」补弹（◀▶ 换枪）" % [
+	# ③ 徽章标题（段序可读性 + 显式化「给哪把枪补弹」）
+	ahead.add_child(_mk_sec_title(2, "③ %s —— 给「%s」补弹" % [
 			HDData.AMMO_NAME, String(ag.get("name", ammo_id))]))
-	var asp := Control.new()
-	asp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	asp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ahead.add_child(asp)
-	ahead.add_child(_mk_label("↑↓ 选枪", 11, _dim(0.5)))
 	var apick := HBoxContainer.new()
-	apick.add_theme_constant_override("separation", 6)
+	apick.add_theme_constant_override("separation", 8)
 	apick.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	av.add_child(apick)
-	var prev := _mk_btn("◀", 12)
-	_style_btn(prev, false, _dim(0.6), 8)
+	var prev := _mk_btn("◀", 14)
+	_style_btn(prev, false, _dim(0.6), 10)
 	prev.pressed.connect(_market_ammo_pick.bind(-1))
 	apick.add_child(prev)
-	var gname := _mk_label(String(ag.get("name", ammo_id)), 14, COL_TEXT)
+	var gname := _mk_label(String(ag.get("name", ammo_id)), 16, COL_TEXT)
 	gname.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	gname.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	apick.add_child(gname)
-	var nxt := _mk_btn("▶", 12)
-	_style_btn(nxt, false, _dim(0.6), 8)
+	var nxt := _mk_btn("▶", 14)
+	_style_btn(nxt, false, _dim(0.6), 10)
 	nxt.pressed.connect(_market_ammo_pick.bind(1))
 	apick.add_child(nxt)
 	var each := _to_int(HDData.AMMO_PRICE.get(ammo_id, 0))
-	av.add_child(_mk_label("单价 ₵%d/发 · 余 %d 发" % [each, _stash.ammo_of(ammo_id)],
-			12, HDData.AMMO_COLOR))
-	# 挡位指示（显式化增强）：挡位序号 + B 键身份亮出——「B 换挡」钮文字本就随挡位刷新，
-	# 这里把「现在是第几挡、B 是干嘛的」摆到明面
-	av.add_child(_mk_label("挡位 %d/%d · %d 发（B 切换）" % [
-			posmod(_ammo_tier, HDData.AMMO_TIERS.size()) + 1,
-			HDData.AMMO_TIERS.size(), _ammo_tier_n()], 11, HDData.AMMO_COLOR))
+	# 挡位指示：挡位序号 + B 键身份亮出——「B 换挡」钮文字本就随挡位刷新
+	av.add_child(_mk_label("单价 ₵%d/发 · 余 %d 发 · 挡位 %d/%d · %d 发（B 切换）" % [
+			each, _stash.ammo_of(ammo_id), posmod(_ammo_tier, HDData.AMMO_TIERS.size()) + 1,
+			HDData.AMMO_TIERS.size(), _ammo_tier_n()], 13, HDData.AMMO_COLOR))
 	var arow := HBoxContainer.new()
-	arow.add_theme_constant_override("separation", 6)
+	arow.add_theme_constant_override("separation", 8)
 	arow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	av.add_child(arow)
-	var cyc := _mk_btn("B 换挡", 12)
-	_style_btn(cyc, false, _dim(0.6), 10)
+	var cyc := _mk_btn("B 换挡", 14)
+	_style_btn(cyc, false, _dim(0.6), 12)
 	cyc.pressed.connect(_cycle_ammo_tier)
 	arow.add_child(cyc)
 	var tier_n := _ammo_tier_n()
-	var buy := _mk_btn("购 %d 发 · ₵%s" % [tier_n, _fmt(tier_n * each)], 12)
-	_style_btn(buy, true, HDData.AMMO_COLOR, 12)
+	var buy := _mk_btn("购 %d 发 · ₵%s" % [tier_n, _fmt(tier_n * each)], 14)
+	_style_btn(buy, true, HDData.AMMO_COLOR, 14)
+	buy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	buy.pressed.connect(_buy_ammo_for.bind(ammo_id))
 	arow.add_child(buy)
 
@@ -1201,26 +1738,23 @@ func _render_market(pg: VBoxContainer) -> void:
 			var md: Dictionary = Guns.M14_MODS[mid2]
 			var mod_on: bool = _stash.m14_mods_on(mid2)
 			var m5sel := _market_sec == 4 and i == _market_m14_mod
-			var m5row := PanelContainer.new()
-			m5row.add_theme_stylebox_override("panel",
-					_panel_style(m5sel, COL_ACCENT if m5sel else _dim(0.22), 4))
+			var m5row := _card(m5sel, COL_ACCENT if m5sel else _dim(0.18), 4)
 			var m5hb := HBoxContainer.new()
 			m5hb.add_theme_constant_override("separation", 10)
 			m5hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			m5row.add_child(m5hb)
-			m5hb.add_child(_mk_label(String(md.get("name", mid2)), 13,
+			m5hb.add_child(_mk_label(String(md.get("name", mid2)), 15,
 					_dim(0.45) if mod_on else COL_TEXT))
-			m5hb.add_child(_mk_label(String(md.get("desc", "")), 11, _dim(0.5)))
-			var m5sp := Control.new()
-			m5sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			m5sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			m5hb.add_child(m5sp)
+			var m5d := _mk_label(String(md.get("desc", "")), 12, _dim(0.5))
+			m5d.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			m5d.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			m5hb.add_child(m5d)
 			if mod_on:
-				m5hb.add_child(_mk_label("已装", 12, COL_OK))
+				m5hb.add_child(_mk_label("已装", 13, COL_OK))
 			else:
-				m5hb.add_child(_mk_label("₵ " + _fmt(_to_int(md.get("price", 0))), 12, COL_ACCENT))
-				var m5btn := _mk_btn("购买", 12)
-				_style_btn(m5btn, true, COL_ACCENT, 10)
+				m5hb.add_child(_mk_label("₵ " + _fmt(_to_int(md.get("price", 0))), 14, COL_ACCENT))
+				var m5btn := _mk_btn("购买", 13)
+				_style_btn(m5btn, true, COL_ACCENT, 12)
 				m5btn.pressed.connect(func():
 					if _stash.buy_m14_mod(mid2):
 						show_hint("已购买：%s（装备 M14 即生效）" % String(md.get("name", mid2))))
@@ -1230,8 +1764,8 @@ func _render_market(pg: VBoxContainer) -> void:
 	# ④ 仓库·战利品条（原仓库页并入，底部通栏）：变卖链路=④段回车+钮双入口，零丢失
 	_render_warehouse_strip(pg)
 
-	var hint := _mk_label("←→ 跨段 · ↑↓ 段内选 · 回车/「购买」钮 成交 · ③ 区内 B 换挡 空格 购弹 · 点击行选中",
-			12, _dim(0.5))
+	var hint := _mk_label("鼠标：点「购买」成交   键盘：←→ 跨段 · ↑↓ 段内选 · 回车 成交 · ③ 区 B 换挡 空格 购弹 · U 安全箱扩容",
+			13, _dim(0.45))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
 
@@ -1239,13 +1773,14 @@ func _render_market(pg: VBoxContainer) -> void:
 ## 交易行段徽章标题（段序可读性增强）：当前段 COL_ACCENT 高亮、其余 COL_OK——
 ## ←/→ 跨段走到第几段一眼可数（段面板/行高亮是既有段光标可见性，非修隐藏 bug）
 func _mk_sec_title(sec: int, text: String) -> Label:
-	return _mk_label(text, 12, COL_ACCENT if _market_sec == sec else COL_OK)
+	return _mk_label(text, 15, COL_ACCENT if _market_sec == sec else COL_OK)
 
 
 ## 交易行行内「购买」钮（未拥有条目专用）：先选中该行，再沿 _market_confirm 收敛成交
 func _mk_market_buy_btn(sec: int, idx: int) -> Button:
-	var b := _mk_btn("购买", 12)
-	_style_btn(b, true, COL_ACCENT, 12)
+	var b := _mk_btn("购买", 13)
+	_style_btn(b, true, COL_ACCENT, 10)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.pressed.connect(_on_market_buy_pressed.bind(sec, idx))
 	return b
 
@@ -1475,12 +2010,15 @@ func _style_btn(b: Button, active: bool, border: Color, hpad := 22) -> void:
 		sb.bg_color = Color(0.17, 0.13, 0.06, 0.9) if active else Color(0.07, 0.1, 0.08, 0.85)
 		sb.border_color = border
 		sb.set_border_width_all(2 if active else 1)
-		sb.set_corner_radius_all(4)
-		sb.set_content_margin_all(8)
+		sb.set_corner_radius_all(6)
+		sb.set_content_margin_all(7)
 		sb.content_margin_left = hpad
 		sb.content_margin_right = hpad
 		b.add_theme_stylebox_override(state, sb)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	var hov: StyleBoxFlat = b.get_theme_stylebox("hover").duplicate()
+	hov.bg_color = hov.bg_color.lightened(0.12)
+	b.add_theme_stylebox_override("hover", hov)
 	b.add_theme_color_override("font_color", border)
 	b.add_theme_color_override("font_hover_color", border)
 	b.add_theme_color_override("font_pressed_color", border)
@@ -1492,7 +2030,7 @@ func _panel_style(sel: bool, border: Color, vpad := 9) -> StyleBoxFlat:
 	sb.bg_color = Color(0.1, 0.14, 0.11, 0.88) if sel else Color(0.06, 0.09, 0.07, 0.62)
 	sb.border_color = border
 	sb.set_border_width_all(2 if sel else 1)
-	sb.set_corner_radius_all(3)
+	sb.set_corner_radius_all(7)
 	sb.set_content_margin_all(vpad)
 	sb.content_margin_left = 14
 	sb.content_margin_right = 14
@@ -1551,3 +2089,90 @@ static func _fmt(n: int) -> String:
 		if c % 3 == 0 and i > 0:
 			out = "," + out
 	return ("-" if n < 0 else "") + out
+
+
+# ================= 卡片式改版小工具（第四阶段） =================
+
+## 卡片（第四阶段大厅改版）：圆角面板 + 悬停提亮 + 手型光标；sel = 光标所在（粗描边亮底）
+func _card(sel: bool, border: Color, vpad := 10) -> PanelContainer:
+	var card := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = COL_CARD_SEL if sel else COL_CARD
+	sb.border_color = border
+	sb.set_border_width_all(2 if sel else 1)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(vpad)
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	if sel:
+		sb.shadow_color = Color(border.r, border.g, border.b, 0.18)
+		sb.shadow_size = 8
+	card.add_theme_stylebox_override("panel", sb)
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.mouse_entered.connect(func(): card.self_modulate = Color(1.18, 1.18, 1.14))
+	card.mouse_exited.connect(func(): card.self_modulate = Color.WHITE)
+	return card
+
+
+func _card_vbox(card: PanelContainer, sep: int) -> VBoxContainer:
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", sep)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 点击穿透到卡片本身
+	card.add_child(vb)
+	return vb
+
+
+## 定宽列
+func _col(parent: Control, w: float) -> VBoxContainer:
+	var v := VBoxContainer.new()
+	v.custom_minimum_size = Vector2(w, 0)
+	v.add_theme_constant_override("separation", 10)
+	parent.add_child(v)
+	return v
+
+
+## 区块标题：左标题 + 右侧小字说明（之后可继续往里塞按钮）
+func _sec_head(title: String, sub: String) -> HBoxContainer:
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	var t := _mk_label(title, 17, COL_OK)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(t)
+	if sub != "":
+		var s := _mk_label(sub, 12, _dim(0.45))
+		s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hb.add_child(s)
+	return hb
+
+
+## 小标签（「装入此槽」/ 键位提示）
+func _chip(text: String, col: Color) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(col.r, col.g, col.b, 0.12)
+	sb.border_color = Color(col.r, col.g, col.b, 0.7)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 7
+	sb.content_margin_right = 7
+	sb.content_margin_top = 1
+	sb.content_margin_bottom = 1
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	p.add_child(_mk_label(text, 12, col))
+	return p
+
+
+## 数据条（frac 0..1）
+class Bar extends Control:
+	var frac := 0.0
+	var col := Color.WHITE
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var h := size.y
+		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.08))
+		draw_rect(Rect2(Vector2.ZERO, Vector2(size.x * clampf(frac, 0.0, 1.0), h)), col)

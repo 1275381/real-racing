@@ -44,6 +44,15 @@ var _using := {}                     # 正在使用的物资 {kind, t, dur}
 var _regen_left := 0.0               # 止痛药待缓回血量
 var _warned := {}                    # 局时提醒（已提示的剩余秒档）
 var _airdrop_fired := false          # 本局空投已投放
+var _raid_wear := {}                 # 本局各枪磨损（开火发数 × DUR_PER_SHOT，局终写回 stash）
+var _raid_insured := false           # 本局出发时投了保
+var _tut := -1                       # 首局引导步骤：-1 关 / 0 搜箱 / 1 看指南针 / 2 撤离
+var _tut_face_t := 0.0               # 第 2 步：对准撤离点的持续秒数
+const TUT_TEXT := [
+	"搜一个箱子：走到亮着琥珀色小灯的箱子旁，按住 F 搜索（指南针上「箱子」标记指路）",
+	"看指南针：顶部指南针上的绿色标记是撤离点——转身，让它对准正中",
+	"去撤离：跟着指南针走进绿色光柱，站满 5 秒读条就带着战利品回家",
+]
 
 func _ready() -> void:
 	_register_inputs()
@@ -79,6 +88,14 @@ func _ready() -> void:
 	guns.m14_mods_provider = func(mid: String): return stash.m14_mods_on(mid)
 	guns.hit_enemy.connect(_on_hit_enemy)
 	guns.fired.connect(_on_player_fired)
+	# 第四阶段：耐久（库存耐久 − 本局磨损）/ 消音器（stash 按枪查）/ 卡壳播报
+	guns.dur_provider = func(gid: String) -> float:
+		return stash.dur_of(gid) - float(_raid_wear.get(gid, 0.0))
+	guns.sup_provider = func(gid: String) -> bool: return stash.suppressed(gid)
+	guns.jammed.connect(func(): hud.feed("卡壳！%s 耐久 %d%% —— 回大厅改枪台维修" % [
+		str(Guns.gun_by_id(guns.cur_id).get("name", guns.cur_id)),
+		int(stash.dur_of(guns.cur_id) - float(_raid_wear.get(guns.cur_id, 0.0)))],
+		Color(1.0, 0.48, 0.27)))
 
 	soldiers = HDSoldiers.new()
 	add_child(soldiers)
@@ -120,6 +137,7 @@ func _ready() -> void:
 	lobby = HDLobby.new()
 	add_child(lobby)
 	lobby.setup(stash)
+	lobby.gun_preview_provider = func(gid: String) -> Node3D: return guns.build_preview(gid)
 	lobby.deploy_requested.connect(_start_mission)
 	lobby.range_requested.connect(_enter_range)
 
@@ -200,6 +218,16 @@ func _start_mission(loadout: Dictionary) -> void:
 	paused = false
 	_raid_live = true
 	_raid_loadout = loadout.duplicate()
+	_raid_wear = {}
+	# 保险（出发页勾选）：按所带装备价值 30% 预付；现金不够就不保
+	_raid_insured = false
+	if bool(loadout.get("insured", false)):
+		var ip: int = stash.insurance_price(loadout)
+		if ip > 0 and stash.cash >= ip:
+			stash.cash -= ip
+			stash.save()
+			stash.changed.emit()
+			_raid_insured = true
 	soldiers.reset_all()
 	loot.reset_all()
 	loot.secure_cap = stash.secure_slots
@@ -210,6 +238,10 @@ func _start_mission(loadout: Dictionary) -> void:
 	world.spawn_pos = Vector3(sp.x, world.ground_height(sp.x, sp.z), sp.z)
 	player.enter(world.spawn_pos)
 	_setup_extracts()
+	# 首局引导（从没完成过才出现）
+	_tut = -1 if stash.tutorial_done else 0
+	_tut_face_t = 0.0
+	_sync_tut()
 	# AI 搜刮者小队：从玩家以外的出生点进图；空投复位
 	soldiers.spawn_scavs(world.spawn_pos)
 	airdrop.reset()
@@ -314,6 +346,8 @@ func _apply_mode_visuals() -> void:
 ## 除外）、记一次阵亡。返回结算明细供结算页/提示用
 func _lose_raid() -> Dictionary:
 	_raid_live = false
+	_reclaim_ammo()   # 先按实际剩余备弹记账（保险退回的是真剩下的那些发数）
+	_apply_wear()
 	var bag_v := 0
 	var bag := loot.drain()
 	for it in bag:
@@ -323,7 +357,7 @@ func _lose_raid() -> Dictionary:
 	for it in kept:
 		kept_v += int(float((it as Dictionary).get("value", 0)))
 	stash.deposit(kept)
-	var gear: Dictionary = stash.lose_carried(_raid_loadout)
+	var gear: Dictionary = stash.lose_carried(_raid_loadout, _raid_insured)
 	stash.record_raid(false, _kills, _raid_t)
 	hud.hide_inventory()
 	return {"gear": gear, "bag_n": bag.size(), "bag_v": bag_v,
@@ -336,11 +370,19 @@ func _abandon_if_live() -> void:
 	var r := _lose_raid()
 	hud.toast("放弃行动（视同阵亡）· " + _gear_text(r["gear"]), Color(1.0, 0.35, 0.25))
 
+## 本局磨损写回库存耐久（撤离/阵亡/放弃都结算；丢掉的枪耐久随枪清掉）
+func _apply_wear() -> void:
+	for gid in _raid_wear.keys():
+		stash.wear(str(gid), float(_raid_wear[gid]))
+	_raid_wear = {}
+
 ## 「M4A1、3.5× 光学镜、备弹 300 发（₵5,400）」
 func _gear_text(g: Dictionary) -> String:
 	var parts: Array = []
 	parts.append_array(g.get("guns", []))
 	parts.append_array(g.get("scopes", []))
+	if int(g.get("sups", 0)) > 0:
+		parts.append("消音器 ×%d" % int(g["sups"]))
 	if int(g.get("ammo", 0)) > 0:
 		parts.append("备弹 %d 发" % int(g["ammo"]))
 	if parts.is_empty():
@@ -362,6 +404,12 @@ func _fail_raid(title: String) -> void:
 	var r := _lose_raid()
 	hud.set_raid_visible(false)
 	var lines: Array = [[_gear_text(r["gear"]), HDHud.COL_LOSE]]
+	var back: Array = (r["gear"] as Dictionary).get("back", [])
+	if not back.is_empty():
+		lines.append(["保险退回：%s（₵%s）" % ["、".join(PackedStringArray(back)),
+			HDHud._fmt(int(r["gear"].get("back_value", 0)))], HDHud.COL_OK])
+	elif _raid_insured:
+		lines.append(["已投保 · 这次运气不好，一件也没退回", HDHud.COL_LOSE])
 	lines.append(["背包丢失 %d 件（₵%s）" % [int(r["bag_n"]), HDHud._fmt(int(r["bag_v"]))],
 		HDHud.COL_LOSE])
 	if int(r["kept_n"]) > 0:
@@ -375,6 +423,8 @@ func _fail_raid(title: String) -> void:
 
 func _win_raid(via: String = "main") -> void:
 	_raid_live = false
+	if _tut >= 0:
+		_tut_finish("新手引导完成 —— 第一次活着撤出来了")
 	_using = {}
 	hud.hide_inventory()
 	var value := float(loot.bag_value())
@@ -382,6 +432,7 @@ func _win_raid(via: String = "main") -> void:
 	bag.append_array(loot.drain_secure())
 	var n := stash.deposit(bag)
 	_reclaim_ammo()   # 撤离：战利品入库 + 剩余备弹写回库存
+	_apply_wear()
 	stash.record_raid(true, _kills, _raid_t)
 	hud.set_raid_visible(false)
 	var lines: Array = []
@@ -448,7 +499,10 @@ func _on_player_hit(dmg: float, from: Vector3) -> void:
 ## 玩家开枪：枪声传播，60 m 内的敌人警觉（改进方案第 3 节；靶场不传播）
 func _on_player_fired() -> void:
 	if mode == Mode.MISSION and _raid_live:
-		soldiers.hear_shot(player.pos + Vector3(0.0, 1.5, 0.0))
+		_raid_wear[guns.cur_id] = float(_raid_wear.get(guns.cur_id, 0.0)) + HDData.DUR_PER_SHOT
+		# 消音器：惊动半径 60 → 20 m
+		var hr: float = HDData.SUP_HEAR_R if stash.suppressed(guns.cur_id) else HDSoldiers.SHOT_HEAR_R
+		soldiers.hear_shot(player.pos + Vector3(0.0, 1.5, 0.0), hr)
 		# 远处听不到枪声的兵：子弹从身边飞过也会警觉（破空声）
 		soldiers.hear_bullet(player.cam.global_position, -player.cam.global_transform.basis.z)
 
@@ -456,7 +510,51 @@ func _on_player_fired() -> void:
 static func _bearing(dx: float, dz: float) -> float:
 	return fposmod(rad_to_deg(atan2(dx, -dz)), 360.0)
 
+## ---- 首局引导（第四阶段，改进方案第 7 节：搜箱 → 看指南针 → 撤离，三步完成；H 跳过）----
+func _sync_tut() -> void:
+	hud.set_tutorial(_tut, TUT_TEXT.size(), str(TUT_TEXT[_tut]) if _tut >= 0 else "")
+
+func _tut_advance(from: int) -> void:
+	if _tut != from:
+		return
+	_tut += 1
+	_tut_face_t = 0.0
+	if _tut >= TUT_TEXT.size():
+		_tut_finish("新手引导完成 —— 之后每局自己来")
+		return
+	hud.feed("引导 %d/%d 完成" % [_tut, TUT_TEXT.size()], HDHud.COL_OK)
+	_sync_tut()
+
+func _tut_finish(msg: String) -> void:
+	_tut = -1
+	stash.tutorial_done = true
+	stash.save()
+	_sync_tut()
+	hud.feed(msg, HDHud.COL_OK)
+
+## 第 2 步：面向最近一个已开放撤离点（方位差 < 12° 持续 0.6 s）
+func _step_tut(dt: float) -> void:
+	if _tut != 1:
+		return
+	var best := INF
+	var want := 0.0
+	for def in world.extract_defs():
+		var e: Dictionary = _extracts.get(str(def["id"]), {})
+		if not bool(e.get("enabled", false)) or not bool(e.get("open", false)):
+			continue
+		var ep: Vector3 = def["pos"]
+		var d := Vector2(ep.x - player.pos.x, ep.z - player.pos.z).length()
+		if d < best:
+			best = d
+			want = _bearing(ep.x - player.pos.x, ep.z - player.pos.z)
+	var face := _bearing(sin(player.yaw), cos(player.yaw))
+	var diff := absf(fposmod(want - face + 180.0, 360.0) - 180.0)
+	_tut_face_t = _tut_face_t + dt if diff < 12.0 else 0.0
+	if _tut_face_t >= 0.6:
+		_tut_advance(1)
+
 func _on_loot_picked(item: Dictionary) -> void:
+	_tut_advance(0)
 	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX, loot.secure.size(), loot.secure_cap)
 	var col: Color = HDData.RARITY[int(item.get("rarity", 0))]["color"]
 	hud.feed("拾取 %s %s +₵%d" % [item.get("icon", ""), item.get("name", ""), int(item.get("value", 0))], col)
@@ -527,6 +625,7 @@ func _step_mission(dt: float) -> void:
 	targets.update(dt)
 	airdrop.update(dt)
 	_step_lever(dt)
+	_step_tut(dt)
 	_step_use(dt)
 	hud.set_armor(player.armor)
 	hud.set_uses(loot.use_counts())
@@ -716,6 +815,21 @@ func _compass_marks() -> Array:
 		marks.append({"bearing": _bearing(lp.x - player.pos.x, lp.z - player.pos.z),
 			"label": "电闸 %dm" % int(Vector2(lp.x - player.pos.x, lp.z - player.pos.z).length()),
 			"color": Color(0.3, 0.7, 1.0)})
+	# 首局引导第 1 步：最近一个未搜容器
+	if _tut == 0:
+		var bd := INF
+		var bp := Vector3.ZERO
+		for c in loot._containers:
+			if bool(c["searched"]) or str(c["cls"]) == "vault":
+				continue
+			var cp: Vector3 = c["pos"]
+			var dd := Vector2(cp.x - player.pos.x, cp.z - player.pos.z).length()
+			if dd < bd:
+				bd = dd
+				bp = cp
+		if bd < INF:
+			marks.append({"bearing": _bearing(bp.x - player.pos.x, bp.z - player.pos.z),
+				"label": "箱子 %dm" % int(bd), "color": Color(1.0, 0.66, 0.3)})
 	# 空投（投放后到搜空前）：紫色标记 + 距离
 	if airdrop != null and str(airdrop.state) != "idle" and not _airdrop_looted():
 		var adp: Vector3 = airdrop.pos
@@ -834,6 +948,9 @@ func _route_key(code: int) -> void:
 	# 对局内：Tab 背包（只在实战；打开后的按键由 HUD 自处理并消费）
 	if code == KEY_TAB and mode == Mode.MISSION:
 		_open_inventory()
+		return
+	if code == KEY_H and mode == Mode.MISSION and _tut >= 0:
+		_tut_finish("已跳过新手引导")
 		return
 	# 对局内：3/4/5/6 用医疗包 / 止痛药 / 护甲板 / 弹药盒
 	if mode == Mode.MISSION and code >= KEY_3 and code <= KEY_6:

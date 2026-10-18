@@ -254,6 +254,64 @@ func play_step(loud: float) -> void:
 	p.play()
 
 
+## 消音器枪声（第四阶段）：没有膛口爆裂与远场尾音，只剩一声闷「噗」+ 枪机金属
+## 咔嗒——低通噪声 0.12 s + 双分音瞬态；音量比原枪声低约 12 dB
+var _sup_stream: AudioStreamWAV
+var _click_stream: AudioStreamWAV
+
+func play_shot_sup(_gun_id: String) -> void:
+	if _sup_stream == null:
+		_sup_stream = _make_sup()
+	var p := _next_player()
+	p.stream = _sup_stream
+	p.volume_db = linear_to_db(0.42) + randf_range(-1.0, 1.0)
+	p.pitch_scale = randf_range(0.93, 1.07)
+	p.play()
+
+
+## 卡壳空击：干脆的单声金属咔哒
+func play_click() -> void:
+	if _click_stream == null:
+		_click_stream = _make_click()
+	var p := _next_player()
+	p.stream = _click_stream
+	p.volume_db = linear_to_db(0.6)
+	p.pitch_scale = 1.0
+	p.play()
+
+
+func _make_sup() -> AudioStreamWAV:
+	var n := int(MIX_RATE * 0.16)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7741
+	var lp := 0.0
+	var lp2 := 0.0
+	var a := 1.0 - exp(-TAU * 1800.0 / MIX_RATE)
+	for i in n:
+		var t := float(i) / MIX_RATE
+		var x := rng.randf() * 2.0 - 1.0
+		lp += a * (x - lp)
+		lp2 += a * (lp - lp2)
+		var puff := lp2 * exp(-t * 38.0) * 2.4
+		var clack := (sin(TAU * 2300.0 * t) + 0.5 * sin(TAU * 5100.0 * t)) \
+				* exp(-maxf(t - 0.045, 0.0) * 160.0) * (0.35 if t > 0.045 else 0.0)
+		data.encode_s16(i * 2, int(clampf(puff + clack, -1.0, 1.0) * 30000.0))
+	return _raw_wav(data)
+
+
+func _make_click() -> AudioStreamWAV:
+	var n := int(MIX_RATE * 0.05)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		var t := float(i) / MIX_RATE
+		var v := (sin(TAU * 3100.0 * t) + 0.6 * sin(TAU * 6900.0 * t)) * exp(-t * 140.0) * 0.7
+		data.encode_s16(i * 2, int(clampf(v, -1.0, 1.0) * 30000.0))
+	return _raw_wav(data)
+
+
 ## 命中反馈 ding：1200Hz 正弦 0.06s 快衰减
 func play_hit() -> void:
 	var p := _next_player()

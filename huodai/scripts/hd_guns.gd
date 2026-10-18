@@ -15,6 +15,7 @@ extends Node3D
 
 signal fired
 signal reloaded
+signal jammed      # 耐久过低卡壳（第四阶段：枪械耐久）
 signal hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: bool)
 
 
@@ -175,7 +176,8 @@ func enter(loadout: Dictionary) -> void:
 		# 同槽换了枪才重建枪模；同枪复用已有 holder（重复进场不堆积）。
 		# 旧枪模释放前先隐身：queue_free 到帧末才生效，不隐身会同帧新旧两把
 		# 枪模叠影一帧（切枪链上唯一的实存渲染缺陷，2026-10 黄壳排查中修掉）
-		if _guns.has(slot) and str(_guns[slot]["id"]) != gid:
+		if _guns.has(slot) and (str(_guns[slot]["id"]) != gid \
+				or bool(_guns[slot].get("sup", false)) != _sup_on(gid)):
 			var old: Dictionary = _guns[slot]
 			var old_holder: Node3D = old["holder"]
 			old_holder.visible = false
@@ -325,6 +327,13 @@ func try_fire() -> void:
 		return
 	if player == null or player.dead or player.cam == null:
 		return
+	# 卡壳：耐久低于 JAM_DUR 每发 JAM_P 概率打不响（不耗弹，JAM_TIME 后才能再扣）
+	if _dur() < HDData.JAM_DUR and randf() < HDData.JAM_P:
+		fire_cd = HDData.JAM_TIME
+		if audio != null and audio.has_method("play_click"):
+			audio.play_click()
+		jammed.emit()
+		return
 	ammo -= 1
 	# 结转式重置：+= 而非 =——进门前晚到的帧量（fire_cd 为负）在此补回，
 	# 长程实际射速收敛到表值 1/cd（帧量化丢的拍逐发找平；闲置期已被
@@ -341,20 +350,27 @@ func try_fire() -> void:
 		var flash_mesh: MeshInstance3D = g["flash_mesh"]
 		var moff: Vector3 = g["muzzle_off"]   # 每槽枪口点（持枪平移随动）
 		_flash_t = 0.05
+		flash.light_energy = 0.5 if bool(g.get("sup", false)) else 3.0   # 消音器：几乎无火光
+		flash_mesh.scale = Vector3.ONE * (0.35 if bool(g.get("sup", false)) else 1.0)
 		flash.visible = true
 		flash.position = (g["holder"] as Node3D).transform * moff
 		flash_mesh.visible = true
 		flash_mesh.position = moff
 		var flash_env: OmniLight3D = g["flash_env"]
+		flash_env.light_energy = flash.light_energy
 		flash_env.visible = true
 		flash_env.position = flash.position   # 同相机局部坐标=同世界位置（sync_vm 不变量）
 	# 射线：相机 from、-Z 前向、右/上基向量抖动 spread（每颗弹丸独立判定）
 	var from: Vector3 = player.cam.global_position
 	var base_dir: Vector3 = -player.cam.global_transform.basis.z
-	var spread: float = float(_g.get("spread", 0.0)) * lerpf(1.0, ADS_SPREAD, _ads)
+	var wear_mul := _dur_mul()
+	var spread: float = float(_g.get("spread", 0.0)) * lerpf(1.0, ADS_SPREAD, _ads) * wear_mul
 	var pellets: int = int(_g.get("pellets", 1))
 	var max_r: float = float(_g.get("range", 250.0))
 	var dmg: float = float(_g.get("dmg", 20.0))
+	var sup := _sup_on(cur_id)
+	if sup:
+		dmg *= HDData.SUP_DMG_MUL
 	var right: Vector3 = player.cam.global_transform.basis.x
 	var up: Vector3 = player.cam.global_transform.basis.y
 	for p in pellets:
@@ -377,12 +393,15 @@ func try_fire() -> void:
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；
 	# 整体 ×配件 recoil_mul（M14 战术护木 -45%——_mod_muls）
 	var rc: Array = RECOIL.get(cur_id, [0.4, 0.2, 0.25])
-	var mul: float = (0.6 if _aiming else 1.0) * _mod_muls().x
+	var mul: float = (0.6 if _aiming else 1.0) * _mod_muls().x * wear_mul
 	player.recoil_pitch += deg_to_rad(rc[0] + rc[1] * player.recoil_pitch * 57.3 * 0.5) * mul
 	player.recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * mul
 	player.recoil_cool = 0.0
 	if audio != null:
-		audio.play_shot(cur_id)
+		if sup and audio.has_method("play_shot_sup"):
+			audio.play_shot_sup(cur_id)
+		else:
+			audio.play_shot(cur_id)
 
 
 ## R 键手动换弹（弹匣未满、有备弹、不在换弹中才生效；极致备弹经济下
@@ -412,6 +431,106 @@ func _mag_cap() -> int:
 ## M14 配件解锁查询（main 注入 stash 查询闭包；未注入 = false 原版行为）
 var m14_mods_provider: Callable = Callable()
 var grip_muls_provider: Callable = Callable()
+## 第四阶段：耐久（func(gun_id)->0..100，含本局磨损）/ 消音器（func(gun_id)->bool）；
+## 未注入 = 全新无消音（探针/测试裸调行为不变）
+var dur_provider: Callable = Callable()
+var sup_provider: Callable = Callable()
+const SUP_LEN := 0.17      # 消音器长（枪架局部 m）：枪口点前移这么多
+const SUP_R := 0.021
+
+
+func _dur() -> float:
+	if dur_provider.is_valid():
+		return float(dur_provider.call(cur_id))
+	return 100.0
+
+
+## 磨损倍率：耐久 ≥ DUR_WORN 为 1；往下线性涨到耐久 0 时 1 + DUR_WORN_MUL
+func _dur_mul() -> float:
+	var d := _dur()
+	if d >= HDData.DUR_WORN:
+		return 1.0
+	return 1.0 + HDData.DUR_WORN_MUL * (HDData.DUR_WORN - d) / HDData.DUR_WORN
+
+
+func _sup_on(gid: String) -> bool:
+	return sup_provider.is_valid() and bool(sup_provider.call(gid))
+
+
+## 消音器圆筒（沿 -Z；k = 尺寸倍率：枪架局部 1.0 / 枪身局部 1/GUN_SCALE）
+func _make_sup_can(k: float) -> MeshInstance3D:
+	var can := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = SUP_R * k
+	cyl.bottom_radius = SUP_R * k
+	cyl.height = SUP_LEN * k
+	cyl.radial_segments = 14
+	var cm := StandardMaterial3D.new()
+	cm.albedo_color = Color(0.07, 0.07, 0.075)
+	cm.roughness = 0.55
+	cm.metallic = 0.6
+	cyl.material = cm
+	can.mesh = cyl
+	can.rotation_degrees = Vector3(90, 0, 0)
+	return can
+
+
+## 枪口点（枪身局部）：全部网格顶点里最靠前（-Z）的 2.5 cm 截面取 x/y 均值——
+## 写实枪模各枪长短不一，按几何量出来；按枪 id 缓存（换镜不影响枪管）
+var _muzzle_cache := {}
+
+func _muzzle_point(gun: Node3D) -> Vector3:
+	var key := str(gun.get_meta("gun_id", gun.name))
+	if _muzzle_cache.has(key):
+		return _muzzle_cache[key]
+	var pts := PackedVector3Array()
+	var inv := gun.global_transform.affine_inverse() if gun.is_inside_tree() else Transform3D.IDENTITY
+	for mi_v in gun.find_children("*", "MeshInstance3D", true, false):
+		var mi := mi_v as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var xf: Transform3D
+		if gun.is_inside_tree():
+			xf = inv * mi.global_transform
+		else:
+			xf = Transform3D.IDENTITY
+			var n: Node = mi
+			while n != null and n != gun:
+				if n is Node3D:
+					xf = (n as Node3D).transform * xf
+				n = n.get_parent()
+		for si in mi.mesh.get_surface_count():
+			var arr: Array = mi.mesh.surface_get_arrays(si)
+			var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			for v in vs:
+				pts.append(xf * v)
+	var out := MUZZLE_OFF / GUN_SCALE
+	if not pts.is_empty():
+		var mz := INF
+		for v in pts:
+			mz = minf(mz, v.z)
+		var sx := 0.0
+		var sy := 0.0
+		var n2 := 0
+		for v in pts:
+			if v.z < mz + 0.025:
+				sx += v.x
+				sy += v.y
+				n2 += 1
+		out = Vector3(sx / n2, sy / n2, mz)
+	_muzzle_cache[key] = out
+	return out
+
+
+## 大厅改枪台 3D 预览：同局内枪模（含所装瞄具）+ 消音器（枪身局部尺寸）
+func build_preview(gid: String) -> Node3D:
+	var gun := _build_gun_visual(gid)
+	gun.set_meta("gun_id", gid)
+	if _sup_on(gid):
+		var can := _make_sup_can(1.0 / GUN_SCALE)
+		can.position = _muzzle_point(gun) + Vector3(0, 0, (-SUP_LEN * 0.5 + 0.012) / GUN_SCALE)
+		gun.add_child(can)
+	return gun
 
 func _m14_mod(mid: String) -> bool:
 	if m14_mods_provider.is_valid():
@@ -572,6 +691,8 @@ func _mount_slot(slot: String) -> void:
 	# 三处消费同一 hold_off，与 _build_gun_visual 的枪身平移保持同源
 	var hold_off: Vector3 = _hold_delta(gid) * GUN_SCALE
 	var gun := _build_gun_visual(gid)
+	gun.set_meta("gun_id", gid)
+	var sup := _sup_on(gid)
 	var holder := Node3D.new()
 	# 锚点抬到视锥内（onfoot：原点在相机上时枪会落到画面底边之外）
 	holder.position = GUN_HIP_POS
@@ -692,9 +813,21 @@ func _mount_slot(slot: String) -> void:
 	# 才有意义；_mount_slot 是四路枪册公共链，primary/secondary 天然全覆盖
 	for mi_v in holder.find_children("*", "MeshInstance3D", true, false):
 		(mi_v as MeshInstance3D).layers |= 1 << 1
+	# 消音器：枪口点外接一节哑光黑圆筒（枪架局部沿 -Z），火光/曳光起点前移到筒口
+	var muzzle := MUZZLE_OFF + hold_off
+	if sup:
+		# 消音器挂在枪模真实枪口（最前端截面中心，各枪长短不一；通用 MUZZLE_OFF
+		# 只是火光近似点）；筒口成为新的火光/曳光起点
+		var mp: Vector3 = _muzzle_point(gun) * GUN_SCALE
+		var can := _make_sup_can(1.0)
+		can.position = mp + Vector3(0, 0, -SUP_LEN * 0.5 + 0.012)
+		can.layers |= 1 << 1
+		holder.add_child(can)
+		muzzle = mp + Vector3(0, 0, -SUP_LEN)
+		flash_mesh.position = muzzle
 	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
-			"mag_pos": mag_pos, "mag_size": mag_size,
-			"muzzle_off": MUZZLE_OFF + hold_off,
+			"mag_pos": mag_pos, "mag_size": mag_size, "sup": sup,
+			"muzzle_off": muzzle,
 			"flash": flash, "flash_env": flash_env, "flash_mesh": flash_mesh,
 			"top": top, "cx": cx}
 	# 红点镜瞄准线：镜体工厂（_scope_visual reddot 分支）把窗中心 local y 写
