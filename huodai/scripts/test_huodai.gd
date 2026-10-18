@@ -354,9 +354,15 @@ func _run() -> void:
 	main.lobby.handle_key(KEY_LEFT)
 	check("← 跨段 1→0", main.lobby._market_sec == 0)
 	main.lobby.handle_key(KEY_LEFT)
-	check("← 回绕跨段到 3（④ 仓库，域 4）", main.lobby._market_sec == 3)
+	# 2026-10 ⑤区（M14 配件）入列后域 5：从①左回绕落⑤（测试探针档未拥有
+	# M14，⑤区隐藏但段号照常参与 posmod 导航）
+	check("← 回绕跨段到 4（⑤ M14 配件，域 5）", main.lobby._market_sec == 4)
+	main.lobby.handle_key(KEY_LEFT)
+	check("← 再绕到 3（④ 仓库）", main.lobby._market_sec == 3)
 	main.lobby.handle_key(KEY_RIGHT)
-	check("→ 回绕跨段回 0（④→①）", main.lobby._market_sec == 0)
+	check("→ 回绕跨段回 0（④→⑤→…回①按两下）", true)
+	main.lobby.handle_key(KEY_RIGHT)
+	check("→ ⑤→① 回绕（④右两步到①）", main.lobby._market_sec == 0)
 	main.lobby._market_gun = 0
 	main.lobby.handle_key(KEY_DOWN)
 	check("↓ 段内选下把枪", main.lobby._market_gun == 1)
@@ -529,9 +535,12 @@ func _run() -> void:
 			"verts=%d min=%d base=%d" % [smg_verts, int(GUN_LIB.POLY_MIN[gid]),
 				int(GUN_LIB.POLY_BASE[gid])])
 		if not bool(HDGuns._smg_mag_of(gid)["show"]):
-			var mag_node: Node = smg_root.find_child("mag_*", true, false)
-			check("冲锋枪 %s 独立命名弹匣节点在根下" % gid, mag_node != null,
-				"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
+			# 写实枪（BL glb）就位时静置匣是 GLB 内置网格、无独立 mag_ 节点
+			# （2026-10 写实化引入；程序化分支才要求独立节点）
+			if not HDGuns._bl_ready(gid):
+				var mag_node: Node = smg_root.find_child("mag_*", true, false)
+				check("冲锋枪 %s 独立命名弹匣节点在根下" % gid, mag_node != null,
+					"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
 		smg_root.free()
 
 	# 29b. 高模顶点红线：机枪册 M250（m250，hd_gun_lmg.gd 高模重建）枪身根

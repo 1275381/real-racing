@@ -66,6 +66,16 @@ const GUNS := [
 		"spread": 0.012, "range": 320.0},
 ]
 
+## M14 专属配件解锁态（2026-10 用户定案）：护木（GRIPS 表 GripMods 生效
+## ——减后坐/加开镜速）与 30 发扩容匣——不走 GUNS 商店表，由交易行⑤区
+## （hd_lobby）按 bool 卖；hd_guns 出厂/开火按此放大弹容与挂护木视觉件
+const M14_MODS := {
+	"foregrip": {"name": "M14 战术护木", "price": 1200,
+		"desc": "前护木：后坐力 -45% · 开镜速度 +25%（垂直前握把档）"},
+	"extmag": {"name": "M14 30 发扩容匣", "price": 900,
+		"desc": "专属 30 发长匣：弹容 20→30（换弹 +0.4s）"},
+}
+
 
 ## 大战场兵种配发枪械（不进枪械店）
 const BATTLE_GUNS := [

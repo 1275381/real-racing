@@ -21,6 +21,8 @@ var items: Array = []                 # [{uid,name,icon,rarity,value}]
 var guns_owned: Array = []            # 枪械 id 列表（默认五枪全有）
 var scopes_owned: Array = []          # 已购瞄具 id 列表
 var scope_fit: Dictionary = {}        # gun_id -> scope_id 或 "iron"
+var grips_owned: Array = []           # 已购握把/护木 id 列表（GRIPS 表，2026-10 M14 首接入）
+var grip_fit: Dictionary = {}         # gun_id -> grip_id 或 "none"
 var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
@@ -48,6 +50,9 @@ func _serialize() -> Dictionary:
 		"guns_owned": guns_owned,
 		"scopes_owned": scopes_owned,
 		"scope_fit": scope_fit,
+		"grips_owned": grips_owned,
+		"grip_fit": grip_fit,
+		"m14_mods": m14_mods,
 		"ammo_inv": ammo_inv,
 		"loadout": loadout,
 		"stats": stats,
@@ -131,6 +136,39 @@ func _load() -> void:
 			elif valid_scopes.has(sid2):
 				scope_fit[gid2] = sid2
 
+	# 握把/护木拥有与装配（2026-10 M14 首接入；"none"/"" 归一化，未知 id 丢弃）
+	var valid_grips: Array = []
+	for gr in Guns.GRIPS:
+		valid_grips.append(str(gr["id"]))
+	grips_owned = ["none"]
+	var raw_go: Variant = d.get("grips_owned", null)
+	if typeof(raw_go) == TYPE_ARRAY:
+		for id in raw_go:
+			var gid3 := str(id)
+			if valid_grips.has(gid3) and not grips_owned.has(gid3):
+				grips_owned.append(gid3)
+	grip_fit = {}
+	var raw_gf: Variant = d.get("grip_fit", null)
+	if typeof(raw_gf) == TYPE_DICTIONARY:
+		for key in raw_gf.keys():
+			var gk := str(key)
+			var gval := str(raw_gf[key])
+			if not valid_guns.has(gk):
+				continue
+			if gval == "" or gval == "none" or not valid_grips.has(gval):
+				grip_fit[gk] = "none"
+			else:
+				grip_fit[gk] = gval
+
+	# M14 专属配件（合法 id 过滤）
+	m14_mods = []
+	var raw_m14: Variant = d.get("m14_mods", null)
+	if typeof(raw_m14) == TYPE_ARRAY:
+		for id in raw_m14:
+			var mid := str(id)
+			if Guns.M14_MODS.has(mid) and not m14_mods.has(mid):
+				m14_mods.append(mid)
+
 	# 出发配置（主副不可同枪）
 	var lo := _to_dict(d.get("loadout", null))
 	var p := str(lo.get("primary", "rifle"))
@@ -161,6 +199,8 @@ func _apply_defaults() -> void:
 	guns_owned = DEFAULT_GUNS.duplicate()
 	scopes_owned = []
 	scope_fit = {}
+	grips_owned = ["none"]
+	grip_fit = {}
 	ammo_inv = {}
 	loadout = {"primary": "rifle", "secondary": "pistol"}
 	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0}
@@ -292,6 +332,72 @@ func scope_zoom(gun_id: String) -> float:
 		if not sc.is_empty():
 			return maxf(1.0, float(sc.get("zoom", 1.0)))
 	return 1.0
+
+
+## 购买握把/护木（2026-10 M14 首接入：借 GRIPS 表——"none" 恒免费恒拥有）
+func buy_grip(id: String) -> bool:
+	if id == "" or id == "none" or owns_grip(id):
+		return true
+	var gr := Guns.grip_by_id(id)
+	if gr.is_empty():
+		return false
+	var price := maxi(0, _to_i(gr.get("price", 0)))
+	if cash < price:
+		return false
+	cash -= price
+	grips_owned.append(id)
+	save()
+	changed.emit()
+	return true
+
+
+func owns_grip(id: String) -> bool:
+	return id == "none" or grips_owned.has(id)
+
+
+## 装配握把（与瞄具不同：握把多枪可复用，同一时间一把枪一个）——M14 装上
+## 即生效：hd_guns 后坐 ×recoil_mul、ADS_SPEED ×ads_mul、护木视觉件
+func equip_grip(gun_id: String, grip_id: String) -> void:
+	var gid := "none" if grip_id == "" or not owns_grip(grip_id) else grip_id
+	grip_fit[gun_id] = gid
+	save()
+	changed.emit()
+
+
+## 当前枪握把的 (recoil_mul, ads_mul)；未装 = (1.0, 1.0)
+func grip_muls(gun_id: String) -> Vector2:
+	var gid := str(grip_fit.get(gun_id, "none"))
+	if gid == "none":
+		return Vector2.ONE
+	var gr := Guns.grip_by_id(gid)
+	if gr.is_empty():
+		return Vector2.ONE
+	return Vector2(maxf(0.0, float(gr.get("recoil_mul", 1.0))),
+			maxf(0.5, float(gr.get("ads_mul", 1.0))))
+
+
+## M14 专属配件（foregrip/extmag）：交易行⑤区购买，bool 解锁持久化——
+## 借 m14_mods 列表存（可扩多枪专属件）；hd_guns 开火/出厂读 m14_mods_on
+var m14_mods: Array = []              # 已购 M14 配件 id：["foregrip"]/["extmag"]
+
+func buy_m14_mod(id: String) -> bool:
+	if m14_mods.has(id):
+		return true
+	var md: Dictionary = Guns.M14_MODS.get(id, {})
+	if md.is_empty():
+		return false
+	var price := maxi(0, _to_i(md.get("price", 0)))
+	if cash < price:
+		return false
+	cash -= price
+	m14_mods.append(id)
+	save()
+	changed.emit()
+	return true
+
+
+func m14_mods_on(id: String) -> bool:
+	return m14_mods.has(id)
 
 
 ## 变卖全部 items 加现金，返回总额

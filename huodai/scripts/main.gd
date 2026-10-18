@@ -62,6 +62,9 @@ func _ready() -> void:
 	guns.targets = targets
 	guns.scope_provider = _scope_for
 	guns.reserve_provider = _reserve_for
+	# M14 专属配件解锁态（2026-10）：查询闭包 + 环境变量（静态工厂视觉件用）
+	guns.m14_mods_provider = func(mid: String): return stash.m14_mods_on(mid)
+	_sync_m14_mods_env()
 	guns.hit_enemy.connect(_on_hit_enemy)
 
 	soldiers = HDSoldiers.new()
@@ -144,6 +147,14 @@ func _reserve_for(gun_id: String) -> int:
 		return RANGE_RESERVE
 	return stash.ammo_of(gun_id)
 
+## M14 专属配件解锁态 → 环境变量（静态枪匠工厂 _ar_build 读它挂视觉件；
+## stash.changed 时刷新——购买配件后下次建枪即带件）
+func _sync_m14_mods_env() -> void:
+	var env := ""
+	for mid in stash.m14_mods:
+		env += str(mid) + ","
+	OS.set_environment("HD_M14_MODS", env)
+
 ## 局终回收：把两把枪剩余备弹写回库存并存档——撤离/死亡/放弃回大厅三路同收敛；
 ## 弹药不属于战利品，死亡也保留（「买多少就用多少」）
 func _reclaim_ammo() -> void:
@@ -169,6 +180,7 @@ func _start_mission(loadout: Dictionary) -> void:
 	if to_c.length() > 0.01:
 		player.yaw = atan2(to_c.x, to_c.z)
 		player.pitch = 0.0
+	_sync_m14_mods_env()   # 枪模重建前刷配件视觉态（进局/进靶场两路都过这）
 	guns.enter(loadout)
 	lobby.hide_lobby()
 	hud.hide_result()
@@ -197,6 +209,7 @@ func _enter_range() -> void:
 	player.enter(lane)
 	player.yaw = PI          # 面朝 -Z 靶道
 	player.pitch = 0.0
+	_sync_m14_mods_env()   # 靶场枪模重建前同步（见 _start_mission 同注）
 	guns.enter(stash.loadout)
 	lobby.hide_lobby()
 	hud.hide_result()

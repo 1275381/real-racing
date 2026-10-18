@@ -528,3 +528,18 @@ static func _m14(mats: Dictionary, root: Node3D) -> void:
 	mag.position = Vector3(0, -0.02, -0.085)
 	root.add_child(mag)
 	GUN_LIB.curved_mag(mag, blk, Vector3(0.042, 0.15, 0.072), 5.0, 3, 3)
+	# M14 专属配件（2026-10 用户定案，视觉件；解锁态由 hd_guns._m14_mod
+	# 查询注入——build 时 mats 附 "_m14_mods" 字典键传递，缺省 = 原版）：
+	# foregrip 战术护木（下挂导轨 + 垂直前握把，替代玻纤上护木段视觉升级）
+	# extmag 30 发长匣（匣体加长 5cm + 底部扩容台阶）
+	var mods: Dictionary = mats.get("_m14_mods", {})
+	if bool(mods.get("foregrip", false)):
+		# 战术护木：下挂短轨基条 + 垂直前握把（深灰聚合物，grip 高模件）
+		GUN_LIB.chamfer_box(root, drk, Vector3(0.024, 0.008, 0.11),
+				Vector3(0, -0.028, -0.23), Vector3.ZERO, 0.001, 4)
+		GUN_LIB.grip(root, drk, 0.075, Vector3(0, -0.036, -0.24), 8.0,
+				0.03, 0.038, blk, 3)
+	if bool(mods.get("extmag", false)):
+		# 30 发长匣：匣体向下加长（原匣 0.15 → 0.20）+ 底部扩容台阶
+		GUN_LIB.chamfer_box(mag, blk, Vector3(0.046, 0.09, 0.076),
+				Vector3(0, -0.19, 0.0), Vector3.ZERO, 0.001, 4)

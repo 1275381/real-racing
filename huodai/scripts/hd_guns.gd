@@ -159,7 +159,12 @@ func enter(loadout: Dictionary) -> void:
 		if gid == "":
 			continue
 		var gi: Dictionary = Guns.gun_by_id(gid)
-		_slots[slot] = {"id": gid, "ammo": int(gi.get("mag", 12)),
+		# M14 扩容匣进场直接按 30 满弹（_m14_mod 查 cur_id 之外还要认 gid——
+		# 进场时 cur_id 还没设，这里直接查 provider）
+		var cap0 := int(gi.get("mag", 12))
+		if gid == "m14" and _m14_mod("extmag"):
+			cap0 = 30
+		_slots[slot] = {"id": gid, "ammo": cap0,
 				"reserve": _reserve_for_gun(gid)}
 		# 同槽换了枪才重建枪模；同枪复用已有 holder（重复进场不堆积）。
 		# 旧枪模释放前先隐身：queue_free 到帧末才生效，不隐身会同帧新旧两把
@@ -211,8 +216,10 @@ func update(dt: float) -> void:
 	if g.is_empty() or cur_id == "":
 		return
 	# ADS：按住右键开镜；进度与倍率每帧写给玩家（FOV=75/zoom 在玩家侧算）
+	# 开镜速度 ×配件 ads_mul（M14 战术护木 +25%——_mod_muls）
 	_aiming = Input.is_action_pressed("hd_scope")
-	_ads = move_toward(_ads, 1.0 if _aiming else 0.0, dt * ADS_SPEED)
+	_ads = move_toward(_ads, 1.0 if _aiming else 0.0,
+			dt * ADS_SPEED * _mod_muls().y)
 	player.ads = _ads
 	player.zoom = current_zoom()
 	# 开火（按住 = 全自动连发）：没弹自动换
@@ -249,7 +256,7 @@ func update(dt: float) -> void:
 			_falling = false
 		if reloading <= 0.0:
 			reloading = 0.0
-			var mag_n: int = int(_g.get("mag", 12))
+			var mag_n: int = _mag_cap()
 			var taken: int = mini(mag_n - ammo, reserve)
 			ammo += taken
 			reserve -= taken
@@ -344,9 +351,10 @@ func try_fire() -> void:
 			targets.on_hit(int(h["i"]))
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
-	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）
+	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；
+	# 整体 ×配件 recoil_mul（M14 战术护木 -45%——_mod_muls）
 	var rc: Array = RECOIL.get(cur_id, [0.4, 0.2, 0.25])
-	var mul: float = 0.6 if _aiming else 1.0
+	var mul: float = (0.6 if _aiming else 1.0) * _mod_muls().x
 	player.recoil_pitch += deg_to_rad(rc[0] + rc[1] * player.recoil_pitch * 57.3 * 0.5) * mul
 	player.recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * mul
 	player.recoil_cool = 0.0
@@ -359,11 +367,41 @@ func try_fire() -> void:
 func start_reload() -> void:
 	if cur_id == "" or reloading > 0.0:
 		return
-	if ammo >= int(_g.get("mag", 12)) or reserve <= 0:
+	if ammo >= _mag_cap() or reserve <= 0:
 		return
-	reloading = float(_g.get("reload", 1.5))
+	# M14 30 发扩容匣：长匣换弹 +0.4s（stash 解锁态经 m14_mods_provider 读）
+	var extra: float = 0.4 if (cur_id == "m14" and _m14_mod("extmag")) else 0.0
+	reloading = float(_g.get("reload", 1.5)) + extra
 	if audio != null:
 		audio.play_reload()
+
+
+## 当前枪弹匣容量：GUNS 表 mag 基准；M14 装 extmag 扩 30（2026-10 用户定案
+## 「装特有的三十发弹匣」——解锁态由 main 注入 m14_mods_provider，探针裸
+## 调时未注入 = 原弹容，行为不变）
+func _mag_cap() -> int:
+	var cap := int(_g.get("mag", 12))
+	if cur_id == "m14" and _m14_mod("extmag"):
+		cap = 30
+	return cap
+
+
+## M14 配件解锁查询（main 注入 stash 查询闭包；未注入 = false 原版行为）
+var m14_mods_provider: Callable = Callable()
+var grip_muls_provider: Callable = Callable()
+
+func _m14_mod(mid: String) -> bool:
+	if m14_mods_provider.is_valid():
+		return bool(m14_mods_provider.call(mid))
+	return false
+
+
+## 当前枪的配件乘数 (recoil_mul, ads_mul)：M14 装 foregrip 护木 = 垂直前握把
+## 档（后坐 -45% / 开镜速 +25%，GRIPS 表 vertical）；其它枪/未装 = 1.0
+func _mod_muls() -> Vector2:
+	if cur_id == "m14" and _m14_mod("foregrip"):
+		return Vector2(0.55, 1.25)
+	return Vector2.ONE
 
 
 ## 备弹弹药源：main 注入的 reserve_provider（stash 极致备弹库存）；
@@ -2254,7 +2292,16 @@ static func _ar_build(id: String) -> Node3D:
 	var bl := _bl_gun(id)
 	if bl != null:
 		return bl
-	return AR_LIB.build(id, _ar_mats())
+	var mats := _ar_mats()
+	# M14 专属配件解锁态随材质包传给枪匠（视觉件挂装；静态工厂无法读实例
+	# provider——用 OS 环境变量 HD_M14_MODS 由 main/探针写入，缺省=原版）
+	if id == "m14":
+		var mods_env := OS.get_environment("HD_M14_MODS")
+		mats["_m14_mods"] = {
+			"foregrip": mods_env.contains("foregrip"),
+			"extmag": mods_env.contains("extmag"),
+		}
+	return AR_LIB.build(id, mats)
 
 
 ## 弹匣动画节点覆盖（hd_guns 枪架局部坐标 = 枪身局部 × GUN_SCALE≈0.62 换算）：

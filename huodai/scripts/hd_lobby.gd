@@ -37,7 +37,7 @@ const TAB_TITLES := ["出发大厅", "改枪台", "交易行"]
 const HINT_LIFE := 2.5              # 底部提示默认停留秒数
 const DESIGN_H := 810.0             # UI 设计基准高度（1440×810），缩放 = 视口高 / 此值
 const DEPLOY_PAGE := 6              # 出发页候选枪每页行数（15 枪=3 页，光标域随页收缩）
-const MARKET_SECS := 4              # 交易行段数：0 枪械 / 1 瞄具 / 2 极致备弹 / 3 仓库·战利品
+const MARKET_SECS := 5              # 交易行段数：0 枪械 / 1 瞄具 / 2 极致备弹 / 3 仓库·战利品 / 4 M14 配件（2026-10；未拥有 M14 时⑤区隐藏但段号保留——posmod 导航空跳无害）
 
 var lobby_visible: bool = false
 
@@ -54,6 +54,7 @@ var _market_sec := 0                # 交易行当前段：0 枪械 / 1 瞄具 /
 var _market_gun := 0                # 交易行①区选中枪
 var _market_scope := 0              # 交易行②区选中瞄具（0=机瞄行）
 var _market_ammo_gun := 0           # 交易行③区购弹对象枪
+var _market_m14_mod := 0            # 交易行⑤区选中 M14 配件（2026-10）
 var _hint_t := 0.0
 
 var _root: Control
@@ -1150,6 +1151,43 @@ func _render_market(pg: VBoxContainer) -> void:
 	_style_btn(buy, true, HDData.AMMO_COLOR, 12)
 	buy.pressed.connect(_buy_ammo_for.bind(ammo_id))
 	arow.add_child(buy)
+
+	# ⑤ M14 专属配件区（2026-10 用户定案：护木/30 发扩容匣——仅拥有 M14 才
+	# 显示购买意义；行式布局同②瞄具区：已购置灰 / 未购「购买」）
+	var m14_owned: bool = _stash.guns_owned.has("m14")
+	if m14_owned:
+		right.add_child(_mk_sec_title(4, "⑤ M14 专属配件"))
+		var mod_ids: Array = Guns.M14_MODS.keys()
+		for i in mod_ids.size():
+			var mid2 := str(mod_ids[i])
+			var md: Dictionary = Guns.M14_MODS[mid2]
+			var mod_on: bool = _stash.m14_mods_on(mid2)
+			var m5sel := _market_sec == 4 and i == _market_m14_mod
+			var m5row := PanelContainer.new()
+			m5row.add_theme_stylebox_override("panel",
+					_panel_style(m5sel, COL_ACCENT if m5sel else _dim(0.22), 4))
+			var m5hb := HBoxContainer.new()
+			m5hb.add_theme_constant_override("separation", 10)
+			m5hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			m5row.add_child(m5hb)
+			m5hb.add_child(_mk_label(String(md.get("name", mid2)), 13,
+					_dim(0.45) if mod_on else COL_TEXT))
+			m5hb.add_child(_mk_label(String(md.get("desc", "")), 11, _dim(0.5)))
+			var m5sp := Control.new()
+			m5sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			m5sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			m5hb.add_child(m5sp)
+			if mod_on:
+				m5hb.add_child(_mk_label("已装", 12, COL_OK))
+			else:
+				m5hb.add_child(_mk_label("₵ " + _fmt(_to_int(md.get("price", 0))), 12, COL_ACCENT))
+				var m5btn := _mk_btn("购买", 12)
+				_style_btn(m5btn, true, COL_ACCENT, 10)
+				m5btn.pressed.connect(func():
+					if _stash.buy_m14_mod(mid2):
+						show_hint("已购买：%s（装备 M14 即生效）" % String(md.get("name", mid2))))
+				m5hb.add_child(m5btn)
+			right.add_child(m5row)
 
 	# ④ 仓库·战利品条（原仓库页并入，底部通栏）：变卖链路=④段回车+钮双入口，零丢失
 	_render_warehouse_strip(pg)
