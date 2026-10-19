@@ -653,7 +653,7 @@ func _step_mission(dt: float) -> void:
 		var stride := 2.0 if player.sprinting else 1.5
 		if _step_acc >= stride:
 			_step_acc = 0.0
-			audio.play_step(0.12 if player.crouching else (0.7 if player.sprinting else 0.32))
+			audio.play_step(0.12 if player.crouching else (0.6 if player.sprinting else 0.32))
 	# 撤离读条：只在本局启用且已开放的撤离点（主 / 大坝 12:00 后 / 付费 / 拉闸后）
 	# 取最近点，圈内累计/离圈回退；付费撤离现金不足不读条
 	var d := HDData.EXTRACT_R + 1.0

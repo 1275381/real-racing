@@ -174,7 +174,9 @@ var _idx := 0
 var _pool3d: Array[AudioStreamPlayer3D] = []
 var _idx3d := 0
 const PLAYERS_3D := 10
-var _steps: Array[AudioStreamWAV] = []   # 脚步（沙砾）3 个变体
+var _steps: Array[AudioStreamWAV] = []   # 脚步（沙地军靴）6 个变体
+var _step_foot := 1.0                     # 左右脚交替（音高 ±3%，不重复同一变体）
+var _step_last := -1
 var _shots := {}          # gun_id -> AudioStreamWAV（ensure 预生成，懒生成兜底）
 var _hit: AudioStreamWAV
 var _reload: AudioStreamWAV
@@ -194,7 +196,7 @@ func ensure() -> void:
 		_shot_stream(str(gid))
 	_hit = _make_ding()
 	_reload = _make_reload()
-	for k in 3:
+	for k in 6:
 		_steps.append(_make_step(311 + k * 17))
 
 
@@ -238,19 +240,26 @@ func play_step_3d(pos: Vector3, running: bool) -> void:
 	p.max_distance = 22.0
 	p.attenuation_filter_cutoff_hz = 6000.0
 	p.attenuation_filter_db = -10.0
-	p.volume_db = linear_to_db(0.75 if running else 0.5) + randf_range(-1.5, 1.5)
-	p.pitch_scale = randf_range(0.9, 1.1)
+	p.volume_db = linear_to_db(0.95 if running else 0.7) + randf_range(-1.5, 1.5)
+	p.pitch_scale = randf_range(0.92, 1.06)
 	p.play()
 
 
-## 玩家自己的脚步（2D，轻）：loud 0..1（蹲走 0.15 / 步行 0.35 / 疾跑 0.7）
+## 玩家自己的脚步（2D，轻）：loud 0..1（main：蹲走 0.12 / 步行 0.32 / 疾跑 0.6）。
+## 自己的脚步只做「在走」的提示，压在枪声与敌人脚步之下（旧版样本偏响 + -6 dB，整体约降 10 dB）；
+## 左右脚交替微调音高、不连续重复同一变体，不再是同一声「噗」循环
 func play_step(loud: float) -> void:
 	if _steps.is_empty():
 		ensure()
 	var p := _next_player()
-	p.stream = _steps[randi() % _steps.size()]
-	p.volume_db = linear_to_db(maxf(loud, 0.02)) - 6.0
-	p.pitch_scale = randf_range(0.92, 1.08)
+	var k := randi() % _steps.size()
+	if k == _step_last:
+		k = (k + 1) % _steps.size()
+	_step_last = k
+	_step_foot = -_step_foot
+	p.stream = _steps[k]
+	p.volume_db = linear_to_db(maxf(loud, 0.02)) - 9.0 + randf_range(-1.5, 1.0)
+	p.pitch_scale = (1.0 + 0.03 * _step_foot) * randf_range(0.97, 1.03)
 	p.play()
 
 
@@ -362,22 +371,95 @@ func _next_3d() -> AudioStreamPlayer3D:
 	return q
 
 
-## 沙砾脚步：两段错开的短噪声（脚跟 + 脚掌）低通约 1.2 kHz，80 ms 内衰减完
+## 沙地军靴脚步（2026-10 用户反馈「步伐声音有点大、奇怪」重做）：
+## 旧版是一段白噪声一阶低通 + 硬起音，听着像「噗嗤」电流声。新版三层：
+## ① 脚跟落地闷响：80–110 Hz 下滑正弦 + 2 阶低通噪声（~450 Hz），3 ms 软起音不爆音；
+## ② 沙粒碾压：脚跟/脚掌落地后几十毫秒内随机迸出的短促「沙沙」颗粒（1.6–4.5 kHz
+##    衰减噪声颗粒，密度随时间衰减）；③ 脚掌滚动：脚跟后 45–75 ms 再一记更轻的闷响；
+## ④ 鞋底擦沙：600–2400 Hz 带通噪声。能量分布刻意让中频占大头——笔记本扬声器
+##    放不出 250 Hz 以下，纯低频闷响在那上面等于没声。
+## 每个变体随机化落点/音高/颗粒，峰值归一到 0.5（留余量给枪声）
 func _make_step(seed_v: int) -> AudioStreamWAV:
-	var n := int(MIX_RATE * 0.11)
-	var data := PackedByteArray()
-	data.resize(n * 2)
+	var dur := 0.22
+	var n := int(MIX_RATE * dur)
+	var buf := PackedFloat32Array()
+	buf.resize(n)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_v
+	var t_heel := rng.randf_range(0.004, 0.009)
+	var t_toe := t_heel + rng.randf_range(0.045, 0.075)
+	var f0 := rng.randf_range(80.0, 110.0)
+	# ①③ 闷响（脚跟 1.0 / 脚掌 0.5）
+	for hit in [[t_heel, 1.0, 0.028], [t_toe, 0.5, 0.022]]:
+		var t0: float = hit[0]
+		var amp: float = hit[1]
+		var tau: float = hit[2]
+		var lp1 := 0.0
+		var lp2 := 0.0
+		var a := 1.0 - exp(-TAU * 700.0 / MIX_RATE)
+		var phase := 0.0
+		for i in range(int(t0 * MIX_RATE), n):
+			var t := float(i) / MIX_RATE - t0
+			var env := minf(t / 0.003, 1.0) * exp(-t / tau)
+			if env < 0.0005 and t > 0.01:
+				break
+			var f := f0 * (1.0 - 0.35 * minf(t / 0.05, 1.0))   # 落地音高下滑
+			phase += TAU * f / MIX_RATE
+			var x := rng.randf() * 2.0 - 1.0
+			lp1 += a * (x - lp1)
+			lp2 += a * (lp1 - lp2)
+			buf[i] += amp * env * (0.3 * sin(phase) + 1.5 * lp2)
+	# ② 沙粒颗粒：脚跟 / 脚掌各一串，泊松式触发，密度指数衰减
+	for burst in [[t_heel, 1600.0, 0.035, 1.0], [t_toe, 1100.0, 0.03, 0.7]]:
+		var tb: float = burst[0]
+		var dens: float = burst[1]
+		var dk: float = burst[2]
+		var gain: float = burst[3]
+		var t := tb
+		while t < tb + 0.14:
+			t += -log(maxf(rng.randf(), 1e-4)) / (dens * exp(-(t - tb) / dk) + 40.0)
+			if t >= dur - 0.01:
+				break
+			var g_len := int(rng.randf_range(0.0015, 0.005) * MIX_RATE)
+			var g_amp := gain * rng.randf_range(0.1, 0.32) * exp(-(t - tb) / (dk * 1.6))
+			var g_f := rng.randf_range(1600.0, 4500.0)
+			var i0 := int(t * MIX_RATE)
+			var prev := 0.0
+			for k in g_len:
+				if i0 + k >= n:
+					break
+				var x2 := rng.randf() * 2.0 - 1.0
+				var hp := x2 - prev   # 一阶差分：去掉低频，只留「沙」的脆
+				prev = x2
+				var ge := exp(-float(k) / (g_len * 0.35))
+				buf[i0 + k] += g_amp * ge * (0.6 * hp + 0.4 * sin(TAU * g_f * k / MIX_RATE))
+	# ④ 擦地「沙——」：脚跟后 60 ms 内一段带通噪声（600–2400 Hz），鞋底陷进沙里的摩擦
+	var b_lo := 0.0
+	var b_hi := 0.0
+	var al := 1.0 - exp(-TAU * 600.0 / MIX_RATE)
+	var ah := 1.0 - exp(-TAU * 2400.0 / MIX_RATE)
+	var s_len := rng.randf_range(0.05, 0.08)
+	for i in range(int(t_heel * MIX_RATE), mini(n, int((t_heel + s_len + 0.03) * MIX_RATE))):
+		var t := float(i) / MIX_RATE - t_heel
+		var env := minf(t / 0.008, 1.0) * exp(-t / (s_len * 0.45))
+		var x3 := rng.randf() * 2.0 - 1.0
+		b_hi += ah * (x3 - b_hi)
+		b_lo += al * (b_hi - b_lo)
+		buf[i] += 0.55 * env * (b_hi - b_lo)
+	# 收尾：全局轻低通去刺耳 + 峰值归一到 0.5
+	var peak := 0.0
 	var lp := 0.0
-	var a := 1.0 - exp(-TAU * 1200.0 / MIX_RATE)
+	var a2 := 1.0 - exp(-TAU * 6500.0 / MIX_RATE)
 	for i in n:
-		var t := float(i) / MIX_RATE
-		var env := exp(-t * 55.0) + 0.6 * exp(-maxf(t - 0.035, 0.0) * 70.0) * (1.0 if t > 0.035 else 0.0)
-		var x := rng.randf() * 2.0 - 1.0
-		lp += a * (x - lp)
-		var v := lp * env * 1.6
-		data.encode_s16(i * 2, int(clampf(v, -1.0, 1.0) * 30000.0))
+		lp += a2 * (buf[i] - lp)
+		buf[i] = lp
+		peak = maxf(peak, absf(lp))
+	var k_norm := 0.5 / maxf(peak, 1e-4)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		var fade := minf(float(n - 1 - i) / (MIX_RATE * 0.01), 1.0)   # 尾部 10 ms 收干净
+		data.encode_s16(i * 2, int(clampf(buf[i] * k_norm * fade, -1.0, 1.0) * 30000.0))
 	return _raw_wav(data)
 
 
