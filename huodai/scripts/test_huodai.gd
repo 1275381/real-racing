@@ -1041,6 +1041,15 @@ func _run() -> void:
 			Vector3(1.0, 0.0, 0.0), 300.0)
 	check("军营西围墙 wall_hit ≈11.6m", absf(wh_camp_w - 11.6) < 0.5,
 		"d=%.1f" % wh_camp_w)
+	# 军营北墙东段（原长度误写 10.62 留两处 3.8m 缺口）：隧道口东侧 x=−114 与
+	# 东北角 x=−100 从北院 z=−38 向北采样均应抵墙皮 z=−41.5
+	var wh_camp_n1: float = main.world.wall_hit(Vector3(-114.0, 1.55, -38.0),
+			Vector3(0.0, 0.0, -1.0), 300.0)
+	var wh_camp_n2: float = main.world.wall_hit(Vector3(-100.0, 1.55, -38.0),
+			Vector3(0.0, 0.0, -1.0), 300.0)
+	check("军营北墙东段无缺口 wall_hit ≈3.5m（隧道口东侧/东北角）",
+		absf(wh_camp_n1 - 3.5) < 0.5 and absf(wh_camp_n2 - 3.5) < 0.5,
+		"d=%.1f/%.1f" % [wh_camp_n1, wh_camp_n2])
 	var wh_sub_c: float = main.world.wall_hit(Vector3(88.0, 2.0, -17.5),
 			Vector3(1.0, 0.0, 0.0), 300.0)
 	check("大电主控楼西墙 wall_hit ≈16.0m（中途围栏不注册·桁架柱让开）",
