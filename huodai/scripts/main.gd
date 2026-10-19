@@ -645,15 +645,7 @@ func _step_mission(dt: float) -> void:
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
 	hud.set_compass(_bearing(sin(player.yaw), cos(player.yaw)), _compass_marks())
-	# 玩家脚步（2D 轻声）：每走一步响一声，疾跑更响更密、蹲走几乎无声
-	var mv := Vector2(player.pos.x - _last_ppos.x, player.pos.z - _last_ppos.z).length()
-	_last_ppos = player.pos
-	if mv < 1.0:   # 传送（进场/探针摆位）不算步子
-		_step_acc += mv
-		var stride := 2.0 if player.sprinting else 1.5
-		if _step_acc >= stride:
-			_step_acc = 0.0
-			audio.play_step(0.12 if player.crouching else (0.6 if player.sprinting else 0.32))
+	_step_footsteps()
 	# 撤离读条：只在本局启用且已开放的撤离点（主 / 大坝 12:00 后 / 付费 / 拉闸后）
 	# 取最近点，圈内累计/离圈回退；付费撤离现金不足不读条
 	var d := HDData.EXTRACT_R + 1.0
@@ -697,8 +689,24 @@ func _step_world_only(dt: float) -> void:
 	_extract_t = maxf(0.0, _extract_t - dt * 2.0)
 	hud.set_extract(_extract_t, HDData.EXTRACT_HOLD)
 
+## 玩家脚步（2D 轻声）：每走一步响一声，疾跑更响更密、蹲走几乎无声；
+## 脚下不是沙漠地面（入口房地坪 / 坡道 / 地下靶馆）换混凝土脚步
+func _step_footsteps() -> void:
+	var mv := Vector2(player.pos.x - _last_ppos.x, player.pos.z - _last_ppos.z).length()
+	_last_ppos = player.pos
+	if mv >= 1.0:   # 传送（进场/探针摆位）不算步子
+		return
+	_step_acc += mv
+	var stride := 2.0 if player.sprinting else 1.5
+	if _step_acc >= stride:
+		_step_acc = 0.0
+		var hard: bool = absf(world.ground_height(player.pos.x, player.pos.z, player.pos.y + 0.5)) > 0.02
+		audio.play_step(0.12 if player.crouching else (0.6 if player.sprinting else 0.32),
+				"concrete" if hard else "sand")
+
 func _step_range(dt: float) -> void:
 	player.update(dt)
+	_step_footsteps()
 	guns.update(dt)
 	targets.update(dt)
 	hud.set_ammo(guns.ammo, guns.reserve)

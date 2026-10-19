@@ -174,7 +174,14 @@ var _idx := 0
 var _pool3d: Array[AudioStreamPlayer3D] = []
 var _idx3d := 0
 const PLAYERS_3D := 10
-var _steps: Array[AudioStreamWAV] = []   # 脚步（沙地军靴）6 个变体
+var _steps: Array[AudioStreamWAV] = []   # 合成脚步（沙地军靴）6 个变体：实录缺失时兜底
+## 实录脚步（2026-10 用户同意换 Kenney「Impact Sounds」CC0 音效包，见
+## assets/audio/footsteps/LICENSE_Kenney_ImpactSounds.txt）：沙地用 snow 组（压实
+## 颗粒的嘎吱声最像沙砾），地下靶馆/坡道/入口房等硬地坪用 concrete 组
+const STEP_DIR := "res://assets/audio/footsteps/"
+const STEP_SETS := {"sand": "snow", "concrete": "concrete"}
+const STEP_REC_DB := -4.3   # 实录样本比合成版响（RMS 0.09 vs 0.055）：按同响度对齐
+var _step_rec := {}         # 地面 -> Array[AudioStream]
 var _step_foot := 1.0                     # 左右脚交替（音高 ±3%，不重复同一变体）
 var _step_last := -1
 var _shots := {}          # gun_id -> AudioStreamWAV（ensure 预生成，懒生成兜底）
@@ -198,6 +205,16 @@ func ensure() -> void:
 	_reload = _make_reload()
 	for k in 6:
 		_steps.append(_make_step(311 + k * 17))
+	for surf in STEP_SETS:
+		var arr: Array = []
+		for k in 5:
+			var path := STEP_DIR + "footstep_%s_%03d.ogg" % [STEP_SETS[surf], k]
+			var st: AudioStream = load(path) if ResourceLoader.exists(path) else null
+			if st == null and FileAccess.file_exists(path):
+				st = AudioStreamOggVorbis.load_from_file(path)   # 另一台电脑还没导入：直接读原文件
+			if st != null:
+				arr.append(st)
+		_step_rec[surf] = arr
 
 
 ## 开枪：轮换池播放 + 每发随机——移调 0.94-1.06、音量 ±1.5dB。
@@ -229,37 +246,44 @@ func play_shot_3d(gun_id: String, pos: Vector3) -> void:
 	p.play()
 
 
-## 敌人脚步（3D）：22 m 外听不到（max_distance），跑动更响
-func play_step_3d(pos: Vector3, running: bool) -> void:
+## 取一声脚步：有实录用实录（不连续重复同一条），否则合成兜底；返回 [stream, 额外 dB]
+func _pick_step(surface: String) -> Array:
 	if _steps.is_empty():
 		ensure()
+	var rec: Array = _step_rec.get(surface, _step_rec.get("sand", []))
+	var pool: Array = rec if not rec.is_empty() else _steps
+	var k := randi() % pool.size()
+	if k == _step_last and pool.size() > 1:
+		k = (k + 1) % pool.size()
+	_step_last = k
+	return [pool[k], STEP_REC_DB if not rec.is_empty() else 0.0]
+
+
+## 敌人脚步（3D）：22 m 外听不到（max_distance），跑动更响
+func play_step_3d(pos: Vector3, running: bool, surface := "sand") -> void:
+	var pk := _pick_step(surface)
 	var p := _next_3d()
 	p.global_position = pos
-	p.stream = _steps[randi() % _steps.size()]
+	p.stream = pk[0]
 	p.unit_size = 3.5
 	p.max_distance = 22.0
 	p.attenuation_filter_cutoff_hz = 6000.0
 	p.attenuation_filter_db = -10.0
-	p.volume_db = linear_to_db(0.95 if running else 0.7) + randf_range(-1.5, 1.5)
-	p.pitch_scale = randf_range(0.92, 1.06)
+	p.volume_db = linear_to_db(0.95 if running else 0.7) + float(pk[1]) + randf_range(-1.5, 1.5)
+	p.pitch_scale = randf_range(0.9, 1.04)   # 略压低：军靴比雪地鞋沉
 	p.play()
 
 
 ## 玩家自己的脚步（2D，轻）：loud 0..1（main：蹲走 0.12 / 步行 0.32 / 疾跑 0.6）。
 ## 自己的脚步只做「在走」的提示，压在枪声与敌人脚步之下（旧版样本偏响 + -6 dB，整体约降 10 dB）；
 ## 左右脚交替微调音高、不连续重复同一变体，不再是同一声「噗」循环
-func play_step(loud: float) -> void:
-	if _steps.is_empty():
-		ensure()
+func play_step(loud: float, surface := "sand") -> void:
+	var pk := _pick_step(surface)
 	var p := _next_player()
-	var k := randi() % _steps.size()
-	if k == _step_last:
-		k = (k + 1) % _steps.size()
-	_step_last = k
 	_step_foot = -_step_foot
-	p.stream = _steps[k]
-	p.volume_db = linear_to_db(maxf(loud, 0.02)) - 9.0 + randf_range(-1.5, 1.0)
-	p.pitch_scale = (1.0 + 0.03 * _step_foot) * randf_range(0.97, 1.03)
+	p.stream = pk[0]
+	p.volume_db = linear_to_db(maxf(loud, 0.02)) - 9.0 + float(pk[1]) + randf_range(-1.5, 1.0)
+	p.pitch_scale = (0.97 + 0.03 * _step_foot) * randf_range(0.97, 1.03)
 	p.play()
 
 
