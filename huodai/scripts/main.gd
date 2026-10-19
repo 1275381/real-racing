@@ -138,6 +138,11 @@ func _ready() -> void:
 	add_child(lobby)
 	lobby.setup(stash)
 	lobby.gun_preview_provider = func(gid: String) -> Node3D: return guns.build_preview(gid)
+	# 大厅卡片实物图（离屏拍局内同一套枪模/镜体，见 hd_thumbs.gd）
+	var thumbs = preload("res://scripts/hd_thumbs.gd").new()
+	add_child(thumbs)
+	lobby.scope_preview_provider = func(kind: String) -> Node3D: return guns.build_scope_preview(kind)
+	lobby.set_thumbs(thumbs)
 	lobby.deploy_requested.connect(_start_mission)
 	lobby.range_requested.connect(_enter_range)
 

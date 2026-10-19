@@ -66,6 +66,10 @@ var _hint_t := 0.0
 var _insure := false                # 出发页「投保」勾选（出发时随 loadout 发给 main 扣费）
 ## 改枪台 3D 预览（常驻复用的 SubViewport；main 注入枪模工厂）
 var gun_preview_provider: Callable = Callable()
+var scope_preview_provider: Callable = Callable()   # main 注入：func(kind)->Node3D 单枚镜体
+var _thumbs                         # 缩略图渲染器（hd_thumbs.gd；main 注入，headless 下不出图）
+var _thumb_wait := {}               # 缩略图键 -> [TextureRect]：图拍好了就地补上，不整页重建
+var _glow_tex: GradientTexture2D    # 缩略图背后的柔光底（暗色枪身压在暗卡片上要有衬托）
 var _pv_box: SubViewportContainer
 var _pv_vp: SubViewport
 var _pv_pivot: Node3D
@@ -445,6 +449,7 @@ func _on_bench_equip_pressed(idx: int) -> void:
 func _refresh_all() -> void:
 	if _root == null or _stash == null:
 		return
+	_thumb_wait.clear()   # 旧页面的图位随页面一起释放
 	# 常驻 3D 预览先摘下（页面子树整体重建会把它一起释放）
 	if _pv_box != null and _pv_box.get_parent() != null:
 		_pv_box.get_parent().remove_child(_pv_box)
@@ -633,6 +638,7 @@ func _slot_card(i: int) -> PanelContainer:
 		return card
 	var g := Guns.gun_by_id(gid)
 	vb.add_child(_mk_label(String(g.get("name", gid)), 24, COL_ACCENT))
+	vb.add_child(_gun_thumb(gid, 72))
 	var att: Array = []
 	var sid := str(_stash.scope_fit.get(gid, "iron"))
 	if g.has("builtin_scope"):
@@ -666,6 +672,7 @@ func _gun_card(gi: int, cur_idx: int) -> PanelContainer:
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.max_lines_visible = 2
 	vb.add_child(desc)
+	vb.add_child(_gun_thumb(id2, 56, not owned))
 	# 卡内速览：伤害 / 射速 数据条 + 已拥有枪的耐久
 	var mx := _gun_maxima()
 	var cd := float(g.get("cd", 0.0))
@@ -675,10 +682,6 @@ func _gun_card(gi: int, cur_idx: int) -> PanelContainer:
 			"%.1f/s" % ((1.0 / cd) if cd > 0.0 else 0.0)))
 	if owned:
 		vb.add_child(_dur_row(id2))
-	var fill := Control.new()
-	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(fill)
 	var bot := HBoxContainer.new()
 	bot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(bot)
@@ -761,12 +764,12 @@ func _stat_row(name: String, frac: float, val: String) -> HBoxContainer:
 	var bar := Bar.new()
 	bar.frac = frac
 	bar.col = COL_ACCENT
-	bar.custom_minimum_size = Vector2(120, 8)
+	bar.custom_minimum_size = Vector2(40, 8)   # 只给下限，随卡宽伸展（1440 宽下三列卡不能被撑出屏）
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(bar)
 	var vl := _mk_label(val, 13, COL_TEXT)
-	vl.custom_minimum_size = Vector2(54, 0)
+	vl.custom_minimum_size = Vector2(44, 0)
 	vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	hb.add_child(vl)
 	return hb
@@ -783,7 +786,7 @@ func _dur_row(gid: String) -> HBoxContainer:
 	var bar := Bar.new()
 	bar.frac = d / 100.0
 	bar.col = col
-	bar.custom_minimum_size = Vector2(100, 8)
+	bar.custom_minimum_size = Vector2(40, 8)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(bar)
@@ -1172,13 +1175,18 @@ func _render_bench(pg: VBoxContainer) -> void:
 		hb.add_theme_constant_override("separation", 8)
 		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(hb)
-		hb.add_child(_mk_label(String(g.get("name", id2)), 15,
-				(COL_ACCENT if i == _gun_idx else COL_TEXT) if owned else _dim(0.42)))
+		hb.add_child(_gun_thumb(id2, 30, not owned, 70))
+		var nl := _mk_label(String(g.get("name", id2)), 15,
+				(COL_ACCENT if i == _gun_idx else COL_TEXT) if owned else _dim(0.42))
+		nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hb.add_child(nl)
 		var sp := Control.new()
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		hb.add_child(sp)
-		hb.add_child(_mk_label(tag if owned else "未拥有", 12, COL_OK if owned else _dim(0.4)))
+		var tgl := _mk_label(tag if owned else "未拥有", 12, COL_OK if owned else _dim(0.4))
+		tgl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hb.add_child(tgl)
 		lv.add_child(row)
 		if i == _gun_idx:
 			sel_card = row
@@ -1237,6 +1245,7 @@ func _render_bench(pg: VBoxContainer) -> void:
 		hb2.add_theme_constant_override("separation", 8)
 		hb2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row2.add_child(hb2)
+		hb2.add_child(_scope_thumb(sid, 40, 70))
 		var tv := VBoxContainer.new()
 		tv.add_theme_constant_override("separation", 0)
 		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1612,12 +1621,13 @@ func _render_market(pg: VBoxContainer) -> void:
 		var msel := _market_sec == 0 and i == _market_gun
 		var mrow := _card(msel, COL_ACCENT if msel else _dim(0.18), 6)
 		mrow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mrow.custom_minimum_size = Vector2(0, 66)
+		mrow.custom_minimum_size = Vector2(0, 100)
 		mrow.gui_input.connect(_on_market_row_input.bind(0, i))
 		var mv := VBoxContainer.new()
 		mv.add_theme_constant_override("separation", 2)
 		mv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		mrow.add_child(mv)
+		mv.add_child(_gun_thumb(mid, 40, mowned))
 		var nm := _mk_label(String(mg.get("name", mid)), 14, _dim(0.45) if mowned else COL_TEXT)
 		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		mv.add_child(nm)
@@ -1655,6 +1665,7 @@ func _render_market(pg: VBoxContainer) -> void:
 		mshb.add_theme_constant_override("separation", 8)
 		mshb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		msrow.add_child(mshb)
+		mshb.add_child(_scope_thumb(msid, 30, 56))
 		mshb.add_child(_mk_label(String(me.get("name", msid)), 15,
 				_dim(0.45) if msowned else COL_TEXT))
 		var mdesc := _mk_label("默认 · 多枪通用" if msid == "iron" else String(me.get("desc", "")), 12, _dim(0.5))
@@ -2176,3 +2187,86 @@ class Bar extends Control:
 		var h := size.y
 		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.08))
 		draw_rect(Rect2(Vector2.ZERO, Vector2(size.x * clampf(frac, 0.0, 1.0), h)), col)
+
+
+## ---- 卡片实物图（2026-10 用户反馈「需要有图像，提高体验」）----
+
+func set_thumbs(t) -> void:
+	_thumbs = t
+	if t != null and not t.shot.is_connected(_on_thumb_shot):
+		t.shot.connect(_on_thumb_shot)
+	if _root != null and lobby_visible:
+		_refresh_all()
+
+
+func _on_thumb_shot(key: String) -> void:
+	for r in _thumb_wait.get(key, []):
+		if is_instance_valid(r):
+			(r as TextureRect).texture = _thumbs.cached(key)
+	_thumb_wait.erase(key)
+
+
+## 枪械实物图：同局内枪模（含所装瞄具/消音器）；dim = 未拥有/已拥有置灰展示
+func _gun_thumb(gid: String, min_h: float, dim := false, w := 0.0) -> Control:
+	var key := "g|%s|%s|%s" % [gid, str(_stash.scope_fit.get(gid, "iron")), str(_stash.suppressed(gid))]
+	var prov := gun_preview_provider
+	return _thumb_box(key, func() -> Node3D: return prov.call(gid) if prov.is_valid() else null,
+			min_h, dim, w)
+
+
+## 瞄具实物图（机瞄没有实物：留同宽空位保持行对齐）
+func _scope_thumb(sid: String, min_h: float, w: float) -> Control:
+	var sc := Guns.scope_by_id(sid)
+	if sid == "iron" or sc.is_empty():
+		var gap := Control.new()
+		gap.custom_minimum_size = Vector2(w, min_h)
+		gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return gap
+	var kind := str(sc.get("kind", sid))
+	var prov := scope_preview_provider
+	return _thumb_box("s|" + kind, func() -> Node3D: return prov.call(kind) if prov.is_valid() else null,
+			min_h, not _stash.owns_scope(sid), w)
+
+
+## 图位：柔光底 + 等比居中的实物图；图还没拍好先留位，拍好就地补上
+func _thumb_box(key: String, builder: Callable, min_h: float, dim: bool, w: float) -> Control:
+	var box := Control.new()
+	box.custom_minimum_size = Vector2(w, min_h)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if w > 0.0:
+		box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	else:
+		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if _glow_tex == null:
+		_glow_tex = GradientTexture2D.new()
+		_glow_tex.fill = GradientTexture2D.FILL_RADIAL
+		_glow_tex.fill_from = Vector2(0.5, 0.55)
+		_glow_tex.fill_to = Vector2(1.0, 0.55)
+		var g := Gradient.new()
+		g.set_color(0, Color(1.0, 0.9, 0.72, 0.13))
+		g.set_color(1, Color(1.0, 0.9, 0.72, 0.0))
+		_glow_tex.gradient = g
+	var glow := TextureRect.new()
+	glow.texture = _glow_tex
+	glow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	glow.stretch_mode = TextureRect.STRETCH_SCALE
+	glow.set_anchors_preset(Control.PRESET_FULL_RECT)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(glow)
+	var tr := TextureRect.new()
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if dim:
+		tr.modulate = Color(0.72, 0.72, 0.72, 0.72)
+	var t: Texture2D = _thumbs.tex(key, builder) if _thumbs != null else null
+	if t != null:
+		tr.texture = t
+	elif _thumbs != null:
+		if not _thumb_wait.has(key):
+			_thumb_wait[key] = []
+		(_thumb_wait[key] as Array).append(tr)
+	box.add_child(tr)
+	return box

@@ -343,6 +343,14 @@ func _initialize() -> void:
 	print("[probe] 探针启动：存档已备份、main.tscn 已入树（卡死排查锚点）")
 	await frames(30)
 	main.stash.tutorial_done = true   # 摆拍不要首局引导卡遮左上角（新档默认会弹；stash 在 main 就绪后才有）
+	# 大厅卡片实物图（2026-10）：离屏拍的枪械缩略图要真出图（headless 不出图，跳过）
+	if DisplayServer.get_name() != "headless":
+		var p_gid := str(main.stash.loadout.get("primary", "rifle"))
+		var p_key := "g|%s|%s|%s" % [p_gid, str(main.stash.scope_fit.get(p_gid, "iron")),
+				str(main.stash.suppressed(p_gid))]
+		var got := await wait_until(func(): return main.lobby._thumbs.cached(p_key) != null, 600)
+		check("大厅枪械实物图已出图（%s）" % p_gid, got)
+		await frames(120)   # 其余卡片的图排队拍完再截大厅
 	shot("res://out/shot_lobby.png")
 
 	# ---- 大厅三页整页截图（三页签改造图证）：出发大厅 / 改枪台 / 交易行 ----

@@ -522,6 +522,14 @@ func _muzzle_point(gun: Node3D) -> Vector3:
 	return out
 
 
+## 大厅缩略图：单独一枚瞄具（同局内镜体：写实 optic_<kind>.glb + 程序化玻璃/
+## 红点件），kind = Guns.SCOPES 的 kind（holo/reddot/optic/sniper/thermal）
+func build_scope_preview(kind: String) -> Node3D:
+	var root := Node3D.new()
+	_scope_visual(root, kind, 0.0, 0.0, -0.08)
+	return root
+
+
 ## 大厅改枪台 3D 预览：同局内枪模（含所装瞄具）+ 消音器（枪身局部尺寸）
 func build_preview(gid: String) -> Node3D:
 	var gun := _build_gun_visual(gid)
