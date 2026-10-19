@@ -84,6 +84,10 @@ const RECOIL := {
 	# m14 大口径全自动（7.62 NATO DMR 高单发，2026-10-19 定案 730rpm）：
 	# 单发推力比 scarh 更沉、水平漂移收窄（连发累增温和，精度优先）
 	"m14": [0.30, 0.10, 0.06],
+	# asval 亚音速重弹（9×39 低膛压 + 一体消音器，2026-10 定案 972rpm 连发
+	# 快）：单发后坐温和（重弹比 5.56 沉、低膛压抵消——比 m4a1 略沉一档）、
+	# 连发累增中等、水平漂移窄（消音特种枪精度定位）
+	"asval": [0.18, 0.07, 0.08],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -351,8 +355,19 @@ func try_fire() -> void:
 		var flash_mesh: MeshInstance3D = g["flash_mesh"]
 		var moff: Vector3 = g["muzzle_off"]   # 每槽枪口点（持枪平移随动）
 		_flash_t = 0.05
-		flash.light_energy = 0.5 if bool(g.get("sup", false)) else 3.0   # 消音器：几乎无火光
-		flash_mesh.scale = Vector3.ONE * (0.35 if bool(g.get("sup", false)) else 1.0)
+		# 火光能量/尺寸按枪分档：改枪台消音器（sup）几乎无火光；asval 自带
+		# 一体消音器分支（写法照 _finish_gun 的 mp7/m14 先例，按枪 id 短路）
+		# ——亚音速弹 + 粗管消声器实际抑制枪口焰：能量减半（3.0→1.5）、
+		# 火光 mesh 缩小（1.0→0.5），介于普通枪与改枪台消音（0.5/0.35）
+		# 之间；既有枪数值零改动
+		var sup_on := bool(g.get("sup", false))
+		var flash_e := 0.5 if sup_on else 3.0   # 消音器：几乎无火光
+		var flash_s := 0.35 if sup_on else 1.0
+		if cur_id == "asval" and not sup_on:
+			flash_e = 1.5    # 自带一体消音器：枪口焰能量减半
+			flash_s = 0.5    # 火光 mesh 缩小一档
+		flash.light_energy = flash_e
+		flash_mesh.scale = Vector3.ONE * flash_s
 		flash.visible = true
 		flash.position = (g["holder"] as Node3D).transform * moff
 		flash_mesh.visible = true
@@ -931,7 +946,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 实拍枪自带真实机瞄（准星/照门是模型的一部分），不再叠旧版机瞄片——
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
-	elif (gun_id == "mp7" or gun_id == "m14") and s_kind == "iron":
+	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval") \
+			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
 		# iron 后照门横条（0.05×0.022 暗块悬浮轨上、无自发光渲染成黑板）
@@ -940,6 +956,9 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# m14 同例（2026-10 并册）：「大麦粒」柱状准星 + 导轨式照门座带
 		# 规正轮/觇孔板为考证建模件（_ar_m14 ⑦⑧），叠 iron 兜底片会悬浮
 		# 在枪顶与真实照门叠影
+		# asval 同例（2026-10 商店枪）：消音管前抱箍柱形准星（两侧半圆
+		# 护翼）+ 机匣前缘凸起座 U 型缺口照门为考证建模件（_ar_asval ③④，
+		# 超长瞄准基线），叠 iron 兜底片会与真实照门叠影
 		pass
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
@@ -1413,6 +1432,9 @@ const HOLD_DELTA := {
 	# m14 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_m14 握把顶锚
 	# grip(pos=(0,-0.028,0.155)) = (0, -0.022+0.028, -0.0018-0.155)
 	"m14": Vector3(0, 0.006, -0.1568),
+	# asval 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_asval 握把顶锚
+	# grip(pos=(0,-0.028,0.075)) = (0, -0.022+0.028, -0.0018-0.075)
+	"asval": Vector3(0, 0.006, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2442,9 +2464,12 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh", "m14"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
+# asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
+# 消音枪并入步枪册——几何体在 hd_gun_ar.gd _ar_asval（HDGunLib 高模件，
+# 一体消音管约占全枪一半长）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2506,6 +2531,15 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# size=匣外形（掉匣替身缩放基准，同 scarh 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.055, -0.150),
 					"size": Vector3(0.042, 0.15, 0.072), "show": false}
+		"asval":
+			# 特征⑧ 40 发聚合物长弧匣（用户定案 40 发，匣体等比拉长）：真匣
+			# 是枪身建模件（mag_val 独立命名节点 + curved_mag 四段 6° 微弧 +
+			# 加密横肋），动画匣隐（照 scarh「匣形由枪身件表达」先例）；
+			# pos=换弹手锚（枪身局部匣中段 (0,-0.19,-0.098)+Δ(0,0.006,-0.0768)
+			# 后 ×0.62 ≈ (0,-0.114,-0.118)）、size=匣外形（掉匣替身缩放基准，
+			# 同 m14 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.114, -0.118),
+					"size": Vector3(0.048, 0.245, 0.082), "show": false}
 	return {}
 
 
@@ -2524,6 +2558,12 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# 机匣顶 0.076 / 照门觇孔板顶 0.110——镜座挂机匣中段（真实
 			# 准星/照门为建模件，iron 不叠兜底机瞄片，见 _finish_gun）
 			return Vector3(0.08, -0.05, -0.40)
+		"asval":
+			# (my, mz, fz) = 镜座安装面高 0.08（防尘盖顶 0.078）/ 镜体中心
+			# z -0.04（机匣中后段）/ 前准星 z -0.52——前柱准星与 U 型缺口
+			# 照门均为建模件（考证超长瞄准基线），iron 不叠兜底机瞄片，
+			# 见 _finish_gun
+			return Vector3(0.08, -0.04, -0.52)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 
@@ -2641,10 +2681,30 @@ static func _ar_mats() -> Dictionary:
 			Color(0.15, 0.16, 0.175), 0.6)
 	var m14dark: StandardMaterial3D = mk14.call(Color(0.149, 0.157, 0.169),
 			Color(0.17, 0.18, 0.195), 0.9)
+	# ---- AS Val 特种突击步枪专用五色（2026-10 商店枪，官方考证配色；mk14
+	#      闭包同参复用——glow 0.32 家族口径，暗处可读三件套不缺）----
+	#      vsteel 黑色磷化钢 #1B1D1F（机匣/消音器/枪托骨架，rough 0.95 消
+	#      端面镜面爆白——同 m14steel 教训）/ vpolym 哑光碳黑聚合物 #26282A
+	#      （握把/弹匣/胶垫，rough 0.85 哑光）/ vplum 老化梅棕 #4A342B
+	#      （护木锥罩，考证「黑或老化梅棕」取梅棕招牌色）/ vwear 冷灰磨损
+	#      #6E7378（棱边露金属/滑动游标）/ vcover 防尘盖磨损高光 #3A3D40
+	#      （旧枪面盖板）
+	var vsteel: StandardMaterial3D = mk14.call(Color(0.106, 0.114, 0.122),
+			Color(0.118, 0.126, 0.134), 0.95)
+	var vpolym: StandardMaterial3D = mk14.call(Color(0.149, 0.157, 0.165),
+			Color(0.165, 0.174, 0.183), 0.85)
+	var vplum: StandardMaterial3D = mk14.call(Color(0.290, 0.204, 0.169),
+			Color(0.32, 0.224, 0.186), 0.8)
+	var vwear: StandardMaterial3D = mk14.call(Color(0.431, 0.451, 0.471),
+			Color(0.474, 0.496, 0.518), 0.6)
+	var vcover: StandardMaterial3D = mk14.call(Color(0.227, 0.239, 0.251),
+			Color(0.25, 0.262, 0.276), 0.95)
 	return {"dark": dark, "steel": steel, "wood": wood, "fde": fde,
 			"walnut": walnut, "polymer": polymer, "blued": blued,
 			"bakelite": bakelite, "m14walnut": m14walnut, "m14fg": m14fg,
-			"m14steel": m14steel, "m14black": m14black, "m14dark": m14dark}
+			"m14steel": m14steel, "m14black": m14black, "m14dark": m14dark,
+			"vsteel": vsteel, "vpolym": vpolym, "vplum": vplum,
+			"vwear": vwear, "vcover": vcover}
 
 
 ## ================= 枪匠·机枪册（m250，SIG XM250 体系） =================
