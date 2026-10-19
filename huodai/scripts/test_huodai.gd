@@ -1293,16 +1293,18 @@ func _run() -> void:
 		and st_m.owns_gun("rifle") and st_m.owns_gun("pistol") and st_m.owns_scope("holo"))
 	main.stash.save()   # 写回测试主档
 	# §射速回归（射速问题三源定案修复：假半自动/帧量化九档/表值错位）：
-	#   ① 半自动三枪（pistol/m14/sniper，表 auto=false）按住 60 帧（1s）只
+	#   ① 半自动两枪（pistol/sniper，表 auto=false）按住 60 帧（1s）只
 	#      发 1 弹——修复前无 tap 边沿门，pistol 按住 1s 连放 4 发（假半自动）；
+	#      （2026-10-19 用户定案 M14 改全自动 730rpm，移出半自动组）
 	#   ② 全自动长程射速 = 表值：vector 表 1200rpm（修复前帧量化压到 900）、
-	#      mp5 表 800（前 720）——追赶式结转冷却（fire_cd -= dt / += cd 配对）
-	#      让晚过门的帧量逐发补回，300 帧（5s）发数对表值 ±2；
-	#   ③ desc 写明「N发每分」的枪（m250/mp7），cd 换算 RPM 与文案一致 ±1%；
+	#      mp5 表 800（前 720）、m14 表 730（前半自动 214）、m250 表 550——
+	#      追赶式结转冷却（fire_cd -= dt / += cd 配对）让晚过门的帧量逐发
+	#      补回，300 帧（5s）发数对表值 ±2；
+	#   ③ desc 写明「N发每分」的枪（m250/mp7/m14），cd 换算 RPM 与文案一致 ±1%；
 	#   ④ 切枪清冷却 + 切枪当帧不丢拍（修复前 _equip 不清 fire_cd、切枪帧
 	#      提前 return 丢 1 拍开火）
 	var semi_bad: Array = []
-	for semi_gid in ["pistol", "m14", "sniper"]:
+	for semi_gid in ["pistol", "sniper"]:
 		main._start_mission({"primary": semi_gid, "secondary": "smg"})
 		await frames(8)
 		main.guns.ammo = 10
@@ -1316,12 +1318,14 @@ func _run() -> void:
 		if semi_shots != 1:
 			semi_bad.append("%s=%d发" % [semi_gid, semi_shots])
 		main.guns.update(1.0 / 60.0)   # 松手帧：归位 _fire_prev
-	check("半自动三枪按住 60 帧只发 1 弹（tap 边沿门）", semi_bad.is_empty(),
+	check("半自动两枪按住 60 帧只发 1 弹（tap 边沿门）", semi_bad.is_empty(),
 		str(semi_bad))
-	check("半自动标志落位（pistol/m14/sniper auto=false，全自动枪缺省 true）",
+	# m14 已改全自动（2026-10-19）：断言翻面——auto 缺省 true + cd≈60/730
+	check("半自动标志落位（pistol/sniper auto=false；m14 已全自动）",
 		not bool(Guns.gun_by_id("pistol").get("auto", true))
-			and not bool(Guns.gun_by_id("m14").get("auto", true))
 			and not bool(Guns.gun_by_id("sniper").get("auto", true))
+			and bool(Guns.gun_by_id("m14").get("auto", true))
+			and absf(60.0 / float(Guns.gun_by_id("m14")["cd"]) - 730.0) < 8.0
 			and bool(Guns.gun_by_id("rifle").get("auto", true))
 			and bool(Guns.gun_by_id("vector").get("auto", true))
 			and bool(Guns.gun_by_id("mp5").get("auto", true))
@@ -1352,8 +1356,34 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("mp5 长程射速达表值 800rpm（修复前帧量化 720）",
 		absf(mp5_shots - 66.7) <= 2.2, "shots=%d/300帧（5s）" % mp5_shots)
-	# desc「N发每分」机读：cd 换算 RPM 与文案一致（±1%）——m250 0.109→550.5
-	# vs「550」、mp7 0.063→952.4 vs「950」（修复前帧量化实际 514.3/900）
+	# m14 全自动 730rpm（2026-10-19 用户定案；cd 0.0822 ≈ 4.93 帧/发结转）
+	main._start_mission({"primary": "m14", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var m14_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("m14 全自动长程射速达表值 730rpm（原半自动 214）",
+		absf(m14_shots - 60.8) <= 2.2, "shots=%d/300帧（5s）" % m14_shots)
+	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）
+	main._start_mission({"primary": "m250", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var m250_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("m250 长程射速达表值 550rpm（用户定案）",
+		absf(m250_shots - 45.8) <= 2.0, "shots=%d/300帧（5s）" % m250_shots)
+	# desc「N发每分」机读：cd 换算 RPM 与文案一致（±1%）——m250 0.1091→549.9
+	# vs「550」、mp7 0.063→952.4 vs「950」、m14 0.0822→729.9 vs「730」（三处）
 	var rpm_re := RegEx.new()
 	rpm_re.compile("(\\d+)发每分")
 	var rpm_bad: Array = []
@@ -1365,7 +1395,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，两处）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，三处 m250/mp7/m14）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})
