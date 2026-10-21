@@ -3,13 +3,13 @@
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 冲锋枪册五枪（mp5/p90/uzi/vector/mp7）+
-#         步枪册五枪（m4a1/akm/scarh/m14/asval）+ 旧五枪 +
+#         步枪册六枪（m4a1/akm/scarh/m14/asval/k416）+ 旧五枪 +
 #         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
 #       + 拟真枪声分层回归（用户反馈「现在的枪声不拟真」）：四层合成
-#         （click/crack/boom/tail）17 枪流/时长分级/峰值/过零率/每发随机
+#         （click/crack/boom/tail）18 枪流/时长分级/峰值/过零率/每发随机
 #         + AS Val 消音专项档（峰值能量/时长低于普通步枪档）
 #       + 贴掩体吞枪复发红线（29f）：全枪册表面材质 no_depth_test/priority≥10
 #         审计 + 枪架 viewmodel 补光在位 + MP7 微自发光（三件套全锁）
@@ -234,6 +234,39 @@ func _run() -> void:
 	check("靶场离场回大厅模式复位", main.mode == main.Mode.LOBBY
 			and main.lobby.lobby_visible)
 
+	# 10d. 大厅 3D 场景（2026-10 三角洲式改版回归）：own_world_3d 独立视口在位 /
+	#      干员节点在位 / 大厅可见+出发页=场景激活 / 换枪当场重建手持枪 /
+	#      节点数与面数红线（数值断言防布景膨胀，性能红线 ≥55 帧的形状面预算）
+	check("大厅 3D 场景在位且独立世界", main.lobby_scene != null
+		and main.lobby_scene.vp != null and main.lobby_scene.vp.own_world_3d)
+	check("干员节点在位（soldier_hd 实例化）", main.lobby_scene.operator != null
+		and main.lobby_scene.operator.get_child_count() > 0)
+	check("大厅可见+出发页=场景激活", main.lobby_scene._active
+		and main.lobby_scene.composite.visible)
+	var held0: String = main.lobby_scene.held_gun_id
+	check("默认手持枪=主槽 rifle", held0 == "rifle", "held=%s" % held0)
+	main.stash.cash = 2400
+	main.stash.buy_gun("scarh")   # 幂等防重复扣款；后续 19 步自管 scarh 归属
+	main.lobby._slot_focus = "primary"
+	main.lobby._load_gun("scarh")
+	await frames(2)
+	check("大厅换枪当场换手持枪（rifle→scarh）", main.lobby_scene.held_gun_id == "scarh"
+		and main.lobby_scene._gun_holder.get_child_count() == 1,
+		"held=%s children=%d" % [main.lobby_scene.held_gun_id,
+			main.lobby_scene._gun_holder.get_child_count()])
+	main.lobby._slot_focus = "primary"   # _load_gun 装完自动跳另一槽，换回要重新指主槽
+	main.lobby._load_gun("rifle")
+	await frames(2)
+	check("换回 rifle 手持枪重建", main.lobby_scene.held_gun_id == "rifle")
+	main.stash.guns_owned.erase("scarh")   # 夹具还原：17 步断言「恰旧五枪」（19 步自购）
+	var lobby_st: Dictionary = main.lobby_scene.stats()
+	check("大厅场景节点数红线（≤%d）" % main.lobby_scene.MAX_NODES,
+		int(lobby_st["nodes"]) > 0 and int(lobby_st["nodes"]) <= main.lobby_scene.MAX_NODES,
+		"nodes=%d" % int(lobby_st["nodes"]))
+	check("大厅场景面数红线（≤%d）" % main.lobby_scene.MAX_TRIS,
+		int(lobby_st["tris"]) > 0 and int(lobby_st["tris"]) <= main.lobby_scene.MAX_TRIS,
+		"tris=%d" % int(lobby_st["tris"]))
+
 	# 11. 经济：买瞄具 → 装配 → 倍率生效（重定价后签到只有 300，先补足现金）
 	main.stash.cash = maxi(main.stash.cash, 700)
 	var cash_before: int = main.stash.cash
@@ -291,11 +324,11 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：十一把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：十二把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
-			"m250", "mp7", "asval"]:
+			"m250", "mp7", "asval", "k416"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -515,12 +548,13 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册五枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
-	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册）逐把枪身根总
-	#     顶点 ≥ 8× 低模基线（走 hd_guns._ar_build 分发入口，含 mag_stanag/
-	#     mag_banana/mag_wide/mag_dmr/mag_val 独立命名弹匣节点；POLY_MIN/
-	#     POLY_BASE 见 HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
-	for gid in ["m4a1", "akm", "scarh", "m14", "asval"]:
+	# 27. 高模顶点红线：步枪册六枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
+	#     步枪 2026-10 并册）逐把枪身根总顶点 ≥ 8× 低模基线（走
+	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
+	#     mag_dmr/mag_val/mag_k416 独立命名弹匣节点；POLY_MIN/POLY_BASE 见
+	#     HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
+	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -533,6 +567,27 @@ func _run() -> void:
 		check("步枪 %s 独立命名弹匣节点在根下" % gid, mag_node != null,
 			"node=%s" % (str(mag_node.name) if mag_node != null else "无"))
 		ar_root.free()
+
+	# 27b. K416 商店枪专项（2026-10 并册）：官方考证断言四件——
+	#      ① 独立命名弹匣锚点 mag_k416 在枪身根下（换弹手沿 mag_of 锚跟随
+	#        的契约件，#27 循环只查 mag_* 存在性，这里锁名）
+	#      ② 简介射速「880发每分」与 cd 换算一致 ±1%（60/0.0682=879.8）
+	#      ③ 全自动缺省（auto 不写 = true，hold 不连发才算违例）
+	#      ④ 备弹档 RESERVE["k416"] 在表（漏加则 enter() 备弹 0）
+	var k_root: Node3D = HDGuns._ar_build("k416")
+	var k_mag: Node = k_root.find_child("mag_k416", true, false)
+	check("K416 独立命名弹匣锚点 mag_k416 在根下", k_mag != null,
+		"node=%s" % (str(k_mag.name) if k_mag != null else "无"))
+	k_root.free()
+	var k_def: Dictionary = Guns.gun_by_id("k416")
+	var k_rpm := 60.0 / float(k_def["cd"])
+	check("K416 简介射速 880 与 cd 换算一致（±1%）",
+		absf(k_rpm - 880.0) / 880.0 <= 0.01, "cd=%s rpm=%.1f"
+			% [str(k_def["cd"]), k_rpm])
+	check("K416 全自动缺省 + 弹匣 30 + 备弹档在表",
+		bool(k_def.get("auto", true)) and int(k_def["mag"]) == 30
+			and (HDData.RESERVE as Dictionary).has("k416"),
+		"mag=%s reserve=%s" % [str(k_def.get("mag")), str(HDData.RESERVE.get("k416", "缺"))])
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -661,7 +716,7 @@ func _run() -> void:
 	# 29d. 拟真枪声分层回归（用户反馈「现在的枪声不拟真」；锚点：上承 29c
 	#      持握锚、下接 30 大坝分区）。枪声已重做为四层合成（click 机械瞬态/
 	#      crack 膛口爆裂/boom 低频/tail 混响尾，见 hd_audio.gd 类头），红线：
-	#      ① ensure 预生成全 17 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
+	#      ① ensure 预生成全 18 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
 	#      ② 时长分级 sniper > rifle > pistol 且全部 ≤0.5s
 	#      ③ 波形峰值 >0.2（非哑弹：归一后 0.88×gain，最短的枪也远过线）
 	#      ④ 过零率 >3× 纯正弦（证明高频 crack 成分在场——只剩 boom 正弦的
@@ -669,12 +724,12 @@ func _run() -> void:
 	#      ⑤ play_shot 每发随机：轮换池刚用的播放器 pitch ∈[0.94,1.06]、
 	#        音量在基准 ±1.5dB 内（真枪每发都不同）
 	var audio = main.guns.audio
-	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 17 枪预生成
+	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 18 枪预生成
 	var miss_pre: Array = []
 	for g_def in Guns.GUNS:
 		if not audio._shots.has(str(g_def["id"])):
 			miss_pre.append(str(g_def["id"]))
-	check("枪声 ensure 预生成全 17 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
+	check("枪声 ensure 预生成全 18 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
 		str(miss_pre))
 	var shot_len := {}
 	var shot_peak := {}
@@ -718,10 +773,10 @@ func _run() -> void:
 			peak_bad.append("%s=%.2f" % [a_gid, shot_peak[a_gid]])
 		if float(shot_len[a_gid]) > 0.5:
 			len_bad.append("%s=%.3f" % [a_gid, shot_len[a_gid]])
-	check("17 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
+	check("18 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
 		zcr_bad.is_empty(), str(zcr_bad))
-	check("17 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
-	check("17 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
+	check("18 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
+	check("18 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
 	check("时长分级 sniper > rifle > pistol",
 		float(shot_len["sniper"]) > float(shot_len["rifle"])
 			and float(shot_len["rifle"]) > float(shot_len["pistol"]),
@@ -1400,7 +1455,8 @@ func _run() -> void:
 	check("m250 长程射速达表值 550rpm（用户定案）",
 		absf(m250_shots - 45.8) <= 2.0, "shots=%d/300帧（5s）" % m250_shots)
 	# desc「N发每分」机读：cd 换算 RPM 与文案一致（±1%）——m250 0.1091→549.9
-	# vs「550」、mp7 0.063→952.4 vs「950」、m14 0.0822→729.9 vs「730」（三处）
+	# vs「550」、mp7 0.063→952.4 vs「950」、m14 0.0822→729.9 vs「730」、
+	# k416 0.0682→879.8 vs「880」
 	var rpm_re := RegEx.new()
 	rpm_re.compile("(\\d+)发每分")
 	var rpm_bad: Array = []
@@ -1412,7 +1468,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，四处 m250/mp7/m14/asval）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，五处 m250/mp7/m14/asval/k416）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

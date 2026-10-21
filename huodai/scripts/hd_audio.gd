@@ -189,6 +189,16 @@ const SHOT_TUNE := {
 		"tail": {"dur": 0.10, "bright": 0.18, "gain": 0.14},
 		"gain": 0.52,
 	},
+	# K416：饱满偏脆——5.56 中口径 HK416 高射速（880rpm），参考 m4a1/scarh
+	# 档之间：m4a1 的均衡骨架上 crack 略提脆（短行程活塞导气比直吹干脆）、
+	# boom 略沉（枪体比 M4 重一档）、tail 明快收束——高射速连发不糊
+	"k416": {
+		"click": {"freq": 4600.0, "dur": 0.007, "gain": 0.44},
+		"crack": {"dur": 0.047, "gain": 0.89},
+		"boom": {"freq": 142.0, "dur": 0.050, "tri": 0.22, "gain": 0.61},
+		"tail": {"dur": 0.25, "bright": 0.40, "gain": 0.29},
+		"gain": 0.84,
+	},
 }
 
 var _pool: Array[AudioStreamPlayer] = []

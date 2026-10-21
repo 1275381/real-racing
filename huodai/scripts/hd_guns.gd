@@ -88,6 +88,10 @@ const RECOIL := {
 	# 快）：单发后坐温和（重弹比 5.56 沉、低膛压抵消——比 m4a1 略沉一档）、
 	# 连发累增中等、水平漂移窄（消音特种枪精度定位）
 	"asval": [0.18, 0.07, 0.08],
+	# k416 5.56 步枪档（HK416 高射速 880rpm，2026-10 定案）：单发后坐 m4a1
+	# 同族略沉一档（气体短行程活塞系统比直吹稳）、连发累增同 5.56 档、
+	# 水平漂移窄（高射速枪横漂放大就压不住）
+	"k416": [0.17, 0.08, 0.09],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -946,8 +950,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 实拍枪自带真实机瞄（准星/照门是模型的一部分），不再叠旧版机瞄片——
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
-	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval") \
-			and s_kind == "iron":
+	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
+			or gun_id == "k416") and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
 		# iron 后照门横条（0.05×0.022 暗块悬浮轨上、无自发光渲染成黑板）
@@ -959,6 +963,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# asval 同例（2026-10 商店枪）：消音管前抱箍柱形准星（两侧半圆
 		# 护翼）+ 机匣前缘凸起座 U 型缺口照门为考证建模件（_ar_asval ③④，
 		# 超长瞄准基线），叠 iron 兜底片会与真实照门叠影
+		# k416 同例（2026-10 商店枪）：导气座折叠准星 + 轨上折叠觇孔照门为
+		# 考证建模件（_ar_k416 ③），叠 iron 兜底片会与真实照门叠影
 		pass
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
@@ -1435,6 +1441,9 @@ const HOLD_DELTA := {
 	# asval 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_asval 握把顶锚
 	# grip(pos=(0,-0.028,0.075)) = (0, -0.022+0.028, -0.0018-0.075)
 	"asval": Vector3(0, 0.006, -0.0768),
+	# k416 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_k416 握把顶锚
+	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	"k416": Vector3(0, 0.008, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2464,12 +2473,15 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
 # 消音枪并入步枪册——几何体在 hd_gun_ar.gd _ar_asval（HDGunLib 高模件，
 # 一体消音管约占全枪一半长）
+# k416（2026-10 商店枪 K416 突击步枪）：官方考证 HK416 风格 5.56 突击步枪
+# 并入步枪册——几何体在 hd_gun_ar.gd _ar_k416（HDGunLib 高模件，全长顶轨 +
+# 两节肋条散热套筒护木 + 鸟笼消焰器）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2540,6 +2552,15 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 同 m14 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.114, -0.118),
 					"size": Vector3(0.048, 0.245, 0.082), "show": false}
+		"k416":
+			# 特征⑧ STANAG 微弯聚合物 30 发匣（横向筋条刻度）：真匣是枪身
+			# 建模件（mag_k416 独立命名节点 + curved_mag 三段 5° 微弧 + 横肋
+			# ×3），动画匣隐（照 m4a1「匣形由枪身件表达」先例）；pos=换弹手锚
+			# （枪身局部匣中 (0,-0.1455,-0.163)+Δ(0,0.008,-0.0768) 后 ×0.62
+			# ≈ (0,-0.085,-0.149)）、size=匣外形（掉匣替身缩放基准，同 m14
+			# 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.085, -0.149),
+					"size": Vector3(0.05, 0.175, 0.09), "show": false}
 	return {}
 
 
@@ -2564,6 +2585,12 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# 照门均为建模件（考证超长瞄准基线），iron 不叠兜底机瞄片，
 			# 见 _finish_gun
 			return Vector3(0.08, -0.04, -0.52)
+		"k416":
+			# (my, mz, fz) = 镜座安装面高 0.083（全长顶轨楔齿尖）/ 镜体中心
+			# z -0.06（机匣中段）/ 前准星 z -0.49（导气座折叠准星）——折叠
+			# 准星 + 折叠照门均为建模件（ref_01 机匣顶部红点镜挂点），iron
+			# 不叠兜底机瞄片，见 _finish_gun
+			return Vector3(0.083, -0.06, -0.49)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 
@@ -2699,12 +2726,17 @@ static func _ar_mats() -> Dictionary:
 			Color(0.474, 0.496, 0.518), 0.6)
 	var vcover: StandardMaterial3D = mk14.call(Color(0.227, 0.239, 0.251),
 			Color(0.25, 0.262, 0.276), 0.95)
+	# ---- K416 突击步枪专用白刻字色（2026-10 商店枪，官方考证特征⑥：机匣
+	#      侧面白色刻字厂标 AMET + 编号刻印；mk14 闭包同参复用）——近白灰
+	#      #9DA2A8，黑枪身上读「白色激光刻印」、不刺眼
+	var kmark: StandardMaterial3D = mk14.call(Color(0.616, 0.635, 0.659),
+			Color(0.678, 0.698, 0.722), 0.6)
 	return {"dark": dark, "steel": steel, "wood": wood, "fde": fde,
 			"walnut": walnut, "polymer": polymer, "blued": blued,
 			"bakelite": bakelite, "m14walnut": m14walnut, "m14fg": m14fg,
 			"m14steel": m14steel, "m14black": m14black, "m14dark": m14dark,
 			"vsteel": vsteel, "vpolym": vpolym, "vplum": vplum,
-			"vwear": vwear, "vcover": vcover}
+			"vwear": vwear, "vcover": vcover, "kmark": kmark}
 
 
 ## ================= 枪匠·机枪册（m250，SIG XM250 体系） =================

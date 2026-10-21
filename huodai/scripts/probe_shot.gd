@@ -1,8 +1,8 @@
 # 画面探针（窗口模式出图，headless 兼容跑断言）：大厅 → 行动出生点 → 远景士兵
 # → 中心危险区 → 靶馆——五张基础截图 + 附加验收：开镜渐晕 → 红点镜大窗两连拍
 # （shot_reddot_hip 腰射大窗造型 / shot_reddot_ads 开镜红点居窗）→ 换弹手部 →
-# 汤姆逊腰射 → 十二把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/
-# mk4/m250/mp7/m14/asval.png）→
+# 汤姆逊腰射 → 十三把新枪逐把腰射（shot_gun_mp5/p90/uzi/vector/m4a1/akm/scarh/
+# mk4/m250/mp7/m14/asval/k416.png）→
 # 双槽切枪串色验收（shot_slot_switch.png）→ 大厅弹药行特写（只读）→
 # 大厅三页整页（shot_page_depart 出发大厅 / shot_page_bench 改枪台·选中枪+已拥有未装镜
 # 让「换装」钮可见 / shot_page_market 交易行四段分区全貌）→
@@ -11,6 +11,9 @@
 # （shot_market_warehouse.png：段选中态+两行滚动窗口+「Enter 一键变卖全部」钮）→
 # 点击=装备两图证（shot_click_equip 出发页合成左键点击装枪后整页：行内「已装备」置灰钮
 # +副槽卡换枪 / shot_click_bench 改枪台合成左键点击换镜后整页：「已装」钮+当前装配摘要）→
+# 三角洲式 3D 出发大厅三连拍（shot_lobby_scene 默认大厅全景：3D 机库+干员持当前配枪
+# / shot_lobby_scene_market 左下面板组战利品入库态 / shot_lobby_scene_swap
+# 换主武器后干员手持变化对比）→
 # 大坝分区四连拍
 # （shot_dam_far 坝全景剪影 / shot_dam_base 坝底工业区街景 / shot_dam_graffiti 涂鸦环近景
 # / shot_dam_ref 对位相机主图——后撤高机位纯净全景（无 HUD/枪模）：山脊+坝面
@@ -29,13 +32,16 @@
 # shot_cover_fire_ads 开火火光帧 / shot_cover_reload_mid 换弹 0.55·pair /
 # shot_cover_glass_ads 幕墙对照 / shot_cover_strafe_s06 真横移第 6 帧 /
 # shot_cover_m250_ads 长枪 ADS / shot_gun_m14_cover 商店枪 M14 贴墙 /
-# shot_gun_asval_cover 商店枪 AS Val 贴墙——①②③⑦⑪⑫
-# 各带 _b 图，两组 a/b 隐枪差分取稳定交集判裂，修后门槛全部「稳定完整（大域 1）」；
+# shot_gun_asval_cover 商店枪 AS Val 贴墙 / shot_gun_k416_cover 商店枪
+# K416 贴墙——①②③⑦⑪⑫⑬ 各带 _b 图，两组 a/b 隐枪差分取稳定交集判裂，
+# 修后门槛全部「稳定完整（大域 1）」；
 # m14 贴掩体 pair 直接回应「注意枪身分裂」：一体成型+独立视口下掩体帧枪体必须完整）
-# （共 76 张：36 处 shot() 调用 + 逐枪美照循环 17 把（全量在册：十二把新枪
-# + 旧五枪，2026-10 判图补图）+ scope 瞄具系列 6 张（2026-10 判图补图）
-# + 矩阵段 18 张（含 pair 的 _b 图）——旧注释「29/31/33/35/40/43/45/59/70/73 张」
-# 随图集扩充滚动订正；
+# （共 82 张：53 处 shot() 调用（其中 7 处 pair 各出 a/_b 双图；
+# 逐枪美照/scope 两组循环随迭代展开 18+6 张）+
+# 逐枪美照循环 18 把（全量在册：十三把新枪 + 旧五枪，2026-10 判图补图；
+# K416 并册追加）+ scope 瞄具系列 6 张（2026-10 判图补图）
+# + 矩阵段 20 张（含 pair 的 _b 图）+ 3D 大厅三连拍 3 张——旧注释
+# 「29/31/33/35/40/43/45/59/70/73/76/79 张」随图集扩充滚动订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
@@ -373,6 +379,38 @@ func _initialize() -> void:
 	await frames(8)
 	shot("res://out/shot_page_market.png")
 	main.lobby.set_tab(0)
+	# ---- 三角洲式 3D 出发大厅三连拍（2026-10 大厅改造图证）：默认大厅全景
+	#      （3D 备战机库 + 干员持当前配枪 + 仓库/交易行面板组停靠左下角）→
+	#      左下面板组带战利品入库态（「打开交易行面板停左下角」）→ 换一把主
+	#      武器后干员手持变化对比（同机位，枪形随 loadout 重建）。
+	#      摆拍改动（loadout/仓库件）拍完即还原——后续靶场段按 guns.enter(
+	#      stash.loadout) 进场，配置被摆拍顶掉会把「两发后余弹 28」跑成别的枪
+	var lo0: Dictionary = main.stash.loadout.duplicate()
+	var items0: int = main.stash.items.size()
+	await frames(8)
+	shot("res://out/shot_lobby_scene.png")
+	main.stash.items.append({"uid": "probe_lobby_a", "name": "军用电池", "icon": "电源",
+		"rarity": 2, "value": 620})
+	main.stash.items.append({"uid": "probe_lobby_b", "name": "机密文件", "icon": "机密",
+		"rarity": 5, "value": 4200})
+	main.lobby.set_tab(0)   # 重刷：左下面板组亮出入库条（④仓库 N 件 + 战利品格 + 变卖钮）
+	await frames(8)
+	shot("res://out/shot_lobby_scene_market.png")
+	var swap_gid := "scarh" if str(main.stash.loadout.get("primary", "")) != "scarh" else "m4a1"
+	if not main.stash.guns_owned.has(swap_gid):
+		main.stash.guns_owned.append(swap_gid)   # 摆拍直拥（收尾还原真实存档）
+	main.lobby._slot_focus = "primary"
+	main.lobby._load_gun(swap_gid)   # 换一把主武器：画面里的人当场换手持枪
+	check("大厅换枪手持已重建（%s）" % swap_gid,
+		main.lobby_scene.held_gun_id == swap_gid,
+		"held=%s" % main.lobby_scene.held_gun_id)
+	await frames(8)
+	shot("res://out/shot_lobby_scene_swap.png")
+	# 还原摆拍：loadout 回原配置、两件摆拍战利品摘除（guns_owned 直拥件不摘
+	# ——逐枪美照段落本就幂等 append，收尾存档还原兜底）
+	main.stash.loadout = lo0
+	while main.stash.items.size() > items0:
+		main.stash.items.remove_at(main.stash.items.size() - 1)
 	main.lobby.hide_lobby()
 
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
@@ -650,15 +688,15 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~18：十七把在册枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~18：十八把在册枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型。
 	# 2026-10 判图补图：循环从十把新枪扩到全量在册（旧五枪
 	# pistol/smg/rifle/shotgun/sniper 并入 + 商店枪 M14/AS Val 并册——此前枪照
-	# 缺图无法验收）
+	# 缺图无法验收）；2026-10 商店枪 K416 并册追加
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
-			"m250", "mp7", "m14", "asval", "pistol", "smg", "rifle", "shotgun",
-			"sniper"]:
+			"m250", "mp7", "m14", "asval", "k416", "pistol", "smg", "rifle",
+			"shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -1069,12 +1107,35 @@ func _initialize() -> void:
 	_set_ads_mx(1.0)
 	await frames(2)
 	await shot("res://out/shot_gun_asval_cover.png", false, true)
+	# ⑬ k416 ADS 1.0 正贴（2026-10 商店枪 K416 并册「验分裂」验收，照 m14/
+	#    asval pair 模式）：一体成型 unibody + vm 独立视口下掩体帧枪体必须
+	#    完整——走 pair 判裂（两组 a/b 隐枪差分取稳定交集，大域 ≥2 = 稳定裂
+	#    即 FAIL）；换枪重进 MISSION 走 guns.enter 同槽换 id 重建链，顺带复核
+	#    新枪挂载公共链
+	main.stash.guns_owned.append("k416")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "k416", "secondary": "pistol"}
+	main._start_mission({"primary": "k416", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm5: Dictionary = main.soldiers.soldiers[i]
+		sm5["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm5["engaged"] = false
+		sm5["moving"] = false
+		sm5["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	await shot("res://out/shot_gun_k416_cover.png", false, true)
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx
 
-	print("[probe] 探针完成：实存 %d/76 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/82 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	# （与看门狗强制收尾共用 _restore_save）
 	_done = true
