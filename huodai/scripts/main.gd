@@ -24,9 +24,13 @@ var soldiers: HDSoldiers
 var loot: HDLoot
 var hud: HDHud
 var lobby: HDLobby
+var lobby_scene   # 3D 出发大厅（hd_lobby_scene.gd，preload 常量见下；新脚本不设 class_name）
 var audio: HDAudio
 var tracers   # TracerPool（无 class_name，preload）
 var airdrop   # 空投事件（hd_airdrop.gd，无 class_name，preload）
+
+## 新脚本一律 preload（-s 测试/探针跑法不刷新全局类缓存，class_name 会编译失败）
+const LobbyScene := preload("res://scripts/hd_lobby_scene.gd")
 
 var _kills: int = 0
 var _raid_t: float = 0.0
@@ -145,6 +149,14 @@ func _ready() -> void:
 	lobby.set_thumbs(thumbs)
 	lobby.deploy_requested.connect(_start_mission)
 	lobby.range_requested.connect(_enter_range)
+	# 3D 出发大厅（三角洲式改版）：机库场景走 own_world_3d 独立视口
+	# （照 player._build_vm 先例），枪模工厂复用局内 build_preview——
+	# 大厅里换枪，画面里的人当场换手持枪（同一套 unibody 枪模）
+	lobby_scene = LobbyScene.new()
+	add_child(lobby_scene)
+	lobby_scene.setup(stash)
+	lobby_scene.gun_preview_provider = func(gid: String) -> Node3D: return guns.build_preview(gid)
+	lobby.attach_scene(lobby_scene)
 
 	lobby.show_lobby()
 	_apply_mode_visuals()
