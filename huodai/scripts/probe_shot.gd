@@ -361,7 +361,7 @@ func _initialize() -> void:
 	shot("res://out/shot_lobby.png")
 
 	# ---- 大厅三页整页截图（三页签改造图证）：出发大厅 / 改枪台 / 交易行 ----
-	shot("res://out/shot_page_depart.png")   # 默认页=出发大厅（槽位卡+候选枪分页+速览）
+	shot("res://out/shot_page_depart.png")   # 默认页=出发大厅（收起态：3D 干员+出发栏+右下角「战备」贴图）
 	# ---- 实战/靶场入口可辨图证：出发大厅整页——红橙「出发 · 实战行动」CTA
 	#      （含消耗提示行）与底栏绿色「G · 练习靶场 · 不耗弹药」入口同框
 	shot("res://out/shot_entries.png")
@@ -396,6 +396,13 @@ func _initialize() -> void:
 	main.lobby.set_tab(0)   # 重刷：左下面板组亮出入库条（④仓库 N 件 + 战利品格 + 变卖钮）
 	await frames(8)
 	shot("res://out/shot_lobby_scene_market.png")
+	# ---- 战备面板展开态（2026-10 战备收拢图证）：点右下角「战备」/TAB 才展开
+	#      本局装备槽卡 + 换枪条 + 速览；拍完收起还原主画面
+	main.lobby._toggle_prep(true)
+	await frames(8)
+	shot("res://out/shot_lobby_prep.png")
+	main.lobby._toggle_prep(false)
+	await frames(2)
 	var swap_gid := "scarh" if str(main.stash.loadout.get("primary", "")) != "scarh" else "m4a1"
 	if not main.stash.guns_owned.has(swap_gid):
 		main.stash.guns_owned.append(swap_gid)   # 摆拍直拥（收尾还原真实存档）

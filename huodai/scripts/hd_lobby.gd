@@ -33,6 +33,9 @@ extends CanvasLayer
 ## 干员持当前配枪站右三分线）——出发页重排为「左列本局装备 + 左下角仓库/交易行
 ## 面板组（用户点名停靠）+ 底部换枪条 + 右侧出发栏」，中央留给干员；改枪台/交易行
 ## 两页整页照旧（1/2/3 页签与点击链路零丢失），出发页背景透出机库、其余页不透明。
+## 2026-10 战备收拢（用户定案「点进去才能战备战」）：本局装备槽卡/换枪条/速览
+## 全部收进战备面板，主画面只留 3D 干员 + 右下角「战备」小贴图（TAB 同链开合）；
+## 收起态光标域只剩出发钮（回车=出发），展开态键鼠链与收拢前完全一致。
 
 signal deploy_requested(loadout: Dictionary)
 signal range_requested
@@ -57,8 +60,9 @@ var lobby_visible: bool = false
 
 var _stash: HDStash
 var _tab := 0                       # 0 出发大厅 / 1 改枪台 / 2 交易行
-var _cur0 := 0                      # 出发页光标（当页行数域：2 槽位 + 当页枪行 + 出发钮）
+var _cur0 := 0                      # 出发页光标（展开态域：2 槽位 + 当页枪行 + 出发钮；收起态只有出发钮）
 var _deploy_page := 0               # 出发页候选枪分页索引
+var _prep_open := false             # 出发页战备面板开合（右下角「战备」贴图 / TAB 同链）
 var _slot_focus := "primary"        # 出发页「装入目标槽」
 var _gun_idx := 0                   # 改枪台左列选中枪
 var _scope_idx := 0                 # 改枪台右列选中瞄具（0=机瞄）
@@ -182,6 +186,11 @@ func handle_key(code: int) -> bool:
 			if _tab != 0:
 				return false
 			_toggle_insure()
+		KEY_TAB:
+			# 战备面板开合（右下角「战备」贴图同链）；只在出发页消费
+			if _tab != 0:
+				return false
+			_toggle_prep(not _prep_open)
 		KEY_R:
 			if _tab != 1:
 				return false
@@ -229,6 +238,14 @@ func show_hint(text: String, dur: float = HINT_LIFE) -> void:
 
 func set_tab(i: int) -> void:
 	_tab = clampi(i, 0, TAB_TITLES.size() - 1)
+	_refresh_all()
+
+
+## 战备面板开合（TAB / 右下角「战备」贴图 / 面板 ✕ 同链）：开合都把光标归位——
+## 收起态光标域只剩出发钮（0 号=出发），展开态 0 号=主武器槽（键盘链与收拢前一致）
+func _toggle_prep(open: bool) -> void:
+	_prep_open = open
+	_cur0 = 0
 	_refresh_all()
 
 
@@ -530,35 +547,122 @@ func _deploy_rows() -> int:
 	return mini(DEPLOY_PAGE, Guns.GUNS.size() - _deploy_page * DEPLOY_PAGE)
 
 func _render_deploy(pg: VBoxContainer) -> void:
-	var guns: Array = Guns.GUNS
 	_deploy_page = clampi(_deploy_page, 0, _deploy_pages() - 1)
 	var rows := _deploy_rows()
-	var n := 3 + rows          # 光标域：2 槽位 + 当页枪行 + 出发钮
+	# 光标域：展开态 = 2 槽位 + 当页枪行 + 出发钮（键鼠链与收拢前一致）；
+	# 收起态 = 只剩出发钮（posmod 归 0），方向键不游走、回车即出发
+	var n := (3 + rows) if _prep_open else 1
 	_cur0 = posmod(_cur0, n)
 
-	# —— 三角洲式 3D 版三栏：左列装备+左下面板组 / 中部留给干员（底部换枪条）
-	# / 右列出发栏。光标域、确认链、点击链与改版前完全一致（只动布局不动状态机）
+	# —— 三角洲式 3D 版：主画面让给 3D 干员；战备内容收进面板（点「战备」才展开）
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 20)
 	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pg.add_child(cols)
 
-	# —— 左：本局装备（主/副武器槽卡；聚焦槽 = 装入目标）+ 左下角面板组 ——
-	var left := _col(cols, 340)
+	# —— 战备面板（展开态）：本局装备槽卡 + 换枪条 + 速览，占主画面 ——
+	if _prep_open:
+		cols.add_child(_prep_panel(rows))
+
+	# —— 收起态左下：仓库/交易行面板组（用户点名停靠），展开态让位战备面板 ——
+	if not _prep_open:
+		var left := _col(cols, 340)
+		var lspace := Control.new()
+		lspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		left.add_child(lspace)
+		left.add_child(_dock_panel())
+		# —— 中：整栏留给 3D 干员 ——
+		var midc := VBoxContainer.new()
+		midc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cols.add_child(midc)
+		var spacer := Control.new()
+		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		midc.add_child(spacer)
+
+	# —— 右：出发（押上 / 保险 / 出发 CTA / 战绩）——
+	var right := _col(cols, 316)
+	right.add_child(_sec_head("出发", ""))
+	var risk_v: int = _stash.carried_value(_stash.loadout)
+	var rc := _card(false, Color(COL_LOW.r, COL_LOW.g, COL_LOW.b, 0.45))
+	var rv := _card_vbox(rc, 2)
+	rv.add_child(_mk_label("本次押上（阵亡/放弃即丢）", 12, _dim(0.6)))
+	rv.add_child(_mk_label("₵ " + _fmt(risk_v), 26, COL_LOW))
+	var rnote := _mk_label("主副武器 · 瞄具消音器 · 备弹", 11, _dim(0.55))
+	rv.add_child(rnote)
+	right.add_child(rc)
+	right.add_child(_insure_card(risk_v))
+	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流）
+	var di := (2 + rows) if _prep_open else 0
+	var dsel := _cur0 == di
+	var btn := _mk_btn("出发 · 实战行动", 22)
+	btn.custom_minimum_size = Vector2(0, 62)
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_style_btn(btn, true, COL_LOW if dsel else Color(COL_LOW.r, COL_LOW.g, COL_LOW.b, 0.75), 20)
+	if dsel:
+		var hsb: StyleBoxFlat = btn.get_theme_stylebox("normal").duplicate()
+		hsb.bg_color = Color(0.38, 0.14, 0.06, 0.95)
+		hsb.set_border_width_all(3)
+		btn.add_theme_stylebox_override("normal", hsb)
+	btn.pressed.connect(_fire_deploy)
+	right.add_child(btn)
+	var dnote := _mk_label("25 分钟内撤出 · 实战消耗库存极致备弹", 11, _dim(0.55))
+	dnote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	right.add_child(dnote)
+	right.add_child(_records_card())
+
+	# —— 右下角「战备」小贴图（用户定案：点进去才能战备战）——
+	var trow := HBoxContainer.new()
+	trow.alignment = BoxContainer.ALIGNMENT_END
+	pg.add_child(trow)
+	trow.add_child(_prep_tile())
+
+	var hint := _mk_label("鼠标：点右下角「战备」整备装备 · 点卡片装入 · ◀▶ 翻页   键盘：TAB 战备 · 回车 确认/出发 · I 投保 · 1/2/3 切页签 · G 靶场",
+			13, _dim(0.45))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pg.add_child(hint)
+
+
+## 战备面板（点右下角「战备」贴图 / TAB 展开）：左列本局装备槽卡 + 右侧换枪条
+## + 光标所指速览——内容与收拢前左列/中栏一致，只是收进了面板（状态机零改动）
+func _prep_panel(rows: int) -> PanelContainer:
+	var panel := _card(true, COL_ACCENT.darkened(0.4))
+	panel.name = "prep_panel"
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var pv := _card_vbox(panel, 6)
+	# 头行：标题 + ✕ 收起（与贴图/TAB 同链）
+	var head := HBoxContainer.new()
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pv.add_child(head)
+	head.add_child(_mk_label("战备", 24, COL_ACCENT))
+	var hsp := Control.new()
+	hsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hsp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(hsp)
+	var close := _mk_btn("✕ 收起（TAB）", 13)
+	_style_btn(close, false, _dim(0.55), 8)
+	close.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	close.pressed.connect(func(): _toggle_prep(false))
+	head.add_child(close)
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", 14)
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pv.add_child(body)
+	# 左：本局装备（主/副武器槽卡；聚焦槽 = 装入目标）
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(300, 0)
+	left.add_theme_constant_override("separation", 8)
+	body.add_child(left)
 	left.add_child(_sec_head("本局装备", "点卡片选装入槽"))
 	for i in 2:
 		left.add_child(_slot_card(i))
-	left.add_child(_dock_panel())
-
-	# —— 中：留给 3D 干员（ Spacer 全透），底部换枪条 + 光标所指速览 ——
-	var midc := VBoxContainer.new()
-	midc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	midc.add_theme_constant_override("separation", 10)
-	cols.add_child(midc)
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	midc.add_child(spacer)
+	# 右：选择武器（◀▶ 翻页 + 换枪条 + 光标所指速览）
+	var wc := VBoxContainer.new()
+	wc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wc.add_theme_constant_override("separation", 8)
+	body.add_child(wc)
+	var guns: Array = Guns.GUNS
 	var owned_n := 0
 	for g0 in guns:
 		if _stash.guns_owned.has(str(g0["id"])):
@@ -578,52 +682,50 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	pnext.pressed.connect(_deploy_flip.bind(1))
 	pnext.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	mh.add_child(pnext)
-	midc.add_child(mh)
+	wc.add_child(mh)
 	var strip := HBoxContainer.new()
 	strip.add_theme_constant_override("separation", 10)
-	midc.add_child(strip)
+	wc.add_child(strip)
 	var first: int = _deploy_page * DEPLOY_PAGE
 	for r in rows:
 		strip.add_child(_gun_card_strip(first + r, 2 + r))
+	wc.add_child(_gun_brief(_deploy_sel_id()))
+	return panel
 
-	# —— 右：出发（押上 / 保险 / 出发 CTA / 战绩 / 速览）——
-	var right := _col(cols, 316)
-	right.add_child(_sec_head("出发", ""))
-	var risk_v: int = _stash.carried_value(_stash.loadout)
-	var rc := _card(false, Color(COL_LOW.r, COL_LOW.g, COL_LOW.b, 0.45))
-	var rv := _card_vbox(rc, 2)
-	rv.add_child(_mk_label("本次押上（阵亡/放弃即丢）", 12, _dim(0.6)))
-	rv.add_child(_mk_label("₵ " + _fmt(risk_v), 26, COL_LOW))
-	var rnote := _mk_label("主副武器 · 瞄具消音器 · 备弹", 11, _dim(0.55))
-	rv.add_child(rnote)
-	right.add_child(rc)
-	right.add_child(_insure_card(risk_v))
-	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流）
-	var di := 2 + rows
-	var dsel := _cur0 == di
-	var btn := _mk_btn("出发 · 实战行动", 22)
-	btn.custom_minimum_size = Vector2(0, 62)
-	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_style_btn(btn, true, COL_LOW if dsel else Color(COL_LOW.r, COL_LOW.g, COL_LOW.b, 0.75), 20)
-	if dsel:
-		var hsb: StyleBoxFlat = btn.get_theme_stylebox("normal").duplicate()
-		hsb.bg_color = Color(0.38, 0.14, 0.06, 0.95)
-		hsb.set_border_width_all(3)
-		btn.add_theme_stylebox_override("normal", hsb)
-	btn.pressed.connect(_fire_deploy)
-	right.add_child(btn)
-	var dnote := _mk_label("25 分钟内撤出 · 实战消耗库存极致备弹", 11, _dim(0.55))
-	dnote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	right.add_child(dnote)
-	# 光标所指武器速览（数据条）：从底部中栏挪到右栏——判图 1 轮「全身构图被
-	# UI 遮挡」返工：中栏底部只留换枪条，干员腿部让出来
-	right.add_child(_gun_brief(_deploy_sel_id()))
-	right.add_child(_records_card())
 
-	var hint := _mk_label("鼠标：点卡片装备 · ◀▶ 翻页   键盘：←/→ 选择 · ↑↓ 跨页 · 回车 装入/出发 · I 投保 · 1/2/3 切页签 · G 靶场",
-			13, _dim(0.45))
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	pg.add_child(hint)
+## 右下角「战备」小贴图（用户定案「点进去才能战备战」）：收起态=入口
+## （写当前主武器），展开态=收起钮；TAB 同链
+func _prep_tile() -> PanelContainer:
+	var pid := str(_stash.loadout.get("primary", ""))
+	var pname := "空槽"
+	if pid != "":
+		pname = String(Guns.gun_by_id(pid).get("name", pid))
+	var tile := _card(false, COL_ACCENT)
+	tile.name = "prep_tile"
+	tile.custom_minimum_size = Vector2(212, 84)
+	tile.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	tile.gui_input.connect(_on_prep_tile_input)
+	var tv := _card_vbox(tile, 2)
+	var th := HBoxContainer.new()
+	th.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tv.add_child(th)
+	th.add_child(_mk_label("战备", 20, COL_ACCENT))
+	var tsp := Control.new()
+	tsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tsp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	th.add_child(tsp)
+	th.add_child(_mk_label("TAB", 12, _dim(0.5)))
+	var sub := "收起面板" if _prep_open else "%s · 点开整备" % pname
+	tv.add_child(_mk_label(sub, 12, _dim(0.65)))
+	return tile
+
+
+## 「战备」贴图点击：开合战备面板（与 TAB / 面板 ✕ 同链）
+func _on_prep_tile_input(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton:
+		var mb := ev as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_toggle_prep(not _prep_open)
 
 
 ## 出发页翻页（◀/▶ 钮）：光标回到当页第一把枪
@@ -1030,8 +1132,12 @@ func _deploy_sel_id() -> String:
 
 
 ## 出发页确认（键盘回车与鼠标再点已选行同收敛于此）：
-## 槽=设装入目标 · 枪行=已拥有装入聚焦槽（未拥有提示去交易行，不扣款）· 出发钮=出发
+## 收起态=直接出发（光标域只有出发钮）· 展开态槽=设装入目标 · 枪行=已拥有装入聚焦槽
+## （未拥有提示去交易行，不扣款）· 出发钮=出发
 func _confirm_deploy() -> void:
+	if not _prep_open:
+		_fire_deploy()   # 收起态光标域只有出发钮：回车即出发
+		return
 	var guns: Array = Guns.GUNS
 	var rows := _deploy_rows()
 	if _cur0 <= 1:
@@ -2021,24 +2127,28 @@ func _buy_ammo_for(gid: String) -> void:
 func _move(dh: int, dv: int) -> void:
 	match _tab:
 		0:
-			# ←/→ 页内回绕；↑/↓ 单步行进、端点跨页：↓ 越过出发钮翻下页回槽位0，
-			# ↑ 在槽位0 翻上页落到出发钮位（回绕成环）
-			var rows := _deploy_rows()
-			var n := 3 + rows
-			if dv > 0:
-				if _cur0 + 1 >= n:
-					_deploy_page = posmod(_deploy_page + 1, _deploy_pages())
-					_cur0 = 0
-				else:
-					_cur0 += 1
-			elif dv < 0:
-				if _cur0 - 1 < 0:
-					_deploy_page = posmod(_deploy_page - 1, _deploy_pages())
-					_cur0 = 2 + _deploy_rows()
-				else:
-					_cur0 -= 1
+			# 战备收起：光标域只剩出发钮，方向键不游走（回车=出发，见 _confirm_deploy）
+			if not _prep_open:
+				_cur0 = 0
 			else:
-				_cur0 = posmod(_cur0 + dh, n)
+				# ←/→ 页内回绕；↑/↓ 单步行进、端点跨页：↓ 越过出发钮翻下页回槽位0，
+				# ↑ 在槽位0 翻上页落到出发钮位（回绕成环）
+				var rows := _deploy_rows()
+				var n := 3 + rows
+				if dv > 0:
+					if _cur0 + 1 >= n:
+						_deploy_page = posmod(_deploy_page + 1, _deploy_pages())
+						_cur0 = 0
+					else:
+						_cur0 += 1
+				elif dv < 0:
+					if _cur0 - 1 < 0:
+						_deploy_page = posmod(_deploy_page - 1, _deploy_pages())
+						_cur0 = 2 + _deploy_rows()
+					else:
+						_cur0 -= 1
+				else:
+					_cur0 = posmod(_cur0 + dh, n)
 		1:
 			if dh != 0:
 				_bench_col = 1 - _bench_col

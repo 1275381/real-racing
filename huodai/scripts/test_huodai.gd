@@ -430,8 +430,14 @@ func _run() -> void:
 
 	# 24. 出发页购买入口回收：未拥有枪行回车不购不装（现金足额也拦）、B/空格不再消费
 	#     （静默不消费——不弹「←→ 切③区」类误导指路，_hint_label 保持空）
+	#     2026-10 战备收拢：槽卡/枪行收进战备面板（右下角贴图/TAB 开合），键盘链
+	#     先展开面板再驱动；收起态光标域只剩出发钮（回车=出发，另见 _confirm_deploy）
 	main.stash.cash = 99999
 	main.lobby.set_tab(0)
+	check("战备面板默认收起（主画面只剩干员+出发栏）", not main.lobby._prep_open)
+	main.lobby._toggle_prep(true)
+	check("战备面板展开（贴图/TAB 链）且光标归主武器槽",
+		main.lobby._prep_open and main.lobby._cur0 == 0)
 	main.lobby._hint_label.text = ""
 	check("出发页不再消费 B/空格", not main.lobby.handle_key(KEY_B)
 		and not main.lobby.handle_key(KEY_SPACE))
@@ -443,6 +449,8 @@ func _run() -> void:
 		and main.stash.cash == 99999
 		and str(main.stash.loadout.get("primary")) != "mp5")
 	check("出发页未拥有指路报键位（按 3）", main.lobby._hint_label.text.contains("按 3 进交易行"))
+	main.lobby._toggle_prep(false)
+	check("战备面板收起（光标归出发钮）", not main.lobby._prep_open and main.lobby._cur0 == 0)
 
 	# 25. 交易行成交链：回车购枪/购镜 · B 换挡 · 空格按挡位购弹（changed 联动刷新现金）
 	main.lobby.handle_key(KEY_3)
@@ -817,6 +825,7 @@ func _run() -> void:
 	#      （loadout 变化）、改枪台右列已拥有镜=选中+直接换装（scope_fit 变化）；
 	#      交易行例外维持只选中（防误购：现金/拥有数不变）
 	main.lobby.set_tab(0)
+	main.lobby._toggle_prep(true)   # 战备收拢后：槽卡/枪行在战备面板里，先展开再点
 	main.lobby._slot_focus = "secondary"   # 聚焦副槽：主槽 scarh 应保持不动（断言装入目标槽）
 	main.lobby._deploy_page = 0
 	main.lobby._cur0 = 0
@@ -830,6 +839,7 @@ func _run() -> void:
 			and main.lobby._cur0 == 3,
 		"primary=%s secondary=%s" % [str(main.stash.loadout.get("primary")),
 			str(main.stash.loadout.get("secondary"))])
+	main.lobby._toggle_prep(false)
 	main.lobby.set_tab(1)
 	main.lobby._gun_idx = 2        # M7 战斗步枪（表序 2，非自带镜；当前装 holo=25c 遗留）
 	main.lobby._bench_col = 1
