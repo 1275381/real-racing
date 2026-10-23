@@ -152,12 +152,21 @@ func _run() -> void:
 		var di: Dictionary = d0
 		var spot_near := false
 		for sp in main.world.container_spots:
-			if Vector2(di["pos"].x - sp["pos"].x, di["pos"].z - sp["pos"].z).length() <= 1.0:
+			# 钥匙落容器旁 1.7m（>GROUND_R：不抢容器搜索的 F）——阈值放宽到搜索半径内
+			if Vector2(di["pos"].x - sp["pos"].x, di["pos"].z - sp["pos"].z).length() <= 2.2:
 				spot_near = true
 				break
 		if not spot_near or not str(di["item"].get("uid", "")).begins_with("key_"):
 			drops_ok = false
-	check("钥匙落点贴容器点位且带 key_ uid", drops_ok)
+	check("钥匙落点贴容器点位（1.7m，不抢搜索 F）且带 key_ uid", drops_ok)
+	# 锁房提示信道回归（用户报告「搜索不了容器」根因之一）：无门在侧时锁房必须
+	# 沉默——旧版每帧发 ("",0) 把 loot 的「按住 F 搜索…」提示整屏抹掉
+	var lk_emits := [0]
+	var lk_spy := func(_t: String, _p: float): lk_emits[0] += 1
+	main.locks.prompt.connect(lk_spy)
+	main.locks.update(0.016, Vector3(0.0, 0.0, 80.0), false)   # 远离三扇门的空地
+	check("锁房无门沉默（不劫持容器搜索提示）", lk_emits[0] == 0)
+	main.locks.prompt.disconnect(lk_spy)
 	var dyn0 := 0
 	for c0 in main.loot._containers:
 		if bool(c0.get("dynamic", false)):

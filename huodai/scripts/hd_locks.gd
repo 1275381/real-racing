@@ -120,7 +120,9 @@ func roll_key_drops(seed: int, spots: Array) -> Array:
 		var p: Vector3 = spot["pos"]
 		s = 1103515245 * s + 12345
 		var ang := TAU * float(absi(s) % 1000) / 1000.0
-		var pos := Vector3(p.x + cos(ang) * 0.75, p.y, p.z + sin(ang) * 0.75)
+		# 偏移 1.7m（>GROUND_R 1.6）：站在容器搜索位时钥匙不抢 F（地面拾取优先
+		# 于容器搜索——0.75m 旧值会把第一次按 F 变成无声捡钥匙，体感「搜不了」）
+		var pos := Vector3(p.x + cos(ang) * 1.7, p.y, p.z + sin(ang) * 1.7)
 		var id := str(def["id"])
 		out.append({
 			"item": {"uid": "key_%s_%d" % [id, seed], "name": str(def["key"]),
@@ -151,8 +153,9 @@ func update(_dt: float, player_pos: Vector3, pressed: bool) -> void:
 			best_d = dd
 			best = st
 	if best.is_empty():
-		prompt.emit("", 0.0)
-		return
+		return   # 无门可提示：不发 ("",0)——提示信道归 loot（每帧发）管，锁房沉默
+	# 门提示只在有门时发（晚于 loot 的连接 = 门边锁房优先；离开门范围后 loot
+	# 下一帧的常规提示自然接管——修复曾把容器搜索提示整屏抹掉的信道劫持）
 	var def2: Dictionary = best["def"]
 	var key_uid := _key_uid(str(def2["id"]))
 	if key_uid != "":
