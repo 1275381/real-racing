@@ -135,6 +135,72 @@ func _run() -> void:
 		and not bool(main.stash.contracts[0]["done"]))
 	main.stash.stats["deaths"] = ct_deaths0
 
+	# 2c. 钥匙锁房 + 隧道撤离（阶段 B）：三间锁房建成 / 钥匙种子确定性刷新 /
+	#     持钥匙 F 开锁（消耗钥匙 + 门障碍移除 + 房内容器生成）/ 无钥匙提示 /
+	#     复位重锁 / 隧道撤离常开
+	check("锁房三间建成（armory/archive/camp）", main.locks._states.size() == 3
+		and main.locks._states.has("armory") and main.locks._states.has("archive")
+		and main.locks._states.has("camp"))
+	var st_a: Dictionary = main.locks._states["armory"]
+	check("armory 门障碍在册", main.world.obstacles.has(st_a["obs"]))
+	var drops_a: Array = main.locks.roll_key_drops(12345, main.world.container_spots)
+	var drops_b: Array = main.locks.roll_key_drops(12345, main.world.container_spots)
+	check("钥匙刷新种子确定性（同种子同结果）", str(drops_a) == str(drops_b)
+		and drops_a.size() >= 0 and drops_a.size() <= 3)
+	var drops_ok := true
+	for d0 in drops_a:
+		var di: Dictionary = d0
+		var spot_near := false
+		for sp in main.world.container_spots:
+			if Vector2(di["pos"].x - sp["pos"].x, di["pos"].z - sp["pos"].z).length() <= 1.0:
+				spot_near = true
+				break
+		if not spot_near or not str(di["item"].get("uid", "")).begins_with("key_"):
+			drops_ok = false
+	check("钥匙落点贴容器点位且带 key_ uid", drops_ok)
+	var dyn0 := 0
+	for c0 in main.loot._containers:
+		if bool(c0.get("dynamic", false)):
+			dyn0 += 1
+	main.loot.backpack.append({"uid": "key_armory_t", "name": "军火库钥匙",
+		"icon": "钥匙", "rarity": 3, "value": 800, "key": "armory"})
+	main.player.enter(Vector3(-39.9, 0.0, -47.0))   # armory 门（朝 E）外 1m
+	# GDScript lambda 按值捕获：String 改不到外部，用数组容器接提示文案
+	var lk_prompt := [""]
+	var lk_cb := func(t: String, _p: float): lk_prompt[0] = t
+	main.locks.prompt.connect(lk_cb)
+	main.locks.update(0.016, main.player.pos, false)
+	main.locks.update(0.016, main.player.pos, true)   # F 边沿 → 开锁
+	check("持钥匙 F 开锁：门开+障碍移除+钥匙消耗", bool(st_a["opened"])
+		and not main.world.obstacles.has(st_a["obs"])
+		and not main.loot.take_item("key_armory_t"))
+	check("持钥匙提示文案（按 F 用…开启）", lk_prompt[0].contains("开启"))
+	var dyn1 := 0
+	var cls_seen := []
+	for c1 in main.loot._containers:
+		if bool(c1.get("dynamic", false)):
+			dyn1 += 1
+			cls_seen.append(str(c1.get("cls", "")))
+	check("开锁生成房内容器×2（safe+物资箱）", dyn1 == dyn0 + 2
+		and cls_seen.has("safe") and cls_seen.has("weapon"))
+	# 无钥匙：archive 门只提示不上锁
+	main.player.enter(Vector3(70.6, 0.0, 37.75))   # archive 门（朝 W）外 ~1m（交互半径内）
+	main.locks.update(0.016, main.player.pos, true)
+	check("无钥匙提示「上锁」不开门", not bool(main.locks._states["archive"]["opened"])
+		and lk_prompt[0].contains("上锁"))
+	# 复位重锁：门障碍回来、开态清零（每局重新上锁）
+	main.locks.reset_all()
+	check("复位重锁（门障碍恢复）", not bool(st_a["opened"])
+		and main.world.obstacles.has(st_a["obs"]))
+	main.locks.prompt.disconnect(lk_cb)
+	# 隧道撤离（军营北，常开）
+	main._setup_extracts()
+	var ext_defs: Array = main.world.extract_defs()
+	check("撤离点 5 处含隧道", ext_defs.size() == 5 and str(ext_defs[4]["id"]) == "tunnel")
+	check("隧道信标已建 + 本局常开", main.world._extract_vis.has("tunnel")
+		and bool(main._extracts["tunnel"]["enabled"])
+		and bool(main._extracts["tunnel"]["open"]))
+
 	# 3. 开箱 roll：150 次全部落在档位区间内
 	var roll_ok := true
 	for i in 150:
@@ -1416,6 +1482,11 @@ func _run() -> void:
 
 	# §单枪出发 + Tab 背包：弃件落地 → 按住 F 捡回 → 移入安全箱 → 满包开箱自动交换
 	main._start_mission({"primary": "pistol", "secondary": ""})
+	# 本节断言地上件数精确值：清掉本局随机刷的钥匙落地件（阶段 B 锁房）
+	for g0 in main.loot._ground.duplicate():
+		(g0["node"] as Node3D).queue_free()
+	main.loot._ground.clear()
+	main.loot._ground_i = -1
 	await frames(4)
 	check("单枪出发（副武器空槽只装一把）", main.guns._slots.size() == 1
 		and str(main.guns.cur_id) == "pistol")

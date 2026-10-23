@@ -28,6 +28,7 @@ var lobby_scene   # 3D 出发大厅（hd_lobby_scene.gd，preload 常量见下�
 var audio: HDAudio
 var tracers   # TracerPool（无 class_name，preload）
 var airdrop   # 空投事件（hd_airdrop.gd，无 class_name，preload）
+var locks     # 钥匙锁房（hd_locks.gd，无 class_name，preload——「更好玩」阶段 B）
 
 ## 新脚本一律 preload（-s 测试/探针跑法不刷新全局类缓存，class_name 会编译失败）
 const LobbyScene := preload("res://scripts/hd_lobby_scene.gd")
@@ -122,6 +123,13 @@ func _ready() -> void:
 	airdrop = preload("res://scripts/hd_airdrop.gd").new()
 	add_child(airdrop)
 	airdrop.setup(world, loot, soldiers)
+
+	# 钥匙锁房（阶段 B）：建房 + 开锁生成房内容器；钥匙每局刷在容器点位旁
+	locks = preload("res://scripts/hd_locks.gd").new()
+	add_child(locks)
+	locks.setup(world, loot)
+	locks.unlocked.connect(_on_lock_unlocked)
+	locks.prompt.connect(func(text: String, prog: float): hud.set_prompt(text, prog))
 	airdrop.landed.connect(_on_airdrop_landed)
 
 	hud = HDHud.new()
@@ -251,6 +259,10 @@ func _start_mission(loadout: Dictionary) -> void:
 	loot.secure_cap = stash.secure_slots
 	hud.hide_inventory()
 	targets.reset_all()
+	# 锁房复位（门关灯红）+ 钥匙按局种子刷在随机容器点位旁（60%/把，地面拾取）
+	locks.reset_all()
+	for drop in locks.roll_key_drops(randi(), world.container_spots):
+		loot._spawn_ground(drop["item"], drop["pos"])
 	# 随机出生（5 处地图边缘，改进方案第 6 节）
 	var sp: Vector3 = HDData.SPAWN_POINTS[randi() % HDData.SPAWN_POINTS.size()]
 	world.spawn_pos = Vector3(sp.x, world.ground_height(sp.x, sp.z), sp.z)
@@ -284,7 +296,7 @@ func _start_mission(loadout: Dictionary) -> void:
 	hud.set_danger(false)
 	hud.set_extract(0.0, 1.0)
 	hud.set_backpack(0, HDData.BACKPACK_MAX, 0, loot.secure_cap)
-	var open_txt := "本局撤离：主撤离 · 大坝（12 分钟后）"
+	var open_txt := "本局撤离：主撤离 · 大坝（12 分钟后）· 隧道（军营北，常开）"
 	if bool(_extracts["paid"]["enabled"]):
 		open_txt += " · 付费（₵%d）" % HDData.PAID_PRICE
 	if bool(_extracts["lever"]["enabled"]):
@@ -532,6 +544,19 @@ func _on_airdrop_landed(at: Vector3) -> void:
 	if mode == Mode.MISSION and _raid_live:
 		hud.feed("空投已落地 · 守军增援正在赶往落点", Color(0.75, 0.45, 1.0))
 
+
+## 锁房开锁（阶段 B）：生成房内容器（safe/物资箱——开锁前不存在，不隔墙搜索）
+func _on_lock_unlocked(lock_id: String) -> void:
+	for def in HDData.LOCKS:
+		if str(def["id"]) != lock_id:
+			continue
+		for c in def["containers"]:
+			var pos := Vector3(float(def["cx"]) + float(c[1]), 0.0,
+					float(def["cz"]) + float(c[2]))
+			loot.add_container(pos, str(c[0]))
+		hud.feed("%s 已开锁 —— 里面的箱子可以搜了" % str(def["room"]),
+				Color(0.95, 0.85, 0.4))
+
 ## 敌弹命中：扣血 + 受击方向弧（来袭方向相对视线：0 正前、+ 右侧）
 func _on_player_hit(dmg: float, from: Vector3) -> void:
 	player.hit(dmg)
@@ -667,6 +692,7 @@ func _step_mission(dt: float) -> void:
 		guns.update(dt)          # 使用物资时收枪：不能开火/换弹
 	soldiers.update(dt, true)
 	loot.update(dt, player.pos, Input.is_action_pressed("hd_interact"))
+	locks.update(dt, player.pos, Input.is_action_pressed("hd_interact"))   # 锁房门（阶段 B；后接=门边提示优先）
 	targets.update(dt)
 	airdrop.update(dt)
 	_step_lever(dt)
@@ -794,6 +820,7 @@ func _setup_extracts() -> void:
 		"dam": {"enabled": true, "open": false},
 		"paid": {"enabled": randf() < float(HDData.EXTRACT_ODDS["paid"]), "open": true},
 		"lever": {"enabled": randf() < float(HDData.EXTRACT_ODDS["lever"]), "open": false},
+		"tunnel": {"enabled": true, "open": true},   # 军营北隧道（阶段 B，常开）
 	}
 	_lever_t = 0.0
 	world.set_lever_pulled(false)

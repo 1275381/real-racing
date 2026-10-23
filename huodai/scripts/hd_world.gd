@@ -262,6 +262,7 @@ var extract_pos: Vector3 = HDData.EXTRACT_POS  # 主撤离点（绿信标）
 var extract2_pos: Vector3 = HDData.DAM_EXTRACT_POS   # 第二撤离点（大坝撤离广场，信标同款）
 var paid_pos: Vector3 = HDData.PAID_EXTRACT_POS      # 付费撤离（金色信标）
 var lever_ext_pos: Vector3 = HDData.LEVER_EXTRACT_POS   # 拉闸撤离（蓝色信标）
+var tunnel_pos: Vector3 = HDData.TUNNEL_EXTRACT_POS   # 军营北隧道撤离（绿信标常开，阶段 B）
 var _extract_vis := {}            # id -> {mats:[StandardMaterial3D], light, col, nodes}
 var _lever_handle: Node3D         # 电闸手柄（拉下后转角）
 var dam: Node3D                   # 大坝硬结构（HDDam 实例：坝体/廊道/涂鸦/闸门排，视觉挂本类）
@@ -323,6 +324,7 @@ func build() -> void:
 	_extract_vis["dam"] = _build_extract(extract2_pos, Color(0.25, 1.0, 0.45))
 	_extract_vis["paid"] = _build_extract(paid_pos, Color(1.0, 0.78, 0.25))
 	_extract_vis["lever"] = _build_extract(lever_ext_pos, Color(0.3, 0.7, 1.0))
+	_extract_vis["tunnel"] = _build_extract(tunnel_pos, Color(0.25, 1.0, 0.45))
 	_build_lever(HDData.LEVER_POS)
 	# 地表植被最后撒：大坝/四新区的障碍物都已登记，才能避开建筑
 	_scatter_ground_cover()
@@ -368,6 +370,7 @@ func extract_defs() -> Array:
 		{"id": "dam", "pos": extract2_pos, "name": "大坝撤离"},
 		{"id": "paid", "pos": paid_pos, "name": "付费撤离"},
 		{"id": "lever", "pos": lever_ext_pos, "name": "拉闸撤离"},
+		{"id": "tunnel", "pos": tunnel_pos, "name": "隧道撤离"},
 	]
 
 
@@ -815,7 +818,7 @@ func _prop_place(name: String, x: float, z: float, rot_y: float, scl: Vector3,
 func _scatter_ground_cover() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20261017
-	var keep_out: Array = [spawn_pos, extract_pos, extract2_pos, paid_pos, lever_ext_pos,
+	var keep_out: Array = [spawn_pos, extract_pos, extract2_pos, paid_pos, lever_ext_pos, tunnel_pos,
 			Vector3(120.0, 0.0, 154.0)]
 	keep_out.append_array(HDData.SPAWN_POINTS)
 	for spec in GROUND_COVER:

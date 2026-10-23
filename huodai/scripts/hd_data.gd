@@ -173,6 +173,28 @@ const CONTRACT_POOL := [
 		"title": "小有收获", "desc": "单局撤离带出战利品价值 ≥ ₵3,000"},
 ]
 
+## ---- 钥匙锁房（2026-10「更好玩」阶段 B）----
+## 三间上锁小屋（军火库=西仓库旁 / 档案室=游客中心门厅西 / 武器室=军营内院），
+## 钥匙不进商店——每局 60% 概率在随机容器点位旁刷一把（拾取进背包，紫档 ₵800
+## 可带走变卖），开锁消耗；房内容器开锁后才生成（不隔墙搜索）。door_facing =
+## 门朝向（"E"/"W"/"S"），房 4×4m、门宽 1.6；containers = 开锁后生成
+## [cls, 相对房心偏移(x,z)]
+const TUNNEL_EXTRACT_POS := Vector3(-118.0, 0.0, -40.6)   # 军营北隧道口（常开撤离）
+const LOCKS := [
+	{"id": "armory", "room": "军火库", "key": "军火库钥匙", "cx": -43.0, "cz": -47.0,
+		"door_facing": "E",
+		"containers": [["safe", -0.8, -0.8], ["weapon", -0.8, 0.8]]},
+	{"id": "archive", "room": "档案室", "key": "档案室钥匙", "cx": 73.5, "cz": 37.75,
+		"door_facing": "W",
+		"containers": [["safe", 0.8, -0.8], ["medical", 0.8, 0.8]]},
+	{"id": "camp", "room": "军营武器室", "key": "军营钥匙", "cx": -103.0, "cz": -37.5,
+		"door_facing": "S",
+		"containers": [["safe", -0.8, 0.8], ["weapon", -0.8, -0.8]]},
+]
+const KEY_SPAWN_P := 0.6           # 每局每把钥匙的刷新概率
+const KEY_VALUE := 800             # 钥匙价值（紫档可带走变卖）
+const LOCK_PROMPT_R := 3.4         # 门交互半径（距房心——门外站定距房心 ≈3m）
+
 ## 局内物资：占背包格；局内按 3/4/5/6（或 Tab 背包「使用」）用掉；撤离带回按价值变卖
 const CONSUMABLES := {
 	"medkit": {"name": "医疗包", "icon": "医疗", "rarity": 1, "value": 180, "use_t": 3.0},

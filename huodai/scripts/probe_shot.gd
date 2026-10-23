@@ -1169,6 +1169,22 @@ func _initialize() -> void:
 	await frames(2)
 	await shot("res://out/shot_gun_an94_cover.png", false, true)
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
+	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
+	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
+	main.player.pos = Vector3(-40.2, 1.55, -47.0)
+	main.player.yaw = -PI / 2.0   # 面向 -x（军火库门朝 E；距房心 2.8m 交互半径内）
+	main.player.pitch = -0.05
+	main.player.update(0.016)
+	await frames(6)
+	await shot("res://out/shot_lock_door.png")
+	main.loot.backpack.append({"uid": "key_probe", "name": "军火库钥匙",
+		"icon": "钥匙", "rarity": 3, "value": 800, "key": "armory"})
+	main.locks.update(0.016, main.player.pos, false)
+	main.locks.update(0.016, main.player.pos, true)   # F 边沿开锁
+	await frames(40)   # 门滑升 + 房内容器生成
+	check("探针开锁成功（armory opened）", bool(main.locks._states["armory"]["opened"]))
+	await shot("res://out/shot_lock_open.png")
+	main.locks.reset_all()   # 还原上锁态（下一局照常重锁）
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx

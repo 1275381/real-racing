@@ -185,6 +185,22 @@ func add_airdrop(pos: Vector3) -> int:
 	return _containers.size() - 1
 
 
+## 通用动态容器（阶段 B 锁房开锁后生成；同 add_airdrop 语义：reset_all 会拆走）
+func add_container(pos: Vector3, cls: String) -> int:
+	_make_container({"pos": pos, "zone": String(_world.zone_at(pos.x, pos.z)),
+			"cls": cls, "dynamic": true})
+	return _containers.size() - 1
+
+
+## 按 uid 从背包取出一件（开锁消耗钥匙用；不在背包/安全箱返回 false）
+func take_item(uid: String) -> bool:
+	for i in backpack.size():
+		if str((backpack[i] as Dictionary).get("uid", "")) == uid:
+			backpack.remove_at(i)
+			return true
+	return false
+
+
 ## 背包里最便宜一件的下标（空 -1）
 func cheapest_idx() -> int:
 	var bi := -1
