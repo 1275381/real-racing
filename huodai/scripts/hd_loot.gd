@@ -15,6 +15,7 @@ extends Node3D
 signal prompt(text: String, progress: float)   # 每帧发（无目标发 ("",0)）
 signal picked(item: Dictionary)
 signal notice(text: String, color: Color)      # 满包交换/落地等提示（main 转 toast）
+signal searched(cls: String, zone: String)     # 玩家搜完一个容器（合同推进用；npc_take 不发）
 
 const SEARCH_TIME := 1.8         # 按住 F 开箱所需秒数
 const SEARCH_RADIUS := 2.2       # 进入提示的最近距离（XZ 平面）
@@ -503,8 +504,10 @@ func _open(i: int, player_pos: Vector3 = Vector3.INF) -> void:
 	_active_i = -1
 	_progress = 0.0
 	var pos: Vector3 = c["pos"]
-	var item := HDData.roll_container(String(c.get("cls", "crate")),
-			String(_world.zone_at(pos.x, pos.z)))
+	var cls := String(c.get("cls", "crate"))
+	var zone := String(_world.zone_at(pos.x, pos.z))
+	searched.emit(cls, zone)   # 合同推进（玩家路径专属——搜刮者 npc_take 不走 _open）
+	var item := HDData.roll_container(cls, zone)
 	var drop_at: Vector3 = pos if player_pos == Vector3.INF else player_pos
 	# 额外物资（武器箱/医疗箱多出）：有空位进包，没空位落在脚下
 	var bonus := HDData.roll_bonus(String(c.get("cls", "crate")))

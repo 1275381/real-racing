@@ -27,13 +27,17 @@ var grips_owned: Array = []           # 已购握把/护木 id 列表（GRIPS �
 var grip_fit: Dictionary = {}         # gun_id -> grip_id 或 "none"
 var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
-var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0}
+var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0, "contracts": 0}
 var daily_last: String = ""          # 最近一次签到的日期键（YYYY-MM-DD）
 var secure_slots: int = HDData.SECURE_BASE   # 安全箱格数（2 起，现金扩到 4；阵亡保留其中物品）
 var durability: Dictionary = {}       # gun_id -> 耐久 0..100（缺键 = 全新 100）
 var sup_owned: Array = []             # 已买消音器的枪 id（消音器按枪买，随枪丢）
 var sup_off: Array = []               # 已买但拆下的枪 id（拆装免费）
 var tutorial_done := false            # 首局引导已完成/跳过（老档有出击记录视为已完成）
+## 合同系统（2026-10 阶段 A）：contracts_day = 发放日期键（YYYY-MM-DD，隔日重发）；
+## contracts = [{id, prog, done, paid}]，def 查 HDData.CONTRACT_POOL
+var contracts_day: String = ""
+var contracts: Array = []
 
 
 func _init() -> void:
@@ -64,6 +68,8 @@ func _serialize() -> Dictionary:
 		"loadout": loadout,
 		"stats": stats,
 		"daily_last": daily_last,
+		"contracts_day": contracts_day,
+		"contracts": contracts,
 		"secure_slots": secure_slots,
 		"durability": durability,
 		"sup_owned": sup_owned,
@@ -211,8 +217,31 @@ func _load() -> void:
 		"deaths": maxi(0, _to_i(st.get("deaths", 0))),
 		"kills": maxi(0, _to_i(st.get("kills", 0))),
 		"time_total": maxi(0, _to_i(st.get("time_total", 0))),   # 累计局时（秒）：平均局时 = ÷ raids
+		"contracts": maxi(0, _to_i(st.get("contracts", 0))),   # 合同完成数（2026-10 阶段 A）
 	}
 	daily_last = _to_s(d.get("daily_last", ""))
+
+	# 合同系统（2026-10 阶段 A）：老档无字段 = 空表（首次读取时按今日种子补发）
+	contracts_day = _to_s(d.get("contracts_day", ""))
+	contracts = []
+	var raw_ct: Variant = d.get("contracts", null)
+	if typeof(raw_ct) == TYPE_ARRAY:
+		var pool_ids := {}
+		for pd in HDData.CONTRACT_POOL:
+			pool_ids[str(pd["id"])] = pd
+		for ct in raw_ct:
+			if typeof(ct) != TYPE_DICTIONARY:
+				continue
+			var cid := _to_s(ct.get("id", ""))
+			if not pool_ids.has(cid):
+				continue   # 池改版后旧 id 失效 → 丢弃（次日重发）
+			var defc: Dictionary = pool_ids[cid]
+			contracts.append({
+				"id": cid,
+				"prog": clampi(_to_i(ct.get("prog", 0)), 0, _to_i(defc["n"])),
+				"done": bool(ct.get("done", false)),
+				"paid": bool(ct.get("paid", false)),
+			})
 
 	# 第四阶段：耐久（0..100，缺键=全新）/ 消音器（按枪，随枪丢）/ 首局引导
 	durability = {}
@@ -244,8 +273,10 @@ func _apply_defaults() -> void:
 	grip_fit = {}
 	ammo_inv = {}
 	loadout = {"primary": "rifle", "secondary": "pistol"}
-	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0}
+	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0, "contracts": 0}
 	daily_last = ""
+	contracts_day = ""
+	contracts = []
 	secure_slots = HDData.SECURE_BASE
 	durability = {}
 	sup_owned = []
@@ -267,6 +298,95 @@ func check_in() -> int:
 	save()
 	changed.emit()
 	return HDData.DAILY_REWARD
+
+
+# ================= 合同系统（2026-10 阶段 A） =================
+
+## 合同定义查表（id → HDData.CONTRACT_POOL 条目；无则空字典）
+func contract_def(id: String) -> Dictionary:
+	for pd in HDData.CONTRACT_POOL:
+		if str(pd["id"]) == id:
+			return pd
+	return {}
+
+
+## 今日合同（3 张，按日期种子定死——同一天多次读取/重开游戏都是同一组）。
+## 隔日重发：未完成进度作废（塔科夫合同惯例），已领奖金照留现金。
+## 首次读取/隔日时滚动新合同并落盘；种子 = 日期字符串哈希的确定性 LCG。
+func daily_contracts() -> Array:
+	var today := Time.get_date_string_from_system()
+	if contracts_day == today and not contracts.is_empty():
+		return contracts
+	var pool: Array = HDData.CONTRACT_POOL.duplicate()
+	var seed := today.hash()
+	contracts = []
+	for k in HDData.CONTRACT_DAILY:
+		seed = 1103515245 * seed + 12345   # 经典 LCG（确定性，重开游戏不变）
+		var idx := absi(seed) % pool.size()
+		var defc: Dictionary = pool[idx]
+		contracts.append({"id": str(defc["id"]), "prog": 0, "done": false, "paid": false})
+		pool.remove_at(idx)   # 不重复发同一张
+	contracts_day = today
+	save()
+	changed.emit()
+	return contracts
+
+
+## 局内事件推进合同：kind = "kill" / "kill_boss" / "safe" / "zone"（zone 另传分区名），
+## n = 本次增量。完成即锁 done（阵亡不清——撤离时统一结算），进度落盘。
+## 返回本次刚完成的合同定义数组（main 可即时播报「合同完成」）
+func contract_add(kind: String, zone: String, n: int) -> Array:
+	daily_contracts()   # 惰性补发（老档首局）
+	var finished: Array = []
+	var dirty := false
+	for ct in contracts:
+		if bool(ct["done"]):
+			continue
+		var defc := contract_def(str(ct["id"]))
+		if defc.is_empty() or str(defc["type"]) != kind:
+			continue
+		if kind == "zone" and str(defc.get("zone", "")) != zone:
+			continue
+		var goal: int = _to_i(defc["n"])
+		ct["prog"] = mini(goal, _to_i(ct["prog"]) + n)
+		dirty = true
+		if _to_i(ct["prog"]) >= goal:
+			ct["done"] = true
+			finished.append(defc)
+	if dirty:
+		save()
+	return finished
+
+
+## 撤离结算：value 类按本局带出价值一次性判定，随后所有 done 未领的一并发奖金。
+## 返回发放明细 [{title, reward}]（main 播报 + 结算行）；无发放返回空数组。
+func settle_contracts(extract_value: int) -> Array:
+	daily_contracts()
+	var dirty := false
+	for ct in contracts:
+		if bool(ct["done"]):
+			continue
+		var defc := contract_def(str(ct["id"]))
+		if str(defc["type"]) == "value" and extract_value >= _to_i(defc["n"]):
+			ct["done"] = true
+			ct["prog"] = _to_i(defc["n"])
+			dirty = true
+	var paid: Array = []
+	for ct in contracts:
+		if bool(ct["done"]) and not bool(ct["paid"]):
+			var defc := contract_def(str(ct["id"]))
+			var reward: int = _to_i(defc["reward"])
+			cash += reward
+			ct["paid"] = true
+			paid.append({"title": str(defc["title"]), "reward": reward})
+			dirty = true
+	if not paid.is_empty():
+		stats["contracts"] = maxi(0, _to_i(stats.get("contracts", 0))) + paid.size()
+		dirty = true
+	if dirty:
+		save()
+		changed.emit()
+	return paid
 
 
 func owns_scope(id: String) -> bool:

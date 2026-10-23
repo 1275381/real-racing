@@ -413,6 +413,12 @@ func _initialize() -> void:
 		"held=%s" % main.lobby_scene.held_gun_id)
 	await frames(8)
 	shot("res://out/shot_lobby_scene_swap.png")
+	# ---- 合同卡图证（2026-10「更好玩」阶段 A）：出发页收起态左下列出今日
+	#      3 张合同（标题/进度/奖金/状态）——出发前看目标
+	main.lobby.set_tab(0)
+	main.lobby._toggle_prep(false)
+	await frames(8)
+	shot("res://out/shot_contracts.png")
 	# 还原摆拍：loadout 回原配置、两件摆拍战利品摘除（guns_owned 直拥件不摘
 	# ——逐枪美照段落本就幂等 append，收尾存档还原兜底）
 	main.stash.loadout = lo0

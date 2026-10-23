@@ -112,6 +112,7 @@ func _ready() -> void:
 	add_child(loot)
 	loot.build(world)
 	loot.picked.connect(_on_loot_picked)
+	loot.searched.connect(_on_loot_searched)   # 合同推进（阶段 A）：玩家搜完容器
 	loot.notice.connect(func(text: String, col: Color): hud.feed(text, col))
 	loot.prompt.connect(func(text: String, prog: float): hud.set_prompt(text, prog))
 	soldiers.set_loot(loot)
@@ -451,10 +452,18 @@ func _win_raid(via: String = "main") -> void:
 	_reclaim_ammo()   # 撤离：战利品入库 + 剩余备弹写回库存
 	_apply_wear()
 	stash.record_raid(true, _kills, _raid_t)
+	# 合同结算（阶段 A）：value 类按带出价值判定 + 所有已完成合同发奖金
+	var paid_ct: Array = stash.settle_contracts(int(value))
+	var ct_total := 0
+	for pc in paid_ct:
+		ct_total += int(pc.get("reward", 0))
 	hud.set_raid_visible(false)
 	var lines: Array = []
 	if via == "paid":
 		lines.append(["付费撤离 · 已付 ₵%s" % HDHud._fmt(HDData.PAID_PRICE), HDHud.COL_ACCENT])
+	if not paid_ct.is_empty():
+		lines.append(["合同 ×%d · 奖金 ₵%s" % [paid_ct.size(), HDHud._fmt(ct_total)],
+				HDHud.COL_ACCENT])
 	hud.show_result(true, {
 		"kills": _kills, "value": value, "deposited": n,
 		"time_sec": _raid_t, "rank": _rank_of(value), "lines": lines,
@@ -489,6 +498,25 @@ func _on_soldier_killed(info: Dictionary) -> void:
 		hud.feed("击杀搜刮者 · %dm · 搜他的尸体" % int(dist), Color(0.62, 0.8, 0.45))
 	else:
 		hud.feed("击杀 · %dm" % int(dist), Color(1.0, 0.7, 0.36))
+	# 合同推进（阶段 A）：击杀类（boss 单列一类）；完成即播报，撤离时发奖金
+	if mode == Mode.MISSION and _raid_live:
+		_feed_contract_done(stash.contract_add(
+				"kill_boss" if tier == "boss" else "kill", "", 1))
+
+
+## 玩家搜完一个容器（合同推进）：safe/vault 计保险箱类，其余计所在分区容器
+func _on_loot_searched(cls: String, zone: String) -> void:
+	if mode != Mode.MISSION or not _raid_live:
+		return
+	_feed_contract_done(stash.contract_add(
+			"safe" if cls == "safe" or cls == "vault" else "zone", zone, 1))
+
+
+## 合同刚完成的即时播报（奖金撤离结算时发——先报喜不打断战斗）
+func _feed_contract_done(finished: Array) -> void:
+	for defc in finished:
+		hud.feed("合同完成 · %s · 撤离后结算 ₵%s" % [str(defc["title"]),
+				HDHud._fmt(int(defc["reward"]))], Color(0.95, 0.85, 0.4))
 
 ## 搜刮者/首领阵亡掉落：摆在尸体旁地上（谁打死的都掉——捡漏也算）
 func _on_soldier_dropped(items: Array, at: Vector3) -> void:

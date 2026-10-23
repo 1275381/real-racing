@@ -138,6 +138,41 @@ const EXTRACT_ODDS := {"paid": 0.6, "lever": 0.6}
 const SPAWN_POINTS := [Vector3(-138.0, 0.0, 138.0), Vector3(10.0, 0.0, 140.0),
 	Vector3(140.0, 0.0, 95.0), Vector3(140.0, 0.0, -60.0), Vector3(-140.0, 0.0, -30.0)]
 
+## ---- 合同系统（2026-10「更好玩」阶段 A）：局外目标层 ----
+## 每日按日期种子发 3 张（CONTRACT_DAILY=3），撤离成功结算发奖金；阵亡不清进度
+## （完成即锁定 paid，撤离时一并发放）。类型五类：
+##   kill_boss 击杀首领 / kill 击杀 N 名敌人 / safe 搜 N 个保险箱 /
+##   zone 在指定分区搜 N 个容器（zone=world.zone_at 值：center/dam/mid/wild）/
+##   value 单局撤离带出战利品 ≥₵n（撤离时按包价值判定）
+## 难度分档（easy/med/hard）只影响奖金档位，文案里不带档位词（玩家读任务不读档）
+const CONTRACT_DAILY := 3
+const CONTRACT_POOL := [
+	{"id": "boss1", "type": "kill_boss", "n": 1, "diff": "hard", "reward": 2600,
+		"title": "斩首行动", "desc": "击杀 1 名首领（军火商 / 坝区指挥官）"},
+	{"id": "kill5", "type": "kill", "n": 5, "diff": "easy", "reward": 900,
+		"title": "清场", "desc": "击杀 5 名敌人"},
+	{"id": "kill12", "type": "kill", "n": 12, "diff": "med", "reward": 1800,
+		"title": "大开杀戒", "desc": "击杀 12 名敌人"},
+	{"id": "safe2", "type": "safe", "n": 2, "diff": "med", "reward": 1400,
+		"title": "开锁匠", "desc": "搜索 2 个保险箱"},
+	{"id": "safe4", "type": "safe", "n": 4, "diff": "hard", "reward": 2400,
+		"title": "保险大盗", "desc": "搜索 4 个保险箱"},
+	{"id": "zcenter", "type": "zone", "zone": "center", "n": 3, "diff": "hard", "reward": 2200,
+		"title": "中心渗透", "desc": "在中心危险区搜索 3 个容器"},
+	{"id": "zdam", "type": "zone", "zone": "dam", "n": 4, "diff": "med", "reward": 1500,
+		"title": "坝区勘察", "desc": "在大坝带搜索 4 个容器"},
+	{"id": "zmid", "type": "zone", "zone": "mid", "n": 4, "diff": "easy", "reward": 1000,
+		"title": "过渡带扫荡", "desc": "在过渡带搜索 4 个容器"},
+	{"id": "zwild", "type": "zone", "zone": "wild", "n": 4, "diff": "easy", "reward": 1000,
+		"title": "荒野拾荒", "desc": "在荒野搜索 4 个容器"},
+	{"id": "value6k", "type": "value", "n": 6000, "diff": "med", "reward": 1600,
+		"title": "满载而归", "desc": "单局撤离带出战利品价值 ≥ ₵6,000"},
+	{"id": "value15k", "type": "value", "n": 15000, "diff": "hard", "reward": 3000,
+		"title": "豪取一台车", "desc": "单局撤离带出战利品价值 ≥ ₵15,000"},
+	{"id": "value3k", "type": "value", "n": 3000, "diff": "easy", "reward": 800,
+		"title": "小有收获", "desc": "单局撤离带出战利品价值 ≥ ₵3,000"},
+]
+
 ## 局内物资：占背包格；局内按 3/4/5/6（或 Tab 背包「使用」）用掉；撤离带回按价值变卖
 const CONSUMABLES := {
 	"medkit": {"name": "医疗包", "icon": "医疗", "rarity": 1, "value": 180, "use_t": 3.0},

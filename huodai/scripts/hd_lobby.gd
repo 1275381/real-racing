@@ -520,9 +520,10 @@ func _refresh_all() -> void:
 func _render_top() -> void:
 	var st: Dictionary = _stash.stats
 	var raids := maxi(0, int(st.get("raids", 0)))
-	_record_label.text = "出击 %d · 撤离 %d · 阵亡 %d · 击杀 %d" % [
+	_record_label.text = "出击 %d · 撤离 %d · 阵亡 %d · 击杀 %d · 合同 %d" % [
 		raids, maxi(0, int(st.get("extracts", 0))),
-		maxi(0, int(st.get("deaths", 0))), maxi(0, int(st.get("kills", 0)))]
+		maxi(0, int(st.get("deaths", 0))), maxi(0, int(st.get("kills", 0))),
+		maxi(0, int(st.get("contracts", 0)))]
 	if raids > 0:   # 门槛 C 两个数：撤离率 40–60%、平均局时 12–20 分钟
 		var avg := int(st.get("time_total", 0)) / raids
 		_record_label.text += " · 撤离率 %d%% · 平均局时 %d:%02d" % [
@@ -564,12 +565,13 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	if _prep_open:
 		cols.add_child(_prep_panel(rows))
 
-	# —— 收起态左下：仓库/交易行面板组（用户点名停靠），展开态让位战备面板 ——
+	# —— 收起态左下：合同卡（每日 3 张，出发前看目标）+ 仓库/交易行面板组 ——
 	if not _prep_open:
 		var left := _col(cols, 340)
 		var lspace := Control.new()
 		lspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		left.add_child(lspace)
+		left.add_child(_contracts_card())
 		left.add_child(_dock_panel())
 		# —— 中：整栏留给 3D 干员 ——
 		var midc := VBoxContainer.new()
@@ -906,6 +908,37 @@ func _dock_panel() -> PanelContainer:
 			nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 			lrow.add_child(nm)
 			lrow.add_child(_mk_label("₵ " + _fmt(_to_int(it.get("value", 0))), 11, COL_OK))
+	return card
+
+
+## 每日合同卡（阶段 A）：今日 3 张进度一目了然——标题 / 进度 / 奖金 / 状态。
+## 惰性发放：渲染时 daily_contracts() 首读即按今日种子补发（老档兼容）
+func _contracts_card() -> PanelContainer:
+	var card := _card(false, _dim(0.22))
+	var vb := _card_vbox(card, 3)
+	vb.add_child(_mk_label("今日合同 · 完成撤离领赏", 14, Color(0.95, 0.85, 0.4)))
+	for ct in _stash.daily_contracts():
+		var defc: Dictionary = _stash.contract_def(str(ct["id"]))
+		if defc.is_empty():
+			continue
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vb.add_child(row)
+		var goal: int = _to_int(defc["n"])
+		var prog: int = _to_int(ct.get("prog", 0))
+		var unit := "₵" if str(defc["type"]) == "value" else ""
+		var state := "✓ 已领取" if bool(ct.get("paid", false)) else \
+				("✓ 完成 · 待撤离" if bool(ct.get("done", false)) else "%d/%d%s" % [prog, goal, unit])
+		var t := _mk_label(String(defc["title"]), 12, COL_TEXT if not bool(ct.get("done", false)) else COL_OK)
+		t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(t)
+		row.add_child(_mk_label("₵%s" % _fmt(_to_int(defc["reward"])), 11, COL_OK))
+		row.add_child(_mk_label(state, 11, _dim(0.65)))
+		var d := _mk_label(String(defc["desc"]), 10, _dim(0.5))
+		d.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		vb.add_child(d)
 	return card
 
 

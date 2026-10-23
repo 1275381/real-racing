@@ -68,6 +68,73 @@ func _run() -> void:
 	check("现金入账", main.stash.cash == HDData.DAILY_REWARD)
 	check("同日二刷拒绝", main.stash.check_in() == 0)
 
+	# 2b. 合同系统（阶段 A）：每日 3 张确定性发放 → 进度推进 → 完成锁定 →
+	#     撤离结算发奖 → 持久化往返 → 阵亡不清进度
+	var cts: Array = main.stash.daily_contracts()
+	check("每日合同恰 3 张", cts.size() == HDData.CONTRACT_DAILY,
+		"n=%d" % cts.size())
+	var ct_ids: Array = []
+	var ct_ok := true
+	for ct in cts:
+		var cid := str(ct.get("id", ""))
+		if ct_ids.has(cid) or main.stash.contract_def(cid).is_empty():
+			ct_ok = false   # 重复 id 或池外 id 都是坏合同
+		ct_ids.append(cid)
+	check("合同 id 不重复且都在池内", ct_ok, str(ct_ids))
+	var cts_reread: Array = main.stash.daily_contracts()
+	var ids2: Array = []
+	for ct2 in cts_reread:
+		ids2.append(str(ct2.get("id", "")))
+	check("同日重读合同不变（日期种子确定性）", str(ids2) == str(ct_ids))
+	# 定向构造三张（kill5 / zdam / value3k）驱动全链——进度推进/完成锁定/分区匹配
+	main.stash.contracts = [
+		{"id": "kill5", "prog": 0, "done": false, "paid": false},
+		{"id": "zdam", "prog": 0, "done": false, "paid": false},
+		{"id": "value3k", "prog": 0, "done": false, "paid": false},
+	]
+	var fin: Array = main.stash.contract_add("kill", "", 2)
+	check("击杀推进 kill5 至 2/5 未完成", int(main.stash.contracts[0]["prog"]) == 2
+		and not bool(main.stash.contracts[0]["done"]) and fin.is_empty())
+	fin = main.stash.contract_add("kill", "", 3)
+	check("击杀补满 5 → 完成锁定并播报", bool(main.stash.contracts[0]["done"])
+		and fin.size() == 1 and str(fin[0]["id"]) == "kill5")
+	main.stash.contract_add("zone", "center", 1)
+	check("分区不匹配不推进（center ≠ zdam）", int(main.stash.contracts[1]["prog"]) == 0)
+	main.stash.contract_add("zone", "dam", 4)
+	check("坝区搜箱 4 → zdam 完成", bool(main.stash.contracts[1]["done"]))
+	# 撤离结算：value3k 按包价值判定（4000 ≥ 3000）→ 三张全发（900+1500+800=3200）
+	var cash_c: int = main.stash.cash
+	var paid_ct: Array = main.stash.settle_contracts(4000)
+	var ct_sum := 0
+	for pc in paid_ct:
+		ct_sum += int(pc.get("reward", 0))
+	check("撤离结算三张全发（value 判定 + 已完成）", paid_ct.size() == 3 and ct_sum == 3200,
+		"paid=%d sum=%d" % [paid_ct.size(), ct_sum])
+	check("奖金入账 + 合同计数 +3", main.stash.cash == cash_c + 3200
+		and int(main.stash.stats.get("contracts", 0)) == 3)
+	check("已领再结算不重复发", main.stash.settle_contracts(99999).is_empty()
+		and main.stash.cash == cash_c + 3200)
+	# value 低值撤离不达标：新一张 value3k 带 ₵1000 撤离 → 不完成不发
+	var cash_v: int = main.stash.cash
+	main.stash.contracts = [{"id": "value3k", "prog": 0, "done": false, "paid": false}]
+	check("value 低值撤离不完成不发", main.stash.settle_contracts(1000).is_empty()
+		and not bool(main.stash.contracts[0]["done"])
+		and main.stash.cash == cash_v)
+	# 持久化往返：新实例读档 → 合同与已领态保留
+	var stash2 := HDStash.new()
+	var cts_load: Array = stash2.contracts
+	check("合同持久化往返（3 张 + 已领态）", cts_load.size() == 3
+		and bool(cts_load[0].get("paid", false))
+		and stash2.contracts_day == main.stash.contracts_day)
+	# 阵亡不清进度（塔科夫式：完成即锁，撤离才发）——record_raid(false) 后进度原样。
+	# deaths 事后复位：真实阵亡测试（第 9 段）期望从 0 数到 1
+	var ct_deaths0: int = int(main.stash.stats.get("deaths", 0))
+	main.stash.contracts = [{"id": "kill12", "prog": 5, "done": false, "paid": false}]
+	main.stash.record_raid(false, 0)
+	check("阵亡不清合同进度", int(main.stash.contracts[0]["prog"]) == 5
+		and not bool(main.stash.contracts[0]["done"]))
+	main.stash.stats["deaths"] = ct_deaths0
+
 	# 3. 开箱 roll：150 次全部落在档位区间内
 	var roll_ok := true
 	for i in 150:
