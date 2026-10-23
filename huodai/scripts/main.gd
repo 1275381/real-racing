@@ -29,6 +29,7 @@ var audio: HDAudio
 var tracers   # TracerPool（无 class_name，preload）
 var airdrop   # 空投事件（hd_airdrop.gd，无 class_name，preload）
 var locks     # 钥匙锁房（hd_locks.gd，无 class_name，preload——「更好玩」阶段 B）
+var thrower   # 投掷物（hd_throw.gd，无 class_name，preload——「更好玩」阶段 D）
 
 ## 新脚本一律 preload（-s 测试/探针跑法不刷新全局类缓存，class_name 会编译失败）
 const LobbyScene := preload("res://scripts/hd_lobby_scene.gd")
@@ -146,6 +147,11 @@ func _ready() -> void:
 	hud.inv_move.connect(_on_inv_move)
 
 	stash = HDStash.new()
+	# 投掷物（阶段 D）：雷/烟/闪 弹道与起爆；7/8/9 键投掷（_route_key）——
+	# 装配在 hud 之后（setup 要传 hud 引用）
+	thrower = preload("res://scripts/hd_throw.gd").new()
+	add_child(thrower)
+	thrower.setup(world, player, soldiers, hud)
 	_sync_m14_mods_env()   # stash 建好后才有解锁态（之前调会读空 stash 报脚本错）
 	lobby = HDLobby.new()
 	add_child(lobby)
@@ -262,6 +268,7 @@ func _start_mission(loadout: Dictionary) -> void:
 	loot.secure_cap = stash.secure_slots
 	hud.hide_inventory()
 	targets.reset_all()
+	thrower.reset_all()   # 投掷物清场（阶段 D；库存件数在 stash 不动）
 	# 锁房复位（门关灯红）+ 钥匙按局种子刷在随机容器点位旁（60%/把，地面拾取）
 	locks.reset_all()
 	for drop in locks.roll_key_drops(randi(), world.container_spots):
@@ -509,7 +516,9 @@ func _rank_of(v: float) -> String:
 	return "C"
 
 func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: bool) -> void:
-	var res: Dictionary = soldiers.apply_hit(idx, dmg, head)
+	# 弹种伤害倍率（阶段 D 接线：Guns.AMMO 表——装备弹种随枪结算）
+	var mul := float(Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id)).get("dmg_mul", 1.0))
+	var res: Dictionary = soldiers.apply_hit(idx, dmg * mul, head)
 	hud.hitmark(head, bool(res.get("killed", false)), bool(res.get("armor", false)))
 	audio.play_hit()
 
@@ -711,6 +720,7 @@ func _step_mission(dt: float) -> void:
 	soldiers.update(dt, true)
 	loot.update(dt, player.pos, Input.is_action_pressed("hd_interact"))
 	locks.update(dt, player.pos, Input.is_action_pressed("hd_interact"))   # 锁房门（阶段 B；后接=门边提示优先）
+	thrower.update(dt)   # 投掷物弹道/起爆/特效（阶段 D）
 	targets.update(dt)
 	airdrop.update(dt)
 	_step_lever(dt)
@@ -1054,8 +1064,31 @@ func _route_key(code: int) -> void:
 	if mode == Mode.MISSION and code >= KEY_3 and code <= KEY_6:
 		_use_item(str(HDData.USE_KEYS[code - KEY_3]))
 		return
+	# 对局内：7/8/9 投破片雷 / 烟雾弹 / 闪光弹（阶段 D）
+	if mode == Mode.MISSION:
+		for tk in HDData.THROW_KEYS:
+			if code == int(HDData.THROW_KEYS[tk]):
+				_throw_item(str(tk))
+				return
 	# 对局内：Esc 菜单
 	if code == KEY_ESCAPE:
 		paused = true
 		hud.show_menu()
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+
+## 投掷（阶段 D）：库存扣件 → 眼位沿视线抛出（读条中的医疗/换弹互斥）
+func _throw_item(kind: String) -> void:
+	if not _raid_live or player.dead or paused:
+		return
+	if not _using.is_empty():
+		return
+	if not stash.consume_throwable(kind):
+		var def: Dictionary = HDData.THROWABLES.get(kind, {})
+		hud.feed("没有%s了 —— 交易行③区可购" % str(def.get("name", kind)),
+				Color(0.85, 0.87, 0.82))
+		return
+	var from := player.pos + Vector3(0.0, 1.55, 0.0)
+	thrower.throw_one(kind, from, -player.cam.global_transform.basis.z)
+	hud.feed("%s 出手 · 剩 %d" % [str(HDData.THROWABLES[kind]["name"]),
+			stash.throwables_of(kind)], Color(0.95, 0.85, 0.4))

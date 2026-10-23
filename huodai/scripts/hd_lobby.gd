@@ -204,6 +204,12 @@ func handle_key(code: int) -> bool:
 				_sup_sel()
 			else:
 				return false
+		KEY_N:
+			# 弹种循环（阶段 D）：只在交易行③ 极致备弹区消费（给光标所指枪换/购弹种）
+			if _tab == 2 and _market_sec == 2:
+				_cycle_ammo_kind_for(_market_ammo_gun_id())
+			else:
+				return false
 		KEY_ENTER, KEY_KP_ENTER:
 			_confirm()
 		KEY_LEFT:
@@ -2005,6 +2011,45 @@ func _render_market(pg: VBoxContainer) -> void:
 	buy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	buy.pressed.connect(_buy_ammo_for.bind(ammo_id))
 	arow.add_child(buy)
+	# 弹种行（阶段 D 接线）：当前枪弹种 + N 换/购循环（未购现场买，已购直接换）
+	var ak := _stash.ammo_kind_of(ammo_id)
+	var adef: Dictionary = Guns.ammo_by_id(ak)
+	var kind_row := HBoxContainer.new()
+	kind_row.add_theme_constant_override("separation", 8)
+	kind_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.add_child(kind_row)
+	var klbl := _mk_label("弹种：%s（%s）" % [str(adef["name"]), str(adef["desc"])], 13,
+			adef["color"])
+	klbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	kind_row.add_child(klbl)
+	var kbtn := _mk_btn("N 换/购弹种 ▸", 13)
+	_style_btn(kbtn, false, COL_ACCENT, 10)
+	kbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	kbtn.pressed.connect(_cycle_ammo_kind_for.bind(ammo_id))
+	kind_row.add_child(kbtn)
+	# 投掷物三钮（阶段 D）：鼠标点击购件（库存制，满员/没钱提示走 show_hint）
+	var trow2 := HBoxContainer.new()
+	trow2.add_theme_constant_override("separation", 6)
+	trow2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.add_child(trow2)
+	for tk in ["frag", "smoke", "flash"]:
+		var td: Dictionary = HDData.THROWABLES[tk]
+		var tb := _mk_btn("%s ₵%s · %d/%d（局内 %s）" % [str(td["name"]), _fmt(_to_int(td["price"])),
+				_stash.throwables_of(tk), _to_int(td["max"]),
+				str(HDData.THROW_KEYS[tk]).trim_prefix("KEY_")], 12)
+		_style_btn(tb, false, COL_OK if _stash.throwables_of(tk) > 0 else _dim(0.5), 8)
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var kind0 := str(tk)
+		tb.pressed.connect(func():
+			if _stash.buy_throwable(kind0):
+				show_hint("已购 %s ×1 —— 局内按 %s 投掷" % [str(HDData.THROWABLES[kind0]["name"]),
+						str(HDData.THROW_KEYS[kind0]).trim_prefix("KEY_")])
+			else:
+				var td2: Dictionary = HDData.THROWABLES[kind0]
+				show_hint("买不了：%s（满 %d 件或现金不足 ₵%s）" % [str(td2["name"]),
+						_to_int(td2["max"]), _fmt(_to_int(td2["price"]))]))
+		trow2.add_child(tb)
 
 	# ⑤ M14 专属配件区（2026-10 用户定案：护木/30 发扩容匣——仅拥有 M14 才
 	# 显示购买意义；行式布局同②瞄具区：已购置灰 / 未购「购买」）
@@ -2178,15 +2223,24 @@ func _cycle_ammo_tier() -> void:
 ## 空格 /「购 N 发」钮（交易行③区）：按当前挡位给选中枪买极致备弹
 ## （现金不足拦截提示，照购枪款；键盘入口由 handle_key 分级守卫把关——只在③区内消费）
 func _buy_ammo_for(gid: String) -> void:
-	var n := _ammo_tier_n()
-	var each := _to_int(HDData.AMMO_PRICE.get(gid, 0))
-	var total := n * each
-	if not _stash.buy_ammo(gid, n):
-		show_hint("现金不足：%s ×%d 发需 ₵%s，现有 ₵%s —— 回仓库变卖战利品或明日签到" % [
-				HDData.AMMO_NAME, n, _fmt(total), _fmt(maxi(0, _stash.cash))])
-		return
-	show_hint("已购 %s ×%d 发 −₵%s（余 ₵%s）" % [
-			HDData.AMMO_NAME, n, _fmt(total), _fmt(maxi(0, _stash.cash))])
+	if _stash.buy_ammo(gid, _ammo_tier_n()):
+		show_hint("已购 %s ×%d 发（₵%s）" % [String(Guns.gun_by_id(gid).get("name", gid)),
+				_ammo_tier_n(), _fmt(_ammo_tier_n() * _to_int(HDData.AMMO_PRICE.get(gid, 0)))])
+	else:
+		show_hint("现金不足 —— %s %d 发需 ₵%s" % [gid, _ammo_tier_n(),
+				_fmt(_ammo_tier_n() * _to_int(HDData.AMMO_PRICE.get(gid, 0)))])
+
+
+## N 键循环该枪弹种（阶段 D）：未购现场买（钱不够提示），已购直接换装
+func _cycle_ammo_kind_for(gid: String) -> void:
+	var r: Array = _stash.cycle_ammo_kind(gid)
+	var adef: Dictionary = Guns.ammo_by_id(str(r[1]))
+	if bool(r[0]):
+		show_hint("「%s」弹种 → %s（%s）" % [String(Guns.gun_by_id(gid).get("name", gid)),
+				str(adef["name"]), str(adef["desc"])])
+	else:
+		show_hint("%s 需 ₵%s —— 现金不足" % [str(adef["name"]),
+				_fmt(_to_int(adef.get("price", 0)))])
 
 
 # ================= 光标 / 确认 =================

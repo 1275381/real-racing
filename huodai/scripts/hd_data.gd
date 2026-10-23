@@ -226,6 +226,17 @@ static func v_f(key: String, fallback: float) -> float:
 static func variant_name() -> String:
 	return str(RAID_VARIANTS.get(variant, {}).get("name", "晴朗"))
 
+
+## ---- 投掷物（「更好玩」阶段 D）：交易行③区购买 → 局内 7/8/9 键投掷 ----
+## max = 单件携带上限（库存制：买了常驻，局内消耗、阵亡不丢——与极致备弹同经济观）
+const THROWABLES := {
+	"frag": {"name": "破片雷", "price": 600, "max": 3, "r": 7.0, "dmg": 130.0,
+		"fuse": 0.9},
+	"smoke": {"name": "烟雾弹", "price": 300, "max": 2, "r": 5.5, "cloud_t": 12.0},
+	"flash": {"name": "闪光弹", "price": 400, "max": 2, "r": 9.0, "blind_t": 2.5},
+}
+const THROW_KEYS := {"frag": KEY_7, "smoke": KEY_8, "flash": KEY_9}
+
 ## 局内物资：占背包格；局内按 3/4/5/6（或 Tab 背包「使用」）用掉；撤离带回按价值变卖
 const CONSUMABLES := {
 	"medkit": {"name": "医疗包", "icon": "医疗", "rarity": 1, "value": 180, "use_t": 3.0},

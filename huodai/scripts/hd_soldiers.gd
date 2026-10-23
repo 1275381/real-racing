@@ -47,6 +47,7 @@ const SEARCH_SPEED_MUL := 0.62  # 搜索小跑（enemies.js SEARCH_SPEED_MUL）
 const ENGAGE_SPEED_MUL := 0.45  # 交战移速 ×0.45（小侧移，battlefield/enemies.js 同款）
 
 const VIEW_DIST := 30.0         # 索敌视距（进战后 ENGAGE_DIST）——2026-10 用户定案：30 米内才会有反应
+const _Throw := preload("res://scripts/hd_throw.gd")   # 烟雾遮蔽（阶段 D；仅静态表，无环依赖）
 
 
 ## 实效索敌视距（阶段 C 天气变体乘数：夜晚 0.6=18m / 浓雾 0.66=20m / 雨天 0.85）
@@ -425,6 +426,8 @@ func _update_soldier(i: int, dt: float, raid_active: bool) -> void:
 	var alerted: bool = float(s["alert_t"]) > 0.0
 	if alerted:
 		s["alert_t"] = float(s["alert_t"]) - dt
+	if float(s.get("blind_t", 0.0)) > 0.0:   # 闪光致盲倒计时（阶段 D）
+		s["blind_t"] = float(s["blind_t"]) - dt
 	var fire_range: float = ALERT_DIST if alerted else ENGAGE_DIST
 	if state == "combat":
 		if not _talive(s):
@@ -726,6 +729,8 @@ func _can_see_player(s: Dictionary) -> bool:
 	var pe: Vector3 = _peye()
 	var to: Vector3 = pe - se
 	var dist := Vector2(to.x, to.z).length()
+	if float(s.get("blind_t", 0.0)) > 0.0:
+		return false   # 闪光致盲（阶段 D）：致盲期谁也看不见
 	var vd: float = ENGAGE_DIST if str(s["state"]) == "combat" else view_dist()
 	if float(s["alert_t"]) > 0.0:
 		vd = ALERT_DIST   # 警觉中：120 m 内看得见就打
@@ -1461,7 +1466,9 @@ func _blocked(from: Vector3, to: Vector3) -> bool:
 	if d < 0.5:
 		return false
 	var wd: float = _world.wall_hit(from, (to - from) / d, d - 0.5)
-	return wd < d - 0.5
+	if wd < d - 0.5:
+		return true
+	return _Throw.blocks_sight(from, to)   # 烟雾弹遮蔽（阶段 D；静态表本局活烟球）
 
 
 func _ground_y(x: float, z: float) -> float:

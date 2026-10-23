@@ -1196,6 +1196,24 @@ func _initialize() -> void:
 		await shot("res://out/shot_variant_%s.png" % v_id)
 	main.world.apply_variant("clear")
 	await frames(4)
+	# ---- 投掷物图证（「更好玩」阶段 D）：破片雷爆点 + 烟雾弹烟球
+	main.player.yaw = PI / 2.0
+	main.player.pitch = -0.12
+	main.player.update(0.016)
+	main.stash.throwables["frag"] = 3
+	main.stash.throwables["smoke"] = 2
+	main._route_key(KEY_7)
+	for i in 26:
+		main.thrower.update(0.06)   # ~1.6s：落地起爆火球展开中
+	await frames(4)
+	await shot("res://out/shot_throw_frag.png")
+	main._route_key(KEY_8)
+	for i in 26:
+		main.thrower.update(0.06)
+	await frames(4)
+	await shot("res://out/shot_throw_smoke.png")
+	main.thrower.reset_all()
+	main.hud.flash_screen(0.0)
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx

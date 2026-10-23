@@ -252,6 +252,79 @@ func _run() -> void:
 		and is_equal_approx(main.world._env.fog_density, main.world.INDOOR_FOG))
 	main.lobby.show_lobby()   # 复位大厅态（后续 UI 断言沿用）
 
+	# 2e. 弹种接线 + 投掷物（阶段 D）：弹种循环购买/切回/免重复扣款 → 投掷物购买
+	#     上限 → 开一局：7 键投掷消耗 → 三类起爆（破片杀兵/闪光致盲+白屏/烟球遮蔽）
+	main.stash.cash = 99999
+	check("弹种缺省标准弹", main.stash.ammo_kind_of("rifle") == "standard")
+	var ck0: int = main.stash.cash
+	var rr: Array = main.stash.cycle_ammo_kind("rifle")
+	check("首切强力弹自动购买（₵600）", bool(rr[0]) and str(rr[1]) == "power"
+		and main.stash.cash == ck0 - 600)
+	main.stash.cycle_ammo_kind("rifle")   # → 穿甲弹（购 ₵1500）
+	main.stash.cycle_ammo_kind("rifle")   # → 燃烧弹（购 ₵3000）
+	rr = main.stash.cycle_ammo_kind("rifle")
+	check("循环到头回标准弹（免费切回）", bool(rr[0]) and str(rr[1]) == "standard")
+	var ck1: int = main.stash.cash
+	rr = main.stash.cycle_ammo_kind("rifle")   # → 强力弹（已购不再扣款）
+	check("已购弹种换装零扣款", bool(rr[0]) and str(rr[1]) == "power"
+		and main.stash.cash == ck1)
+	check("燃烧弹倍率表落位（2.2×）",
+		is_equal_approx(float(Guns.ammo_by_id("incendiary")["dmg_mul"]), 2.2))
+	main.stash.throwables = {"frag": 0, "smoke": 0, "flash": 0}
+	var tb_ok: bool = main.stash.buy_throwable("frag") and main.stash.buy_throwable("frag") \
+			and main.stash.buy_throwable("frag")
+	check("破片雷购满 3 件", tb_ok and main.stash.throwables_of("frag") == 3)
+	main.stash.buy_throwable("frag")
+	check("投掷物上限拦截（第 4 件拒购）", main.stash.throwables_of("frag") == 3)
+	check("烟雾/闪光各购 1", main.stash.buy_throwable("smoke")
+		and main.stash.buy_throwable("flash"))
+	# 开一局：真兵真模块测投掷链
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(6)
+	var sol_i := -1
+	for si in main.soldiers.soldiers.size():
+		var s0: Dictionary = main.soldiers.soldiers[si]
+		if not bool(s0.get("dead", true)) and str(s0.get("tier", "")) == "regular":
+			sol_i = si
+			break
+	check("找到一名普通兵作靶", sol_i >= 0)
+	var n_frag0: int = main.stash.throwables_of("frag")
+	main.player.yaw = 0.0
+	main._route_key(KEY_7)
+	check("7 键投掷：库存 -1 + 投掷物在飞", main.stash.throwables_of("frag") == n_frag0 - 1
+		and main.thrower._projs.size() == 1)
+	for i in 30:
+		main.thrower.update(0.06)   # 1.8s 快进：弹道落地 + 引信起爆
+	check("投掷物全部起爆（无残留）", main.thrower._projs.is_empty())
+	main.stash.consume_throwable("smoke")   # 直接消耗走起爆直测（弹道已验）
+	main.thrower._detonate("smoke", main.player.pos + Vector3(4.0, 0.5, 0.0))
+	check("烟球入表并遮蔽视线", main.thrower.smoke_spheres.size() == 1
+		and main.thrower.blocks_sight(main.player.pos + Vector3(0, 1.5, 0),
+			main.player.pos + Vector3(8.0, 1.5, 0.0))
+		and not main.thrower.blocks_sight(main.player.pos + Vector3(-8.0, 1.5, -8.0),
+			main.player.pos + Vector3(-4.0, 1.5, -8.0)))
+	main.thrower.smoke_spheres.clear()   # 清烟：别让上一测试的烟球挡了闪光 LOS
+	main.stash.consume_throwable("flash")
+	main.player.yaw = PI / 2.0   # 面朝 +x（前向 = (sin yaw, 0, cos yaw)）——爆点在正前
+	main.player.update(0.016)
+	var tgt: Dictionary = main.soldiers.soldiers[sol_i] if sol_i >= 0 else {}
+	if not tgt.is_empty():
+		tgt["pos"] = main.player.pos + Vector3(3.0, 0.0, 0.0)   # 挪到玩家正面 3m
+		tgt["dead"] = false
+	main.thrower._detonate("flash", main.player.pos + Vector3(3.0, 1.2, 0.0))
+	main.thrower.update(0.016)   # 白屏 alpha 由 update 施加（_detonate 只置计时）
+	check("闪光：玩家白屏起效 + 近兵致盲", main.hud._flash_rect.color.a > 0.0
+		and (tgt.is_empty() or float(tgt.get("blind_t", 0.0)) > 0.0))
+	# 破片 AoE 直测：把靶兵贴爆点（130 伤害 ≥ 普通 100 血）
+	if not tgt.is_empty():
+		tgt["hp"] = 100.0
+		tgt["armor"] = 0.0
+		tgt["dead"] = false
+		main.thrower._detonate("frag", tgt["pos"] + Vector3(0, 1.0, 0))
+		check("破片雷近距击杀普通兵", bool(tgt.get("dead", false)))
+	main.thrower.reset_all()
+	check("投掷物清场（烟球清空）", main.thrower.smoke_spheres.is_empty())
+
 	# 3. 开箱 roll：150 次全部落在档位区间内
 	var roll_ok := true
 	for i in 150:

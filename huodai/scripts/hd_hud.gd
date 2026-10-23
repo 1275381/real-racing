@@ -32,6 +32,7 @@ var result_visible: bool = false
 var inv_visible: bool = false
 
 var _base: Control
+var _flash_rect: ColorRect   # 闪光弹白屏（阶段 D）
 var _raid: Control
 var _center: CenterLayer
 var _scope_ov: ScopeOverlay
@@ -111,6 +112,13 @@ func setup() -> void:
 	_base.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_base.theme = HDData.ui_theme()   # 中文字体链设为 default_font，全部 Label/Button 继承
 	add_child(_base)
+
+	# 闪光弹白屏（阶段 D，最顶全屏）：throw 模块每帧喂强度 0..1
+	_flash_rect = ColorRect.new()
+	_flash_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_flash_rect.color = Color(1, 1, 1, 0)
+	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_base.add_child(_flash_rect)
 
 	# ---- 对局层（默认隐藏） ----
 	_raid = Control.new()
@@ -509,6 +517,13 @@ func set_scope(kind: String, zoom: float, on: bool) -> void:
 
 
 ## 顶部中短命消息（队列最多叠 3 条）
+## 闪光白屏强度（阶段 D）：k=0 收起，k>0 全屏白 alpha=k（throw 模块渐退喂 0）
+func flash_screen(k: float) -> void:
+	if _flash_rect == null:
+		return
+	_flash_rect.color.a = clampf(k, 0.0, 0.92)
+
+
 func toast(text: String, color: Color = Color(1, 1, 1)) -> void:
 	if _toast_box == null:
 		setup()

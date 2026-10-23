@@ -38,6 +38,12 @@ var tutorial_done := false            # 首局引导已完成/跳过（老档有
 ## contracts = [{id, prog, done, paid}]，def 查 HDData.CONTRACT_POOL
 var contracts_day: String = ""
 var contracts: Array = []
+## 弹种（阶段 D）：ammo_kind = gun_id → 当前装备弹种 id（缺省 standard）；
+## ammo_kinds_owned = gun_id → 已购弹种 id 数组（standard 恒有）
+var ammo_kind: Dictionary = {}
+var ammo_kinds_owned: Dictionary = {}
+## 投掷物库存（阶段 D）：kind → 件数（买了常驻、局内消耗、阵亡不丢）
+var throwables: Dictionary = {"frag": 0, "smoke": 0, "flash": 0}
 
 
 func _init() -> void:
@@ -70,6 +76,9 @@ func _serialize() -> Dictionary:
 		"daily_last": daily_last,
 		"contracts_day": contracts_day,
 		"contracts": contracts,
+		"ammo_kind": ammo_kind,
+		"ammo_kinds_owned": ammo_kinds_owned,
+		"throwables": throwables,
 		"secure_slots": secure_slots,
 		"durability": durability,
 		"sup_owned": sup_owned,
@@ -242,6 +251,31 @@ func _load() -> void:
 				"done": bool(ct.get("done", false)),
 				"paid": bool(ct.get("paid", false)),
 			})
+	# 弹种 + 投掷物（阶段 D）：老档无字段 = 缺省（standard / 三件 0）
+	var kind_ids := {}
+	for ad in Guns.AMMO:
+		kind_ids[str(ad["id"])] = true
+	var raw_kinds := _to_dict(d.get("ammo_kinds_owned", null))
+	for gk in raw_kinds.keys():
+		var owned0: Array = []
+		for k0 in (raw_kinds[gk] as Array):
+			var k := str(k0)
+			if kind_ids.has(k) and not owned0.has(k):
+				owned0.append(k)
+		if not owned0.has("standard"):
+			owned0.push_front("standard")
+		ammo_kinds_owned[str(gk)] = owned0
+	var raw_kind := _to_dict(d.get("ammo_kind", null))
+	for gk2 in raw_kind.keys():
+		var kk := str(raw_kind[gk2])
+		var owned_l: Array = ammo_kinds_owned.get(str(gk2), ["standard"])
+		if kk == "standard" or owned_l.has(kk):
+			ammo_kind[str(gk2)] = kk
+	throwables = {"frag": 0, "smoke": 0, "flash": 0}
+	var raw_th := _to_dict(d.get("throwables", null))
+	for tk in ["frag", "smoke", "flash"]:
+		throwables[tk] = clampi(_to_i(raw_th.get(tk, 0)), 0,
+				_to_i(HDData.THROWABLES[tk]["max"]))
 
 	# 第四阶段：耐久（0..100，缺键=全新）/ 消音器（按枪，随枪丢）/ 首局引导
 	durability = {}
@@ -277,6 +311,9 @@ func _apply_defaults() -> void:
 	daily_last = ""
 	contracts_day = ""
 	contracts = []
+	ammo_kind = {}
+	ammo_kinds_owned = {}
+	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	secure_slots = HDData.SECURE_BASE
 	durability = {}
 	sup_owned = []
@@ -298,6 +335,73 @@ func check_in() -> int:
 	save()
 	changed.emit()
 	return HDData.DAILY_REWARD
+
+
+# ================= 投掷物 + 弹种（2026-10 阶段 D） =================
+
+## 当前弹种（缺省标准弹）
+func ammo_kind_of(gid: String) -> String:
+	return str(ammo_kind.get(gid, "standard"))
+
+
+## N 键循环弹种：下一档未购则现场购买（钱不够 false + 提示），已购则直接换装。
+## 返回 [ok, 新弹种 id]；standard 恒可切回
+func cycle_ammo_kind(gid: String) -> Array:
+	var order: Array = []
+	for ad in Guns.AMMO:
+		order.append(str(ad["id"]))
+	var cur_i := order.find(ammo_kind_of(gid))
+	var nxt: String = order[(cur_i + 1) % order.size()]
+	if nxt == "standard":
+		ammo_kind[gid] = "standard"
+		save()
+		return [true, "standard"]
+	var owned: Array = ammo_kinds_owned.get(gid, ["standard"])
+	if owned.has(nxt):
+		ammo_kind[gid] = nxt
+		save()
+		return [true, nxt]
+	var price := _to_i(Guns.ammo_by_id(nxt).get("price", 0))
+	if cash < price:
+		return [false, nxt]
+	cash -= price
+	owned.append(nxt)
+	ammo_kinds_owned[gid] = owned
+	ammo_kind[gid] = nxt
+	save()
+	changed.emit()
+	return [true, nxt]
+
+
+## 买投掷物一件（③区按钮）：满/没钱返回 false（提示由大厅发）
+func buy_throwable(kind: String) -> bool:
+	var def: Dictionary = HDData.THROWABLES.get(kind, {})
+	if def.is_empty():
+		return false
+	var n := _to_i(throwables.get(kind, 0))
+	if n >= _to_i(def["max"]):
+		return false
+	if cash < _to_i(def["price"]):
+		return false
+	cash -= _to_i(def["price"])
+	throwables[kind] = n + 1
+	save()
+	changed.emit()
+	return true
+
+
+func throwables_of(kind: String) -> int:
+	return _to_i(throwables.get(kind, 0))
+
+
+## 局内投掷消耗一件（没了 false）
+func consume_throwable(kind: String) -> bool:
+	var n := _to_i(throwables.get(kind, 0))
+	if n <= 0:
+		return false
+	throwables[kind] = n - 1
+	save()
+	return true
 
 
 # ================= 合同系统（2026-10 阶段 A） =================
