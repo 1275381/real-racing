@@ -1148,6 +1148,43 @@ func _run() -> void:
 	# top 公式（holo 拓扑）写死，reddot 走「窗中心过屏幕中心」aim_y 公式——
 	# 不还原会把本段的状态泄漏进那条几何断言（实测 d=0.026 撞线）
 	main.stash.equip_scope("rifle", "holo")
+	# 29e2. 改枪台左列点击回归（用户报告「点没拥有的枪会直接开局」——战备收拢改造
+	#       曾把 _confirm_deploy 的收起早退分支劫持成 _fire_deploy）：未拥有=指路
+	#       不开局不扣款 · 已拥有=装入聚焦槽不开局；两条都必须停留在大厅
+	main.lobby.show_lobby()
+	main.lobby.set_tab(1)
+	main.lobby._prep_open = false   # 触发过 bug 的状态（战备收起）
+	var bench_unowned := -1
+	var bench_owned := -1
+	var lo_p := str(main.stash.loadout.get("primary", ""))
+	var lo_s := str(main.stash.loadout.get("secondary", ""))
+	for gi0 in Guns.GUNS.size():
+		var gid0 := str(Guns.GUNS[gi0]["id"])
+		# 已拥有样本避开两槽在装枪（_load_gun 的「主副不可同枪」守卫会拒装）
+		if bench_owned < 0 and main.stash.guns_owned.has(gid0) \
+				and gid0 != lo_p and gid0 != lo_s:
+			bench_owned = gi0
+		if bench_unowned < 0 and not main.stash.guns_owned.has(gid0):
+			bench_unowned = gi0
+	check("改枪台夹具：找到未拥有/已拥有样本", bench_unowned >= 0 and bench_owned >= 0)
+	if bench_unowned >= 0:
+		var cash_b: int = main.stash.cash
+		var lo_b: Dictionary = main.stash.loadout.duplicate()
+		main.lobby._hint_label.text = ""
+		main.lobby._on_bench_row_input(mb, 0, bench_unowned)
+		check("改枪台点未拥有枪：不开局只指路（按 3 进交易行）",
+			main.lobby.lobby_visible and main.stash.cash == cash_b
+				and str(main.stash.loadout) == str(lo_b)
+				and main.lobby._hint_label.text.contains("按 3 进交易行"),
+			"hint=%s" % main.lobby._hint_label.text)
+	if bench_owned >= 0:
+		main.lobby._slot_focus = "primary"
+		var gid_o := str(Guns.GUNS[bench_owned]["id"])
+		main.lobby._on_bench_row_input(mb, 0, bench_owned)
+		check("改枪台点已拥有枪：装入聚焦槽且不开局",
+			main.lobby.lobby_visible
+				and str(main.stash.loadout.get("primary")) == gid_o,
+			"primary=%s" % str(main.stash.loadout.get("primary")))
 	main.lobby.set_tab(2)
 	main.lobby._market_sec = 0
 	main.lobby._market_gun = 0

@@ -1185,8 +1185,11 @@ func _deploy_sel_id() -> String:
 ## 收起态=直接出发（光标域只有出发钮）· 展开态槽=设装入目标 · 枪行=已拥有装入聚焦槽
 ## （未拥有提示去交易行，不扣款）· 出发钮=出发
 func _confirm_deploy() -> void:
-	if not _prep_open:
-		_fire_deploy()   # 收起态光标域只有出发钮：回车即出发
+	# 收起态「回车即出发」只属于出发页本页（键盘回车/再点已选钮）；改枪台左列
+	# 点击也汇入本函数（_equip_gun_global 链）——那边要的是枪行语义（未拥有指路/
+	# 已拥有装入聚焦槽），不得开局（战备收拢改造曾把该链劫持成直接开局，回归修复）
+	if not _prep_open and _tab == 0:
+		_fire_deploy()
 		return
 	var guns: Array = Guns.GUNS
 	var rows := _deploy_rows()
