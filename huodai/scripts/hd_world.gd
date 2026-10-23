@@ -276,6 +276,10 @@ var _ph_scenes := {}              # path -> PackedScene | null（实拍模型缓
 var _fallback_mats := {}          # name -> StandardMaterial3D（兜底盒共用）
 var _sun: DirectionalLight3D
 var _env: Environment
+var _indoor := false            # 靶馆室内氛围态（set_indoor）
+var _variant := "clear"         # 当前天气变体（apply_variant；晴朗缺省）
+var _var_def: Dictionary = {}   # 变体参数（RAID_VARIANTS 条目）
+var _rain: GPUParticles3D       # 雨粒子（跟玩家，rain 变体可见）
 var _hdri_on := false   # 实拍 HDRI 天空是否加载成功（失败回退物理天空 + 噪声云带）
 
 
@@ -334,14 +338,58 @@ func build() -> void:
 
 
 ## 进靶馆模式：雾拉近/环境光稍暗/夕阳压弱（室内氛围）；回大厅/行动恢复。
-## 集成者用 has_method("set_indoor") 探测调用。
+## 集成者用 has_method("set_indoor") 探测调用。户外值随天气变体乘数走（阶段 C）。
 func set_indoor(on: bool) -> void:
 	if _env == null:
 		return
-	_env.fog_density = INDOOR_FOG if on else OUTDOOR_FOG
-	_env.ambient_light_energy = INDOOR_AMB if on else OUTDOOR_AMB
+	_indoor = on
+	_apply_atmos()
+
+
+## 应用昼夜/天气变体（阶段 C）：HDData.RAID_VARIANTS[id]——太阳能量/色/俯角、
+## 环境光、雾密度乘户外常量；雨变体挂雨粒子（update_rain 每帧跟玩家）。
+## 未知 id 回落晴朗。室内（靶馆）优先保持室内氛围，变体乘数在出馆时生效。
+func apply_variant(id: String) -> void:
+	_variant = id
+	_var_def = HDData.RAID_VARIANTS.get(id, {}) if HDData.RAID_VARIANTS.has(id) else {}
+	_apply_atmos()
+	if _rain != null:
+		_rain.visible = bool(_var_def.get("rain", false)) and not _indoor
+
+
+## 大气三件套统一落点：indoor 用室内常量；户外 = OUTDOOR_* × 变体乘数
+func _apply_atmos() -> void:
+	if _env == null:
+		return
+	if _indoor:
+		_env.fog_density = INDOOR_FOG
+		_env.ambient_light_energy = INDOOR_AMB
+		if _sun != null:
+			_sun.light_energy = INDOOR_SUN
+		return
+	var fog_m := float(_var_def.get("fog", 1.0))
+	var amb_m := float(_var_def.get("amb", 1.0))
+	var sun_m := float(_var_def.get("sun", 1.0))
+	_env.fog_density = OUTDOOR_FOG * fog_m
+	_env.ambient_light_energy = OUTDOOR_AMB * amb_m
 	if _sun != null:
-		_sun.light_energy = INDOOR_SUN if on else OUTDOOR_SUN
+		_sun.light_energy = OUTDOOR_SUN * sun_m
+		if _var_def.has("sun_color"):
+			_sun.light_color = _var_def["sun_color"]
+		else:
+			_sun.light_color = Color(1.0, 0.96, 0.9)
+		if _var_def.has("sun_rot_x"):
+			_sun.rotation_degrees = Vector3(float(_var_def["sun_rot_x"]),
+					_sun.rotation_degrees.y, 0.0)
+		else:
+			_sun.rotation_degrees = Vector3(-40.0, _sun.rotation_degrees.y, 0.0)
+
+
+## 雨粒子跟玩家（main._process 调）：发射盒罩住玩家周围 26m，进馆隐藏
+func update_rain(player_pos: Vector3) -> void:
+	if _rain == null or not _rain.visible:
+		return
+	_rain.position = Vector3(player_pos.x, player_pos.y + 12.0, player_pos.z)
 
 
 ## 分区：距原点 d<=80 中心危险区 / d>112 荒野 / 其间过渡（HDData.DANGER_R 同源）；
@@ -513,6 +561,30 @@ func _build_env() -> void:
 	fill.shadow_enabled = false
 	fill.visible = not _hdri_on   # HDRI 天空下天光来自真实环境光，假补光会把阴影洗蓝
 	add_child(fill)
+	# —— 雨粒子（阶段 C 雨天变体）：细长雨丝盒发射 26×22×26 罩玩家（update_rain
+	#    跟人）、重力下坠；晴朗/夜晚/浓雾不显示——构建一次按变体切可见
+	_rain = GPUParticles3D.new()
+	_rain.amount = 420
+	_rain.lifetime = 1.1
+	_rain.visibility_aabb = AABB(Vector3(-14.0, -13.0, -14.0), Vector3(28.0, 26.0, 28.0))
+	var rmat := ParticleProcessMaterial.new()
+	rmat.direction = Vector3(0.06, -1.0, 0.03)
+	rmat.spread = 4.0
+	rmat.initial_velocity_min = 17.0
+	rmat.initial_velocity_max = 21.0
+	rmat.gravity = Vector3(0.0, -6.0, 0.0)
+	rmat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	rmat.emission_box_extents = Vector3(13.0, 11.0, 13.0)
+	_rain.process_material = rmat
+	var rq := QuadMesh.new()
+	rq.size = Vector2(0.012, 0.55)
+	rq.material = StandardMaterial3D.new()
+	(rq.material as StandardMaterial3D).albedo_color = Color(0.65, 0.72, 0.8, 0.42)
+	(rq.material as StandardMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	(rq.material as StandardMaterial3D).billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	_rain.draw_pass_1 = rq
+	_rain.visible = false
+	add_child(_rain)
 
 	# —— 物理大气散射天空（第 3 轮判图 #1：上轮 turbidity 6 把天读成死板灰蓝
 	#    一块——回落到 3.5 保地平过渡带，同时瑞利 2.5 拉开天顶饱和蓝↔地平微暖

@@ -1185,6 +1185,17 @@ func _initialize() -> void:
 	check("探针开锁成功（armory opened）", bool(main.locks._states["armory"]["opened"]))
 	await shot("res://out/shot_lock_open.png")
 	main.locks.reset_all()   # 还原上锁态（下一局照常重锁）
+	# ---- 天气变体三连拍（「更好玩」阶段 C）：夜晚/雨天/浓雾玩家视角（雨含粒子）
+	main.player.pos = Vector3(-24.0, 1.55, -36.0)   # 西仓库门前（沙袋+集装箱巷道视野）
+	main.player.yaw = PI * 0.75
+	main.player.pitch = -0.04
+	main.player.update(0.016)
+	for v_id in ["night", "rain", "fog"]:
+		main.world.apply_variant(v_id)
+		await frames(10)
+		await shot("res://out/shot_variant_%s.png" % v_id)
+	main.world.apply_variant("clear")
+	await frames(4)
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx

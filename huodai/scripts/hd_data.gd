@@ -195,6 +195,37 @@ const KEY_SPAWN_P := 0.6           # 每局每把钥匙的刷新概率
 const KEY_VALUE := 800             # 钥匙价值（紫档可带走变卖）
 const LOCK_PROMPT_R := 3.4         # 门交互半径（距房心——门外站定距房心 ≈3m）
 
+## ---- 昼夜/天气局变体（「更好玩」阶段 C）----
+## 出发前 V 键选（缺省晴朗）：夜晚敌人视距 30→18m（夜战潜入）、雨天枪声警觉
+## 60→36m（雨幕掩声）+ 雨粒子、浓雾全员视距 30→20m；夜/雾/雨战利品有品质
+## 上浮（风险换回报——roll_loot 按 luck 概率 +1 档）。multiplier 语义：
+## sun/amb/fog = 乘 OUTDOOR_* 常量；sight = 乘 HDSoldiers.VIEW_DIST；
+## hear = 乘枪声传播半径；sun_rot_x 可选（太阳俯角覆写）
+static var variant := "clear"
+const RAID_VARIANTS := {
+	"clear": {"name": "晴朗", "sun": 1.0, "amb": 1.0, "fog": 1.0,
+		"sight": 1.0, "hear": 1.0, "luck": 0.0, "rain": false},
+	"night": {"name": "夜晚", "sun": 0.16, "amb": 0.3, "fog": 1.5,
+		"sight": 0.6, "hear": 1.0, "luck": 0.12, "rain": false,
+		"sun_color": Color(0.55, 0.65, 1.0), "sun_rot_x": -14.0},
+	"rain": {"name": "雨天", "sun": 0.5, "amb": 0.75, "fog": 2.4,
+		"sight": 0.85, "hear": 0.6, "luck": 0.08, "rain": true,
+		"sun_color": Color(0.7, 0.72, 0.78)},
+	"fog": {"name": "浓雾", "sun": 0.65, "amb": 0.82, "fog": 6.0,
+		"sight": 0.66, "hear": 1.0, "luck": 0.12, "rain": false,
+		"sun_color": Color(0.85, 0.85, 0.88)},
+}
+
+
+## 当前变体参数读取（缺省晴朗：字段缺失/未知变体都回落 1.0/0.0 安全值）
+static func v_f(key: String, fallback: float) -> float:
+	var def: Dictionary = RAID_VARIANTS.get(variant, {})
+	return float(def.get(key, fallback))
+
+
+static func variant_name() -> String:
+	return str(RAID_VARIANTS.get(variant, {}).get("name", "晴朗"))
+
 ## 局内物资：占背包格；局内按 3/4/5/6（或 Tab 背包「使用」）用掉；撤离带回按价值变卖
 const CONSUMABLES := {
 	"medkit": {"name": "医疗包", "icon": "医疗", "rarity": 1, "value": 180, "use_t": 3.0},
@@ -325,6 +356,9 @@ static func roll_rarity(zone: String) -> int:
 ## 开箱 roll 一件变卖物：{uid,name,rarity,value,icon}
 static func roll_loot(zone: String) -> Dictionary:
 	var rid := roll_rarity(zone)
+	# 天气局运气（阶段 C）：夜/雨/雾按 luck 概率品质 +1 档（风险换回报；晴朗 0）
+	if randf() < v_f("luck", 0.0):
+		rid = mini(rid + 1, RARITY.size() - 1)
 	var tier: Array = LOOT_NAMES[rid]
 	var pick: Array = tier[randi() % tier.size()]
 	var rar: Dictionary = RARITY[rid]

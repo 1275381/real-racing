@@ -238,6 +238,9 @@ func _reclaim_ammo() -> void:
 ## ---- 模式流转 ----
 func _start_mission(loadout: Dictionary) -> void:
 	mode = Mode.MISSION
+	# 天气变体（阶段 C）：先设全局（AI 视距/枪声半径/战利品运气都读它）再重置世界
+	HDData.variant = str(loadout.get("variant", "clear"))
+	world.apply_variant(HDData.variant)
 	_kills = 0
 	_raid_t = 0.0
 	_extract_t = 0.0
@@ -302,6 +305,13 @@ func _start_mission(loadout: Dictionary) -> void:
 	if bool(_extracts["lever"]["enabled"]):
 		open_txt += " · 拉闸（先去变电站拉电闸）"
 	hud.toast(open_txt + " —— 25 分钟内撤出", Color(0.49, 0.89, 0.66))
+	# 天气变体播报（阶段 C）：夜/雨/雾提示本局差异（晴朗不播）
+	var v_tips := {"night": "敌人视距 30→18m · 潜入正当时 · 战利品上浮",
+		"rain": "雨幕掩枪声 60→36m · 战利品上浮",
+		"fog": "浓雾全员视距 30→20m · 战利品上浮"}
+	if v_tips.has(HDData.variant):
+		hud.toast("本局天气：%s —— %s" % [HDData.variant_name(), v_tips[HDData.variant]],
+				Color(0.6, 0.8, 1.0))
 	hud.toast("阵亡丢失随身装备与背包 · 贵重小件放进安全箱（Tab）", Color(1.0, 0.7, 0.36))
 	_apply_mode_visuals()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -312,6 +322,9 @@ func _enter_range() -> void:
 	_abandon_if_live()
 	hud.hide_inventory()
 	mode = Mode.RANGE
+	# 靶场恒晴朗（阶段 C）：变体是实战专属，AI/战利品参数回缺省
+	HDData.variant = "clear"
+	world.apply_variant("clear")
 	paused = false
 	soldiers.reset_all()
 	loot.reset_all()
@@ -344,6 +357,9 @@ func _back_to_lobby() -> void:
 	_abandon_if_live()
 	hud.hide_inventory()
 	mode = Mode.LOBBY
+	# 回大厅恢复晴朗（阶段 C）：大厅期间世界背景与 AI 参数都回缺省态
+	HDData.variant = "clear"
+	world.apply_variant("clear")
 	paused = false
 	hud.set_raid_visible(false)
 	hud.hide_result()
@@ -570,8 +586,9 @@ func _on_player_hit(dmg: float, from: Vector3) -> void:
 func _on_player_fired() -> void:
 	if mode == Mode.MISSION and _raid_live:
 		_raid_wear[guns.cur_id] = float(_raid_wear.get(guns.cur_id, 0.0)) + HDData.DUR_PER_SHOT
-		# 消音器：惊动半径 60 → 20 m
-		var hr: float = HDData.SUP_HEAR_R if stash.suppressed(guns.cur_id) else HDSoldiers.SHOT_HEAR_R
+		# 消音器：惊动半径 60 → 20 m；雨天再乘变体掩声系数（0.6 → 36/12 m）
+		var hr: float = (HDData.SUP_HEAR_R if stash.suppressed(guns.cur_id)
+				else HDSoldiers.SHOT_HEAR_R) * HDData.v_f("hear", 1.0)
 		soldiers.hear_shot(player.pos + Vector3(0.0, 1.5, 0.0), hr)
 		# 远处听不到枪声的兵：子弹从身边飞过也会警觉（破空声）
 		soldiers.hear_bullet(player.cam.global_position, -player.cam.global_transform.basis.z)
@@ -671,6 +688,7 @@ func _process(delta: float) -> void:
 	if lobby.lobby_visible:
 		player.update(0.0)   # 大厅盖场：世界静止，只摆相机（dt=0 不移动）
 		return   # 经济 UI 全在 CanvasLayer
+	world.update_rain(player.pos)   # 雨粒子跟玩家（阶段 C；不可见时零开销）
 	if hud.result_visible:
 		return   # 结算页冻结战场
 	if hud.menu_visible:

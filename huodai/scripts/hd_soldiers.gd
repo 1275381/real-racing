@@ -47,6 +47,11 @@ const SEARCH_SPEED_MUL := 0.62  # 搜索小跑（enemies.js SEARCH_SPEED_MUL）
 const ENGAGE_SPEED_MUL := 0.45  # 交战移速 ×0.45（小侧移，battlefield/enemies.js 同款）
 
 const VIEW_DIST := 30.0         # 索敌视距（进战后 ENGAGE_DIST）——2026-10 用户定案：30 米内才会有反应
+
+
+## 实效索敌视距（阶段 C 天气变体乘数：夜晚 0.6=18m / 浓雾 0.66=20m / 雨天 0.85）
+func view_dist() -> float:
+	return VIEW_DIST * HDData.v_f("sight", 1.0)
 const ENGAGE_DIST := 30.0       # 进战视距 = 敌弹射程（与索敌同步 30：看得见才打得到）
 const FOV_COS := 0.5736         # cos(55°)：视锥 110° 半角（背身看不见）
 const LOS_RECHECK := 0.4        # 视线复测周期（battlefield.gd:388）
@@ -721,7 +726,7 @@ func _can_see_player(s: Dictionary) -> bool:
 	var pe: Vector3 = _peye()
 	var to: Vector3 = pe - se
 	var dist := Vector2(to.x, to.z).length()
-	var vd: float = ENGAGE_DIST if str(s["state"]) == "combat" else VIEW_DIST
+	var vd: float = ENGAGE_DIST if str(s["state"]) == "combat" else view_dist()
 	if float(s["alert_t"]) > 0.0:
 		vd = ALERT_DIST   # 警觉中：120 m 内看得见就打
 	if dist > vd:
@@ -1107,7 +1112,7 @@ func _retarget(s: Dictionary) -> void:
 func _find_foe(s: Dictionary) -> int:
 	var fac := str(s["faction"])
 	var se: Vector3 = s["pos"] + Vector3(0, EYE_H, 0)
-	var bd: float = ALERT_DIST if float(s["alert_t"]) > 0.0 else VIEW_DIST
+	var bd: float = ALERT_DIST if float(s["alert_t"]) > 0.0 else view_dist()
 	var fwd := Vector2(sin(float(s["yaw"])), cos(float(s["yaw"])))
 	var best := -1
 	for j in soldiers.size():

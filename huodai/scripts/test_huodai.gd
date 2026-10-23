@@ -201,6 +201,57 @@ func _run() -> void:
 		and bool(main._extracts["tunnel"]["enabled"])
 		and bool(main._extracts["tunnel"]["open"]))
 
+	# 2d. 昼夜/天气变体（阶段 C）：表完整性 / 大气三态 / AI 视距乘数 / 枪声掩声 /
+	#     大厅 V 循环 + payload / 靶场复位（不真开一局——避免阵亡结算吃掉后续夹具）
+	var rvk: Array = HDData.RAID_VARIANTS.keys()
+	check("变体四态齐备（晴朗/夜晚/雨天/浓雾）",
+		rvk.size() == 4 and rvk.has("clear") and rvk.has("night")
+			and rvk.has("rain") and rvk.has("fog"))
+	var vfields_ok := true
+	for vd0 in HDData.RAID_VARIANTS.values():
+		var vd: Dictionary = vd0
+		for fkey in ["sun", "amb", "fog", "sight", "hear", "luck", "rain"]:
+			if not vd.has(fkey):
+				vfields_ok = false
+	check("变体字段齐（sun/amb/fog/sight/hear/luck/rain）", vfields_ok)
+	HDData.variant = "night"
+	check("夜晚实效视距 18m（30×0.6）", is_equal_approx(main.soldiers.view_dist(), 18.0))
+	main.world.apply_variant("night")
+	check("夜晚大气（阳×0.16 · 雾×1.5）",
+		is_equal_approx(main.world._sun.light_energy, main.world.OUTDOOR_SUN * 0.16)
+			and is_equal_approx(main.world._env.fog_density, main.world.OUTDOOR_FOG * 1.5))
+	main.world.apply_variant("rain")
+	check("雨天雨粒子可见", main.world._rain.visible)
+	main.world.apply_variant("fog")
+	check("浓雾雾密度 ×6 + 雨隐藏", is_equal_approx(main.world._env.fog_density,
+		main.world.OUTDOOR_FOG * 6.0) and not main.world._rain.visible)
+	HDData.variant = "rain"
+	check("雨天枪声掩声 36m（60×0.6）", is_equal_approx(
+		HDSoldiers.SHOT_HEAR_R * HDData.v_f("hear", 1.0), 36.0))
+	HDData.variant = "clear"
+	main.world.apply_variant("clear")
+	check("晴朗复位（阳/雾回基线 + 雨隐藏）",
+		is_equal_approx(main.world._sun.light_energy, main.world.OUTDOOR_SUN)
+			and is_equal_approx(main.world._env.fog_density, main.world.OUTDOOR_FOG)
+			and not main.world._rain.visible)
+	# 大厅 V 循环 + payload 契约
+	main.lobby.set_tab(0)
+	main.lobby._variant_idx = 0
+	main.lobby.handle_key(KEY_V)
+	main.lobby.handle_key(KEY_V)
+	check("V 两下循环到 雨天", main.lobby.variant_key() == "rain")
+	var pl: Dictionary = main.lobby._deploy_payload("rifle", "pistol", false)
+	check("出发 payload 带天气字段", str(pl.get("variant", "")) == "rain"
+		and str(pl.get("primary", "")) == "rifle")
+	main.lobby._variant_idx = 0   # 复位缺省晴朗
+	# 靶场入口复位变体（先手动置夜晚再进靶场）
+	HDData.variant = "night"
+	main.world.apply_variant("night")
+	main._enter_range()
+	check("进靶场恢复晴朗（变体实战专属）", HDData.variant == "clear"
+		and is_equal_approx(main.world._env.fog_density, main.world.INDOOR_FOG))
+	main.lobby.show_lobby()   # 复位大厅态（后续 UI 断言沿用）
+
 	# 3. 开箱 roll：150 次全部落在档位区间内
 	var roll_ok := true
 	for i in 150:

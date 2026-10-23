@@ -63,6 +63,7 @@ var _tab := 0                       # 0 出发大厅 / 1 改枪台 / 2 交易行
 var _cur0 := 0                      # 出发页光标（展开态域：2 槽位 + 当页枪行 + 出发钮；收起态只有出发钮）
 var _deploy_page := 0               # 出发页候选枪分页索引
 var _prep_open := false             # 出发页战备面板开合（右下角「战备」贴图 / TAB 同链）
+var _variant_idx := 0               # 天气变体索引（阶段 C：RAID_VARIANTS 键序循环）
 var _slot_focus := "primary"        # 出发页「装入目标槽」
 var _gun_idx := 0                   # 改枪台左列选中枪
 var _scope_idx := 0                 # 改枪台右列选中瞄具（0=机瞄）
@@ -196,9 +197,13 @@ func handle_key(code: int) -> bool:
 				return false
 			_repair_sel()
 		KEY_V:
-			if _tab != 1:
+			# 出发页=天气变体循环（阶段 C）；改枪台=消音器（旧链）
+			if _tab == 0:
+				_cycle_variant()
+			elif _tab == 1:
+				_sup_sel()
+			else:
 				return false
-			_sup_sel()
 		KEY_ENTER, KEY_KP_ENTER:
 			_confirm()
 		KEY_LEFT:
@@ -594,6 +599,12 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	rv.add_child(rnote)
 	right.add_child(rc)
 	right.add_child(_insure_card(risk_v))
+	# 天气变体循环钮（阶段 C）：V 同链；夜/雨/雾在局内有视距/掩声/战利品差异
+	var vb := _mk_btn("天气：%s ▸" % variant_name(), 15)
+	_style_btn(vb, false, COL_ACCENT if _variant_idx != 0 else _dim(0.6), 10)
+	vb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	vb.pressed.connect(_cycle_variant)
+	right.add_child(vb)
 	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流）
 	var di := (2 + rows) if _prep_open else 0
 	var dsel := _cur0 == di
@@ -619,7 +630,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	pg.add_child(trow)
 	trow.add_child(_prep_tile())
 
-	var hint := _mk_label("鼠标：点右下角「战备」整备装备 · 点卡片装入 · ◀▶ 翻页   键盘：TAB 战备 · 回车 确认/出发 · I 投保 · 1/2/3 切页签 · G 靶场",
+	var hint := _mk_label("鼠标：点右下角「战备」整备装备 · 点卡片装入 · ◀▶ 翻页   键盘：TAB 战备 · 回车 确认/出发 · I 投保 · V 天气 · 1/2/3 切页签 · G 靶场",
 			13, _dim(0.45))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
@@ -1221,7 +1232,30 @@ func _fire_deploy() -> void:
 	var ins := _insure and _stash.insurance_price(_stash.loadout) > 0 \
 			and _stash.cash >= _stash.insurance_price(_stash.loadout)
 	hide_lobby()
-	deploy_requested.emit({"primary": p, "secondary": s, "insured": ins})
+	deploy_requested.emit({"primary": p, "secondary": s, "insured": ins,
+			"variant": variant_key()})
+
+
+## 出发 payload 组装（阶段 C 抽出：测试不发射信号也能取变体字段）
+func _deploy_payload(p: String, s: String, ins: bool) -> Dictionary:
+	return {"primary": p, "secondary": s, "insured": ins, "variant": variant_key()}
+
+
+## 天气变体（阶段 C）：键序循环 + 名称；夜/雨/雾局敌人视距/枪声/战利品有差异
+func variant_key() -> String:
+	var keys := HDData.RAID_VARIANTS.keys()
+	return str(keys[_variant_idx % keys.size()])
+
+
+func variant_name() -> String:
+	var def: Dictionary = HDData.RAID_VARIANTS.get(variant_key(), {})
+	return str(def.get("name", "晴朗"))
+
+
+## V 键/按钮同链：循环切换天气（第 0 位=晴朗缺省）
+func _cycle_variant() -> void:
+	_variant_idx = (_variant_idx + 1) % HDData.RAID_VARIANTS.size()
+	_refresh_all()
 
 
 func _fire_range() -> void:
