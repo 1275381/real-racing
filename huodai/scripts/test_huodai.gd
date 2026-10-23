@@ -9,7 +9,7 @@
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
 #       + 拟真枪声分层回归（用户反馈「现在的枪声不拟真」）：四层合成
-#         （click/crack/boom/tail）18 枪流/时长分级/峰值/过零率/每发随机
+#         （click/crack/boom/tail）19 枪流/时长分级/峰值/过零率/每发随机
 #         + AS Val 消音专项档（峰值能量/时长低于普通步枪档）
 #       + 贴掩体吞枪复发红线（29f）：全枪册表面材质 no_depth_test/priority≥10
 #         审计 + 枪架 viewmodel 补光在位 + MP7 微自发光（三件套全锁）
@@ -328,7 +328,7 @@ func _run() -> void:
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
-			"m250", "mp7", "asval", "k416"]:
+			"m250", "mp7", "asval", "k416", "an94"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -556,13 +556,14 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册六枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	# 27. 高模顶点红线：步枪册七枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
 	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
-	#     步枪 2026-10 并册）逐把枪身根总顶点 ≥ 8× 低模基线（走
+	#     步枪 2026-10 并册、an94 商店超点射突击步枪 2026-10 并册）
+	#     逐把枪身根总顶点 ≥ 8× 低模基线（走
 	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
-	#     mag_dmr/mag_val/mag_k416 独立命名弹匣节点；POLY_MIN/POLY_BASE 见
-	#     HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
-	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416"]:
+	#     mag_dmr/mag_val/mag_k416/mag_an94 独立命名弹匣节点；POLY_MIN/POLY_BASE
+	#     见 HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
+	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -596,6 +597,40 @@ func _run() -> void:
 		bool(k_def.get("auto", true)) and int(k_def["mag"]) == 30
 			and (HDData.RESERVE as Dictionary).has("k416"),
 		"mag=%s reserve=%s" % [str(k_def.get("mag")), str(HDData.RESERVE.get("k416", "缺"))])
+
+	# 27c. AN-94 商店枪专项（2026-10 并册·S12 微光赛季）：超点射考证断言四件——
+	#      ① 独立命名弹匣锚点 mag_an94 在枪身根下（右倾 AK-74 弧匣，换弹手沿
+	#        mag_of 锚跟随的契约件，#27 循环只查 mag_* 存在性，这里锁名）
+	#      ② 简介双射速文案与数值一致：「前两发 1800」↔ cd_profile[0]=0.0333
+	#        （60/0.0333=1801.8，±1%）；「600发每分」↔ cd=0.1（60/0.1=600 精确）
+	#      ③ 射速档案在位：cd_profile=[0.0333, 0.1] 且末位 == cd（档案末值=
+	#        稳态间隔，与单 cd 语义同源——越界取末值的文档契约）
+	#      ④ 全自动缺省 + 弹匣 30 + 备弹/购弹双表在表（RESERVE/AMMO_PRICE
+	#        缺键则 enter() 备弹 0 / 交易行购弹静默拒）
+	var a_root: Node3D = HDGuns._ar_build("an94")
+	var a_mag: Node = a_root.find_child("mag_an94", true, false)
+	check("AN-94 独立命名弹匣锚点 mag_an94 在根下", a_mag != null,
+		"node=%s" % (str(a_mag.name) if a_mag != null else "无"))
+	a_root.free()
+	var a_def: Dictionary = Guns.gun_by_id("an94")
+	var a_prof: Array = a_def.get("cd_profile", [])
+	check("AN-94 简介双射速文案与 cd/cd_profile 换算一致（±1%）",
+		str(a_def["desc"]).contains("前两发 1800")
+			and str(a_def["desc"]).contains("600发每分")
+			and absf(60.0 / float(a_def["cd"]) - 600.0) / 600.0 <= 0.01
+			and a_prof.size() > 0
+			and absf(60.0 / float(a_prof[0]) - 1800.0) / 1800.0 <= 0.01,
+		"cd=%s prof=%s" % [str(a_def["cd"]), str(a_prof)])
+	check("AN-94 射速档案在位（首对 0.0333 + 稳态 0.1 == cd 末位同源）",
+		a_prof.size() == 2 and is_equal_approx(float(a_prof[1]), float(a_def["cd"])),
+		"prof=%s" % str(a_prof))
+	check("AN-94 全自动缺省 + 弹匣 30 + 备弹/购弹双表在表",
+		bool(a_def.get("auto", true)) and int(a_def["mag"]) == 30
+			and (HDData.RESERVE as Dictionary).has("an94")
+			and (HDData.AMMO_PRICE as Dictionary).has("an94"),
+		"mag=%s reserve=%s price=%s" % [str(a_def.get("mag")),
+			str(HDData.RESERVE.get("an94", "缺")),
+			str(HDData.AMMO_PRICE.get("an94", "缺"))])
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -724,7 +759,7 @@ func _run() -> void:
 	# 29d. 拟真枪声分层回归（用户反馈「现在的枪声不拟真」；锚点：上承 29c
 	#      持握锚、下接 30 大坝分区）。枪声已重做为四层合成（click 机械瞬态/
 	#      crack 膛口爆裂/boom 低频/tail 混响尾，见 hd_audio.gd 类头），红线：
-	#      ① ensure 预生成全 18 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
+	#      ① ensure 预生成全 19 枪流（SHOT_TUNE 不得缺枪，缺了只能懒生成兜底）
 	#      ② 时长分级 sniper > rifle > pistol 且全部 ≤0.5s
 	#      ③ 波形峰值 >0.2（非哑弹：归一后 0.88×gain，最短的枪也远过线）
 	#      ④ 过零率 >3× 纯正弦（证明高频 crack 成分在场——只剩 boom 正弦的
@@ -732,12 +767,12 @@ func _run() -> void:
 	#      ⑤ play_shot 每发随机：轮换池刚用的播放器 pitch ∈[0.94,1.06]、
 	#        音量在基准 ±1.5dB 内（真枪每发都不同）
 	var audio = main.guns.audio
-	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 18 枪预生成
+	audio.ensure()   # 幂等：已建则跳过；无论冷热路径都保证 19 枪预生成
 	var miss_pre: Array = []
 	for g_def in Guns.GUNS:
 		if not audio._shots.has(str(g_def["id"])):
 			miss_pre.append(str(g_def["id"]))
-	check("枪声 ensure 预生成全 18 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
+	check("枪声 ensure 预生成全 19 枪流（SHOT_TUNE 不缺枪）", miss_pre.is_empty(),
 		str(miss_pre))
 	var shot_len := {}
 	var shot_peak := {}
@@ -781,10 +816,10 @@ func _run() -> void:
 			peak_bad.append("%s=%.2f" % [a_gid, shot_peak[a_gid]])
 		if float(shot_len[a_gid]) > 0.5:
 			len_bad.append("%s=%.3f" % [a_gid, shot_len[a_gid]])
-	check("18 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
+	check("19 枪过零率 >3× 纯正弦 %.0f/s（高频 crack 在场）" % sine_rate,
 		zcr_bad.is_empty(), str(zcr_bad))
-	check("18 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
-	check("18 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
+	check("19 枪波形峰值 >0.2（非哑弹）", peak_bad.is_empty(), str(peak_bad))
+	check("19 枪总时长 ≤0.5s", len_bad.is_empty(), str(len_bad))
 	check("时长分级 sniper > rifle > pistol",
 		float(shot_len["sniper"]) > float(shot_len["rifle"])
 			and float(shot_len["rifle"]) > float(shot_len["pistol"]),
@@ -1464,9 +1499,83 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("m250 长程射速达表值 550rpm（用户定案）",
 		absf(m250_shots - 45.8) <= 2.0, "shots=%d/300帧（5s）" % m250_shots)
+	# an94 超点射三连测（2026-10 商店枪·用户定案机制，cd_profile 射速档案
+	# 首个消费枪）：①按压内首对 1800rpm（0.0333s=2 帧）+ 之后稳态 600rpm
+	# （0.1s=6 帧）——FIRE_GATE 残差容差下 60fps 帧量化对表不漂，5s 按压实测
+	# 发数期望精算 = 首对 2 发（帧 0/2）+ 稳态 6 帧一发（帧 8,14,…,296）=
+	# 51 发，容差 ±1；②按压内前两发间隔 ≤0.05s；③松开再按首对间隔复位
+	# （若计数不复位，再按首对按稳态 0.1s 走、当场撞线）+ 首对之后回落
+	# 稳态 6 帧 ±1；④其余枪任抽两把（akm/k416）长程 RPM 原值不动——
+	# cd_profile 缺省枪必须仍走单 cd 路径（纯增量机制回归锁）
+	main._start_mission({"primary": "an94", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999   # 给足弹防中途自动换弹打断节拍
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	var burst_frames: Array = []
+	var ammo_prev: int = 999
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+		if main.guns.ammo < ammo_prev:
+			burst_frames.append(i)
+			ammo_prev = main.guns.ammo
+	Input.action_release("hd_fire")
+	var an94_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("an94 超点射 5s 按压实测 51 发 ±1（首对 1800 + 稳态 600）",
+		absf(an94_shots - 51.0) <= 1.0, "shots=%d/300帧（5s）" % an94_shots)
+	var pair_gap: float = -1.0
+	if burst_frames.size() >= 2:
+		pair_gap = float(burst_frames[1] - burst_frames[0]) / 60.0
+	check("an94 按压内首对间隔 ≤0.05s（1800rpm=2 帧）",
+		pair_gap >= 0.0 and pair_gap <= 0.05,
+		"首对间隔=%.4fs（帧 %s）" % [pair_gap, str(burst_frames.slice(0, 2))])
+	var steady_gap: float = -1.0
+	if burst_frames.size() >= 3:
+		steady_gap = float(burst_frames[2] - burst_frames[1]) / 60.0
+	check("an94 首对之后回落稳态 600rpm（6 帧 ±1）",
+		steady_gap >= 0.08 and steady_gap <= 0.12,
+		"第2→3发间隔=%.4fs" % steady_gap)
+	# ③ 松开再按：按压计数复位，又一对新的 1800rpm 超点射
+	await frames(8)
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	var re_frames: Array = []
+	var re_prev: int = main.guns.ammo
+	for i in 30:
+		main.guns.update(1.0 / 60.0)
+		if main.guns.ammo < re_prev:
+			re_frames.append(i)
+			re_prev = main.guns.ammo
+	Input.action_release("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	var re_gap: float = -1.0
+	if re_frames.size() >= 2:
+		re_gap = float(re_frames[1] - re_frames[0]) / 60.0
+	check("an94 松开再按首对间隔复位（再一对 1800rpm）",
+		re_gap >= 0.0 and re_gap <= 0.05,
+		"再按首对间隔=%.4fs（帧 %s）" % [re_gap, str(re_frames.slice(0, 2))])
+	# ④ 纯增量回归：抽 akm（545rpm）/ k416（880rpm）长程 RPM 原值不动
+	for rpm_gid in ["akm", "k416"]:
+		var rpm_exp: float = 60.0 / float(Guns.gun_by_id(rpm_gid)["cd"])
+		main._start_mission({"primary": rpm_gid, "secondary": "pistol"})
+		await frames(8)
+		main.guns.ammo = 999
+		main.guns.update(1.0 / 60.0)
+		Input.action_press("hd_fire")
+		for i in 300:
+			main.guns.update(1.0 / 60.0)
+		Input.action_release("hd_fire")
+		var rpm_shots: int = 999 - main.guns.ammo
+		main.guns.update(1.0 / 60.0)
+		check("%s 长程射速原值不动（%.0frpm，cd_profile 缺省单 cd 路径）"
+				% [rpm_gid, rpm_exp],
+			absf(rpm_shots - rpm_exp * 5.0 / 60.0) <= 2.2,
+			"shots=%d/300帧（期望 %.1f）" % [rpm_shots, rpm_exp * 5.0 / 60.0])
 	# desc「N发每分」机读：cd 换算 RPM 与文案一致（±1%）——m250 0.1091→549.9
 	# vs「550」、mp7 0.063→952.4 vs「950」、m14 0.0822→729.9 vs「730」、
-	# k416 0.0682→879.8 vs「880」
+	# k416 0.0682→879.8 vs「880」、an94 0.1→600.0 vs「600」（超点射首对 1800
+	# 在 desc 里不邻「发每分」不参与机读，档案位校验见 27c）
 	var rpm_re := RegEx.new()
 	rpm_re.compile("(\\d+)发每分")
 	var rpm_bad: Array = []
@@ -1478,7 +1587,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，五处 m250/mp7/m14/asval/k416）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，六处 m250/mp7/m14/asval/k416/an94）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

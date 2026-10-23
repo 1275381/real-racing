@@ -40,6 +40,12 @@ const FIRE_GATE := 1e-6    # 开火门残差容差（秒）：60·cd 为整数�
                            # 0.05=3 帧）IEEE 双精度 3f 与 cd 差 ~1e-18，曾把节拍
                            # 多推 1 帧（1200rpm 掉到 900）；容差远小于任何非整除
                            # 余量（最小 ~0.008），只吸收残差不偷跑
+const BURST_SOFT_SHOTS := 2   # 射速档案（cd_profile）枪按压内「前两发」判定数：
+                              # 超点射对射窗口（AN-94 现实 2 发点射管）
+const BURST_SOFT_MUL := 0.35  # 超点射前两发后坐乘数（AN-94 延迟后坐的真实弹道
+                              # 特征：钢制内机匣在聚合物外壳内后坐吸掉对射冲量，
+                              # 扣扳机打出的头两发垂直跳动极小——三角洲爆料
+                              # 「前两发射速极快、后坐力极低」同源）
 
 ## 换弹手部动画（reload 进度 prog 关键帧，照 _reload_off/_reload_rot 的插值
 ## 模式，不引入新状态机）：0.15-0.30 手入画伸匣 → 0.30-0.55 握匣下拉拔出
@@ -92,6 +98,12 @@ const RECOIL := {
 	# 同族略沉一档（气体短行程活塞系统比直吹稳）、连发累增同 5.56 档、
 	# 水平漂移窄（高射速枪横漂放大就压不住）
 	"k416": [0.17, 0.08, 0.09],
+	# an94 超点射 5.45 步枪（2026-10 商店枪，S12 微光赛季）：延迟后坐机制档
+	# ——按压前两发由 try_fire 的 BURST_SOFT_MUL 软乘数吃掉大半垂直跳动
+	# （带 cd_profile 才触发，真实弹道特征=后坐延迟到对射之后），基表给稳态
+	# 600rpm 档：单发推力 5.45 轻弹 + 3.85kg 重枪体（比 k416 略沉）、连发
+	# 累增温和、水平漂移窄（前两发高精度是本枪卖点）
+	"an94": [0.19, 0.06, 0.09],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -132,6 +144,9 @@ var _slot2_prev := false
 var _reload_prev := false
 var _fire_prev := false    # 开火键边沿检测：半自动/栓动（表 auto=false）只认
                            # tap 边沿开火——按住不连发（假半自动根治）
+var _press_shots := 0      # 本次扳机按压内已发数（cd_profile 射速档案的档位
+                           # 索引；松开扳机/切枪/换弹归零——超点射「再按又是
+                           # 新的一对」；不带档案的枪不消费此计数，零行为变化）
 
 
 func setup(player, world, audio, tracers) -> void:
@@ -156,6 +171,7 @@ func enter(loadout: Dictionary) -> void:
 	reserve = 0
 	reloading = 0.0
 	fire_cd = 0.0
+	_press_shots = 0   # 进场清零按压计数（cd_profile 射速档案档位）
 	_ads = 0.0
 	_aiming = false
 	_reload_off = Vector3.ZERO
@@ -237,6 +253,9 @@ func update(dt: float) -> void:
 	# 按住不连发。没弹自动换弹。门带 FIRE_GATE 残差容差；闲置（不可触发/
 	# 换弹/没弹）时冷却 clamp 归零——松手重置节拍，负盈余不攒出偷跑
 	var fire_pressed := Input.is_action_pressed("hd_fire")
+	if not fire_pressed:
+		_press_shots = 0   # 松开扳机：按压计数复位（cd_profile 档位回零——
+		                   # 再按又是一对新的超点射；不带档案的枪无感）
 	var fire_tap := fire_pressed and not _fire_prev
 	_fire_prev = fire_pressed
 	var fire_ok := fire_pressed if bool(_g.get("auto", true)) else fire_tap
@@ -331,6 +350,17 @@ func update(dt: float) -> void:
 
 
 ## 开一发：弹数/射线/曳光/伤害结算/后坐力/火光/枪声（按住自动连发）
+## 射速档案取值（2026-10 AN-94 超点射机制，纯增量）：本次按压已打
+## _press_shots 发，则下一发冷却 = cd_profile 第 mini(_press_shots-1, 末位)
+## 位（越界取末值）；无档案 = 单 cd（原路径，其余 18 把枪行为逐字不变）。
+## 按压计数在 update（松开扳机）/_equip（切枪）/start_reload（换弹）归零
+func _cd_after_shot() -> float:
+	var prof: Array = _g.get("cd_profile", [])
+	if prof.is_empty():
+		return float(_g.get("cd", 0.13))
+	return float(prof[mini(_press_shots - 1, prof.size() - 1)])
+
+
 func try_fire() -> void:
 	if cur_id == "" or reloading > 0.0 or fire_cd > 0.0 or ammo <= 0:
 		return
@@ -343,11 +373,21 @@ func try_fire() -> void:
 			audio.play_click()
 		jammed.emit()
 		return
-	ammo -= 1
 	# 结转式重置：+= 而非 =——进门前晚到的帧量（fire_cd 为负）在此补回，
 	# 长程实际射速收敛到表值 1/cd（帧量化丢的拍逐发找平；闲置期已被
-	# update 的 clamp 归零，不会把松手攒的负值结转成爆发）
-	fire_cd += float(_g.get("cd", 0.13))
+	# update 的 clamp 归零，不会把松手攒的负值结转成爆发）。
+	# 间隔取值走射速档案 _cd_after_shot：cd_profile 枪按压内第 k 发之后
+	# 取 prof[min(k-1, 末位)]（AN-94 [0.0333,0.1]：首对 1800rpm、之后
+	# 600rpm）；无档案 = 单 cd 原路径逐字不变（其余 18 把枪零变化）。
+	# 档案枪按压首发额外出掉「门前 -=dt 负结转」（update 先减后过门的
+	# 固有提前量：它让全枪册每一按的首个间隔都少 1 帧）——超点射首对
+	# 间隔是机制签名，必须对表 0.0333s=2 帧不漂；无档案枪不吃此吸收，
+	# 首发提前量原样保留（既有手感零变化）
+	ammo -= 1
+	_press_shots += 1
+	if _press_shots == 1 and not (_g.get("cd_profile", []) as Array).is_empty():
+		fire_cd = maxf(fire_cd, 0.0)
+	fire_cd += _cd_after_shot()
 	var g := _cur_gun()
 	if not g.is_empty():
 		# 枪口火光：发光片贴枪口 + 瞬时点光（onfoot 同款 0.05s）；点光同位：
@@ -411,9 +451,15 @@ func try_fire() -> void:
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；
-	# 整体 ×配件 recoil_mul（M14 战术护木 -45%——_mod_muls）
+	# 整体 ×配件 recoil_mul（M14 战术护木 -45%——_mod_muls）。
+	# 超点射真实弹道特征（2026-10 AN-94 引入）：带射速档案（cd_profile）的枪
+	# 按压内前 BURST_SOFT_SHOTS 发后坐再乘 BURST_SOFT_MUL——延迟后坐让对射
+	# 几乎无感（内机匣在聚合物外壳内后坐吸收冲量）；其余枪/超点射之后不触发
 	var rc: Array = RECOIL.get(cur_id, [0.4, 0.2, 0.25])
 	var mul: float = (0.6 if _aiming else 1.0) * _mod_muls().x * wear_mul
+	if not (_g.get("cd_profile", []) as Array).is_empty() \
+			and _press_shots <= BURST_SOFT_SHOTS:
+		mul *= BURST_SOFT_MUL
 	player.recoil_pitch += deg_to_rad(rc[0] + rc[1] * player.recoil_pitch * 57.3 * 0.5) * mul
 	player.recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * mul
 	player.recoil_cool = 0.0
@@ -434,6 +480,7 @@ func start_reload() -> void:
 	# M14 30 发扩容匣：长匣换弹 +0.4s（stash 解锁态经 m14_mods_provider 读）
 	var extra: float = 0.4 if (cur_id == "m14" and _m14_mod("extmag")) else 0.0
 	reloading = float(_g.get("reload", 1.5)) + extra
+	_press_shots = 0   # 换弹归零按压计数（cd_profile 档位回零——AN-94 超点射）
 	if audio != null:
 		audio.play_reload()
 
@@ -690,6 +737,7 @@ func _equip(slot: String) -> void:
 	# 切枪不继承上一把枪的剩余冷却（此前 _equip 只清 reloading 不清
 	# fire_cd：狙击开一枪立刻切枪，新枪按住要等旧枪 ~1.2s 冷却走完才首发）
 	fire_cd = 0.0
+	_press_shots = 0   # 切枪归零按压计数（换枪再按又是新的一对超点射）
 	_falling = false
 	_mag_landed = false
 	_hide_hand()
@@ -951,7 +999,7 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
 	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
-			or gun_id == "k416") and s_kind == "iron":
+			or gun_id == "k416" or gun_id == "an94") and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
 		# iron 后照门横条（0.05×0.022 暗块悬浮轨上、无自发光渲染成黑板）
@@ -965,6 +1013,9 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 超长瞄准基线），叠 iron 兜底片会与真实照门叠影
 		# k416 同例（2026-10 商店枪）：导气座折叠准星 + 轨上折叠觇孔照门为
 		# 考证建模件（_ar_k416 ③），叠 iron 兜底片会与真实照门叠影
+		# an94 同例（2026-10 商店枪）：制退器后准星座柱形准星（双护耳）+
+		# 回转式星形觇孔表尺（五角盘 5 觇孔）为考证建模件（_ar_an94 ③④，
+		# 本枪最强识别件），叠 iron 兜底片会悬浮壳顶与星形表尺叠影
 		pass
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
@@ -1444,6 +1495,9 @@ const HOLD_DELTA := {
 	# k416 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_k416 握把顶锚
 	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
 	"k416": Vector3(0, 0.008, -0.0768),
+	# an94 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_an94 握把顶锚
+	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	"an94": Vector3(0, 0.008, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2473,7 +2527,7 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
@@ -2482,6 +2536,9 @@ const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416"]
 # k416（2026-10 商店枪 K416 突击步枪）：官方考证 HK416 风格 5.56 突击步枪
 # 并入步枪册——几何体在 hd_gun_ar.gd _ar_k416（HDGunLib 高模件，全长顶轨 +
 # 两节肋条散热套筒护木 + 鸟笼消焰器）
+# an94（2026-10 商店枪 AN-94 突击步枪）：S12 微光赛季新枪并入步枪册——几何
+# 体在 hd_gun_ar.gd _ar_an94（HDGunLib 高模件，大型双室制退器 + 回转星形
+# 觇孔表尺 + 右倾 AK-74 弧匣 + 侧折骨架托；超点射机制见 guns.cd_profile）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2561,6 +2618,17 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.085, -0.149),
 					"size": Vector3(0.05, 0.175, 0.09), "show": false}
+		"an94":
+			# 特征⑥ AK-74 式 30 发弧匣明显向右倾斜 ~10°（机匣左侧布置复进簧
+			# 让位——第二识别特征，文字资料为准）：真匣是枪身建模件
+			# （mag_an94 独立命名节点整体绕 Z 转 10° + curved_mag 四段 13° 弧
+			# 弧向前 + 横肋×3），动画匣隐（照 m4a1「匣形由枪身件表达」先例）；
+			# pos=换弹手锚（枪身局部匣中段 (0.016,-0.146,-0.124)——x 分量 =
+			# 右倾 sin10°×匣半长 0.09、z 含弧向前偏、+Δ(0,0.008,-0.0768) 后
+			# ×0.62 ≈ (0.010,-0.086,-0.124)）、size=匣外形（掉匣替身缩放基准，
+			# 同 m14 口径用枪身局部原值）
+			return {"pos": Vector3(0.010, -0.086, -0.124),
+					"size": Vector3(0.048, 0.18, 0.076), "show": false}
 	return {}
 
 
@@ -2591,6 +2659,13 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# 准星 + 折叠照门均为建模件（ref_01 机匣顶部红点镜挂点），iron
 			# 不叠兜底机瞄片，见 _finish_gun
 			return Vector3(0.083, -0.06, -0.49)
+		"an94":
+			# (my, mz, fz) = 镜座安装面高 0.068（聚合物外壳顶面上沿——原型无
+			# 皮卡汀尼顶轨，瞄具走左置侧导轨，本作挂点统一放壳顶平台，星形
+			# 表尺在更后位 0.045 让位）/ 镜体中心 z -0.06（机匣中段）/ 前准星
+			# z -0.558（制退器后准星座柱）——柱形准星 + 星形转盘觇孔均为考证
+			# 建模件，iron 不叠兜底机瞄片，见 _finish_gun
+			return Vector3(0.068, -0.06, -0.558)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 

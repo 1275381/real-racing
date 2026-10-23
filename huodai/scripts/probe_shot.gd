@@ -36,10 +36,10 @@
 # K416 贴墙——①②③⑦⑪⑫⑬ 各带 _b 图，两组 a/b 隐枪差分取稳定交集判裂，
 # 修后门槛全部「稳定完整（大域 1）」；
 # m14 贴掩体 pair 直接回应「注意枪身分裂」：一体成型+独立视口下掩体帧枪体必须完整）
-# （共 82 张：53 处 shot() 调用（其中 7 处 pair 各出 a/_b 双图；
-# 逐枪美照/scope 两组循环随迭代展开 18+6 张）+
-# 逐枪美照循环 18 把（全量在册：十三把新枪 + 旧五枪，2026-10 判图补图；
-# K416 并册追加）+ scope 瞄具系列 6 张（2026-10 判图补图）
+# （共 85 张：55 处 shot() 调用（其中 8 处 pair 各出 a/_b 双图；
+# 逐枪美照/scope 两组循环随迭代展开 19+6 张）+
+# 逐枪美照循环 19 把（全量在册：十四把新枪 + 旧五枪，2026-10 判图补图；
+# K416/AN-94 并册追加）+ scope 瞄具系列 6 张（2026-10 判图补图）
 # + 矩阵段 20 张（含 pair 的 _b 图）+ 3D 大厅三连拍 3 张——旧注释
 # 「29/31/33/35/40/43/45/59/70/73/76/79 张」随图集扩充滚动订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
@@ -695,15 +695,16 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~18：十八把在册枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~18：十九把在册枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型。
 	# 2026-10 判图补图：循环从十把新枪扩到全量在册（旧五枪
 	# pistol/smg/rifle/shotgun/sniper 并入 + 商店枪 M14/AS Val 并册——此前枪照
-	# 缺图无法验收）；2026-10 商店枪 K416 并册追加
+	# 缺图无法验收）；2026-10 商店枪 K416 并册追加；2026-10 商店枪 AN-94
+	# 并册追加（S12 微光赛季超点射新枪）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
-			"m250", "mp7", "m14", "asval", "k416", "pistol", "smg", "rifle",
-			"shotgun", "sniper"]:
+			"m250", "mp7", "m14", "asval", "k416", "an94", "pistol", "smg",
+			"rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -1137,12 +1138,36 @@ func _initialize() -> void:
 	_set_ads_mx(1.0)
 	await frames(2)
 	await shot("res://out/shot_gun_k416_cover.png", false, true)
+	# ⑭ an94 ADS 1.0 正贴（2026-10 商店枪 AN-94 并册「验分裂」验收，照 m14/
+	#     asval/k416 pair 模式）：一体成型 unibody + vm 独立视口下掩体帧枪体
+	#     必须完整——大型双室制退器 + 星形表尺 + 右倾弧匣的识别件密度最高，
+	#     最考验合并网格的掩体帧完整性，走 pair 判裂（两组 a/b 隐枪差分取
+	#     稳定交集，大域 ≥2 = 稳定裂即 FAIL）；换枪重进 MISSION 走 guns.enter
+	#     同槽换 id 重建链，顺带复核新枪挂载公共链
+	main.stash.guns_owned.append("an94")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "an94", "secondary": "pistol"}
+	main._start_mission({"primary": "an94", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm6: Dictionary = main.soldiers.soldiers[i]
+		sm6["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm6["engaged"] = false
+		sm6["moving"] = false
+		sm6["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	await shot("res://out/shot_gun_an94_cover.png", false, true)
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx
 
-	print("[probe] 探针完成：实存 %d/82 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d/85 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	# （与看门狗强制收尾共用 _restore_save）
 	_done = true
