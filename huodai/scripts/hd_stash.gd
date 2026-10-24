@@ -44,6 +44,9 @@ var ammo_kind: Dictionary = {}
 var ammo_kinds_owned: Dictionary = {}
 ## 投掷物库存（阶段 D）：kind → 件数（买了常驻、局内消耗、阵亡不丢）
 var throwables: Dictionary = {"frag": 0, "smoke": 0, "flash": 0}
+## 钥匙卡库存（2026-10-24 用户定案「钥匙卡需要购买」）：lock_id → 件数；
+## 开局自动注入背包（带入即风险——阵亡丢失，与局内拾取的钥匙同通道）
+var keycards: Dictionary = {}
 
 
 func _init() -> void:
@@ -79,6 +82,7 @@ func _serialize() -> Dictionary:
 		"ammo_kind": ammo_kind,
 		"ammo_kinds_owned": ammo_kinds_owned,
 		"throwables": throwables,
+		"keycards": keycards,
 		"secure_slots": secure_slots,
 		"durability": durability,
 		"sup_owned": sup_owned,
@@ -272,10 +276,19 @@ func _load() -> void:
 		if kk == "standard" or owned_l.has(kk):
 			ammo_kind[str(gk2)] = kk
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
+	keycards = {}
 	var raw_th := _to_dict(d.get("throwables", null))
 	for tk in ["frag", "smoke", "flash"]:
 		throwables[tk] = clampi(_to_i(raw_th.get(tk, 0)), 0,
 				_to_i(HDData.THROWABLES[tk]["max"]))
+	# 钥匙卡库存（老档无字段 = 全 0；id 池外丢弃）
+	var lock_ids := {}
+	for ld in HDData.LOCKS:
+		lock_ids[str(ld["id"])] = str(ld["key"])
+	var raw_kc := _to_dict(d.get("keycards", null))
+	for kid in raw_kc.keys():
+		if lock_ids.has(str(kid)):
+			keycards[str(kid)] = clampi(_to_i(raw_kc[kid]), 0, HDData.KEY_STOCK_MAX)
 
 	# 第四阶段：耐久（0..100，缺键=全新）/ 消音器（按枪，随枪丢）/ 首局引导
 	durability = {}
@@ -314,6 +327,7 @@ func _apply_defaults() -> void:
 	ammo_kind = {}
 	ammo_kinds_owned = {}
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
+	keycards = {}
 	secure_slots = HDData.SECURE_BASE
 	durability = {}
 	sup_owned = []
@@ -402,6 +416,28 @@ func consume_throwable(kind: String) -> bool:
 	throwables[kind] = n - 1
 	save()
 	return true
+
+
+## 买一把钥匙卡（2026-10-24 用户定案）：上限 KEY_STOCK_MAX / 钱 insufficient 拒
+func buy_keycard(lock_id: String) -> bool:
+	var key_name := ""
+	for ld in HDData.LOCKS:
+		if str(ld["id"]) == lock_id:
+			key_name = str(ld["key"])
+	if key_name == "":
+		return false
+	var n := _to_i(keycards.get(lock_id, 0))
+	if n >= HDData.KEY_STOCK_MAX or cash < HDData.KEY_PRICE:
+		return false
+	cash -= HDData.KEY_PRICE
+	keycards[lock_id] = n + 1
+	save()
+	changed.emit()
+	return true
+
+
+func keycards_of(lock_id: String) -> int:
+	return _to_i(keycards.get(lock_id, 0))
 
 
 # ================= 合同系统（2026-10 阶段 A） =================

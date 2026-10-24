@@ -193,6 +193,8 @@ const LOCKS := [
 ]
 const KEY_SPAWN_P := 0.6           # 每局每把钥匙的刷新概率
 const KEY_VALUE := 800             # 钥匙价值（紫档可带走变卖）
+const KEY_PRICE := 1500            # 商店钥匙售价（>变卖价 800：买了不用就是亏）
+const KEY_STOCK_MAX := 2           # 每种钥匙库存上限（交易行购买；开局自动入包）
 const LOCK_PROMPT_R := 3.4         # 门交互半径（距房心——门外站定距房心 ≈3m）
 
 ## ---- 昼夜/天气局变体（「更好玩」阶段 C）----

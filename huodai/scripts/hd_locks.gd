@@ -163,7 +163,8 @@ func update(_dt: float, player_pos: Vector3, pressed: bool) -> void:
 		if edge:
 			_open(str(def2["id"]), key_uid)
 	else:
-		prompt.emit("%s 上锁了 —— 需要 %s（局内容器旁可能刷）" % [str(def2["room"]), str(def2["key"])], 0.0)
+		prompt.emit("%s 上锁了 —— 需要 %s（局内容器旁可能刷 · 交易行③区有售）" % [
+				str(def2["room"]), str(def2["key"])], 0.0)
 
 
 ## 背包里对应钥匙的 uid（"" = 没带）

@@ -273,6 +273,7 @@ func _start_mission(loadout: Dictionary) -> void:
 	locks.reset_all()
 	for drop in locks.roll_key_drops(randi(), world.container_spots):
 		loot._spawn_ground(drop["item"], drop["pos"])
+	_inject_keycards()
 	# 随机出生（5 处地图边缘，改进方案第 6 节）
 	var sp: Vector3 = HDData.SPAWN_POINTS[randi() % HDData.SPAWN_POINTS.size()]
 	world.spawn_pos = Vector3(sp.x, world.ground_height(sp.x, sp.z), sp.z)
@@ -322,6 +323,21 @@ func _start_mission(loadout: Dictionary) -> void:
 	hud.toast("阵亡丢失随身装备与背包 · 贵重小件放进安全箱（Tab）", Color(1.0, 0.7, 0.36))
 	_apply_mode_visuals()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+## 已购钥匙卡注入背包（2026-10-24 用户定案「钥匙卡需要购买」）：库存清零、
+## 带入即风险（阵亡随包丢——与局内拾取的钥匙同通道消耗/变卖）
+func _inject_keycards() -> void:
+	var kc_i := 0
+	for ld in HDData.LOCKS:
+		var lid := str(ld["id"])
+		for k0 in stash.keycards_of(lid):
+			kc_i += 1
+			loot.backpack.append({"uid": "kc_%s_%d" % [lid, Time.get_ticks_msec() + kc_i],
+					"name": str(ld["key"]), "icon": "钥匙", "rarity": 3,
+					"value": HDData.KEY_VALUE, "key": lid})
+	stash.keycards = {}
+	stash.save()
 
 func _enter_range() -> void:
 	# 从实战转靶场（暂停菜单「2 重开靶场」）= 放弃行动，视同阵亡（装备与背包丢失）；

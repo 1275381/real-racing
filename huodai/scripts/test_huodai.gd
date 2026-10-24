@@ -167,6 +167,28 @@ func _run() -> void:
 	main.locks.update(0.016, Vector3(0.0, 0.0, 80.0), false)   # 远离三扇门的空地
 	check("锁房无门沉默（不劫持容器搜索提示）", lk_emits[0] == 0)
 	main.locks.prompt.disconnect(lk_spy)
+	# 钥匙卡购买（2026-10-24 用户定案）：买入入库存（每种上限 2）→ 开局注入背包
+	main.stash.cash = 99999
+	var kc0: int = main.stash.cash
+	check("买军火库钥匙×2（₵1500/把）", main.stash.buy_keycard("armory")
+		and main.stash.buy_keycard("armory")
+		and main.stash.keycards_of("armory") == 2
+		and main.stash.cash == kc0 - 3000)
+	main.stash.buy_keycard("armory")
+	check("钥匙卡上限拦截（第 3 把拒购）", main.stash.keycards_of("armory") == 2
+		and main.stash.cash == kc0 - 3000)
+	main.stash.buy_keycard("archive")
+	main.loot.reset_all()          # 清包再注入（不开真局——避免打乱下游经济夹具）
+	main._inject_keycards()
+	var kc_in_bag := 0
+	for it_kc in main.loot.backpack:
+		if str((it_kc as Dictionary).get("key", "")) == "armory":
+			kc_in_bag += 1
+	check("开局注入：库存钥匙卡自动入包（2 把）且库存清零", kc_in_bag == 2
+		and main.stash.keycards_of("armory") == 0)
+	for i_kc in range(main.loot.backpack.size() - 1, -1, -1):   # 夹具复位：取出注入件
+		if str((main.loot.backpack[i_kc] as Dictionary).get("key", "")) != "":
+			main.loot.backpack.remove_at(i_kc)
 	var dyn0 := 0
 	for c0 in main.loot._containers:
 		if bool(c0.get("dynamic", false)):

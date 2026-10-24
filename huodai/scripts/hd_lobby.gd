@@ -2053,6 +2053,26 @@ func _render_market(pg: VBoxContainer) -> void:
 				show_hint("买不了：%s（满 %d 件或现金不足 ₵%s）" % [str(td2["name"]),
 						_to_int(td2["max"]), _fmt(_to_int(td2["price"]))]))
 		trow2.add_child(tb)
+	# 钥匙卡三钮（2026-10-24 用户定案「钥匙卡需要购买」）：买入入库存，
+	# 开局自动放进背包（带入即风险）；门边提示同步指路
+	var krow := HBoxContainer.new()
+	krow.add_theme_constant_override("separation", 6)
+	krow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.add_child(krow)
+	for ld in HDData.LOCKS:
+		var lid := str(ld["id"])
+		var kb := _mk_btn("%s ₵%s · 持 %d/%d" % [str(ld["key"]), _fmt(HDData.KEY_PRICE),
+				_stash.keycards_of(lid), HDData.KEY_STOCK_MAX], 12)
+		_style_btn(kb, false, COL_ACCENT if _stash.keycards_of(lid) > 0 else _dim(0.5), 8)
+		kb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		kb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		kb.pressed.connect(func():
+			if _stash.buy_keycard(lid):
+				show_hint("已购 %s —— 下局出发自动携带" % str(ld["key"]))
+			else:
+				show_hint("买不了：%s（每种最多 %d 把或现金不足 ₵%s）" % [str(ld["key"]),
+						HDData.KEY_STOCK_MAX, _fmt(HDData.KEY_PRICE)]))
+		krow.add_child(kb)
 
 	# ⑤ M14 专属配件区（2026-10 用户定案：护木/30 发扩容匣——仅拥有 M14 才
 	# 显示购买意义；行式布局同②瞄具区：已购置灰 / 未购「购买」）
