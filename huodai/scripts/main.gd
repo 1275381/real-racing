@@ -307,22 +307,43 @@ func _start_mission(loadout: Dictionary) -> void:
 	hud.set_danger(false)
 	hud.set_extract(0.0, 1.0)
 	hud.set_backpack(0, HDData.BACKPACK_MAX, 0, loot.secure_cap)
-	var open_txt := "本局撤离：主撤离 · 大坝（12 分钟后）· 隧道（军营北，常开）"
-	if bool(_extracts["paid"]["enabled"]):
-		open_txt += " · 付费（₵%d）" % HDData.PAID_PRICE
-	if bool(_extracts["lever"]["enabled"]):
-		open_txt += " · 拉闸（先去变电站拉电闸）"
-	hud.toast(open_txt + " —— 25 分钟内撤出", Color(0.49, 0.89, 0.66))
-	# 天气变体播报（阶段 C）：夜/雨/雾提示本局差异（晴朗不播）
-	var v_tips := {"night": "敌人视距 30→18m · 潜入正当时 · 战利品上浮",
-		"rain": "雨幕掩枪声 60→36m · 战利品上浮",
-		"fog": "浓雾全员视距 30→20m · 战利品上浮"}
-	if v_tips.has(HDData.variant):
-		hud.toast("本局天气：%s —— %s" % [HDData.variant_name(), v_tips[HDData.variant]],
-				Color(0.6, 0.8, 1.0))
-	hud.toast("阵亡丢失随身装备与背包 · 贵重小件放进安全箱（Tab）", Color(1.0, 0.7, 0.36))
+	# 开局简报卡组（2026-10-24 用户定案「开局内容分小卡片、去口水话」）：
+	# 撤离/天气/合同/风险 各一张短句卡，右上角 12s——替代旧三连长 toast
+	hud.show_briefing(_briefing_cards())
 	_apply_mode_visuals()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+## 开局简报卡数据（纯函数：测试/探针复用）——短句化，一行一件事
+func _briefing_cards() -> Array:
+	var col_ok := Color(0.49, 0.89, 0.66)
+	var ext_lines := ["主撤离 · 常开", "大坝 · 12:00 后", "隧道 · 军营北 · 常开"]
+	if bool(_extracts["paid"]["enabled"]):
+		ext_lines.append("付费 · ₵%d" % HDData.PAID_PRICE)
+	if bool(_extracts["lever"]["enabled"]):
+		ext_lines.append("拉闸 · 变电站电闸")
+	var cards: Array = [
+		{"title": "撤离 · 25 分钟内", "color": col_ok, "lines": ext_lines},
+	]
+	var v_tips := {"night": "敌视距 30→18m · 战利品上浮",
+		"rain": "枪声警觉 60→36m · 战利品上浮",
+		"fog": "全员视距 30→20m · 战利品上浮"}
+	if v_tips.has(HDData.variant):
+		cards.append({"title": "天气 · %s" % HDData.variant_name(),
+			"color": Color(0.6, 0.8, 1.0), "lines": [v_tips[HDData.variant]]})
+	var ct_lines := []
+	for ct in stash.daily_contracts():
+		var defc := stash.contract_def(str(ct["id"]))
+		if defc.is_empty():
+			continue
+		ct_lines.append("%s %d/%d · ₵%s" % [str(defc["title"]),
+				int(ct.get("prog", 0)), int(defc["n"]), HDHud._fmt(int(defc["reward"]))])
+	if not ct_lines.is_empty():
+		cards.append({"title": "今日合同 · 撤离结算", "color": Color(0.95, 0.85, 0.4),
+			"lines": ct_lines})
+	cards.append({"title": "风险", "color": Color(1.0, 0.7, 0.36),
+		"lines": ["阵亡丢随身装备与背包", "贵重小件入安全箱（Tab）"]})
+	return cards
 
 
 ## 已购钥匙卡注入背包（2026-10-24 用户定案「钥匙卡需要购买」）：库存清零、

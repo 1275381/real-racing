@@ -33,6 +33,9 @@ var inv_visible: bool = false
 
 var _base: Control
 var _flash_rect: ColorRect   # 闪光弹白屏（阶段 D）
+var _brief_box: VBoxContainer   # 开局简报卡组（2026-10-24：开局信息卡片化）
+var _brief_t := 0.0
+const BRIEF_LIFE := 12.0     # 简报停留秒数（尾段 1.5s 渐隐）
 var _raid: Control
 var _center: CenterLayer
 var _scope_ov: ScopeOverlay
@@ -522,6 +525,56 @@ func flash_screen(k: float) -> void:
 	if _flash_rect == null:
 		return
 	_flash_rect.color.a = clampf(k, 0.0, 0.92)
+
+
+## 开局简报卡组（2026-10-24 用户定案「开局内容分小卡片」）：右上角竖排小卡，
+## 每张卡 title + 数行短句（撤离/天气/合同/风险各一张——替代旧的三连长 toast）；
+## BRIEF_LIFE 秒后渐隐。cards = [{title, color, lines: [String]}]
+func show_briefing(cards: Array) -> void:
+	if _base == null:
+		setup()
+	if _brief_box == null:
+		_brief_box = VBoxContainer.new()
+		_brief_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		_brief_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		_brief_box.grow_vertical = Control.GROW_DIRECTION_END
+		_brief_box.offset_left = -362.0
+		_brief_box.offset_right = -16.0
+		_brief_box.offset_top = 92.0
+		_brief_box.add_theme_constant_override("separation", 8)
+		_brief_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_base.add_child(_brief_box)
+	for c0 in _brief_box.get_children():
+		_brief_box.remove_child(c0)
+		c0.queue_free()
+	for c0 in cards:
+		var c: Dictionary = c0
+		var p := PanelContainer.new()
+		var col: Color = c.get("color", Color(0.85, 0.87, 0.82))
+		var sb := _sb_flat(Color(0.03, 0.05, 0.04, 0.82),
+				Color(col.r, col.g, col.b, 0.55), 1)
+		sb.content_margin_left = 12
+		sb.content_margin_right = 12
+		sb.content_margin_top = 7
+		sb.content_margin_bottom = 7
+		p.add_theme_stylebox_override("panel", sb)
+		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 2)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		p.add_child(v)
+		var t := _mk_label(str(c.get("title", "")), 13, col)
+		t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		v.add_child(t)
+		for ln in c.get("lines", []):
+			var l2 := _mk_label(str(ln), 12, Color(0.82, 0.84, 0.78))
+			l2.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			v.add_child(l2)
+		_brief_box.add_child(p)
+	_brief_box.visible = not cards.is_empty()
+	_brief_box.modulate.a = 1.0
+	_brief_t = BRIEF_LIFE
 
 
 func toast(text: String, color: Color = Color(1, 1, 1)) -> void:
@@ -1097,6 +1150,13 @@ func _process(dt: float) -> void:
 				fnode.get_parent().remove_child(fnode)
 			fnode.queue_free()
 		fi -= 1
+	# 开局简报卡组寿元（尾段 1.5s 渐隐）
+	if _brief_t > 0.0:
+		_brief_t = maxf(0.0, _brief_t - dt)
+		if _brief_box != null:
+			_brief_box.modulate.a = clampf(_brief_t / 1.5, 0.0, 1.0)
+			if _brief_t <= 0.0:
+				_brief_box.visible = false
 	var i := _toasts.size() - 1
 	while i >= 0:
 		var rec: Dictionary = _toasts[i]

@@ -1214,6 +1214,11 @@ func _initialize() -> void:
 	await shot("res://out/shot_throw_smoke.png")
 	main.thrower.reset_all()
 	main.hud.flash_screen(0.0)
+	# ---- 开局简报卡组图证（2026-10-24 用户定案）：右上角撤离/合同/风险小卡
+	main.hud.show_briefing(main._briefing_cards())
+	await frames(6)
+	await shot("res://out/shot_briefing.png")
+	main.hud.show_briefing([])
 	# 矩阵段收尾：恢复主循环与 HUD（之后只剩探针收尾打印与存档还原）
 	main.set_process(true)
 	main.hud.visible = hud_mx

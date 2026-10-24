@@ -372,6 +372,21 @@ func _run() -> void:
 	await frames(30)
 	check("进入 MISSION", main.mode == main.Mode.MISSION)
 	check("大厅已隐藏", not main.lobby.lobby_visible)
+	# 4b. 开局简报卡组（2026-10-24 用户定案「开局内容分小卡片、去口水话」）：
+	#     撤离/合同/风险各一张短句卡（晴天无天气卡），右上角显示
+	var brief_n: int = main.hud._brief_box.get_child_count() if main.hud._brief_box != null else 0
+	var brief_txt := ""
+	if main.hud._brief_box != null:
+		for bc in main.hud._brief_box.get_children():
+			for lc in (bc as PanelContainer).find_children("*", "Label", true, false):
+				brief_txt += str((lc as Label).text) + "|"
+	check("开局简报卡组 ≥3 张且在显", main.hud._brief_box != null
+		and main.hud._brief_box.visible and brief_n >= 3,
+		"cards=%d" % brief_n)
+	check("简报含撤离/合同/风险要点（短句化）",
+		brief_txt.contains("主撤离") and brief_txt.contains("合同")
+			and brief_txt.contains("安全箱") and brief_txt.contains("25 分钟"),
+		brief_txt.substr(0, 80))
 	check("步枪满弹·备弹=stash（首局礼物 150）",
 		main.guns.ammo == 30 and main.guns.reserve == 150
 			and main.guns.reserve == main.stash.ammo_of("rifle"),
