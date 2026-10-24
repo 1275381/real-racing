@@ -147,6 +147,8 @@ var _fire_prev := false    # 开火键边沿检测：半自动/栓动（表 auto
 var _press_shots := 0      # 本次扳机按压内已发数（cd_profile 射速档案的档位
                            # 索引；松开扳机/切枪/换弹归零——超点射「再按又是
                            # 新的一对」；不带档案的枪不消费此计数，零行为变化）
+var _trig_delay := 0.0     # 扳机蓄力剩余秒（表 trigger_delay>0 的枪——M250 弹链
+                           # 机枪 0.5s：按下先蓄力再出第一发，松开/切枪复位重蓄）
 
 
 func setup(player, world, audio, tracers) -> void:
@@ -172,6 +174,7 @@ func enter(loadout: Dictionary) -> void:
 	reloading = 0.0
 	fire_cd = 0.0
 	_press_shots = 0   # 进场清零按压计数（cd_profile 射速档案档位）
+	_trig_delay = 0.0  # 进场清零扳机蓄力（trigger_delay）
 	_ads = 0.0
 	_aiming = false
 	_reload_off = Vector3.ZERO
@@ -256,9 +259,20 @@ func update(dt: float) -> void:
 	if not fire_pressed:
 		_press_shots = 0   # 松开扳机：按压计数复位（cd_profile 档位回零——
 		                   # 再按又是一对新的超点射；不带档案的枪无感）
+		_trig_delay = 0.0  # 松开同时放弃蓄力：再按重新蓄满（M250 0.5s）
 	var fire_tap := fire_pressed and not _fire_prev
 	_fire_prev = fire_pressed
 	var fire_ok := fire_pressed if bool(_g.get("auto", true)) else fire_tap
+	# 扳机蓄力（表 trigger_delay，2026-10-24 M250 用户定案 0.5s）：按下边沿起蓄，
+	# 蓄满前不出弹；全自动蓄力结束后连发节拍照旧（cd 路径零改动）。完成判据带
+	# FIRE_GATE 残差容差——浮点逐帧递减的尾差不算额外一帧延迟（射速门同套路）
+	var trig_d := float(_g.get("trigger_delay", 0.0))
+	if fire_tap and trig_d > 0.0:
+		_trig_delay = trig_d
+	if _trig_delay > 0.0:
+		_trig_delay = maxf(0.0, _trig_delay - dt)
+		if _trig_delay > FIRE_GATE:
+			fire_ok = false   # 蓄力中——当帧不出弹（蓄满帧即放行开火）
 	if fire_ok and fire_cd <= FIRE_GATE and reloading <= 0.0:
 		if ammo > 0:
 			try_fire()
@@ -738,6 +752,7 @@ func _equip(slot: String) -> void:
 	# fire_cd：狙击开一枪立刻切枪，新枪按住要等旧枪 ~1.2s 冷却走完才首发）
 	fire_cd = 0.0
 	_press_shots = 0   # 切枪归零按压计数（换枪再按又是新的一对超点射）
+	_trig_delay = 0.0  # 切枪放弃蓄力：新枪按下重新蓄（不继承旧枪进度）
 	_falling = false
 	_mag_landed = false
 	_hide_hand()

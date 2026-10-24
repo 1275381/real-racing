@@ -1831,7 +1831,9 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("m14 全自动长程射速达表值 730rpm（原半自动 214）",
 		absf(m14_shots - 60.8) <= 2.2, "shots=%d/300帧（5s）" % m14_shots)
-	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）
+	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）+ 扳机延迟
+	# 0.5s（2026-10-24 用户定案 trigger_delay）：首发出弹在 0.5s 蓄力后，
+	# 5s 按压实测 = 1 + floor(4.5/0.1091) ≈ 42 发；松开再按重新蓄满
 	main._start_mission({"primary": "m250", "secondary": "pistol"})
 	await frames(8)
 	main.guns.ammo = 999
@@ -1842,8 +1844,46 @@ func _run() -> void:
 	Input.action_release("hd_fire")
 	var m250_shots: int = 999 - main.guns.ammo
 	main.guns.update(1.0 / 60.0)
-	check("m250 长程射速达表值 550rpm（用户定案）",
-		absf(m250_shots - 45.8) <= 2.0, "shots=%d/300帧（5s）" % m250_shots)
+	check("m250 长程射速 550rpm 且计 0.5s 扳机延迟（42 发/5s）",
+		absf(m250_shots - 42.0) <= 2.0, "shots=%d/300帧（5s）" % m250_shots)
+	# 延迟边界：按住 29 帧（<0.5s）零出弹；第 30 帧蓄满当帧放行出弹
+	# （完成判据带 FIRE_GATE 容差——蓄满帧即首发，无额外一帧）
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 29:
+		main.guns.update(1.0 / 60.0)
+	var m250_early: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)   # 第 30 帧：0.5s 蓄满当帧首发
+	var m250_first: int = 999 - main.guns.ammo
+	Input.action_release("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	check("m250 扳机延迟边界（29 帧零出弹 · 第 30 帧首发）",
+		m250_early == 0 and m250_first >= 1,
+		"early=%d first=%d" % [m250_early, m250_first])
+	# 松开复位：再按又是全新 0.5s 蓄力（前 29 帧零出弹）
+	main.guns.update(1.0 / 60.0)
+	main.guns.ammo = 999
+	Input.action_press("hd_fire")
+	for i in 29:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var m250_re: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("m250 松开再按重新蓄力（再按前 29 帧零出弹）", m250_re == 0,
+		"shots=%d" % m250_re)
+	# 其余枪零延迟抽查：rifle 按下当帧即出弹（trigger_delay 缺省 0）
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	var rifle_instant: int = 999 - main.guns.ammo
+	Input.action_release("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	check("无 trigger_delay 枪零延迟（rifle 按下当帧出弹）", rifle_instant >= 1,
+		"shots=%d" % rifle_instant)
 	# an94 超点射三连测（2026-10 商店枪·用户定案机制，cd_profile 射速档案
 	# 首个消费枪）：①按压内首对 1800rpm（0.0333s=2 帧）+ 之后稳态 600rpm
 	# （0.1s=6 帧）——FIRE_GATE 残差容差下 60fps 帧量化对表不漂，5s 按压实测
