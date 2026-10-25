@@ -1942,6 +1942,32 @@ func _run() -> void:
 		main.guns.update(1.0 / 60.0)   # 松手后点射继续打完
 	var mk4_tap: int = 999 - main.guns.ammo
 	check("MK4 点一下恰三连发（松手打完 3 发）", mk4_tap == 3, "shots=%d" % mk4_tap)
+	# 轮间锁（2026-10-26 考证：三角洲实测 打完 ~100ms 才能点下一轮）：
+	# 纯机制直测——静置清残余 → 置满锁 → 注入完整 tap 边沿 → 快进 30 帧
+	# 应零出弹（锁吞掉点射）；再静置过锁 → 正常 tap → 三连发
+	for i in 12:
+		main.guns.update(1.0 / 60.0)   # 清第一轮残余锁与冷却
+	main.guns.ammo = 999
+	main.guns._burst_gap = 0.1        # 模拟「上一轮刚打完」
+	Input.action_press("hd_fire")     # 锁内 tap（1 帧即松）
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	for i in 30:
+		main.guns.update(1.0 / 60.0)
+	var mk4_locked: int = 999 - main.guns.ammo
+	check("MK4 轮间锁：锁窗口内 tap 不起射（30 帧零出弹）", mk4_locked == 0,
+		"shots=%d" % mk4_locked)
+	for i in 10:   # 静置过锁（0.1s 锁早已清）
+		main.guns.update(1.0 / 60.0)
+	main.guns.ammo = 999
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	for i in 24:
+		main.guns.update(1.0 / 60.0)
+	var mk4_second: int = 999 - main.guns.ammo
+	check("MK4 过锁后第二要点射正常（再 3 发）", mk4_second == 3, "shots=%d" % mk4_second)
+	check("MK4 过锁后第二要点射正常（再 3 发）", mk4_second == 3, "shots=%d" % mk4_second)
 	main.guns.update(1.0 / 60.0)
 	main.guns.ammo = 999
 	Input.action_press("hd_fire")

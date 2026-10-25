@@ -151,6 +151,8 @@ var _trig_delay := 0.0     # 扳机蓄力剩余秒（表 trigger_delay>0 的枪�
                            # 机枪 0.5s：按下先蓄力再出第一发，松开/切枪复位重蓄）
 var _burst_left := 0       # 三连发剩余发数（表 burst>0 的枪——MK4：点一下边沿
                            # 起一个点射，打完为止；换弹/没弹/切枪中止，按住不重复）
+var _burst_gap := 0.0      # 轮间锁剩余秒（表 burst_gap：点射打完后的强制间隔——
+                           # 三角洲 MK4 实测 ~100ms，锁内起不了新点射）
 
 
 func setup(player, world, audio, tracers) -> void:
@@ -178,6 +180,7 @@ func enter(loadout: Dictionary) -> void:
 	_press_shots = 0   # 进场清零按压计数（cd_profile 射速档案档位）
 	_trig_delay = 0.0  # 进场清零扳机蓄力（trigger_delay）
 	_burst_left = 0    # 进场清零三连发计数（burst）
+	_burst_gap = 0.0   # 进场清零轮间锁（burst_gap）
 	_ads = 0.0
 	_aiming = false
 	_reload_off = Vector3.ZERO
@@ -268,8 +271,12 @@ func update(dt: float) -> void:
 	var fire_ok := fire_pressed if bool(_g.get("auto", true)) else fire_tap
 	# 三连发（表 burst，2026-10-25 MK4 用户定案）：点一下边沿起一个 N 发点射，
 	# 打完为止（松手不打断——点射一旦扣出就完成）；按住不重复、点射中再点无效。
+	# 轮间锁（burst_gap，三角洲实测 0.1s：单轮内 ~1200rpm 0.05s 间隔、打完后约
+	# 100ms 才能点下一轮——面板 800rpm 即含间隔的平均值）：锁内起不了新点射。
 	# 全自动解锁走配件（m14_mods_provider 注入 autobarrel——存储链与 M14 同源）
 	var burst_n := int(_g.get("burst", 0))
+	if _burst_gap > 0.0:
+		_burst_gap = maxf(0.0, _burst_gap - dt)
 	if burst_n > 0:
 		var mod_auto := str(cur_id) == "mk4" and m14_mods_provider != null \
 				and bool(m14_mods_provider.call("autobarrel"))
@@ -277,8 +284,8 @@ func update(dt: float) -> void:
 			fire_ok = fire_pressed   # 全自动枪管：按住连发（burst 字段让位）
 		else:
 			fire_ok = false   # 三连发原厂：按住不连发（点射由内部计数驱动）
-			if fire_tap and _burst_left <= 0:
-				_burst_left = burst_n
+			if fire_tap and _burst_left <= 0 and _burst_gap <= 0.0:
+				_burst_left = burst_n   # 锁清零帧才可起新点射（严格 >0 都锁）
 			if _burst_left > 0:
 				fire_ok = true
 	# 扳机蓄力（表 trigger_delay，2026-10-24 M250 用户定案 0.5s）：按下边沿起蓄，
@@ -388,9 +395,11 @@ func update(dt: float) -> void:
 ## 按压计数在 update（松开扳机）/_equip（切枪）/start_reload（换弹）归零
 func _cd_after_shot() -> float:
 	var prof: Array = _g.get("cd_profile", [])
-	if prof.is_empty():
-		return float(_g.get("cd", 0.13))
-	return float(prof[mini(_press_shots - 1, prof.size() - 1)])
+	if not prof.is_empty():
+		return float(prof[mini(_press_shots - 1, prof.size() - 1)])
+	if _burst_left > 0:
+		return float(_g.get("burst_cd", 0.05))   # 点射轮内间隔（缺省 1200rpm；三角洲 MK4 实测）
+	return float(_g.get("cd", 0.13))
 
 
 func try_fire() -> void:
@@ -419,6 +428,10 @@ func try_fire() -> void:
 	_press_shots += 1
 	if _burst_left > 0:
 		_burst_left -= 1   # 三连发计数（没弹换弹会中止：下方清零）
+		if _burst_left <= 0:
+			# 点射打完 → 轮间锁（burst_gap，三角洲实测 ~100ms；cd 是轮内间隔
+			# 1200rpm=0.05s，两者不是一回事）
+			_burst_gap = float(_g.get("burst_gap", 0.0))
 		if ammo <= 0:
 			_burst_left = 0
 	if _press_shots == 1 and not (_g.get("cd_profile", []) as Array).is_empty():
@@ -518,6 +531,7 @@ func start_reload() -> void:
 	reloading = float(_g.get("reload", 1.5)) + extra
 	_press_shots = 0   # 换弹归零按压计数（cd_profile 档位回零——AN-94 超点射）
 	_burst_left = 0    # 换弹中止三连发点射（MK4：装填完要重新扣扳机）
+	_burst_gap = 0.0   # 换弹清轮间锁
 	if audio != null:
 		audio.play_reload()
 
@@ -777,6 +791,7 @@ func _equip(slot: String) -> void:
 	_press_shots = 0   # 切枪归零按压计数（换枪再按又是新的一对超点射）
 	_trig_delay = 0.0  # 切枪放弃蓄力：新枪按下重新蓄（不继承旧枪进度）
 	_burst_left = 0    # 切枪中止点射（新枪按自己的节奏来）
+	_burst_gap = 0.0   # 切枪清轮间锁
 	_falling = false
 	_mag_landed = false
 	_hide_hand()
