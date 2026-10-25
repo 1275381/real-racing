@@ -125,9 +125,10 @@ func build(world, player, audio) -> void:
 	_world = world
 	_player = player
 	_audio = audio
-	_tracers = TracerPool.new()
-	add_child(_tracers)
-	_tracers.setup(32, Color(1.0, 0.55, 0.35), 4.0, 0.03)
+	if _tracers == null:
+		_tracers = TracerPool.new()
+		add_child(_tracers)
+		_tracers.setup(32, Color(1.0, 0.55, 0.35), 4.0, 0.03)
 	# 美术写实化第二轮：优先用写实士兵（细分身体 + 布料/皮革 PBR + 装具细节，
 	# 骨架/动画/材质名与旧模型完全一致）；没拉到 LFS 时退回旧模型
 	var scene: PackedScene = load(SOLDIER_HD_PATH) if ResourceLoader.exists(SOLDIER_HD_PATH) else null
@@ -136,6 +137,11 @@ func build(world, player, audio) -> void:
 	if scene == null:
 		push_warning("[烽火地带] 士兵模型加载失败：%s —— 暂用胶囊人代替" % SOLDIER_PATH)
 	_scene = scene
+	_populate()
+
+
+## 按当前 world.patrol_spots / 首领表布兵（build 与换图 rebuild 共用）
+func _populate() -> void:
 	soldiers.clear()
 	var spots: Array = _world.patrol_spots
 	var zone_n := {}   # 同区计数（精英轮次）
@@ -166,12 +172,16 @@ func build(world, player, audio) -> void:
 			zone_n[zone] = zi + 1
 			if zi % HDData.ELITE_EVERY == 1:
 				tier = "elite"
-		_add_soldier(home, route, zone, tier, scene)
-	# 首领 ×2（第四阶段）：守首领保险柜，路线只有家门口（站岗不巡逻）
-	for bd in HDData.BOSSES:
+		_add_soldier(home, route, zone, tier, _scene)
+	# 首领 ×2（第四阶段）：守首领保险柜，路线只有家门口（站岗不巡逻）——
+	# 首领表按图分支（dam 军火商/坝区指挥官 · space 总装厂长/发射指挥官）
+	var bosses: Array = HDData.BOSSES
+	if _world != null and _world.has_method("boss_defs"):
+		bosses = _world.boss_defs()
+	for bd in bosses:
 		var bp: Vector3 = bd["pos"]
 		var bh := Vector3(bp.x, _ground_y(bp.x, bp.z), bp.z)
-		_add_soldier(bh, [bh], str(bd["zone"]), "boss", scene)
+		_add_soldier(bh, [bh], str(bd["zone"]), "boss", _scene)
 		soldiers[soldiers.size() - 1]["boss_id"] = str(bd["id"])
 		soldiers[soldiers.size() - 1]["boss_name"] = str(bd["name"])
 		# 面朝保险柜外侧（背靠宝箱守门）
@@ -179,11 +189,11 @@ func build(world, player, audio) -> void:
 		soldiers[soldiers.size() - 1]["yaw"] = atan2(bh.x - vp.x, bh.z - vp.z)
 	# 预留槽（不活跃，reset_all 不复活）：空投增援 3 + 搜刮者 2 队 × 3
 	for k in HDData.REINFORCE_N:
-		_add_soldier(Vector3.ZERO, [Vector3.ZERO], "mid", "elite" if k == 0 else "regular", scene)
+		_add_soldier(Vector3.ZERO, [Vector3.ZERO], "mid", "elite" if k == 0 else "regular", _scene)
 		soldiers[soldiers.size() - 1]["reserve"] = "reinforce"
 	for q in HDData.SCAV_SQUADS:
 		for k in HDData.SCAV_SIZE:
-			_add_soldier(Vector3.ZERO, [Vector3.ZERO], "mid", "scav", scene)
+			_add_soldier(Vector3.ZERO, [Vector3.ZERO], "mid", "scav", _scene)
 			var sc: Dictionary = soldiers[soldiers.size() - 1]
 			sc["reserve"] = "scav"
 			sc["faction"] = "scav"
@@ -197,6 +207,24 @@ func build(world, player, audio) -> void:
 	# 一遍 _write_pose，远兵在第一帧渲染前就已断链停蒙皮
 	for i in soldiers.size():
 		_write_pose(i)
+
+
+## 换图重建（world.set_map 后由 main 调）：拆全部兵力/模型槽，按新图巡逻点与
+## 首领表重灌；撤离目标与寻路网格随新图重算（loot 容器重建后再调本函数，
+## 网格才含新容器障碍）
+func rebuild() -> void:
+	if _world == null or _player == null:
+		return
+	for b in _bodies:
+		if is_instance_valid(b["node"]):
+			(b["node"] as Node3D).queue_free()
+	_bodies.clear()
+	soldiers.clear()
+	exfil_points = _world.extract_list()
+	_populate()
+	if _loot != null:
+		_nav = NavGrid.new()
+		_nav.build(_world)
 
 
 ## 新兵入列：tier = regular / elite / boss（HDData.ENEMY_TIERS）
@@ -1200,8 +1228,12 @@ func _activate(i: int, at: Vector3, route: Array) -> void:
 
 
 ## 开局放搜刮者：每队一个出生点（避开玩家出生点，最远的优先），队员围着队长站开
+## ——出生点表按图分支（dam 五点 / space 图缘荒野五点）
 func spawn_scavs(avoid: Vector3) -> void:
-	var pts: Array = HDData.SPAWN_POINTS.duplicate()
+	var pts: Array = HDData.SPAWN_POINTS
+	if _world != null and _world.has_method("spawn_points"):
+		pts = _world.spawn_points()
+	pts = pts.duplicate()
 	pts.sort_custom(func(a, b): return Vector2(a.x - avoid.x, a.z - avoid.z).length() \
 			> Vector2(b.x - avoid.x, b.z - avoid.z).length())
 	for i in soldiers.size():

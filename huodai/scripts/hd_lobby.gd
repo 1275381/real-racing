@@ -64,6 +64,7 @@ var _cur0 := 0                      # 出发页光标（展开态域：2 槽位 
 var _deploy_page := 0               # 出发页候选枪分页索引
 var _prep_open := false             # 出发页战备面板开合（右下角「战备」贴图 / TAB 同链）
 var _variant_idx := 0               # 天气变体索引（阶段 C：RAID_VARIANTS 键序循环）
+var _map_idx := 0                   # 地图索引（2026-10 第二张图：MAP_KEYS 键序循环，缺省 dam）
 var _slot_focus := "primary"        # 出发页「装入目标槽」
 var _gun_idx := 0                   # 改枪台左列选中枪
 var _scope_idx := 0                 # 改枪台右列选中瞄具（0=机瞄）
@@ -204,6 +205,11 @@ func handle_key(code: int) -> bool:
 				_sup_sel()
 			else:
 				return false
+		KEY_M:
+			# 出发页=出发地图循环（2026-10 第二张图）；他页静默不消费
+			if _tab != 0:
+				return false
+			_cycle_map()
 		KEY_N:
 			# 弹种循环（阶段 D）：只在交易行③ 极致备弹区消费（给光标所指枪换/购弹种）
 			if _tab == 2 and _market_sec == 2:
@@ -611,6 +617,12 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	vb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	vb.pressed.connect(_cycle_variant)
 	right.add_child(vb)
+	# 地图切换循环钮（2026-10 第二张图「航天基地」）：M 同链；缺省零号大坝
+	var mb := _mk_btn("地图：%s ▸" % map_name(), 15)
+	_style_btn(mb, false, COL_ACCENT if _map_idx != 0 else _dim(0.6), 10)
+	mb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	mb.pressed.connect(_cycle_map)
+	right.add_child(mb)
 	# 出发钮（实战主 CTA：措辞点明「实战行动」+ 红橙配色与靶场绿色入口分流）
 	var di := (2 + rows) if _prep_open else 0
 	var dsel := _cur0 == di
@@ -636,7 +648,7 @@ func _render_deploy(pg: VBoxContainer) -> void:
 	pg.add_child(trow)
 	trow.add_child(_prep_tile())
 
-	var hint := _mk_label("鼠标：点右下角「战备」整备装备 · 点卡片装入 · ◀▶ 翻页   键盘：TAB 战备 · 回车 确认/出发 · I 投保 · V 天气 · 1/2/3 切页签 · G 靶场",
+	var hint := _mk_label("鼠标：点右下角「战备」整备装备 · 点卡片装入 · ◀▶ 翻页   键盘：TAB 战备 · 回车 确认/出发 · I 投保 · V 天气 · M 地图 · 1/2/3 切页签 · G 靶场",
 			13, _dim(0.45))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pg.add_child(hint)
@@ -1242,12 +1254,13 @@ func _fire_deploy() -> void:
 			and _stash.cash >= _stash.insurance_price(_stash.loadout)
 	hide_lobby()
 	deploy_requested.emit({"primary": p, "secondary": s, "insured": ins,
-			"variant": variant_key()})
+			"variant": variant_key(), "map": map_key()})
 
 
-## 出发 payload 组装（阶段 C 抽出：测试不发射信号也能取变体字段）
+## 出发 payload 组装（阶段 C 抽出：测试不发射信号也能取变体/地图字段）
 func _deploy_payload(p: String, s: String, ins: bool) -> Dictionary:
-	return {"primary": p, "secondary": s, "insured": ins, "variant": variant_key()}
+	return {"primary": p, "secondary": s, "insured": ins,
+			"variant": variant_key(), "map": map_key()}
 
 
 ## 天气变体（阶段 C）：键序循环 + 名称；夜/雨/雾局敌人视距/枪声/战利品有差异
@@ -1264,6 +1277,23 @@ func variant_name() -> String:
 ## V 键/按钮同链：循环切换天气（第 0 位=晴朗缺省）
 func _cycle_variant() -> void:
 	_variant_idx = (_variant_idx + 1) % HDData.RAID_VARIANTS.size()
+	_refresh_all()
+
+
+## 地图循环（2026-10 第二张图）：键序循环 + 名称；缺省零号大坝
+const MAP_KEYS := ["dam", "space"]
+
+func map_key() -> String:
+	return str(MAP_KEYS[_map_idx % MAP_KEYS.size()])
+
+
+func map_name() -> String:
+	return str(HDData.MAP_NAMES.get(map_key(), map_key()))
+
+
+## M 键/按钮同链：循环切换出发地图（第 0 位=零号大坝缺省）
+func _cycle_map() -> void:
+	_map_idx = (_map_idx + 1) % MAP_KEYS.size()
 	_refresh_all()
 
 

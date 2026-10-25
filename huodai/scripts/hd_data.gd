@@ -344,6 +344,35 @@ const SUP_HEAR_R := 20.0
 const SUP_DMG_MUL := 0.92
 const SUP_BLOCK := ["shotgun"]
 
+## ---- 第二张地图：航天基地（space；与零号大坝并存、出发可选、互不连通）----
+## 方位沿用攻略罗盘语言换算到本工程坐标（北 = -Z 中控楼方向、南 = +Z 发射区、
+## 东 = +X 工业带、西 = -X 水渠荒野）；数值为游戏坐标（BOUND ±148 内）。
+## 出生 5 处全在图缘荒野（wild 投放带），离最近巡逻点 ≥30m（space 段回归钉死）
+const SPACE_SPAWN_POINTS := [Vector3(0.0, 0.0, -142.0), Vector3(-138.0, 0.0, -110.0),
+	Vector3(128.0, 0.0, -70.0), Vector3(-128.0, 0.0, 96.0), Vector3(136.0, 0.0, 100.0)]
+## 空投落点候选（过渡区空地，避建筑/水道/管廊；每局随机一处）
+const SPACE_AIRDROP_POINTS := [Vector3(44.0, 0.0, 44.0), Vector3(-40.0, 0.0, 58.0),
+	Vector3(16.0, 0.0, 78.0), Vector3(-48.0, 0.0, -96.0), Vector3(46.0, 0.0, -70.0)]
+## 首领 ×2（space 版）：总装厂长守主厂房保险柜（dam 带）· 发射指挥官守
+## 发射坪保险柜（发射坪按高价值区落 center 分区）
+const SPACE_BOSSES := [
+	{"id": "plant", "name": "总装厂长", "pos": Vector3(88.0, 0.0, -40.0),
+		"vault": Vector3(85.0, 0.0, -42.0), "zone": "dam"},
+	{"id": "pad", "name": "发射指挥官", "pos": Vector3(12.0, 0.0, 110.0),
+		"vault": Vector3(10.0, 0.0, 112.0), "zone": "center"},
+]
+## 撤离五处（槽位复用既有 extract 机制：main 常开 / dam 槽=12:00 定时 / paid 付费 /
+## lever 拉闸 / tunnel 槽=常开第二点）——原型是直升机坪/丢包/事件撤离，
+## 机制简化复用既有三型（切换架构见 hd_world.set_map）
+const SPACE_EXTRACT_MAIN := Vector3(0.0, 0.0, -97.0)      # ①中控楼北门（出生侧常开）
+const SPACE_EXTRACT_TIMED := Vector3(-46.0, 0.0, 114.0)   # ④火箭观景坪（12:00 后开放）
+const SPACE_EXTRACT_PAID := Vector3(138.0, 0.0, 112.0)    # 绝密通道（东南角·付费）
+const SPACE_EXTRACT_LEVER := Vector3(100.0, 0.0, 90.0)    # ③试车场尾门（拉闸后开放）
+const SPACE_LEVER_POS := Vector3(70.0, 0.0, 66.0)         # 电闸：试车场中控室内
+const SPACE_EXTRACT_DORM := Vector3(-117.0, 0.0, -75.0)   # ②宿舍停车场西门（常开）
+## 地图显示名（大厅切换钮/开局简报/结算用）
+const MAP_NAMES := {"dam": "零号大坝", "space": "航天基地"}
+
 ## 地图与分区（340m 见方；中心危险区半径 80m）
 const MAP_HALF := 170.0
 const DANGER_R := 80.0

@@ -247,6 +247,14 @@ func _start_mission(loadout: Dictionary) -> void:
 	# 天气变体（阶段 C）：先设全局（AI 视距/枪声半径/战利品运气都读它）再重置世界
 	HDData.variant = str(loadout.get("variant", "clear"))
 	world.apply_variant(HDData.variant)
+	# 地图切换（2026-10 第二张图「航天基地」）：选图与当前不同才原地重建 +
+	# 各模块复位（锁房门控 / 容器重生成 / 兵力重灌——同一 world 实例引用不变）
+	var want_map := str(loadout.get("map", world.map_id))
+	if want_map != world.map_id:
+		world.set_map(want_map)
+		locks.apply_map(want_map)
+		loot.rebuild_map()
+		soldiers.rebuild()
 	_kills = 0
 	_raid_t = 0.0
 	_extract_t = 0.0
@@ -270,12 +278,15 @@ func _start_mission(loadout: Dictionary) -> void:
 	targets.reset_all()
 	thrower.reset_all()   # 投掷物清场（阶段 D；库存件数在 stash 不动）
 	# 锁房复位（门关灯红）+ 钥匙按局种子刷在随机容器点位旁（60%/把，地面拾取）
+	# ——锁房是大坝地图专属：space 局不建不刷不注入（钥匙卡购买照常，库存保留）
 	locks.reset_all()
-	for drop in locks.roll_key_drops(randi(), world.container_spots):
-		loot._spawn_ground(drop["item"], drop["pos"])
-	_inject_keycards()
-	# 随机出生（5 处地图边缘，改进方案第 6 节）
-	var sp: Vector3 = HDData.SPAWN_POINTS[randi() % HDData.SPAWN_POINTS.size()]
+	if world.map_id == "dam":
+		for drop in locks.roll_key_drops(randi(), world.container_spots):
+			loot._spawn_ground(drop["item"], drop["pos"])
+		_inject_keycards()
+	# 随机出生（每图 5 处图缘，改进方案第 6 节）
+	var sp_list: Array = world.spawn_points()
+	var sp: Vector3 = sp_list[randi() % sp_list.size()]
 	world.spawn_pos = Vector3(sp.x, world.ground_height(sp.x, sp.z), sp.z)
 	player.enter(world.spawn_pos)
 	_setup_extracts()
@@ -317,11 +328,19 @@ func _start_mission(loadout: Dictionary) -> void:
 ## 开局简报卡数据（纯函数：测试/探针复用）——短句化，一行一件事
 func _briefing_cards() -> Array:
 	var col_ok := Color(0.49, 0.89, 0.66)
-	var ext_lines := ["主撤离 · 常开", "大坝 · 12:00 后", "隧道 · 军营北 · 常开"]
+	var names := {}
+	for d in world.extract_defs():
+		names[str(d["id"])] = str(d["name"])
+	var ext_lines := [
+		"地图 · %s" % world.map_name(),
+		"主撤离 · 常开",
+		"%s · 12:00 后" % names.get("dam", "大坝"),
+		"%s · 常开" % names.get("tunnel", "隧道"),
+	]
 	if bool(_extracts["paid"]["enabled"]):
 		ext_lines.append("付费 · ₵%d" % HDData.PAID_PRICE)
 	if bool(_extracts["lever"]["enabled"]):
-		ext_lines.append("拉闸 · 变电站电闸")
+		ext_lines.append("拉闸 · %s" % ("变电站电闸" if world.map_id == "dam" else "试车场中控室"))
 	var cards: Array = [
 		{"title": "撤离 · 25 分钟内", "color": col_ok, "lines": ext_lines},
 	]
@@ -859,24 +878,36 @@ func _tick_raid_clock() -> bool:
 	if left <= 0.0:
 		_mia()
 		return true
-	# 第 10 分钟空投：随机落点冒红烟，约 18 s 后伞降落地
+	# 第 10 分钟空投：随机落点冒红烟，约 18 s 后伞降落地（落点表按图分支）
 	if not _airdrop_fired and _raid_t >= HDData.AIRDROP_T:
 		_airdrop_fired = true
-		var ap: Vector3 = HDData.AIRDROP_POINTS[randi() % HDData.AIRDROP_POINTS.size()]
+		var ad_pts: Array = world.airdrop_points()
+		var ap: Vector3 = ad_pts[randi() % ad_pts.size()]
 		airdrop.trigger(ap)
 		var dir_names := ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
 		var bdeg := _bearing(ap.x - player.pos.x, ap.z - player.pos.z)
 		hud.toast("空投已投放 · %s方向 %dm · 红色烟雾标记落点（紫色及以上 + 物资）" % [
 			dir_names[int(round(bdeg / 45.0)) % 8],
 			int(Vector2(ap.x - player.pos.x, ap.z - player.pos.z).length())], Color(0.75, 0.45, 1.0))
-	# 大坝撤离点 12 分钟后开放
+	# 定时撤离槽（dam 槽位）12 分钟后开放——名称按图（大坝撤离/观景坪）
 	var dam: Dictionary = _extracts.get("dam", {})
 	if bool(dam.get("enabled", false)) and not bool(dam.get("open", false)) \
 			and _raid_t >= HDData.DAM_OPEN_T:
 		dam["open"] = true
 		_sync_extract_vis()
-		hud.toast("大坝撤离点已开放", Color(0.49, 0.89, 0.66))
+		hud.toast("%s撤离点已开放" % _ext_short("dam"), Color(0.49, 0.89, 0.66))
 	return false
+
+## 撤离槽显示名（extract_defs 按图）：罗盘/简报/播报共用
+func _ext_name(eid: String) -> String:
+	for d in world.extract_defs():
+		if str(d["id"]) == eid:
+			return str(d["name"])
+	return eid
+
+## 短名（去掉「撤离」后缀，对齐旧文案「大坝 3:00 后开放」的字面）
+func _ext_short(eid: String) -> String:
+	return _ext_name(eid).replace("撤离", "")
 
 ## 每局撤离点：主撤离常开；大坝定时；付费 / 拉闸各按概率启用（每局组合不同）
 func _setup_extracts() -> void:
@@ -899,13 +930,13 @@ func _sync_extract_vis() -> void:
 			st = "open" if bool(e["open"]) else "closed"
 		world.set_extract_state(str(eid), st)
 
-## 电闸：启用拉闸撤离的局，进变电站主控楼按住 F 2 s 拉下 → 东门撤离点开放，
-## 动静惊动 80 m 内敌人
+## 电闸：启用拉闸撤离的局，到电闸处按住 F 2 s 拉下 → 对应撤离点开放，
+## 动静惊动 80 m 内敌人（电闸位置按图：dam 变电站主控楼 / space 试车场中控室）
 func _step_lever(dt: float) -> void:
 	var lev: Dictionary = _extracts.get("lever", {})
 	if not bool(lev.get("enabled", false)) or bool(lev.get("open", false)):
 		return
-	var lp := HDData.LEVER_POS
+	var lp := world.lever_pos
 	if Vector2(player.pos.x - lp.x, player.pos.z - lp.z).length() > 1.6:
 		_lever_t = 0.0
 		return
@@ -916,16 +947,18 @@ func _step_lever(dt: float) -> void:
 			return
 	else:
 		_lever_t = maxf(0.0, _lever_t - dt)
-	hud.set_prompt("按住 F 拉闸 —— 打开变电站东门撤离（动静很大）", _lever_t / HDData.LEVER_HOLD)
+	hud.set_prompt("按住 F 拉闸 —— 打开%s撤离（动静很大）" % _ext_short("lever"),
+			_lever_t / HDData.LEVER_HOLD)
 
 func _pull_lever() -> void:
 	_extracts["lever"]["open"] = true
 	_lever_t = 0.0
 	world.set_lever_pulled(true)
 	_sync_extract_vis()
-	soldiers.hear_shot(HDData.LEVER_POS + Vector3(0.0, 1.5, 0.0), HDData.LEVER_ALERT_R)
+	soldiers.hear_shot(world.lever_pos + Vector3(0.0, 1.5, 0.0), HDData.LEVER_ALERT_R)
 	hud.set_prompt("", 0.0)
-	hud.toast("电闸已拉下 · 变电站东门撤离点开放 —— 附近敌人被惊动了", Color(0.3, 0.7, 1.0))
+	hud.toast("电闸已拉下 · %s撤离点开放 —— 附近敌人被惊动了" % _ext_short("lever"),
+			Color(0.3, 0.7, 1.0))
 
 ## 指南针标记：本局启用的撤离点（开放 / 未开放倒计时 / 付费价 / 待拉闸）+ 电闸位置
 func _compass_marks() -> Array:
@@ -950,13 +983,13 @@ func _compass_marks() -> Array:
 			col = Color(0.62, 0.62, 0.62)
 			if eid == "dam":
 				var wait := maxf(0.0, HDData.DAM_OPEN_T - _raid_t)
-				label = "大坝 %d:%02d 后开放" % [int(wait) / 60, int(wait) % 60]
+				label = "%s %d:%02d 后开放" % [_ext_short("dam"), int(wait) / 60, int(wait) % 60]
 			elif eid == "lever":
 				label = "拉闸撤离 · 未通电"
 		marks.append({"bearing": _bearing(dx, dz), "label": label, "color": col})
 	var lev: Dictionary = _extracts.get("lever", {})
 	if bool(lev.get("enabled", false)) and not bool(lev.get("open", false)):
-		var lp := HDData.LEVER_POS
+		var lp := world.lever_pos
 		marks.append({"bearing": _bearing(lp.x - player.pos.x, lp.z - player.pos.z),
 			"label": "电闸 %dm" % int(Vector2(lp.x - player.pos.x, lp.z - player.pos.z).length()),
 			"color": Color(0.3, 0.7, 1.0)})

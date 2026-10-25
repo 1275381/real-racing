@@ -18,6 +18,7 @@ const DOOR_H := 2.6
 var _world                           # HDWorld（obstacles 追加/移除）
 var _loot                            # HDLoot（背包查钥匙/消耗）
 var _states := {}                    # id -> {def, door, lamp_mat, obs, opened, open_t}
+var _room_obs: Array = []            # 本模块登记过的全部障碍（apply_map 换图时移除）
 var _prev_press := false             # F 边沿检测（开锁瞬时动作，不按住读条）
 
 func setup(world, loot) -> void:
@@ -37,6 +38,30 @@ func reset_all() -> void:
 		lm.albedo_color = Color(0.55, 0.1, 0.08)
 		if not _world.obstacles.has(st["obs"]):
 			_world.obstacles.append(st["obs"])
+
+
+## 换图门控（2026-10 第二张图）：三间锁房（军火库/档案室/军营武器室）是大坝
+## 地图专属——space 局不建（钥匙照常购买、space 局不注入不刷新），切回 dam
+## 原样重建。world.set_map 之后由 main 调（障碍已随 set_map 清掉，这里兜底 erase）
+func apply_map(id: String) -> void:
+	var roots: Array = []
+	for idk in _states:
+		var st: Dictionary = _states[idk]
+		var door: Node3D = st["door"]
+		if door != null and is_instance_valid(door):
+			var r: Node = door.get_parent()
+			if r != null and is_instance_valid(r) and not roots.has(r):
+				roots.append(r)
+	for ob in _room_obs:
+		_world.obstacles.erase(ob)
+	_room_obs.clear()
+	_states.clear()
+	_prev_press = false
+	for r2 in roots:
+		(r2 as Node).queue_free()
+	if id == "dam":
+		for def in HDData.LOCKS:
+			_build_room(def)
 
 
 ## 朝向基向量：facing = 门面法线方向（门开在哪面墙）；side = 门墙走向
@@ -84,6 +109,7 @@ func _build_room(def: Dictionary) -> void:
 		"hx": 0.15 if f.x != 0.0 else DOOR_W * 0.5,
 		"hz": DOOR_W * 0.5 if f.x != 0.0 else 0.15, "top": 2.6, "bot": 0.0}
 	_world.obstacles.append(obs)
+	_room_obs.append(obs)
 	# 锁灯：门楣中央小红灯（开锁变绿）
 	var lm := StandardMaterial3D.new()
 	lm.emission_enabled = true
@@ -100,8 +126,10 @@ func _seg_wall(root: Node3D, c: Vector2, dir: Vector2, length: float) -> void:
 	var d := WALL_T if dir.x != 0.0 else length
 	_box(root, c.x, WALL_H * 0.5, c.y, w, WALL_H, d, _mats_conc(root))
 	var def: Dictionary = _room_def_of(root)
-	_world.obstacles.append({"cx": float(def["cx"]) + c.x, "cz": float(def["cz"]) + c.y,
-		"hx": w * 0.5, "hz": d * 0.5, "top": WALL_H, "bot": 0.0})
+	var wobs := {"cx": float(def["cx"]) + c.x, "cz": float(def["cz"]) + c.y,
+		"hx": w * 0.5, "hz": d * 0.5, "top": WALL_H, "bot": 0.0}
+	_world.obstacles.append(wobs)
+	_room_obs.append(wobs)
 
 
 ## 每局钥匙刷新（种子 LCG 确定性）：每把 60% 概率，落点 = 随机容器点位旁

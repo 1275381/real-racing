@@ -2765,6 +2765,175 @@ func _run() -> void:
 	check("地下靶馆地坪判硬地（混凝土脚步）", absf(main.world.ground_height(hall_p.x, hall_p.z, hall_p.y + 0.5)) > 0.02)
 	check("沙漠地面判沙地", absf(main.world.ground_height(-40.0, 120.0, 0.5)) <= 0.02)
 
+	# ===== 第二张地图「航天基地」（space）——切换架构 / 分区 / 点位齐全 / 往返 =====
+	# 大厅切换钮 + payload（照天气 V 钮先例：缺省 dam）
+	main._raid_live = false
+	main.lobby.show_lobby()
+	main.lobby.set_tab(0)
+	main.lobby._map_idx = 0
+	# 切图前快照：坝障碍总数（往返后必须一致——防 set_map 泄漏/翻倍）
+	var dam_obs_before: int = main.world.obstacles.size()
+	var pl_map: Dictionary = main.lobby._deploy_payload("rifle", "pistol", false)
+	check("出发 payload 带地图字段（缺省 dam）", str(pl_map.get("map", "")) == "dam")
+	main.lobby._cycle_map()
+	check("M/按钮循环到航天基地（payload map=space）",
+		main.lobby.map_key() == "space" and main.lobby.map_name() == "航天基地"
+			and str(main.lobby._deploy_payload("rifle", "pistol", false).get("map", "")) == "space")
+	main.lobby._map_idx = 0   # 复位缺省
+	# 切图整链：_start_mission 带 map=space → world.set_map + locks/loot/soldiers 复位
+	main._start_mission({"primary": "rifle", "secondary": "pistol", "map": "space"})
+	await frames(6)
+	check("切图：map_id=space 且名称在册", main.world.map_id == "space"
+		and main.world.map_name() == "航天基地")
+	check("切图：坝三件已拆、航天整图挂载（同一 world 实例）", main.world.dam == null
+		and main.world.dam_base == null and main.world.dam_zones == null
+		and main.world.space_map != null and main.world.space_map.get_parent() == main.world)
+	check("锁房 space 门控（0 间——dam 专属不建）", main.locks._states.is_empty())
+	check("space 撤离五槽信标齐（槽位机制两图一致）",
+		main.world._extract_vis.size() == 5 and main.world._extract_vis.has("main")
+		and main.world._extract_vis.has("tunnel"))
+	var ext_names := []
+	for d0 in main.world.extract_defs():
+		ext_names.append(str(d0["name"]))
+	check("space 撤离点名（中控楼北/观景坪/试车场尾门/宿舍停车场）",
+		ext_names.has("中控楼北") and ext_names.has("观景坪")
+			and ext_names.has("试车场尾门") and ext_names.has("宿舍停车场"))
+	# zone_at 四分区采样（核心区/发射坪=center · 工业带/中控桥=dam · 宿舍/发射外围=mid · 图缘=wild）
+	check("space zone_at 四分区采样",
+		main.world.zone_at(0.0, 0.0) == "center"
+			and main.world.zone_at(0.0, 114.0) == "center"
+			and main.world.zone_at(70.0, -40.0) == "dam"
+			and main.world.zone_at(0.0, -50.0) == "dam"
+			and main.world.zone_at(-92.0, -80.0) == "mid"
+			and main.world.zone_at(0.0, 70.0) == "mid"
+			and main.world.zone_at(0.0, -142.0) == "wild"
+			and main.world.zone_at(-88.0, 124.0) == "wild")
+	# 容器 ≥45：zone 字段与 zone_at 逐点一致（hd_soldiers 分组路由/loot 档位靠它）、边界内
+	var sp_ct_n: int = main.world.container_spots.size()
+	var sp_zone_ok: bool = sp_ct_n >= 45
+	var sp_in_bound := true
+	for c0 in main.world.container_spots:
+		var spc1: Dictionary = c0
+		if str(spc1["zone"]) != main.world.zone_at(spc1["pos"].x, spc1["pos"].z):
+			sp_zone_ok = false
+		if absf(spc1["pos"].x) > HDWorld.BOUND - 2.0 or absf(spc1["pos"].z) > HDWorld.BOUND - 2.0:
+			sp_in_bound = false
+	check("space 容器 ≥45 且 zone 字段与 zone_at 一致、全在边界内",
+		sp_zone_ok and sp_in_bound, "n=%d" % sp_ct_n)
+	# 巡逻 ≥24：zone 一致 + 每分区 ≥3（同 zone 家点+2 邻域成路）
+	var sp_pat_n: int = main.world.patrol_spots.size()
+	var sp_pat_zone_ok: bool = sp_pat_n >= 24
+	var sp_pat_zone_n := {}
+	for p0 in main.world.patrol_spots:
+		var spp1: Dictionary = p0
+		if str(spp1["zone"]) != main.world.zone_at(spp1["pos"].x, spp1["pos"].z):
+			sp_pat_zone_ok = false
+		sp_pat_zone_n[str(spp1["zone"])] = int(sp_pat_zone_n.get(str(spp1["zone"]), 0)) + 1
+	for zkey in ["center", "dam", "mid", "wild"]:
+		if int(sp_pat_zone_n.get(zkey, 0)) < 3:
+			sp_pat_zone_ok = false
+	check("space 巡逻 ≥24 且 zone 一致、每分区 ≥3", sp_pat_zone_ok,
+		"n=%d %s" % [sp_pat_n, str(sp_pat_zone_n)])
+	# 出生 5：边界内空地、离巡逻点 ≥30 m（dam 版同款口径）
+	var sp_sp_ok := HDData.SPACE_SPAWN_POINTS.size() == 5
+	for sp in HDData.SPACE_SPAWN_POINTS:
+		for ps in main.world.patrol_spots:
+			if Vector2(sp.x - ps["pos"].x, sp.z - ps["pos"].z).length() < 30.0:
+				sp_sp_ok = false
+		for ob in main.world.obstacles:
+			if absf(sp.x - float(ob["cx"])) < float(ob["hx"]) + 0.6 \
+					and absf(sp.z - float(ob["cz"])) < float(ob["hz"]) + 0.6:
+				sp_sp_ok = false
+		if absf(sp.x) > HDWorld.BOUND - 2.0 or absf(sp.z) > HDWorld.BOUND - 2.0:
+			sp_sp_ok = false
+	check("space 出生 ×5 都在边界内空地且离巡逻点 ≥30 m", sp_sp_ok)
+	# 撤离五处都在边界内
+	var sp_ext_ok: bool = main.world.extract_defs().size() == 5
+	for d2 in main.world.extract_defs():
+		var sp_ep: Vector3 = d2["pos"]
+		if absf(sp_ep.x) > HDWorld.BOUND - 2.0 or absf(sp_ep.z) > HDWorld.BOUND - 2.0:
+			sp_ext_ok = false
+	check("space 撤离点 5 处都在边界内", sp_ext_ok)
+	check("space 障碍 ≥200（轴对齐契约）", main.world.obstacles.size() >= 200,
+		"n=%d" % main.world.obstacles.size())
+	# 灵魂地标：火箭（发射坪中心 ≥55 m 高实体障碍——远看可辨的白箭体）
+	var rocket_ok := false
+	for ob in main.world.obstacles:
+		if float(ob.get("top", 0.0)) >= 55.0 and absf(float(ob["cx"])) < 2.0 \
+				and absf(float(ob["cz"]) - 114.0) < 2.0:
+			rocket_ok = true
+	check("火箭灵魂地标在位（发射坪中心 ≥55 m 高障碍）", rocket_ok)
+	# 首领 ×2 + 保险柜 ×2（space 版：总装厂长/发射指挥官）
+	var sp_boss_n := 0
+	for sp_sv in main.soldiers.soldiers:
+		if str(sp_sv.get("tier", "")) == "boss" and not sp_sv.has("reserve"):
+			sp_boss_n += 1
+	var sp_vaults: Array = main.loot._containers.filter(func(c): return str(c["cls"]) == "vault")
+	check("space 首领 2 名 + 保险柜 2 只", sp_boss_n == 2 and sp_vaults.size() == 2,
+		"boss=%d vault=%d" % [sp_boss_n, sp_vaults.size()])
+	# 空投落点表分支（4-6 处、边界内）
+	var sp_ad_ok: bool = HDData.SPACE_AIRDROP_POINTS.size() >= 4 \
+			and HDData.SPACE_AIRDROP_POINTS.size() <= 6
+	for ap0 in HDData.SPACE_AIRDROP_POINTS:
+		if absf(ap0.x) > HDWorld.BOUND - 4.0 or absf(ap0.z) > HDWorld.BOUND - 4.0:
+			sp_ad_ok = false
+	check("space 空投落点表 4-6 处且在边界内", sp_ad_ok,
+		"n=%d" % HDData.SPACE_AIRDROP_POINTS.size())
+	# 开局状态：出生在 space 表内 + 简报卡带地图名一行
+	var sp_spawn_in := false
+	for sp2 in HDData.SPACE_SPAWN_POINTS:
+		if Vector2(sp2.x - main.world.spawn_pos.x, sp2.z - main.world.spawn_pos.z).length() < 0.6:
+			sp_spawn_in = true
+	var brief_txt2 := ""
+	if main.hud._brief_box != null:
+		for bc2 in main.hud._brief_box.get_children():
+			for lc2 in (bc2 as PanelContainer).find_children("*", "Label", true, false):
+				brief_txt2 += str((lc2 as Label).text) + "|"
+	check("space 开局出生在 space 表内 + 简报卡带地图名",
+		sp_spawn_in and brief_txt2.contains("航天基地"), brief_txt2.substr(0, 60))
+	# 靶场两图共享（切换架构二选一取「space 同坐标建造馆体」）
+	check("space 图靶场馆体同坐标（地下馆地坪 -6.94 照旧）",
+		absf(main.world.ground_height(HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, -10.0)
+			+ 6.94) < 0.001
+			and main.world.in_hall(HDData.HALL_CENTER.x, HDData.HALL_CENTER.z))
+	# 钥匙卡 space 局不注入、地上无钥匙
+	var kc_space := 0
+	for sp_it in main.loot.backpack:
+		if str((sp_it as Dictionary).get("key", "")) != "":
+			kc_space += 1
+	check("space 局不注入钥匙卡/不刷钥匙", kc_space == 0 and main.loot.ground_count() == 0)
+	main._raid_live = false
+	# 往返：切回 dam（完整复位链走一遍——不炸、既有契约全复检）
+	main._start_mission({"primary": "rifle", "secondary": "pistol", "map": "dam"})
+	await frames(6)
+	check("往返 dam：map_id 回 dam + 坝三件重挂", main.world.map_id == "dam"
+		and main.world.dam != null and main.world.dam_base != null
+		and main.world.dam_zones != null and main.world.space_map == null)
+	check("往返 dam：锁房三间重建（armory/archive/camp）", main.locks._states.size() == 3
+		and main.locks._states.has("armory") and main.locks._states.has("camp"))
+	check("往返 dam：容器 58 / 巡逻 31 / 障碍 ≥268（既有契约复检）",
+		main.world.container_spots.size() == 58
+			and main.world.patrol_spots.size() == 31
+			and main.world.obstacles.size() >= 268,
+		"c=%d p=%d ob=%d" % [main.world.container_spots.size(),
+			main.world.patrol_spots.size(), main.world.obstacles.size()])
+	check("往返 dam：zone_at 回坝矩形裁决",
+		main.world.zone_at(28.0, -95.0) == "dam" and main.world.zone_at(0.0, 0.0) == "center"
+			and main.world.zone_at(96.0, 0.0) == "mid")
+	check("往返 dam：障碍数与切图前一致（无泄漏/无翻倍）",
+		main.world.obstacles.size() == dam_obs_before,
+		"%d → %d" % [dam_obs_before, main.world.obstacles.size()])
+	check("往返 dam：撤离点名回大坝口径", _ext_names_has(main.world, "大坝撤离"))
+	main._raid_live = false
+
 	print("[huodai] %s（失败 %d 项）" % ["ALL PASS" if fails == 0 else "FAILED", fails])
 	main.free()
 	quit(0 if fails == 0 else 1)
+
+
+## world.extract_defs 里是否含指定撤离点名（往返断言用）
+func _ext_names_has(world, want: String) -> bool:
+	for d in world.extract_defs():
+		if str(d["name"]) == want:
+			return true
+	return false

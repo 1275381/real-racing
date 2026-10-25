@@ -79,13 +79,37 @@ func build(world) -> void:
 	_crate_scene = load(CRATE_PATH) if ResourceLoader.exists(CRATE_PATH) else null
 	if _crate_scene == null:
 		push_warning("[烽火地带] 容器模型加载失败：%s（暂用程序化箱体）" % CRATE_PATH)
-	for spot in world.container_spots:
+	_spawn_static()
+
+
+## 容器生成主体（build 与换图 rebuild_map 共用）：点位表 + 首领保险柜
+## ——首领表按图分支（world.boss_defs；dam 军火商/坝区指挥官 · space 两名）
+func _spawn_static() -> void:
+	for spot in _world.container_spots:
 		_make_container(spot)
 	# 首领保险柜（第四阶段）：不进 world.container_spots（容器点总数契约不变），
 	# 由首领守着——要先打赢首领才能安心搜 6 s
-	for bd in HDData.BOSSES:
+	var bosses: Array = HDData.BOSSES
+	if _world != null and _world.has_method("boss_defs"):
+		bosses = _world.boss_defs()
+	for bd in bosses:
 		_make_container({"pos": bd["vault"], "zone": bd["zone"], "cls": "vault",
 				"boss": str(bd["id"])})
+
+
+## 换图重建（world.set_map 后由 main 调）：拆旧容器（外观 + 占位障碍）→ 按
+## world.container_spots / 首领表重生成（分类 roll 走新图 zone_at 实时裁决）
+func rebuild_map() -> void:
+	if _world == null:
+		return
+	for c in _containers:
+		(c["root"] as Node3D).queue_free()
+		_world.obstacles.erase(c["ob"])
+	_containers.clear()
+	_spawn_static()
+	_active_i = -1
+	_ground_i = -1
+	_progress = 0.0
 
 
 func update(dt: float, player_pos: Vector3, interact_held: bool) -> void:

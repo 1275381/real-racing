@@ -19,6 +19,8 @@ const HDDAM_BASE_SCRIPT := preload("res://scripts/hd_dam_base.gd")
 ## 四新区件（军营/大电/水泥厂/游客中心）同由路径 preload：新 class_name
 ## HDDamZones 在 --headless -s 回归下同样不进全局类名缓存，走路径最稳
 const HDDAM_ZONES_SCRIPT := preload("res://scripts/hd_dam_zones.gd")
+## 第二张图「航天基地」整图（hd_space_map.gd，同款路径 preload 先例）
+const HDSPACE_SCRIPT := preload("res://scripts/hd_space_map.gd")
 const BATCH := preload("res://scripts/hd_batch.gd")
 const PBR := preload("res://scripts/hd_pbr.gd")   # 美术写实化：CC0 实拍 PBR 贴图（缺失自动回退纯色）
 ## 实拍 HDRI 天空（Poly Haven kloofendal_43d_clear_puresky，CC0）：天空本身 +
@@ -257,11 +259,14 @@ const WILD_PROPS := [
 var obstacles: Array = []         # {cx,cz,hx,hz,top,bot}（onfoot push_out 契约）
 var container_spots: Array = []   # {pos: Vector3, zone: String}（HDLoot 据此生成）
 var patrol_spots: Array = []      # {pos: Vector3, zone: String}（AI 巡逻锚点）
-var spawn_pos := Vector3(-138.0, 0.0, 138.0)   # 本局出生点（main 每局从 HDData.SPAWN_POINTS 随机取）
+var map_id := "dam"               # 当前地图（dam 零号大坝缺省 / space 航天基地）
+var space_map: Node3D             # 航天基地整图（HDSpaceMap 实例：装配/点位同 dam 三件）
+var spawn_pos := Vector3(-138.0, 0.0, 138.0)   # 本局出生点（main 每局从 spawn_points() 随机取）
 var extract_pos: Vector3 = HDData.EXTRACT_POS  # 主撤离点（绿信标）
 var extract2_pos: Vector3 = HDData.DAM_EXTRACT_POS   # 第二撤离点（大坝撤离广场，信标同款）
 var paid_pos: Vector3 = HDData.PAID_EXTRACT_POS      # 付费撤离（金色信标）
 var lever_ext_pos: Vector3 = HDData.LEVER_EXTRACT_POS   # 拉闸撤离（蓝色信标）
+var lever_pos: Vector3 = HDData.LEVER_POS             # 电闸位置（拉闸撤离交互点）
 var tunnel_pos: Vector3 = HDData.TUNNEL_EXTRACT_POS   # 军营北隧道撤离（绿信标常开，阶段 B）
 var _extract_vis := {}            # id -> {mats:[StandardMaterial3D], light, col, nodes}
 var _lever_handle: Node3D         # 电闸手柄（拉下后转角）
@@ -270,7 +275,8 @@ var dam_base: Node3D              # 坝底工业区（HDDamBase 实例：厂房/
 var batch_stats := {}             # 静态合批结果 {merged, meshes}（性能探针/测试读）
 var dam_zones: Node3D             # 四新区（HDDamZones 实例：军营/大电/水泥厂/游客中心 + 新点位）
 
-var _built := false
+var _built := false               # env/大地/边界/靶馆等全局件已建（一次）
+var _map_built := false           # 当前图内容已建（set_map 换图时可拆可重建）
 var _prop_scenes := {}            # name -> PackedScene | null（load 缓存）
 var _ph_scenes := {}              # path -> PackedScene | null（实拍模型缓存）
 var _fallback_mats := {}          # name -> StandardMaterial3D（兜底盒共用）
@@ -289,7 +295,85 @@ func build() -> void:
 	_built = true
 	_build_env()
 	_build_ground()
-	_build_boundary()
+	_build_boundary()   # 隐形边界墙（两图同界）：一次建成、换图保留
+	_build_hall()
+	_build_entrance()
+	_build_map()
+
+
+## 换图（2026-10 第二张图「航天基地」）：free 全部地图子树（保留天空/太阳/雨/
+## env/大地/边界墙/地下靶馆等全局件）→ 清空 obstacles（保留边界/靶馆 keep 项）
+## /容器/巡逻/撤离信标 → 按 map_id 走对应建造分支 → 重跑地表植被与静态合批。
+## 同一实例原地重建，所有模块持有的 world 引用不变——main 侧在选图变化时另调
+## locks.apply_map / loot.rebuild_map / soldiers.rebuild 复位，禁止换 HDWorld 实例
+func set_map(id: String) -> void:
+	if not _built or id == map_id:
+		return
+	map_id = id
+	_teardown_map()
+	_build_map()
+
+
+func _teardown_map() -> void:
+	for c in get_children():
+		if c.has_meta("keep_map"):
+			continue
+		remove_child(c)
+		c.queue_free()
+	var kept: Array = []
+	for ob in obstacles:
+		if ob.has("keep_map"):
+			kept.append(ob)
+	obstacles = kept
+	container_spots.clear()
+	patrol_spots.clear()
+	_extract_vis.clear()
+	_lever_handle = null
+	dam = null
+	dam_base = null
+	dam_zones = null
+	space_map = null
+	_map_built = false
+
+
+func _build_map() -> void:
+	if _map_built:
+		return
+	_map_built = true
+	if map_id == "dam":
+		_build_dam_map()
+	else:
+		_build_space_map()
+	# 撤离信标 ×5（槽位 id 两图一致：main 常开 / dam 槽=12:00 定时 / paid 付费 /
+	# lever 拉闸 / tunnel 槽=常开第二点；点位与名称按图，开放状态 main 每局切）
+	for eid in ["main", "dam", "paid", "lever", "tunnel"]:
+		var pos := _extract_pos_of(eid)
+		var col := Color(1.0, 0.78, 0.25) if eid == "paid" \
+				else (Color(0.3, 0.7, 1.0) if eid == "lever" else Color(0.25, 1.0, 0.45))
+		_extract_vis[eid] = _build_extract(pos, col)
+	_build_lever(lever_pos)
+	# 地表植被最后撒：本图障碍/点位都已登记，才能避开建筑与撤离位
+	_scatter_ground_cover()
+	# 静态陈设合批（第四阶段性能门槛 D：出生点绘制调用 < 800）——必须最后做：
+	# 之前的装配/PBR 换皮都要先落定
+	batch_stats = BATCH.run(self)
+
+
+func _extract_pos_of(eid: String) -> Vector3:
+	match eid:
+		"main":
+			return extract_pos
+		"dam":
+			return extract2_pos
+		"paid":
+			return paid_pos
+		"lever":
+			return lever_ext_pos
+	return tunnel_pos
+
+
+## 零号大坝（缺省图）：中心巷道/过渡/荒野道具 + 坝体三件 + 大坝五处撤离位
+func _build_dam_map() -> void:
 	for e in CENTER_PROPS:
 		_place_prop(e)
 	for e in MID_PROPS:
@@ -297,8 +381,6 @@ func build() -> void:
 	for e in WILD_PROPS:
 		_place_prop(e)
 	_scatter_decor()
-	_build_hall()
-	_build_entrance()
 	for zone in CONTAINER_XZ:
 		for p in CONTAINER_XZ[zone]:
 			var v: Vector2 = p
@@ -322,19 +404,46 @@ func build() -> void:
 	dam_zones = HDDAM_ZONES_SCRIPT.new()
 	add_child(dam_zones)
 	dam_zones.build(self)
-	# 撤离信标 ×4：主撤离（东侧绿标）+ 大坝广场（定时开放）+ 付费（金）+ 拉闸（蓝）；
-	# 开放状态由 main 每局按规则切（set_extract_state）
-	_extract_vis["main"] = _build_extract(extract_pos, Color(0.25, 1.0, 0.45))
-	_extract_vis["dam"] = _build_extract(extract2_pos, Color(0.25, 1.0, 0.45))
-	_extract_vis["paid"] = _build_extract(paid_pos, Color(1.0, 0.78, 0.25))
-	_extract_vis["lever"] = _build_extract(lever_ext_pos, Color(0.3, 0.7, 1.0))
-	_extract_vis["tunnel"] = _build_extract(tunnel_pos, Color(0.25, 1.0, 0.45))
-	_build_lever(HDData.LEVER_POS)
-	# 地表植被最后撒：大坝/四新区的障碍物都已登记，才能避开建筑
-	_scatter_ground_cover()
-	# 静态陈设合批（第四阶段性能门槛 D：出生点绘制调用 < 800）——必须最后做：
-	# 之前的装配/PBR 换皮都要先落定
-	batch_stats = BATCH.run(self)
+	extract_pos = HDData.EXTRACT_POS
+	extract2_pos = HDData.DAM_EXTRACT_POS
+	paid_pos = HDData.PAID_EXTRACT_POS
+	lever_ext_pos = HDData.LEVER_EXTRACT_POS
+	tunnel_pos = HDData.TUNNEL_EXTRACT_POS
+	lever_pos = HDData.LEVER_POS
+	spawn_pos = HDData.SPAWN_POINTS[0]
+
+
+## 航天基地（第二图）：整图建造归 hd_space_map.gd（照 hd_dam_zones 先例：
+## 视觉挂本类、障碍/点位 append）；撤离五处 = 中控楼北常开 / 观景坪 12:00 定时 /
+## 绝密通道付费 / 试车场尾门拉闸（电闸在试车场中控室）/ 宿舍停车场常开
+func _build_space_map() -> void:
+	space_map = HDSPACE_SCRIPT.new()
+	add_child(space_map)
+	space_map.build(self)
+	extract_pos = HDData.SPACE_EXTRACT_MAIN
+	extract2_pos = HDData.SPACE_EXTRACT_TIMED
+	paid_pos = HDData.SPACE_EXTRACT_PAID
+	lever_ext_pos = HDData.SPACE_EXTRACT_LEVER
+	tunnel_pos = HDData.SPACE_EXTRACT_DORM
+	lever_pos = HDData.SPACE_LEVER_POS
+	spawn_pos = HDData.SPACE_SPAWN_POINTS[0]
+
+
+## 按图取表（main/大厅消费；dam 返回值与旧全局表逐项一致——缺省行为零变化）
+func map_name() -> String:
+	return str(HDData.MAP_NAMES.get(map_id, map_id))
+
+
+func spawn_points() -> Array:
+	return HDData.SPAWN_POINTS if map_id == "dam" else HDData.SPACE_SPAWN_POINTS
+
+
+func airdrop_points() -> Array:
+	return HDData.AIRDROP_POINTS if map_id == "dam" else HDData.SPACE_AIRDROP_POINTS
+
+
+func boss_defs() -> Array:
+	return HDData.BOSSES if map_id == "dam" else HDData.SPACE_BOSSES
 
 
 ## 进靶馆模式：雾拉近/环境光稍暗/夕阳压弱（室内氛围）；回大厅/行动恢复。
@@ -392,9 +501,14 @@ func update_rain(player_pos: Vector3) -> void:
 	_rain.position = Vector3(player_pos.x, player_pos.y + 12.0, player_pos.z)
 
 
-## 分区：距原点 d<=80 中心危险区 / d>112 荒野 / 其间过渡（HDData.DANGER_R 同源）；
-## 大坝矩形分支优先于 wild 裁决（矩形西北角距原点 >112 仍判 dam，防坝区点漏进荒野表）
+## 分区（合同/品质/精英/危险横幅共用）：dam = 距原点 d<=80 中心危险区 /
+## 大坝矩形 / d>112 荒野 / 其间过渡（HDData.DANGER_R 同源）；大坝矩形分支优先于
+## wild 裁决（矩形西北角距原点 >112 仍判 dam，防坝区点漏进荒野表）。
+## space = 核心区围墙院 + 发射工位坪（center 高价值区）→ 东侧工业带 L 形 +
+## 北部控制点中控楼/桥（dam 厂区带）→ d>135 图缘荒野（wild）→ 其间过渡（mid）
 func zone_at(x: float, z: float) -> String:
+	if map_id != "dam":
+		return _zone_space(x, z)
 	var d := Vector2(x, z).length()
 	if d <= HDData.DANGER_R:
 		return "center"
@@ -405,14 +519,39 @@ func zone_at(x: float, z: float) -> String:
 	return "mid"
 
 
+## 航天基地分区矩形（hd_space_map.gd 落位同源）：
+## center = 核心区围墙院 x∈[-37,37]×z∈[-37,41] + 发射工位坪 x∈[-35,35]×z∈[91,141]
+## dam = 东侧工业带 x∈[56,116]×z∈[-60,98] + 北部控制点 x∈[-17,17]×z∈[-95,-33]
+func _zone_space(x: float, z: float) -> String:
+	if x >= -37.0 and x <= 37.0 and z >= -37.0 and z <= 41.0:
+		return "center"
+	if x >= -35.0 and x <= 35.0 and z >= 91.0 and z <= 141.0:
+		return "center"
+	if x >= 56.0 and x <= 116.0 and z >= -60.0 and z <= 98.0:
+		return "dam"
+	if x >= -17.0 and x <= 17.0 and z >= -95.0 and z <= -33.0:
+		return "dam"
+	if Vector2(x, z).length() > 135.0:
+		return "wild"
+	return "mid"
+
+
 ## 撤离点列表（主撤离 + 大坝广场第二撤离）：main._step_mission 取最近点判定读条，
 ## 开局/离场逻辑不改——圈内距离判定与单点语义一致（test 断言 size==2）
 func extract_list() -> Array:
 	return [extract_pos, extract2_pos]
 
 
-## 全部撤离点定义（2026-10 第三阶段：主 / 大坝定时 / 付费 / 拉闸）
+## 全部撤离点定义（槽位机制两图一致；名称/点位按图——指南针/简报/罗盘读它）
 func extract_defs() -> Array:
+	if map_id != "dam":
+		return [
+			{"id": "main", "pos": extract_pos, "name": "中控楼北"},
+			{"id": "dam", "pos": extract2_pos, "name": "观景坪"},
+			{"id": "paid", "pos": paid_pos, "name": "绝密通道"},
+			{"id": "lever", "pos": lever_ext_pos, "name": "试车场尾门"},
+			{"id": "tunnel", "pos": tunnel_pos, "name": "宿舍停车场"},
+		]
 	return [
 		{"id": "main", "pos": extract_pos, "name": "撤离"},
 		{"id": "dam", "pos": extract2_pos, "name": "大坝撤离"},
@@ -552,6 +691,7 @@ func _build_env() -> void:
 	# 阴影贴图 4096→2048（ProjectSettings 只能启动前改——main.gd _ready 里
 	# 通过 project_settings 无效，改在 project.godot；此处兜底再设一次）
 	add_child(_sun)
+	_sun.set_meta("keep_map", true)   # 全局件：换图保留
 	# —— 冷天光补光（第 5 轮双色温架构）：从主阳反向的半空铺冷蓝天光，
 	#    阴影面偏蓝、受光面偏暖——无阴影、低能量，只做暗部染色
 	var fill := DirectionalLight3D.new()
@@ -561,6 +701,7 @@ func _build_env() -> void:
 	fill.shadow_enabled = false
 	fill.visible = not _hdri_on   # HDRI 天空下天光来自真实环境光，假补光会把阴影洗蓝
 	add_child(fill)
+	fill.set_meta("keep_map", true)
 	# —— 雨粒子（阶段 C 雨天变体）：细长雨丝盒发射 26×22×26 罩玩家（update_rain
 	#    跟人）、重力下坠；晴朗/夜晚/浓雾不显示——构建一次按变体切可见
 	_rain = GPUParticles3D.new()
@@ -585,6 +726,7 @@ func _build_env() -> void:
 	_rain.draw_pass_1 = rq
 	_rain.visible = false
 	add_child(_rain)
+	_rain.set_meta("keep_map", true)
 
 	# —— 物理大气散射天空（第 3 轮判图 #1：上轮 turbidity 6 把天读成死板灰蓝
 	#    一块——回落到 3.5 保地平过渡带，同时瑞利 2.5 拉开天顶饱和蓝↔地平微暖
@@ -663,6 +805,7 @@ func _build_env() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	we.set_meta("keep_map", true)
 	# —— 全图大盒反射探针（第 3 轮判图 #2：玻璃幕墙 metallic 材质在纯 ambient
 	#    环境下是死色——一个大范围 ONCE 烘焙探针让 sky 渐变进玻璃/金属反射，
 	#    一次性烘焙零每帧开销；游客中心幕墙「上半幅映天色」由它兑现）——
@@ -673,6 +816,7 @@ func _build_env() -> void:
 	probe.intensity = 0.8
 	probe.box_projection = true
 	add_child(probe)
+	probe.set_meta("keep_map", true)
 	if not _hdri_on:
 		_build_clouds()   # 噪声云带只给物理天空兜底用；实拍天空自带真实云
 
@@ -721,6 +865,7 @@ func _build_clouds() -> void:
 		mi.position = Vector3(cb["x"], cb["y"], cb["z"])
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mi)
+		mi.set_meta("keep_map", true)
 
 
 ## 大地平面：300×300 浅色戈壁滩 + 程序化细噪点（battle_map.gd 同款 NoiseTexture2D）
@@ -764,6 +909,7 @@ func _build_ground() -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = plane
 	add_child(mi)
+	mi.set_meta("keep_map", true)   # 大地平面：全局件，换图保留
 
 
 ## 地表着色器：世界 XZ 平铺（与 PlaneMesh 的 UV/切线同向，法线贴图方向正确）
@@ -805,17 +951,21 @@ void fragment() {
 
 # ================= 边界与登记 =================
 
-## 地图边界四面隐形高墙（只登记 obstacles，无视觉）
+## 地图边界四面隐形高墙（只登记 obstacles，无视觉）——两图同界，keep 保留
 func _build_boundary() -> void:
-	_add_obstacle(0.0, -(BOUND + 1.0), BOUND + 2.0, 1.0, 40.0)
-	_add_obstacle(0.0, BOUND + 1.0, BOUND + 2.0, 1.0, 40.0)
-	_add_obstacle(-(BOUND + 1.0), 0.0, 1.0, BOUND + 2.0, 40.0)
-	_add_obstacle(BOUND + 1.0, 0.0, 1.0, BOUND + 2.0, 40.0)
+	_add_obstacle(0.0, -(BOUND + 1.0), BOUND + 2.0, 1.0, 40.0, 0.0, true)
+	_add_obstacle(0.0, BOUND + 1.0, BOUND + 2.0, 1.0, 40.0, 0.0, true)
+	_add_obstacle(-(BOUND + 1.0), 0.0, 1.0, BOUND + 2.0, 40.0, 0.0, true)
+	_add_obstacle(BOUND + 1.0, 0.0, 1.0, BOUND + 2.0, 40.0, 0.0, true)
 
 
 func _add_obstacle(cx: float, cz: float, hx: float, hz: float,
-		top := 40.0, bot := 0.0) -> void:
-	obstacles.append({"cx": cx, "cz": cz, "hx": hx, "hz": hz, "top": top, "bot": bot})
+		top := 40.0, bot := 0.0, keep := false) -> void:
+	if keep:
+		obstacles.append({"cx": cx, "cz": cz, "hx": hx, "hz": hz,
+				"top": top, "bot": bot, "keep_map": true})
+	else:
+		obstacles.append({"cx": cx, "cz": cz, "hx": hx, "hz": hz, "top": top, "bot": bot})
 
 
 ## 摆一个道具条目（摆位表 Dictionary → 实例 + 保守 AABB 登记）
@@ -892,7 +1042,7 @@ func _scatter_ground_cover() -> void:
 	rng.seed = 20261017
 	var keep_out: Array = [spawn_pos, extract_pos, extract2_pos, paid_pos, lever_ext_pos, tunnel_pos,
 			Vector3(120.0, 0.0, 154.0)]
-	keep_out.append_array(HDData.SPAWN_POINTS)
+	keep_out.append_array(spawn_points())
 	for spec in GROUND_COVER:
 		var ps := PBR.scene(str(spec["path"]))
 		if ps == null:
@@ -1188,12 +1338,12 @@ func _build_hall() -> void:
 			HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
 	# 吊顶障碍（top/bot 过滤）：地下玩家被挡在馆内、地表玩家/子弹从覆土上走不下来
 	_add_obstacle(cx, cz, HALL_HX, HALL_HZ,
-			HALL_FLOOR_Y + HALL_H + 0.3, HALL_FLOOR_Y + HALL_H)
+			HALL_FLOOR_Y + HALL_H + 0.3, HALL_FLOOR_Y + HALL_H, true)
 	# -Z 尽端挡弹墙（整面，靶道最深 22m + 缓冲；底部落在地坪上）
 	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz - HALL_HZ + HALL_TRAP_T * 0.5,
 			HALL_HX * 2.0, HALL_H, HALL_TRAP_T, mat_trap)
 	_add_obstacle(cx, cz - HALL_HZ + HALL_TRAP_T * 0.5, HALL_HX, HALL_TRAP_T * 0.5,
-			HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3)
+			HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
 	# +Z 墙（射击线后方）：中央门洞 x∈[116,124] 接地下连廊（坡道从入口房
 	# 下行到此）——2026-10 靶馆入地，门洞恢复；两段墙各 18m
 	var seg := (HALL_HX * 2.0 - 8.0) * 0.5
@@ -1202,14 +1352,14 @@ func _build_hall() -> void:
 		_hall_box(wx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
 				seg, HALL_H, HALL_WALL_T, mat_concrete)
 		_add_obstacle(wx, cz + HALL_HZ - HALL_WALL_T * 0.5, seg * 0.5,
-				HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3)
+				HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
 	# 西墙 / 东墙
 	for side in [-1.0, 1.0]:
 		var wz := cz
 		_hall_box(cx + side * (HALL_HX - HALL_WALL_T * 0.5), HALL_FLOOR_Y + HALL_H * 0.5,
 				wz, HALL_WALL_T, HALL_H, HALL_HZ * 2.0, mat_concrete)
 		_add_obstacle(cx + side * (HALL_HX - HALL_WALL_T * 0.5), wz,
-				HALL_WALL_T * 0.5, HALL_HZ, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3)
+				HALL_WALL_T * 0.5, HALL_HZ, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
 
 	# 顶部成排发光灯板（3 排 ×5 列）+ 3 盏暖白点光（室内人工照明）
 	var lamp_mat := StandardMaterial3D.new()
@@ -1230,13 +1380,14 @@ func _build_hall() -> void:
 		l.omni_range = 24.0
 		l.position = lp
 		add_child(l)
+		l.set_meta("keep_map", true)
 
 	# 射击位隔断墙 ×3（射击线两侧分道 + 西端封头），下实混凝土 1.2m 高（底部落在地坪上）
 	for dx in [-3.0, -1.0, 1.0]:
 		var dxz: float = cx + dx
 		_hall_box(dxz, HALL_FLOOR_Y + 0.6, cz + HALL_FIRE_DZ, 0.12, 1.2, 6.0, mat_concrete)
 		_add_obstacle(dxz, cz + HALL_FIRE_DZ, 0.1, 3.0, HALL_FLOOR_Y + 1.2,
-				HALL_FLOOR_Y - 0.1)
+				HALL_FLOOR_Y - 0.1, true)
 
 	# 射击线黄黑警示条（双色交替 BoxMesh 拼一条横带，铺在地坪上方 2cm 防共面闪烁）
 	var hy := HALL_FLOOR_Y + 0.02
@@ -1282,24 +1433,24 @@ func _build_entrance() -> void:
 	_hall_box(120.0, 0.06 - 0.15, 159.0, 16.0, 0.3, 4.0, mat)
 	# 房顶（含坡道段上方——坡道在房体内部下行，顶板包死防坠）
 	_hall_box(120.0, top_y + 0.25, 154.0, 16.0, 0.5, 14.0, mat)
-	_add_obstacle(120.0, 154.0, 8.0, 7.0, top_y + 0.5, top_y)
+	_add_obstacle(120.0, 154.0, 8.0, 7.0, top_y + 0.5, top_y, true)
 	# 北墙（门洞 x∈[117,123] 朝大道）两段 + 门楣
 	for side in [-1.0, 1.0]:
 		var nx: float = 120.0 + side * (5.0 + 3.0)
 		_hall_box(nx, 0.06 + wall_h * 0.5, 161.0, 5.0, wall_h, 0.5, mat)
-		_add_obstacle(nx, 161.0, 2.5, 0.25, top_y, -0.1)
+		_add_obstacle(nx, 161.0, 2.5, 0.25, top_y, -0.1, true)
 	_hall_box(120.0, top_y - 0.35, 161.0, 6.0, 0.7, 0.5, mat)
 	# 南墙（坡道开洞 x∈[116,124] 之上两段，墙脚落在坡道侧墙上沿）
 	for side in [-1.0, 1.0]:
 		var sx: float = 120.0 + side * 6.0
 		_hall_box(sx, 0.06 + wall_h * 0.5, 147.0, 4.0, wall_h, 0.5, mat)
-		_add_obstacle(sx, 147.0, 2.0, 0.25, top_y, -0.1)
+		_add_obstacle(sx, 147.0, 2.0, 0.25, top_y, -0.1, true)
 	_hall_box(120.0, top_y - 0.35, 147.0, 8.0, 0.7, 0.5, mat)
 	# 西墙 / 东墙
 	for side in [-1.0, 1.0]:
 		var wx: float = 120.0 + side * 8.0
 		_hall_box(wx, 0.06 + wall_h * 0.5, 154.0, 0.5, wall_h, 14.0, mat)
-		_add_obstacle(wx, 154.0, 0.25, 7.0, top_y, -0.1)
+		_add_obstacle(wx, 154.0, 0.25, 7.0, top_y, -0.1, true)
 	# 阶梯坡道（10 级踏步，每级 1m 深 × 0.7m 高——与 ground_height 坡道
 	# 线性（落差 7.0/10m）对齐；踏步体从坡底 -7.1 实心填到各级踏面）
 	for k in 10:
@@ -1314,14 +1465,14 @@ func _build_entrance() -> void:
 	for side in [-1.0, 1.0]:
 		var rx: float = 120.0 + side * 4.25
 		_hall_box(rx, -3.52, 152.0, 0.5, 7.16, 10.0, mat)
-		_add_obstacle(rx, 152.0, 0.25, 5.0, 0.06, -7.1)
+		_add_obstacle(rx, 152.0, 0.25, 5.0, 0.06, -7.1, true)
 	# 地下连廊（坡道底→馆门洞）：两侧墙 + 顶板
 	for side in [-1.0, 1.0]:
 		var tx: float = 120.0 + side * 4.25
 		_hall_box(tx, -4.2, 145.0, 0.5, 5.66, 4.0, mat)
-		_add_obstacle(tx, 145.0, 0.25, 2.0, -1.44, -7.1)
+		_add_obstacle(tx, 145.0, 0.25, 2.0, -1.44, -7.1, true)
 	_hall_box(120.0, -1.69, 145.0, 8.0, 0.5, 4.0, mat)
-	_add_obstacle(120.0, 145.0, 4.0, 2.0, -1.44, -1.94)
+	_add_obstacle(120.0, 145.0, 4.0, 2.0, -1.44, -1.94, true)
 	# 入口房内照明 + 坡道中段照明 + 门头绿信标（东南角地标）
 	var hl := OmniLight3D.new()
 	hl.light_color = Color(1.0, 0.96, 0.88)
@@ -1329,12 +1480,14 @@ func _build_entrance() -> void:
 	hl.omni_range = 12.0
 	hl.position = Vector3(120.0, 2.8, 154.0)
 	add_child(hl)
+	hl.set_meta("keep_map", true)
 	var rl := OmniLight3D.new()
 	rl.light_color = Color(0.95, 0.93, 0.85)
 	rl.light_energy = 0.9
 	rl.omni_range = 14.0
 	rl.position = Vector3(120.0, -1.2, 152.0)
 	add_child(rl)
+	rl.set_meta("keep_map", true)
 	var beacon_mat := StandardMaterial3D.new()
 	beacon_mat.albedo_color = Color(0.08, 0.28, 0.13)
 	beacon_mat.emission_enabled = true
@@ -1343,7 +1496,8 @@ func _build_entrance() -> void:
 	_hall_box(120.0, top_y - 0.1, 160.7, 4.0, 0.2, 0.2, beacon_mat)
 
 
-## 靶馆构件盒体（纯视觉，不登记 obstacles——由调用方按需登记）
+## 靶馆构件盒体（纯视觉，不登记 obstacles——由调用方按需登记）；馆体/入口房
+## 两图同坐标共享（keep_map：set_map 换图保留）
 func _hall_box(x: float, y: float, z: float, w: float, h: float, d: float,
 		mat: StandardMaterial3D) -> void:
 	var mi := MeshInstance3D.new()
@@ -1353,6 +1507,7 @@ func _hall_box(x: float, y: float, z: float, w: float, h: float, d: float,
 	mi.mesh = bm
 	mi.position = Vector3(x, y, z)
 	add_child(mi)
+	mi.set_meta("keep_map", true)
 
 
 # ================= 射线 =================

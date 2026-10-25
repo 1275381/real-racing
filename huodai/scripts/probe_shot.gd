@@ -613,6 +613,122 @@ func _initialize() -> void:
 	shot("res://out/shot_dam_new4.png")
 	main.player.dead = false
 
+	# ---- 第二张图「航天基地」切换五连拍（2026-10）：切图 → 俯视全景 + 代表区域
+	#      特写×3（火箭灵魂地标/核心区五室/工业带）+ 切回 dam 一张 sanity。
+	#      换图链与 main._start_mission 同款：world.set_map + locks/loot/soldiers 复位
+	#      （同一 world 实例原地重建）；机位协议照 dam 段冻结摆拍（dead=true 冻
+	#      玩家 update、cam 手动定格、player.pos 挪 mid 区熄红罩——space 的 center/
+	#      dam 分区=核心区+发射坪/工业带+中控楼，站位都在 mid）。
+	main._raid_live = false   # 摆拍换图不算放弃行动（不丢装备）
+	main.world.set_map("space")
+	main.locks.apply_map("space")
+	main.loot.rebuild_map()
+	main.soldiers.rebuild()
+	await frames(30)
+	check("切图 space 挂载（航天整图在 world 下）",
+		main.world.map_id == "space" and main.world.space_map != null
+			and main.world.space_map.get_parent() == main.world,
+		"map=%s" % main.world.map_id)
+
+	# shot_space_overview：西北高机位 (-120,62,-30) 朝东南瞄 (0,10,80)——
+	# 核心区围墙院居中、工业带右侧、正南火箭（61m 白箭体）中远景入画、
+	# 北路/中控楼近景；yaw=atan2(120,110)=0.830、pitch=atan2(-52,162.8)=-0.309
+	main.player.enter(Vector3(-120.0, 0.0, -30.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(-120.0, 62.0, -30.0)
+	main.player.cam.rotation = Vector3(-0.309, 0.830 + PI, 0)
+	main.player.cam.fov = 55.0
+	var hud_sp: bool = main.hud.visible
+	main.hud.visible = false
+	var holder_sp := {}
+	for slot_v in main.guns._guns:
+		var g_sp: Dictionary = main.guns._guns[slot_v]
+		holder_sp[slot_v] = g_sp["holder"].visible
+		g_sp["holder"].visible = false
+	main.player.pos = Vector3(0.0, 0.0, 58.0)
+	await frames(8)
+	shot("res://out/shot_space_overview.png")
+	main.player.dead = false
+	main.player.cam.fov = main.player.BASE_FOV
+	main.hud.visible = hud_sp
+	for slot_v in holder_sp:
+		main.guns._guns[slot_v]["holder"].visible = holder_sp[slot_v]
+
+	# shot_space_1：火箭灵魂地标特写——南路 (0,58) 朝正南仰看发射坪：
+	# 火箭全高（发射座+白箭体+锥头+勤务塔摆杆）+ 发射坪导流槽前景
+	main.player.enter(Vector3(0.0, 0.0, 58.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(0.0, 1.55, 58.0)
+	main.player.cam.rotation = Vector3(0.538, PI, 0)
+	main.player.pos = Vector3(0.0, 0.0, 58.0)
+	await frames(8)
+	shot("res://out/shot_space_1.png")
+	main.player.dead = false
+
+	# shot_space_2：核心区五室——南路 (0,50) 朝正北看围墙南门+中心花园+
+	# 总裁室四层塔（左右浮力室/黑室山墙）
+	main.player.enter(Vector3(0.0, 0.0, 50.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(0.0, 1.55, 50.0)
+	main.player.cam.rotation = Vector3(0.128, PI + PI, 0)
+	main.player.pos = Vector3(0.0, 0.0, 50.0)
+	await frames(8)
+	shot("res://out/shot_space_2.png")
+	main.player.dead = false
+
+	# shot_space_3：东侧工业带——东路 (48,-30) 朝东南瞄总装主厂房西立面
+	# （双卷帘门+monitor 屋面+吊装跨），打印室/管廊入画
+	main.player.enter(Vector3(48.0, 0.0, -30.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(48.0, 1.55, -30.0)
+	main.player.cam.rotation = Vector3(0.183, 1.796 + PI, 0)
+	main.player.pos = Vector3(48.0, 0.0, -30.0)
+	await frames(8)
+	shot("res://out/shot_space_3.png")
+	main.player.dead = false
+
+	# shot_space_4：北部控制点——北路 (0,-104) 朝正南看中控楼（三层窗带+
+	# 楼顶天线阵）+ 中控桥跨水道（守桥人对枪点）
+	main.player.enter(Vector3(0.0, 0.0, -104.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(0.0, 1.55, -104.0)
+	main.player.cam.rotation = Vector3(0.146, PI, 0)
+	main.player.pos = Vector3(0.0, 0.0, -104.0)
+	await frames(8)
+	shot("res://out/shot_space_4.png")
+	main.player.dead = false
+
+	# 切回 dam sanity：完整复位链走一遍再拍一张坝全景（与 shot_dam_overview 同机位）
+	main.world.set_map("dam")
+	main.locks.apply_map("dam")
+	main.loot.rebuild_map()
+	main.soldiers.rebuild()
+	await frames(20)
+	check("切回 dam 往返（坝三件重挂+锁房三间）",
+		main.world.map_id == "dam" and main.world.dam != null
+			and main.world.dam_base != null and main.world.dam_zones != null
+			and main.world.space_map == null and main.locks._states.size() == 3)
+	main.player.enter(Vector3(-96.0, 0.0, 116.0))
+	main.player.dead = true
+	main.player.cam.position = Vector3(-96.0, 58.0, 116.0)
+	main.player.cam.rotation = Vector3(-0.2667, 2.5899 + PI, 0)
+	main.player.cam.fov = 55.0
+	var hud_bd: bool = main.hud.visible
+	main.hud.visible = false
+	var holder_bd := {}
+	for slot_v in main.guns._guns:
+		var g_bd: Dictionary = main.guns._guns[slot_v]
+		holder_bd[slot_v] = g_bd["holder"].visible
+		g_bd["holder"].visible = false
+	main.player.pos = Vector3(90.0, 0.0, -30.0)
+	await frames(8)
+	shot("res://out/shot_space_back_dam.png")
+	main.player.dead = false
+	main.player.cam.fov = main.player.BASE_FOV
+	main.hud.visible = hud_bd
+	for slot_v in holder_bd:
+		main.guns._guns[slot_v]["holder"].visible = holder_bd[slot_v]
+
 	# 摆拍局不是真实对局：先置「已结算」再转靶场——2026-10 起局内转靶场 = 放弃
 	# 行动视同阵亡（丢主副武器），不置位会把 rifle 丢掉、主槽退成侦察手枪
 	# （下文「两发后余弹 28」读到手枪 12 发匣 → ammo=10 的根因）
