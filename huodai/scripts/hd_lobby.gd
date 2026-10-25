@@ -2030,49 +2030,6 @@ func _render_market(pg: VBoxContainer) -> void:
 	kbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	kbtn.pressed.connect(_cycle_ammo_kind_for.bind(ammo_id))
 	kind_row.add_child(kbtn)
-	# 投掷物三钮（阶段 D）：鼠标点击购件（库存制，满员/没钱提示走 show_hint）
-	var trow2 := HBoxContainer.new()
-	trow2.add_theme_constant_override("separation", 6)
-	trow2.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	av.add_child(trow2)
-	for tk in ["frag", "smoke", "flash"]:
-		var td: Dictionary = HDData.THROWABLES[tk]
-		var tb := _mk_btn("%s ₵%s · %d/%d（局内 %s）" % [str(td["name"]), _fmt(_to_int(td["price"])),
-				_stash.throwables_of(tk), _to_int(td["max"]),
-				str(HDData.THROW_KEYS[tk]).trim_prefix("KEY_")], 12)
-		_style_btn(tb, false, COL_OK if _stash.throwables_of(tk) > 0 else _dim(0.5), 8)
-		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		var kind0 := str(tk)
-		tb.pressed.connect(func():
-			if _stash.buy_throwable(kind0):
-				show_hint("已购 %s ×1 —— 局内按 %s 投掷" % [str(HDData.THROWABLES[kind0]["name"]),
-						str(HDData.THROW_KEYS[kind0]).trim_prefix("KEY_")])
-			else:
-				var td2: Dictionary = HDData.THROWABLES[kind0]
-				show_hint("买不了：%s（满 %d 件或现金不足 ₵%s）" % [str(td2["name"]),
-						_to_int(td2["max"]), _fmt(_to_int(td2["price"]))]))
-		trow2.add_child(tb)
-	# 钥匙卡三钮（2026-10-24 用户定案「钥匙卡需要购买」）：买入入库存，
-	# 开局自动放进背包（带入即风险）；门边提示同步指路
-	var krow := HBoxContainer.new()
-	krow.add_theme_constant_override("separation", 6)
-	krow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	av.add_child(krow)
-	for ld in HDData.LOCKS:
-		var lid := str(ld["id"])
-		var kb := _mk_btn("%s ₵%s · 持 %d/%d" % [str(ld["key"]), _fmt(HDData.KEY_PRICE),
-				_stash.keycards_of(lid), HDData.KEY_STOCK_MAX], 12)
-		_style_btn(kb, false, COL_ACCENT if _stash.keycards_of(lid) > 0 else _dim(0.5), 8)
-		kb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		kb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		kb.pressed.connect(func():
-			if _stash.buy_keycard(lid):
-				show_hint("已购 %s —— 下局出发自动携带" % str(ld["key"]))
-			else:
-				show_hint("买不了：%s（每种最多 %d 把或现金不足 ₵%s）" % [str(ld["key"]),
-						HDData.KEY_STOCK_MAX, _fmt(HDData.KEY_PRICE)]))
-		krow.add_child(kb)
 
 	# ⑤ 专属配件区（2026-10 M14 护木/扩容匣；2026-10-25 MK4 全自动枪管并入）：
 	# 按枪分组渲染（拥有该枪才显示购买意义）；行式布局同②瞄具区：已购置灰/未购「购买」
@@ -2121,6 +2078,53 @@ func _render_market(pg: VBoxContainer) -> void:
 				right.add_child(m5row)
 				mod_row_i += 1
 
+	# ⑥ 投掷物 · 钥匙卡区（2026-10-25 用户报告「钥匙卡没出现在交易行」——原埋在
+	# ③ 补弹面板底部 12px 小钮里不可发现；独立成区 + 字号放大 13，鼠标购买、
+	# 不占 ←/→ 导航域（MARKET_SECS 仍 5，键盘导航零变化）
+	right.add_child(_mk_sec_title(5, "⑥ 投掷物 · 钥匙卡（鼠标购买 · 局内 7/8/9 投掷）"))
+	# 投掷物三钮（阶段 D）：鼠标点击购件（库存制，满员/没钱提示走 show_hint）
+	var trow2 := HBoxContainer.new()
+	trow2.add_theme_constant_override("separation", 6)
+	trow2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right.add_child(trow2)
+	for tk in ["frag", "smoke", "flash"]:
+		var td: Dictionary = HDData.THROWABLES[tk]
+		var tb := _mk_btn("%s ₵%s · %d/%d（局内 %s）" % [str(td["name"]), _fmt(_to_int(td["price"])),
+				_stash.throwables_of(tk), _to_int(td["max"]),
+				str(HDData.THROW_KEYS[tk]).trim_prefix("KEY_")], 13)
+		_style_btn(tb, false, COL_OK if _stash.throwables_of(tk) > 0 else _dim(0.5), 8)
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var kind0 := str(tk)
+		tb.pressed.connect(func():
+			if _stash.buy_throwable(kind0):
+				show_hint("已购 %s ×1 —— 局内按 %s 投掷" % [str(HDData.THROWABLES[kind0]["name"]),
+						str(HDData.THROW_KEYS[kind0]).trim_prefix("KEY_")])
+			else:
+				var td2: Dictionary = HDData.THROWABLES[kind0]
+				show_hint("买不了：%s（满 %d 件或现金不足 ₵%s）" % [str(td2["name"]),
+						_to_int(td2["max"]), _fmt(_to_int(td2["price"]))]))
+		trow2.add_child(tb)
+	# 钥匙卡三钮（2026-10-24 用户定案「钥匙卡需要购买」）：买入入库存，
+	# 开局自动放进背包（带入即风险）；门边提示同步指路
+	var krow := HBoxContainer.new()
+	krow.add_theme_constant_override("separation", 6)
+	krow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right.add_child(krow)
+	for ld in HDData.LOCKS:
+		var lid := str(ld["id"])
+		var kb := _mk_btn("%s ₵%s · 持 %d/%d" % [str(ld["key"]), _fmt(HDData.KEY_PRICE),
+				_stash.keycards_of(lid), HDData.KEY_STOCK_MAX], 13)
+		_style_btn(kb, false, COL_ACCENT if _stash.keycards_of(lid) > 0 else _dim(0.5), 8)
+		kb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		kb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		kb.pressed.connect(func():
+			if _stash.buy_keycard(lid):
+				show_hint("已购 %s —— 下局出发自动携带" % str(ld["key"]))
+			else:
+				show_hint("买不了：%s（每种最多 %d 把或现金不足 ₵%s）" % [str(ld["key"]),
+						HDData.KEY_STOCK_MAX, _fmt(HDData.KEY_PRICE)]))
+		krow.add_child(kb)
 	# ④ 仓库·战利品条（原仓库页并入，底部通栏）：变卖链路=④段回车+钮双入口，零丢失
 	_render_warehouse_strip(pg)
 

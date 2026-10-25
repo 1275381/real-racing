@@ -178,6 +178,22 @@ func _run() -> void:
 	check("钥匙卡上限拦截（第 3 把拒购）", main.stash.keycards_of("armory") == 2
 		and main.stash.cash == kc0 - 3000)
 	main.stash.buy_keycard("archive")
+	# ⑥区可见性回归（用户报告「钥匙卡没出现在交易行」——曾经埋在③区底部小钮
+	# 不可发现）：交易行页面必须渲染出带「钥匙」字样的购买钮
+	main.lobby.show_lobby()
+	main.lobby.set_tab(2)
+	main.lobby._refresh_all()
+	var mkt_txt := ""
+	var ui_stack: Array = [main.lobby._pages[2]]   # 栈循环收按钮文案（递归 lambda 自引用是解析错）
+	while not ui_stack.is_empty():
+		var n0: Node = ui_stack.pop_back()
+		if n0 is Button:
+			mkt_txt += str((n0 as Button).text) + "|"
+		for c0 in n0.get_children():
+			ui_stack.push_back(c0)
+	check("交易行⑥区钥匙卡购买钮可见", mkt_txt.contains("军火库钥匙")
+		and mkt_txt.contains("军营钥匙") and mkt_txt.contains("破片雷"),
+		mkt_txt.substr(0, 60))
 	main.loot.reset_all()          # 清包再注入（不开真局——避免打乱下游经济夹具）
 	main._inject_keycards()
 	var kc_in_bag := 0
