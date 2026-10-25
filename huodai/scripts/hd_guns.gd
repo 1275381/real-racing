@@ -104,6 +104,12 @@ const RECOIL := {
 	# 600rpm 档：单发推力 5.45 轻弹 + 3.85kg 重枪体（比 k416 略沉）、连发
 	# 累增温和、水平漂移窄（前两发高精度是本枪卖点）
 	"an94": [0.19, 0.06, 0.09],
+	# sr25 7.62 半自动 DMR（2026-10 商店枪，群星赛季）：单发推力全枪册
+	# 最沉一档（7.62 NATO 重弹 + dmg 50 单发重击——比 m14 [0.30] 更沉，
+	# 仅次于狙击栓动）；半自动 tap 门单发结算、无连发累增（累增系数只在
+	# 按住连发时消费，auto=false 枪实际不触达）；水平漂移最窄同 m14
+	# （DMR 精度定位，重枪体 + 浮置护木吸振）
+	"sr25": [0.32, 0.10, 0.06],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1053,7 +1059,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
 	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
-			or gun_id == "k416" or gun_id == "an94") and s_kind == "iron":
+			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25") \
+			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
 		# iron 后照门横条（0.05×0.022 暗块悬浮轨上、无自发光渲染成黑板）
@@ -1070,7 +1077,18 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# an94 同例（2026-10 商店枪）：制退器后准星座柱形准星（双护耳）+
 		# 回转式星形觇孔表尺（五角盘 5 觇孔）为考证建模件（_ar_an94 ③④，
 		# 本枪最强识别件），叠 iron 兜底片会悬浮壳顶与星形表尺叠影
+		# sr25 同例（2026-10 商店枪）：护木前端折叠立式准星 + 机匣尾轨上
+		# 折叠觇孔照门为考证建模件（_ar_sr25 ④，ref_04 特写），叠 iron
+		# 兜底片会与真实照门叠影
 		pass
+	elif gun_id == "sr25":
+		# sr25 自带 2.5-8 倍瞄准镜 + 右侧 45° 侧瞄红点（2026-10 判图返工
+		# 补件，_ar_sr25 ⑪ 特征11，ref_01 瞄准镜/遮光罩/侧瞄具标注）——
+		# 镜体已在枪身建模，装镜不再叠 _scope_visual 镜体（自带镜先例=
+		# sniper 密位镜，叠镜会双镜重影）；仅热成像照 sniper 先例在自带镜
+		# 后方加挂热成像单元（目镜后 z 0.30，让开镜体/骑缓冲管上方）
+		if s_kind == "thermal":
+			_scope_visual(root, "thermal", 0.083, 0.30, -0.48)
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
 	return root
@@ -1552,6 +1570,10 @@ const HOLD_DELTA := {
 	# an94 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_an94 握把顶锚
 	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
 	"an94": Vector3(0, 0.008, -0.0768),
+	# sr25 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_sr25 握把顶锚
+	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	# （AR 式握把与 k416/an94 同锚）
+	"sr25": Vector3(0, 0.008, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2595,7 +2617,7 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
@@ -2607,6 +2629,9 @@ const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94"]
 # an94（2026-10 商店枪 AN-94 突击步枪）：S12 微光赛季新枪并入步枪册——几何
 # 体在 hd_gun_ar.gd _ar_an94（HDGunLib 高模件，大型双室制退器 + 回转星形
 # 觇孔表尺 + 右倾 AK-74 弧匣 + 侧折骨架托；超点射机制见 guns.cd_profile）
+# sr25（2026-10 商店枪 SR25 射手步枪）：群星赛季新枪并入步枪册——几何体在
+# hd_gun_ar.gd _ar_sr25（HDGunLib 高模件，KAC 浮置肋条护木 + 大直径战术
+# 消音器 + 伸缩精准枪托；半自动 tap 门见 guns.gd auto=false）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2697,6 +2722,15 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 同 m14 口径用枪身局部原值）
 			return {"pos": Vector3(0.010, -0.086, -0.124),
 					"size": Vector3(0.048, 0.18, 0.076), "show": false}
+		"sr25":
+			# 特征⑦ 20 发 7.62 直-微弧弹匣（平直略带弧度、侧面加强筋×3）：
+			# 真匣是枪身建模件（mag_sr25 独立命名节点 + curved_mag 三段 4°
+			# 微弧 + 横筋×3），动画匣隐（照 k416「匣形由枪身件表达」先例）；
+			# pos=换弹手锚（枪身局部匣中段 (0,-0.1255,-0.149)+Δ(0,0.008,
+			# -0.0768) 后 ×0.62 ≈ (0,-0.073,-0.138)）、size=匣外形（掉匣替身
+			# 缩放基准，同 m14/k416 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.073, -0.138),
+					"size": Vector3(0.048, 0.155, 0.078), "show": false}
 	return {}
 
 
@@ -2734,6 +2768,12 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# z -0.558（制退器后准星座柱）——柱形准星 + 星形转盘觇孔均为考证
 			# 建模件，iron 不叠兜底机瞄片，见 _finish_gun
 			return Vector3(0.068, -0.06, -0.558)
+		"sr25":
+			# (my, mz, fz) = 镜座安装面高 0.083（全长顶轨楔齿尖，k416 同值）/
+			# 镜体中心 z -0.06（机匣中段）/ 前准星 z -0.48（护木前端折叠立式
+			# 准星）——折叠准星 + 尾部轨上折叠觇孔照门均为建模件（ref_04 特
+			# 写），iron 不叠兜底机瞄片，见 _finish_gun
+			return Vector3(0.083, -0.06, -0.48)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 
