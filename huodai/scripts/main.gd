@@ -960,6 +960,17 @@ func _compass_marks() -> Array:
 		marks.append({"bearing": _bearing(lp.x - player.pos.x, lp.z - player.pos.z),
 			"label": "电闸 %dm" % int(Vector2(lp.x - player.pos.x, lp.z - player.pos.z).length()),
 			"color": Color(0.3, 0.7, 1.0)})
+	# 地上钥匙（2026-10-25 用户定案「钥匙地点也要在方向标显示」）：本局刷出的
+	# 钥匙落地件实时标向（捡起即从 _ground 消失 → 标记自动消失，无需另存状态；
+	# 钥匙落地件只存在于局内，大厅期间 _ground 为空、零开销）
+	for g0 in loot._ground:
+		var gi: Dictionary = g0["item"]
+		if str(gi.get("key", "")) == "":
+			continue
+		var gp: Vector3 = g0["pos"]
+		marks.append({"bearing": _bearing(gp.x - player.pos.x, gp.z - player.pos.z),
+			"label": "钥匙 %dm" % int(Vector2(gp.x - player.pos.x, gp.z - player.pos.z).length()),
+			"color": Color(0.95, 0.85, 0.4)})
 	# 首局引导第 1 步：最近一个未搜容器
 	if _tut == 0:
 		var bd := INF

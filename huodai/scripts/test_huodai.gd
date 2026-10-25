@@ -167,6 +167,33 @@ func _run() -> void:
 	main.locks.update(0.016, Vector3(0.0, 0.0, 80.0), false)   # 远离三扇门的空地
 	check("锁房无门沉默（不劫持容器搜索提示）", lk_emits[0] == 0)
 	main.locks.prompt.disconnect(lk_spy)
+	# 钥匙落点罗盘标记（2026-10-25 用户定案「钥匙地点也要在方向标显示」）：
+	# 地上钥匙实时标向（金色「钥匙 Nm」），捡起（离开 _ground）标记即消失
+	for g0 in main.loot._ground.duplicate():   # 清残留地面件，摆一把已知位置钥匙（不开局防打乱夹具）
+		(g0["node"] as Node3D).queue_free()
+	main.loot._ground.clear()
+	main.loot._ground_i = -1
+	main.player.enter(Vector3(-24.0, 0.0, -36.0))
+	main.loot._spawn_ground({"uid": "key_mark_t", "name": "军火库钥匙",
+		"icon": "钥匙", "rarity": 3, "value": 800, "key": "armory"},
+		Vector3(40.0, 0.0, 40.0))
+	var marks0: Array = main._compass_marks()
+	var key_mark := {}
+	for m0 in marks0:
+		if str(m0.get("label", "")).begins_with("钥匙"):
+			key_mark = m0
+	check("地上钥匙有罗盘标记（金色·带距离）", not key_mark.is_empty()
+		and str(key_mark.get("label", "")).contains("m"),
+		str(key_mark))
+	for g1 in main.loot._ground.duplicate():   # 捡起（清地）→ 标记消失
+		(g1["node"] as Node3D).queue_free()
+	main.loot._ground.clear()
+	var marks1: Array = main._compass_marks()
+	var key_mark_gone := true
+	for m1 in marks1:
+		if str(m1.get("label", "")).begins_with("钥匙"):
+			key_mark_gone = false
+	check("捡起后钥匙标记消失", key_mark_gone)
 	# 钥匙卡购买（2026-10-24 用户定案）：买入入库存（每种上限 2）→ 开局注入背包
 	main.stash.cash = 99999
 	var kc0: int = main.stash.cash
