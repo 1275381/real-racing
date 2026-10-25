@@ -1884,6 +1884,61 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("无 trigger_delay 枪零延迟（rifle 按下当帧出弹）", rifle_instant >= 1,
 		"shots=%d" % rifle_instant)
+	# MK4 三连发（2026-10-25 用户定案）：点一下=一个三连发（松手打完为止），
+	# 按住不重复；「全自动枪管」配件（MK4_MODS.autobarrel，M14 配件同链）解锁全自动
+	main.stash.m14_mods.erase("autobarrel")   # 夹具：确保未购（幂等）
+	main._sync_m14_mods_env()
+	main._start_mission({"primary": "mk4", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)   # 点一下（单帧按压）
+	Input.action_release("hd_fire")
+	for i in 24:
+		main.guns.update(1.0 / 60.0)   # 松手后点射继续打完
+	var mk4_tap: int = 999 - main.guns.ammo
+	check("MK4 点一下恰三连发（松手打完 3 发）", mk4_tap == 3, "shots=%d" % mk4_tap)
+	main.guns.update(1.0 / 60.0)
+	main.guns.ammo = 999
+	Input.action_press("hd_fire")
+	for i in 60:   # 持续按住：首发点射 3 发后不再重复（需新边沿）
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var mk4_hold: int = 999 - main.guns.ammo
+	check("MK4 按住不重复（无枪管仍 3 发）", mk4_hold == 3, "shots=%d" % mk4_hold)
+	main.guns.update(1.0 / 60.0)
+	# 全自动枪管解锁：购入后 provider 生效，按住连发（cd 0.063≈3.8 帧/发）
+	main.stash.cash = 99999
+	check("买 MK4 全自动枪管（₵1800，M14 配件同链）", main.stash.buy_m14_mod("autobarrel"))
+	main._sync_m14_mods_env()
+	main._start_mission({"primary": "mk4", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 60:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var mk4_auto: int = 999 - main.guns.ammo
+	check("全自动枪管：按住连发（60 帧 ≈16 发 ±2.5）", absf(mk4_auto - 15.9) <= 2.5,
+		"shots=%d" % mk4_auto)
+	main.guns.update(1.0 / 60.0)
+	# 视觉件：配件环境变量 → 重型枪管+鸟笼在位；摘除 → 不在。
+	# mk4 有写实 GLB（BL_GUNS）——强制 HD_NO_BL 走程序化枪身验配件件
+	OS.set_environment("HD_NO_BL", "1")
+	var mk4_r1: Node3D = HDGuns._smg_build("mk4")
+	check("全自动枪管视觉件在位（mk4_autobarrel 节点，程序化路径）",
+		mk4_r1.find_child("mk4_autobarrel", true, false) != null)
+	mk4_r1.free()
+	OS.set_environment("HD_M14_MODS", "")
+	var mk4_r2: Node3D = HDGuns._smg_build("mk4")
+	check("未购无枪管件（环境变量摘除后不在）",
+		mk4_r2.find_child("mk4_autobarrel", true, false) == null)
+	mk4_r2.free()
+	OS.set_environment("HD_NO_BL", "")
+	main.stash.m14_mods.erase("autobarrel")   # 夹具复位（后续按未购口径）
+	main._sync_m14_mods_env()
 	# an94 超点射三连测（2026-10 商店枪·用户定案机制，cd_profile 射速档案
 	# 首个消费枪）：①按压内首对 1800rpm（0.0333s=2 帧）+ 之后稳态 600rpm
 	# （0.1s=6 帧）——FIRE_GATE 残差容差下 60fps 帧量化对表不漂，5s 按压实测

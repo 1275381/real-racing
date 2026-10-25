@@ -149,6 +149,8 @@ var _press_shots := 0      # 本次扳机按压内已发数（cd_profile 射速�
                            # 新的一对」；不带档案的枪不消费此计数，零行为变化）
 var _trig_delay := 0.0     # 扳机蓄力剩余秒（表 trigger_delay>0 的枪——M250 弹链
                            # 机枪 0.5s：按下先蓄力再出第一发，松开/切枪复位重蓄）
+var _burst_left := 0       # 三连发剩余发数（表 burst>0 的枪——MK4：点一下边沿
+                           # 起一个点射，打完为止；换弹/没弹/切枪中止，按住不重复）
 
 
 func setup(player, world, audio, tracers) -> void:
@@ -175,6 +177,7 @@ func enter(loadout: Dictionary) -> void:
 	fire_cd = 0.0
 	_press_shots = 0   # 进场清零按压计数（cd_profile 射速档案档位）
 	_trig_delay = 0.0  # 进场清零扳机蓄力（trigger_delay）
+	_burst_left = 0    # 进场清零三连发计数（burst）
 	_ads = 0.0
 	_aiming = false
 	_reload_off = Vector3.ZERO
@@ -263,6 +266,21 @@ func update(dt: float) -> void:
 	var fire_tap := fire_pressed and not _fire_prev
 	_fire_prev = fire_pressed
 	var fire_ok := fire_pressed if bool(_g.get("auto", true)) else fire_tap
+	# 三连发（表 burst，2026-10-25 MK4 用户定案）：点一下边沿起一个 N 发点射，
+	# 打完为止（松手不打断——点射一旦扣出就完成）；按住不重复、点射中再点无效。
+	# 全自动解锁走配件（m14_mods_provider 注入 autobarrel——存储链与 M14 同源）
+	var burst_n := int(_g.get("burst", 0))
+	if burst_n > 0:
+		var mod_auto := str(cur_id) == "mk4" and m14_mods_provider != null \
+				and bool(m14_mods_provider.call("autobarrel"))
+		if mod_auto:
+			fire_ok = fire_pressed   # 全自动枪管：按住连发（burst 字段让位）
+		else:
+			fire_ok = false   # 三连发原厂：按住不连发（点射由内部计数驱动）
+			if fire_tap and _burst_left <= 0:
+				_burst_left = burst_n
+			if _burst_left > 0:
+				fire_ok = true
 	# 扳机蓄力（表 trigger_delay，2026-10-24 M250 用户定案 0.5s）：按下边沿起蓄，
 	# 蓄满前不出弹；全自动蓄力结束后连发节拍照旧（cd 路径零改动）。完成判据带
 	# FIRE_GATE 残差容差——浮点逐帧递减的尾差不算额外一帧延迟（射速门同套路）
@@ -399,6 +417,10 @@ func try_fire() -> void:
 	# 首发提前量原样保留（既有手感零变化）
 	ammo -= 1
 	_press_shots += 1
+	if _burst_left > 0:
+		_burst_left -= 1   # 三连发计数（没弹换弹会中止：下方清零）
+		if ammo <= 0:
+			_burst_left = 0
 	if _press_shots == 1 and not (_g.get("cd_profile", []) as Array).is_empty():
 		fire_cd = maxf(fire_cd, 0.0)
 	fire_cd += _cd_after_shot()
@@ -495,6 +517,7 @@ func start_reload() -> void:
 	var extra: float = 0.4 if (cur_id == "m14" and _m14_mod("extmag")) else 0.0
 	reloading = float(_g.get("reload", 1.5)) + extra
 	_press_shots = 0   # 换弹归零按压计数（cd_profile 档位回零——AN-94 超点射）
+	_burst_left = 0    # 换弹中止三连发点射（MK4：装填完要重新扣扳机）
 	if audio != null:
 		audio.play_reload()
 
@@ -753,6 +776,7 @@ func _equip(slot: String) -> void:
 	fire_cd = 0.0
 	_press_shots = 0   # 切枪归零按压计数（换枪再按又是新的一对超点射）
 	_trig_delay = 0.0  # 切枪放弃蓄力：新枪按下重新蓄（不继承旧枪进度）
+	_burst_left = 0    # 切枪中止点射（新枪按自己的节奏来）
 	_falling = false
 	_mag_landed = false
 	_hide_hand()
@@ -2059,6 +2083,20 @@ static func _smg_mk4() -> Node3D:
 			Vector3(90, 0, 0), 0.004, 4, dark, 4, 48)
 	GUN_LIB.torus_ring(root, polymer, 0.006, 0.062,
 			Vector3(0, 0.024, -0.238), Vector3(90, 0, 0))
+	# ⑤ 全自动枪管配件件（2026-10-25 MK4_MODS.autobarrel，环境变量与 M14 配件
+	#    同源）：重型长枪管（原枪管位加粗前伸）+ 鸟笼消焰器——命名节点供断言
+	if OS.get_environment("HD_M14_MODS").contains("autobarrel"):
+		var ab := Node3D.new()
+		ab.name = "mk4_autobarrel"
+		root.add_child(ab)
+		GUN_LIB.barrel(ab, dark, 0.012, 0.24, Vector3(0, 0.022, -0.60),
+				Vector3(90, 0, 0), 0, 10)
+		GUN_LIB.tube(ab, dark, 0.07, 0.026, Vector3(0, 0.022, -0.745),
+				Vector3(90, 0, 0), 0.003, 3, steel, 3, 10)
+		for si in 4:   # 鸟笼排气槽（亮钢短柱读「孔」）
+			GUN_LIB.barrel(ab, steel, 0.0135, 0.005,
+					Vector3(0.0, 0.022 + 0.006 * (1 if si % 2 == 0 else -1), -0.72 - 0.012 * float(si % 2)),
+					Vector3(90, 0, 0), 0, 4)
 	# ④ 前折叠准星（轨前：基座 + 护耳双柱 + 准星柱）
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.02, 0.012, 0.026),
 			Vector3(0, 0.074, -0.50), Vector3.ZERO, 0.001, 3)
