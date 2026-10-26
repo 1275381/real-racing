@@ -1079,16 +1079,14 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 本枪最强识别件），叠 iron 兜底片会悬浮壳顶与星形表尺叠影
 		# sr25 同例（2026-10 商店枪）：护木前端折叠立式准星 + 机匣尾轨上
 		# 折叠觇孔照门为考证建模件（_ar_sr25 ④，ref_04 特写），叠 iron
-		# 兜底片会与真实照门叠影
+		# 兜底片会与真实照门叠影（原厂不带瞄准镜——2026-10-26 用户定案，
+		# 改装镜走通用 else 路径）
 		pass
 	elif gun_id == "sr25":
-		# sr25 自带 2.5-8 倍瞄准镜 + 右侧 45° 侧瞄红点（2026-10 判图返工
-		# 补件，_ar_sr25 ⑪ 特征11，ref_01 瞄准镜/遮光罩/侧瞄具标注）——
-		# 镜体已在枪身建模，装镜不再叠 _scope_visual 镜体（自带镜先例=
-		# sniper 密位镜，叠镜会双镜重影）；仅热成像照 sniper 先例在自带镜
-		# 后方加挂热成像单元（目镜后 z 0.30，让开镜体/骑缓冲管上方）
-		if s_kind == "thermal":
-			_scope_visual(root, "thermal", 0.083, 0.30, -0.48)
+		# sr25 原厂不带瞄准镜（2026-10-26 用户定案——旧版自带 2.5-8 倍镜 +
+		# 45° 侧瞄已从 _ar_sr25 拆除）：改装镜走通用 else 路径照常上轨，
+		# 此分支仅保留折叠准星/照门为建模件、不叠 iron 兜底片的语义
+		pass
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
 	return root
