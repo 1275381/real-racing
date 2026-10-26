@@ -157,6 +157,7 @@ var _trig_delay := 0.0     # 扳机蓄力剩余秒（表 trigger_delay>0 的枪�
                            # 机枪 0.5s：按下先蓄力再出第一发，松开/切枪复位重蓄）
 var _burst_left := 0       # 三连发剩余发数（表 burst>0 的枪——MK4：点一下边沿
                            # 起一个点射，打完为止；换弹/没弹/切枪中止，按住不重复）
+var _burst_cd_ov := 0.0    # 配件覆写的轮内间隔秒（SR25 套件 burst_cd_to；0=无覆写）
 var _burst_gap := 0.0      # 轮间锁剩余秒（表 burst_gap：点射打完后的强制间隔——
                            # 三角洲 MK4 实测 ~100ms，锁内起不了新点射）
 
@@ -288,6 +289,9 @@ func update(dt: float) -> void:
 	var burst_n := int(_g.get("burst", 0))
 	if sr25_kit:
 		burst_n = int(Guns.SR25_MODS["fullauto"]["burst_to"])
+		_burst_cd_ov = float(Guns.SR25_MODS["fullauto"]["burst_cd_to"])
+	else:
+		_burst_cd_ov = 0.0
 	if _burst_gap > 0.0:
 		_burst_gap = maxf(0.0, _burst_gap - dt)
 	if burst_n > 0:
@@ -418,6 +422,8 @@ func _cd_after_shot() -> float:
 	if not prof.is_empty():
 		return float(prof[mini(_press_shots - 1, prof.size() - 1)])
 	if _burst_left > 0:
+		if _burst_cd_ov > 0.0:
+			return _burst_cd_ov   # 配件覆写轮内间隔（SR25 套件 1069rpm）
 		return float(_g.get("burst_cd", 0.05))   # 点射轮内间隔（缺省 1200rpm；三角洲 MK4 实测）
 	return float(_g.get("cd", 0.13))
 

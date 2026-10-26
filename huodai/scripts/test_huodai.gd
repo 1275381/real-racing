@@ -1932,15 +1932,28 @@ func _run() -> void:
 	check("装套件：弹匣自动 20→45", main.guns._mag_cap() == 45)
 	main.guns.ammo = 999
 	main.guns.update(1.0 / 60.0)
+	# 装套件后 1069rpm 三连发：扳机边沿起 3 发点射（轮内 0.0561s≈3.4 帧/发），
+	# MK4 机制同款——测单轮节拍：按压后 12 帧（0.2s）内恰 3 发
 	Input.action_press("hd_fire")
-	for i in 24:   # 装套件按住 0.4s：全自动连发（cd 0.1648≈9.9 帧/发 → ~5 发，
-	               # 其中每新边沿后 2 发为点射补发——连发+点射叠加≥4 即达意）
+	for i in 12:
 		main.guns.update(1.0 / 60.0)
+	var sr_burst3: int = 999 - main.guns.ammo
 	Input.action_release("hd_fire")
-	var sr_kit: int = 999 - main.guns.ammo
-	check("SR25 装套件按住 0.4s 连发 ≥4 发（auto+burst 叠加）", sr_kit >= 4,
-		"shots=%d" % sr_kit)
 	main.guns.update(1.0 / 60.0)
+	check("SR25 装套件：1069rpm 三连发（12 帧恰 3 发）", sr_burst3 == 3,
+		"shots=%d" % sr_burst3)
+	# 轮内节拍验证：0.0561s≈3.37 帧/发 → 6 帧（0.1s）内应已出 2 发
+	# （3 发全出要 ~0.112s=7 帧，12 帧窗口上一断言已锁总数=3）
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 6:
+		main.guns.update(1.0 / 60.0)
+	var sr_at6: int = 999 - main.guns.ammo
+	Input.action_release("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	check("SR25 套件轮内 1069rpm 节拍（6 帧内 2 发：0.056s×2）",
+		sr_at6 == 2, "f6=%d" % sr_at6)
 	main.stash.m14_mods.erase("fullauto")   # 夹具复位（后续按未购口径）
 	main._sync_m14_mods_env()
 	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）+ 扳机延迟
