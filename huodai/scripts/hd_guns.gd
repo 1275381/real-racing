@@ -158,6 +158,10 @@ var _trig_delay := 0.0     # 扳机蓄力剩余秒（表 trigger_delay>0 的枪�
 var _burst_left := 0       # 三连发剩余发数（表 burst>0 的枪——MK4：点一下边沿
                            # 起一个点射，打完为止；换弹/没弹/切枪中止，按住不重复）
 var _burst_cd_ov := 0.0    # 配件覆写的轮内间隔秒（SR25 套件 burst_cd_to；0=无覆写）
+var _kit_gap_ov := 0.0     # 配件覆写的轮间锁秒（SR25 套件 burst_gap_to；0=无覆写）
+var _kit_cd_ov := 0.0      # 配件覆写的全自动节拍秒（SR25 套件 cd_to；0=无覆写）
+var _kit_burst_mode := false  # SR25 套件开火模式（false=全自动缺省 / true=三连发，
+                              # B 键切换——2026-10-26 用户三次定案）
 var _burst_gap := 0.0      # 轮间锁剩余秒（表 burst_gap：点射打完后的强制间隔——
                            # 三角洲 MK4 实测 ~100ms，锁内起不了新点射）
 
@@ -287,20 +291,25 @@ func update(dt: float) -> void:
 	# 100ms 才能点下一轮——面板 800rpm 即含间隔的平均值）：锁内起不了新点射。
 	# 全自动解锁走配件（m14_mods_provider 注入 autobarrel——存储链与 M14 同源）
 	var burst_n := int(_g.get("burst", 0))
-	if sr25_kit:
+	if sr25_kit and _kit_burst_mode:
 		burst_n = int(Guns.SR25_MODS["fullauto"]["burst_to"])
 		_burst_cd_ov = float(Guns.SR25_MODS["fullauto"]["burst_cd_to"])
+		_kit_gap_ov = float(Guns.SR25_MODS["fullauto"]["burst_gap_to"])
 	else:
 		_burst_cd_ov = 0.0
+		_kit_gap_ov = 0.0
+	_kit_cd_ov = float(Guns.SR25_MODS["fullauto"]["cd_to"]) if sr25_kit else 0.0
 	if _burst_gap > 0.0:
 		_burst_gap = maxf(0.0, _burst_gap - dt)
 	if burst_n > 0:
 		var mod_auto := str(cur_id) == "mk4" and m14_mods_provider != null \
 				and bool(m14_mods_provider.call("autobarrel"))
 		if sr25_kit:
-			# SR25 套件：按住连发，且扳机每起新边沿补一个两发点射
-			# （auto 与 burst 叠加语义——连发节拍 + 边沿起 2 连发）
-			if fire_tap:
+			# SR25 套件三连发模式（B 切换）：MK4 式——边沿起三发、打完为止、
+			# 轮间锁内不起射；先压 fire_ok=false（auto 缺省真值会漏成按住
+			# 连发——MK4 改造同款坑）；全自动模式下本分支不进（burst_n=0）
+			fire_ok = false
+			if fire_tap and _burst_left <= 0 and _burst_gap <= 0.0:
 				_burst_left = burst_n
 			if _burst_left > 0:
 				fire_ok = true
@@ -425,6 +434,8 @@ func _cd_after_shot() -> float:
 		if _burst_cd_ov > 0.0:
 			return _burst_cd_ov   # 配件覆写轮内间隔（SR25 套件 1069rpm）
 		return float(_g.get("burst_cd", 0.05))   # 点射轮内间隔（缺省 1200rpm；三角洲 MK4 实测）
+	if _kit_cd_ov > 0.0:
+		return _kit_cd_ov   # SR25 套件全自动模式节拍覆写（cd_to=1069rpm）
 	return float(_g.get("cd", 0.13))
 
 
@@ -456,8 +467,9 @@ func try_fire() -> void:
 		_burst_left -= 1   # 三连发计数（没弹换弹会中止：下方清零）
 		if _burst_left <= 0:
 			# 点射打完 → 轮间锁（burst_gap，三角洲实测 ~100ms；cd 是轮内间隔
-			# 1200rpm=0.05s，两者不是一回事）
-			_burst_gap = float(_g.get("burst_gap", 0.0))
+			# 1200rpm=0.05s，两者不是一回事）；SR25 套件三连发模式走覆写值
+			_burst_gap = _kit_gap_ov if _kit_gap_ov > 0.0 \
+					else float(_g.get("burst_gap", 0.0))
 		if ammo <= 0:
 			_burst_left = 0
 	if _press_shots == 1 and not (_g.get("cd_profile", []) as Array).is_empty():
@@ -565,6 +577,16 @@ func start_reload() -> void:
 ## 当前枪弹匣容量：GUNS 表 mag 基准；M14 装 extmag 扩 30（2026-10 用户定案
 ## 「装特有的三十发弹匣」——解锁态由 main 注入 m14_mods_provider，探针裸
 ## 调时未注入 = 原弹容，行为不变）
+## SR25 套件 B 键切换开火模式：返回新模式（"auto"/"burst"），未装套件返回 ""
+func toggle_fire_mode() -> String:
+	if not (cur_id == "sr25" and _m14_mod("fullauto")):
+		return ""
+	_kit_burst_mode = not _kit_burst_mode
+	_burst_left = 0   # 切模式中止进行中的点射
+	_burst_gap = 0.0
+	return "burst" if _kit_burst_mode else "auto"
+
+
 func _mag_cap() -> int:
 	var cap := int(_g.get("mag", 12))
 	if cur_id == "m14" and _m14_mod("extmag"):
@@ -821,6 +843,7 @@ func _equip(slot: String) -> void:
 	_trig_delay = 0.0  # 切枪放弃蓄力：新枪按下重新蓄（不继承旧枪进度）
 	_burst_left = 0    # 切枪中止点射（新枪按自己的节奏来）
 	_burst_gap = 0.0   # 切枪清轮间锁
+	_kit_burst_mode = false   # 切枪回全自动缺省（别的枪没有模式态）
 	_falling = false
 	_mag_landed = false
 	_hide_hand()

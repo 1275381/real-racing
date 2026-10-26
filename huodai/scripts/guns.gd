@@ -160,12 +160,13 @@ const MK4_MODS := {
 ## 存储复用 stash.m14_mods 数组（id 全局唯一，buy/owns 链同源）；表字段约定：
 ## auto_to/burst_to/mag_to = 装上后的 auto/burst/mag 覆写值（hd_guns 消费）
 const SR25_MODS := {
-	# 2026-10-26 二次定案：装上后 1069rpm 射速 + MK4 式三连发（burst_to 2→3、
-	# burst_cd_to=60/1069≈0.0561 轮内三发间隔按 1069 换算）——MK4 的 burst 机制
-	# 复用（三发边沿起点射），差异只在节拍字段值
+	# 2026-10-26 三次定案（用户）：B 键切换开火模式——默认全自动（1069rpm 连发），
+	# 按 B 切 MK4 式三连发（轮内同 1069rpm + 轮间锁 0.1s），再按 B 切回全自动。
+	# 字段族：cd_to=全自动节拍覆写 / burst_to+burst_cd_to+burst_gap_to=三连发形态
 	"fullauto": {"name": "SR25 全自动套件", "price": 6800,
-		"desc": "快慢机改装 + 三连发机匣（1069rpm）+ 45 发专用长匣：解锁全自动 · 三连发模式 · 弹匣 20→45",
-		"auto_to": true, "burst_to": 3, "burst_cd_to": 0.0561, "mag_to": 45},
+		"desc": "快慢机改装（1069rpm·B 切换全自动/三连发）+ 45 发专用长匣：弹匣 20→45",
+		"auto_to": true, "cd_to": 0.0561, "burst_to": 3, "burst_cd_to": 0.0561,
+		"burst_gap_to": 0.1, "mag_to": 45},
 }
 
 

@@ -1151,6 +1151,14 @@ func _route_key(code: int) -> void:
 			if code == int(HDData.THROW_KEYS[tk]):
 				_throw_item(str(tk))
 				return
+	# 对局内：B 切换 SR25 全自动套件开火模式（2026-10-26 用户三次定案：
+	# 默认全自动，B→三连发，再 B→全自动；靶场也可切——练习模式切换）
+	if code == KEY_B and (mode == Mode.MISSION or mode == Mode.RANGE):
+		var fmode := guns.toggle_fire_mode()
+		if fmode != "":
+			hud.feed("SR25 开火模式：%s（1069rpm）" % ("三连发" if fmode == "burst" else "全自动"),
+					Color(0.95, 0.85, 0.4))
+			return
 	# 对局内：Esc 菜单
 	if code == KEY_ESCAPE:
 		paused = true

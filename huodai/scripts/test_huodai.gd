@@ -1930,30 +1930,52 @@ func _run() -> void:
 	main._start_mission({"primary": "sr25", "secondary": "pistol"})   # 重进场：cap/套件生效
 	await frames(8)
 	check("装套件：弹匣自动 20→45", main.guns._mag_cap() == 45)
+	# 三次定案（2026-10-26）：B 键切换开火模式——默认全自动（1069rpm 连发），
+	# B→MK4 式三连发（轮内同 1069rpm+轮间锁），再 B→全自动；靶场/实战都可用
 	main.guns.ammo = 999
 	main.guns.update(1.0 / 60.0)
-	# 装套件后 1069rpm 三连发：扳机边沿起 3 发点射（轮内 0.0561s≈3.4 帧/发），
-	# MK4 机制同款——测单轮节拍：按压后 12 帧（0.2s）内恰 3 发
+	check("套件默认全自动模式", not main.guns._kit_burst_mode)
 	Input.action_press("hd_fire")
+	for i in 30:   # 全自动 1069rpm（0.0561s≈3.37 帧/发）按住 0.5s ≈ 8 发
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var sr_auto: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("套件全自动：按住 0.5s ≈8 发（1069rpm）", sr_auto >= 7 and sr_auto <= 9,
+		"shots=%d" % sr_auto)
+	# B 切三连发：tap 边沿起 3 发、轮间锁内再点不起射
+	var fm: String = main.guns.toggle_fire_mode()
+	check("B 切换 → 三连发模式", fm == "burst" and main.guns._kit_burst_mode)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
 	for i in 12:
 		main.guns.update(1.0 / 60.0)
-	var sr_burst3: int = 999 - main.guns.ammo
-	Input.action_release("hd_fire")
+	var sr_b3: int = 999 - main.guns.ammo
+	check("三连发模式：点一下恰 3 发（1069rpm 轮内）", sr_b3 == 3, "shots=%d" % sr_b3)
+	main.guns._burst_gap = 0.1   # 模拟轮刚打完（锁窗口内）
+	Input.action_press("hd_fire")   # 锁内 tap
 	main.guns.update(1.0 / 60.0)
-	check("SR25 装套件：1069rpm 三连发（12 帧恰 3 发）", sr_burst3 == 3,
-		"shots=%d" % sr_burst3)
-	# 轮内节拍验证：0.0561s≈3.37 帧/发 → 6 帧（0.1s）内应已出 2 发
-	# （3 发全出要 ~0.112s=7 帧，12 帧窗口上一断言已锁总数=3）
+	Input.action_release("hd_fire")
+	for i in 12:
+		main.guns.update(1.0 / 60.0)
+	var sr_locked: int = 999 - main.guns.ammo - sr_b3
+	check("三连发轮间锁：锁内 tap 不起射", sr_locked == 0, "extra=%d" % sr_locked)
+	# 再 B 切回全自动：按住恢复连发
+	var fm2: String = main.guns.toggle_fire_mode()
+	check("再 B 切回全自动", fm2 == "auto" and not main.guns._kit_burst_mode)
 	main.guns.ammo = 999
 	main.guns.update(1.0 / 60.0)
 	Input.action_press("hd_fire")
-	for i in 6:
+	for i in 24:   # 0.4s × 1069rpm/60 ≈ 7.1 发
 		main.guns.update(1.0 / 60.0)
-	var sr_at6: int = 999 - main.guns.ammo
 	Input.action_release("hd_fire")
+	var sr_auto2: int = 999 - main.guns.ammo
 	main.guns.update(1.0 / 60.0)
-	check("SR25 套件轮内 1069rpm 节拍（6 帧内 2 发：0.056s×2）",
-		sr_at6 == 2, "f6=%d" % sr_at6)
+	check("切回全自动：按住连发恢复（0.4s ≈7 发）", sr_auto2 >= 6 and sr_auto2 <= 8,
+		"shots=%d" % sr_auto2)
 	main.stash.m14_mods.erase("fullauto")   # 夹具复位（后续按未购口径）
 	main._sync_m14_mods_env()
 	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）+ 扳机延迟
