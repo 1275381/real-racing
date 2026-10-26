@@ -2068,6 +2068,8 @@ func _render_market(pg: VBoxContainer) -> void:
 		mod_groups.append(["M14", Guns.M14_MODS])
 	if _stash.guns_owned.has("mk4"):
 		mod_groups.append(["MK4", Guns.MK4_MODS])
+	if _stash.guns_owned.has("sr25"):
+		mod_groups.append(["SR25", Guns.SR25_MODS])
 	if not mod_groups.is_empty():
 		right.add_child(_mk_sec_title(4, "⑤ 专属配件"))
 		var mod_row_i := 0

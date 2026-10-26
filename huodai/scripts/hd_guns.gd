@@ -274,19 +274,33 @@ func update(dt: float) -> void:
 		_trig_delay = 0.0  # 松开同时放弃蓄力：再按重新蓄满（M250 0.5s）
 	var fire_tap := fire_pressed and not _fire_prev
 	_fire_prev = fire_pressed
-	var fire_ok := fire_pressed if bool(_g.get("auto", true)) else fire_tap
+	# SR25 全自动套件（SR25_MODS.fullauto，2026-10-26 用户定案）：覆写 auto/burst
+	# ——装上后 auto=true 按住连发 + burst=2（扳机每起新边沿补一个两发点射）；
+	# 未装 = 原厂半自动（auto=false 走 tap 门，burst=0 无点射）
+	var sr25_kit := cur_id == "sr25" and _m14_mod("fullauto")
+	var auto_now := bool(_g.get("auto", true)) or (sr25_kit and bool(Guns.SR25_MODS["fullauto"]["auto_to"]))
+	var fire_ok := fire_pressed if auto_now else fire_tap
 	# 三连发（表 burst，2026-10-25 MK4 用户定案）：点一下边沿起一个 N 发点射，
 	# 打完为止（松手不打断——点射一旦扣出就完成）；按住不重复、点射中再点无效。
 	# 轮间锁（burst_gap，三角洲实测 0.1s：单轮内 ~1200rpm 0.05s 间隔、打完后约
 	# 100ms 才能点下一轮——面板 800rpm 即含间隔的平均值）：锁内起不了新点射。
 	# 全自动解锁走配件（m14_mods_provider 注入 autobarrel——存储链与 M14 同源）
 	var burst_n := int(_g.get("burst", 0))
+	if sr25_kit:
+		burst_n = int(Guns.SR25_MODS["fullauto"]["burst_to"])
 	if _burst_gap > 0.0:
 		_burst_gap = maxf(0.0, _burst_gap - dt)
 	if burst_n > 0:
 		var mod_auto := str(cur_id) == "mk4" and m14_mods_provider != null \
 				and bool(m14_mods_provider.call("autobarrel"))
-		if mod_auto:
+		if sr25_kit:
+			# SR25 套件：按住连发，且扳机每起新边沿补一个两发点射
+			# （auto 与 burst 叠加语义——连发节拍 + 边沿起 2 连发）
+			if fire_tap:
+				_burst_left = burst_n
+			if _burst_left > 0:
+				fire_ok = true
+		elif mod_auto:
 			fire_ok = fire_pressed   # 全自动枪管：按住连发（burst 字段让位）
 		else:
 			fire_ok = false   # 三连发原厂：按住不连发（点射由内部计数驱动）
@@ -549,6 +563,9 @@ func _mag_cap() -> int:
 	var cap := int(_g.get("mag", 12))
 	if cur_id == "m14" and _m14_mod("extmag"):
 		cap = 30
+	# SR25 全自动套件：弹匣自动换 45 发专用长匣（2026-10-26 用户定案）
+	if cur_id == "sr25" and _m14_mod("fullauto"):
+		cap = int(Guns.SR25_MODS["fullauto"]["mag_to"])
 	return cap
 
 

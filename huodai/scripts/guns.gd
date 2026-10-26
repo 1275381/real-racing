@@ -155,6 +155,16 @@ const MK4_MODS := {
 		"desc": "重型长枪管 + 鸟笼消焰器：解锁全自动（原厂三连发）"},
 }
 
+## SR25 专属配件（2026-10-26 用户定案「很贵的全自动套件」）：装上后解锁全自动
+## 且每次扣扳机一次射出两发（double tap 双位点射）、弹匣自动换 45 发专用长匣——
+## 存储复用 stash.m14_mods 数组（id 全局唯一，buy/owns 链同源）；表字段约定：
+## auto_to/burst_to/mag_to = 装上后的 auto/burst/mag 覆写值（hd_guns 消费）
+const SR25_MODS := {
+	"fullauto": {"name": "SR25 全自动套件", "price": 6800,
+		"desc": "快慢机改装 + 双位点射机匣 + 45 发专用长匣：解锁全自动 · 每扣一次扳机射出 2 发 · 弹匣 20→45",
+		"auto_to": true, "burst_to": 2, "mag_to": 45},
+}
+
 
 ## 大战场兵种配发枪械（不进枪械店）
 const BATTLE_GUNS := [

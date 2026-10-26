@@ -688,11 +688,13 @@ var m14_mods: Array = []              # 已购 M14 配件 id：["foregrip"]/["ex
 func buy_m14_mod(id: String) -> bool:
 	if m14_mods.has(id):
 		return true
-	# 校验放宽到两张专属配件表（2026-10-25 MK4 autobarrel 并入同链）：
+	# 校验放宽到三张专属配件表（2026-10-25 MK4 / 2026-10-26 SR25 并入同链）：
 	# 存储共用 m14_mods 数组（id 全局唯一）
 	var md: Dictionary = Guns.M14_MODS.get(id, {})
 	if md.is_empty():
 		md = Guns.MK4_MODS.get(id, {})
+	if md.is_empty():
+		md = Guns.SR25_MODS.get(id, {})
 	if md.is_empty():
 		return false
 	var price := maxi(0, _to_i(md.get("price", 0)))

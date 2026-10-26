@@ -1907,6 +1907,42 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("m14 全自动长程射速达表值 730rpm（原半自动 214）",
 		absf(m14_shots - 60.8) <= 2.2, "shots=%d/300帧（5s）" % m14_shots)
+	# SR25 全自动套件（2026-10-26 用户定案「很贵的全自动套件」）：未装=原厂
+	# 半自动；装上（₵6800）=按住全自动 + 扳机每起边沿补两发点射 + 弹匣 20→45
+	main.stash.m14_mods.erase("fullauto")   # 夹具：确保未购（幂等）
+	main._sync_m14_mods_env()
+	main._start_mission({"primary": "sr25", "secondary": "pistol"})
+	await frames(8)
+	check("SR25 原厂：半自动 20 发匣", not main.guns._g.get("auto", true)
+		and main.guns._mag_cap() == 20)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 30:   # 未装套件按住 0.5s：半自动只 1 发
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var sr_stock: int = 999 - main.guns.ammo
+	check("SR25 原厂按住 30 帧只 1 发（半自动）", sr_stock == 1, "shots=%d" % sr_stock)
+	main.guns.update(1.0 / 60.0)
+	main.stash.cash = 99999
+	check("购 SR25 全自动套件（₵6800，M14 配件同链）", main.stash.buy_m14_mod("fullauto"))
+	main._sync_m14_mods_env()
+	main._start_mission({"primary": "sr25", "secondary": "pistol"})   # 重进场：cap/套件生效
+	await frames(8)
+	check("装套件：弹匣自动 20→45", main.guns._mag_cap() == 45)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 24:   # 装套件按住 0.4s：全自动连发（cd 0.1648≈9.9 帧/发 → ~5 发，
+	               # 其中每新边沿后 2 发为点射补发——连发+点射叠加≥4 即达意）
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var sr_kit: int = 999 - main.guns.ammo
+	check("SR25 装套件按住 0.4s 连发 ≥4 发（auto+burst 叠加）", sr_kit >= 4,
+		"shots=%d" % sr_kit)
+	main.guns.update(1.0 / 60.0)
+	main.stash.m14_mods.erase("fullauto")   # 夹具复位（后续按未购口径）
+	main._sync_m14_mods_env()
 	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）+ 扳机延迟
 	# 0.5s（2026-10-24 用户定案 trigger_delay）：首发出弹在 0.5s 蓄力后，
 	# 5s 按压实测 = 1 + floor(4.5/0.1091) ≈ 42 发；松开再按重新蓄满
