@@ -1156,11 +1156,10 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 兜底片会与真实照门叠影（原厂不带瞄准镜——2026-10-26 用户定案，
 		# 改装镜走通用 else 路径）
 		pass
-	elif gun_id == "sr25":
-		# sr25 原厂不带瞄准镜（2026-10-26 用户定案——旧版自带 2.5-8 倍镜 +
-		# 45° 侧瞄已从 _ar_sr25 拆除）：改装镜走通用 else 路径照常上轨，
-		# 此分支仅保留折叠准星/照门为建模件、不叠 iron 兜底片的语义
-		pass
+	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
+	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
+	# 落到下方 else 通用挂载——2026-10-27 修复：旧版此处有 sr25 pass 分支把
+	# 改装镜整段吞掉，开镜只剩 HUD 分划点、无框镜体全无（全枪开镜审计实锤）
 	else:
 		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
 	return root

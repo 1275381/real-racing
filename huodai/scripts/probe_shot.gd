@@ -881,6 +881,32 @@ func _initialize() -> void:
 		shot("res://out/shot_scope_%s.png" % s_kind)
 		Input.action_release("hd_scope")
 		await wait_until(func(): return main.player.ads <= 0.4)
+	# ---- 18a2 全枪红点开镜审计（2026-10-27 用户报告「有些枪装红点只显示
+	# 一个点、无框镜体丢失」）：20 把在册枪逐把装 reddot → 开镜到位 →
+	# shot_ads_rdd_<gid>.png——逐把目检镜体在位性
+	if not main.stash.scopes_owned.has("reddot"):
+		main.stash.scopes_owned.append("reddot")
+	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
+			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "pistol",
+			"smg", "rifle", "shotgun", "sniper"]:
+		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
+		main._enter_range()
+		await frames(20)
+		main.stash.equip_scope(gid0, "reddot")
+		var olds0: Dictionary = main.guns._guns["primary"]
+		var oldh0: Node3D = olds0["holder"]
+		oldh0.visible = false
+		oldh0.queue_free()
+		(olds0["flash"] as OmniLight3D).queue_free()
+		main.guns._guns.erase("primary")
+		main.guns._mount_slot("primary")
+		main.guns._equip("primary")
+		Input.action_press("hd_scope")
+		await wait_until(func(): return main.player.ads >= 1.0)
+		await frames(4)
+		shot("res://out/shot_ads_rdd_%s.png" % gid0)
+		Input.action_release("hd_scope")
+		await wait_until(func(): return main.player.ads <= 0.4)
 	# scope 段收尾：恢复 mp7 在枪（下段 shot_gun_cover_all 依赖「逐枪循环
 	# 收尾正是 mp7」的摆位前提）；镜装配不还原（收尾存档还原兜底）
 	main.stash.loadout = {"primary": "mp7", "secondary": "pistol"}
