@@ -543,12 +543,15 @@ func try_fire() -> void:
 	# 按压内前 BURST_SOFT_SHOTS 发后坐再乘 BURST_SOFT_MUL——延迟后坐让对射
 	# 几乎无感（内机匣在聚合物外壳内后坐吸收冲量）；其余枪/超点射之后不触发
 	var rc: Array = RECOIL.get(cur_id, [0.4, 0.2, 0.25])
-	var mul: float = (0.6 if _aiming else 1.0) * _mod_muls().x * wear_mul
+	var base: float = (0.6 if _aiming else 1.0) * wear_mul
+	var hmul: float = base * _mod_muls().x   # 水平漂移乘数（通用握把 recoil_mul）
+	var vmul: float = base * _vy_mul()       # 垂直上顶乘数（共振前握把 vy_mul 专属）
 	if not (_g.get("cd_profile", []) as Array).is_empty() \
 			and _press_shots <= BURST_SOFT_SHOTS:
-		mul *= BURST_SOFT_MUL
-	player.recoil_pitch += deg_to_rad(rc[0] + rc[1] * player.recoil_pitch * 57.3 * 0.5) * mul
-	player.recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * mul
+		hmul *= BURST_SOFT_MUL
+		vmul *= BURST_SOFT_MUL
+	player.recoil_pitch += deg_to_rad(rc[0] + rc[1] * player.recoil_pitch * 57.3 * 0.5) * vmul
+	player.recoil_yaw += deg_to_rad(randf_range(-rc[2], rc[2])) * hmul
 	player.recoil_cool = 0.0
 	if audio != null:
 		if sup and audio.has_method("play_shot_sup"):
@@ -600,6 +603,7 @@ func _mag_cap() -> int:
 ## M14 配件解锁查询（main 注入 stash 查询闭包；未注入 = false 原版行为）
 var m14_mods_provider: Callable = Callable()
 var grip_muls_provider: Callable = Callable()
+var grip_vy_provider: Callable = Callable()   # 垂直后坐乘数（共振前握把 vy_mul）
 ## 第四阶段：耐久（func(gun_id)->0..100，含本局磨损）/ 消音器（func(gun_id)->bool）；
 ## 未注入 = 全新无消音（探针/测试裸调行为不变）
 var dur_provider: Callable = Callable()
@@ -718,9 +722,24 @@ func _m14_mod(mid: String) -> bool:
 ## 当前枪的配件乘数 (recoil_mul, ads_mul)：M14 装 foregrip 护木 = 垂直前握把
 ## 档（后坐 -45% / 开镜速 +25%，GRIPS 表 vertical）；其它枪/未装 = 1.0
 func _mod_muls() -> Vector2:
+	var v := Vector2.ONE
 	if cur_id == "m14" and _m14_mod("foregrip"):
-		return Vector2(0.55, 1.25)
-	return Vector2.ONE
+		v = Vector2(0.55, 1.25)
+	# 通用前握把（GRIPS 表，stash grip_muls 经 main 注入——2026-10-27 接活，
+	# 此前 provider 悬空纯数据）：后坐/开镜乘数叠乘（未装 = ONE 零变化）
+	if grip_muls_provider != null and grip_muls_provider.is_valid():
+		var gm: Vector2 = grip_muls_provider.call(cur_id)
+		v = Vector2(v.x * gm.x, v.y * gm.y)
+	return v
+
+
+## 垂直后坐专用乘数（共振前握把 vy_mul 只压 pitch 上顶，水平漂移走
+## _mod_muls().x）——M14 战术护木对两轴都生效照旧叠乘
+func _vy_mul() -> float:
+	var m := 0.55 if (cur_id == "m14" and _m14_mod("foregrip")) else 1.0
+	if grip_vy_provider != null and grip_vy_provider.is_valid():
+		m *= float(grip_vy_provider.call(cur_id))
+	return m
 
 
 ## 备弹弹药源：main 注入的 reserve_provider（stash 极致备弹库存）；

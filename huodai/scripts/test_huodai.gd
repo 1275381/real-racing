@@ -2031,6 +2031,46 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("无 trigger_delay 枪零延迟（rifle 按下当帧出弹）", rifle_instant >= 1,
 		"shots=%d" % rifle_instant)
+	# 共振前握把（2026-10-27 用户定案「大幅减少垂直后坐力」）：vy_mul 只压
+	# 垂直轴（pitch ×0.30），水平漂移不变——顺带接活悬空的通用握把链
+	var fg_def: Dictionary = Guns.grip_by_id("resonant_fg")
+	check("共振前握把在表（vy_mul 0.3 · 水平 recoil_mul 1.0）",
+		not fg_def.is_empty() and absf(float(fg_def["vy_mul"]) - 0.3) < 0.001
+			and absf(float(fg_def["recoil_mul"]) - 1.0) < 0.001,
+		str(fg_def))
+	main.stash.cash = 99999
+	check("购+装共振前握把（rifle）", main.stash.buy_grip("resonant_fg")
+		and not main.stash.grips_owned.is_empty())
+	main.stash.equip_grip("rifle", "resonant_fg")
+	check("grip_vy_mul 装上=0.3 / 卸下=1.0",
+		absf(main.stash.grip_vy_mul("rifle") - 0.3) < 0.001)
+	main.stash.equip_grip("rifle", "none")
+	check("grip_vy_mul 卸下回 1.0", absf(main.stash.grip_vy_mul("rifle") - 1.0) < 0.001)
+	# 后坐分轴实测：步枪各打一发（无握把 vs 装共振前握把），pitch 增量比 ≈0.3
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 99
+	main.guns.update(1.0 / 60.0)
+	main.player.recoil_pitch = 0.0
+	main.player.recoil_yaw = 0.0
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var pitch0: float = main.player.recoil_pitch
+	for i in 15:   # 冷却清空（半自动 cd ~0.13s）再打第二发
+		main.guns.update(1.0 / 60.0)
+	main.stash.equip_grip("rifle", "resonant_fg")
+	main.player.recoil_pitch = 0.0
+	main.player.recoil_yaw = 0.0
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var pitch1: float = main.player.recoil_pitch
+	main.guns.update(1.0 / 60.0)
+	check("装共振前握把垂直后坐 ≈30%（pitch 实测）",
+		pitch1 < pitch0 * 0.5 and pitch1 > pitch0 * 0.1,
+		"p0=%.4f p1=%.4f" % [pitch0, pitch1])
+	main.stash.equip_grip("rifle", "none")   # 夹具复位（卸握把）
 	# MK4 三连发（2026-10-25 用户定案）：点一下=一个三连发（松手打完为止），
 	# 按住不重复；「全自动枪管」配件（MK4_MODS.autobarrel，M14 配件同链）解锁全自动
 	main.stash.m14_mods.erase("autobarrel")   # 夹具：确保未购（幂等）

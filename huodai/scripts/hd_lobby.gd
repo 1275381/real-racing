@@ -2060,6 +2060,23 @@ func _render_market(pg: VBoxContainer) -> void:
 	kbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	kbtn.pressed.connect(_cycle_ammo_kind_for.bind(ammo_id))
 	kind_row.add_child(kbtn)
+	# 握把行（2026-10-27 共振前握把上线顺带接活整链）：选中枪的握把循环——
+	# 未购现场买（钱不够提示）、已购直接换装（GRIPS 表；stash buy/equip_grip）
+	var gfit := str(_stash.grip_fit.get(ammo_id, "none"))
+	var gdef: Dictionary = Guns.grip_by_id(gfit)
+	var grow := HBoxContainer.new()
+	grow.add_theme_constant_override("separation", 8)
+	grow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.add_child(grow)
+	var glbl := _mk_label("握把：%s（%s）" % [str(gdef.get("name", gfit)), str(gdef.get("desc", ""))], 13, COL_TEXT)
+	glbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	glbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	grow.add_child(glbl)
+	var gbtn := _mk_btn("换/购握把 ▸", 13)
+	_style_btn(gbtn, false, COL_ACCENT, 10)
+	gbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	gbtn.pressed.connect(_cycle_grip_for.bind(ammo_id))
+	grow.add_child(gbtn)
 
 	# ⑤ 专属配件区（2026-10 M14 护木/扩容匣；2026-10-25 MK4 全自动枪管并入）：
 	# 按枪分组渲染（拥有该枪才显示购买意义）；行式布局同②瞄具区：已购置灰/未购「购买」
@@ -2301,6 +2318,33 @@ func _buy_ammo_for(gid: String) -> void:
 	else:
 		show_hint("现金不足 —— %s %d 发需 ₵%s" % [gid, _ammo_tier_n(),
 				_fmt(_ammo_tier_n() * _to_int(HDData.AMMO_PRICE.get(gid, 0)))])
+
+
+## 握把循环（2026-10-27）：下一档未购现场买（钱不够提示）、已购直接换装、
+## 循环回 none 卸下——GRIPS 表驱动，通用全枪
+func _cycle_grip_for(gid: String) -> void:
+	var ids: Array = []
+	for gr in Guns.GRIPS:
+		ids.append(str(gr["id"]))
+	var cur_i := ids.find(str(_stash.grip_fit.get(gid, "none")))
+	var nxt: String = ids[(cur_i + 1) % ids.size()]
+	var gname := String(Guns.grip_by_id(nxt).get("name", nxt))
+	if nxt == "none":
+		_stash.equip_grip(gid, "none")
+		show_hint("「%s」握把卸下" % String(Guns.gun_by_id(gid).get("name", gid)))
+		return
+	if not _stash.owns_grip(nxt):
+		if _stash.buy_grip(nxt):
+			_stash.equip_grip(gid, nxt)
+			show_hint("已购并装上 %s —— %s" % [gname,
+					String(Guns.grip_by_id(nxt).get("desc", ""))])
+		else:
+			show_hint("%s 需 ₵%s —— 现金不足" % [gname,
+					_fmt(_to_int(Guns.grip_by_id(nxt).get("price", 0)))])
+	else:
+		_stash.equip_grip(gid, nxt)
+		show_hint("「%s」握把 → %s" % [String(Guns.gun_by_id(gid).get("name", gid)),
+				String(Guns.grip_by_id(nxt).get("desc", ""))])
 
 
 ## N 键循环该枪弹种（阶段 D）：未购现场买（钱不够提示），已购直接换装

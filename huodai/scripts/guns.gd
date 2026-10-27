@@ -245,6 +245,11 @@ const GRIPS := [
 		"recoil_mul": 0.55, "ads_mul": 1.25},
 	{"id": "resonant", "name": "共振握把", "desc": "后坐力归零 · 开镜速度 +50% · 顶级配件", "price": 4800,
 		"recoil_mul": 0.0, "ads_mul": 1.5},
+	# 共振前握把（2026-10-27 用户定案「大幅减少垂直后坐力」）：vy_mul 只压
+	# 垂直轴（pitch 上顶 ×0.30 = -70%），水平漂移不变（recoil_mul 1.0）——
+	# 与全归零的共振握把拉开档位差（专精垂直 vs 全消）
+	{"id": "resonant_fg", "name": "共振前握把", "desc": "垂直后坐 -70% · 开镜速度 +20%（水平后坐不变）", "price": 3200,
+		"recoil_mul": 1.0, "vy_mul": 0.3, "ads_mul": 1.2},
 ]
 
 

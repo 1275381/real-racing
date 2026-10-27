@@ -669,6 +669,20 @@ func equip_grip(gun_id: String, grip_id: String) -> void:
 	changed.emit()
 
 
+## 当前枪握把的垂直后坐乘数（共振前握把 vy_mul 专属；无该字段 = recoil_mul，
+## 未装 = 1.0）——hd_guns 后坐 pitch 轴消费
+func grip_vy_mul(gun_id: String) -> float:
+	var gid := str(grip_fit.get(gun_id, "none"))
+	if gid == "none":
+		return 1.0
+	var gr := Guns.grip_by_id(gid)
+	if gr.is_empty():
+		return 1.0
+	if gr.has("vy_mul"):
+		return maxf(0.0, float(gr["vy_mul"]))
+	return maxf(0.0, float(gr.get("recoil_mul", 1.0)))
+
+
 ## 当前枪握把的 (recoil_mul, ads_mul)；未装 = (1.0, 1.0)
 func grip_muls(gun_id: String) -> Vector2:
 	var gid := str(grip_fit.get(gun_id, "none"))
