@@ -321,7 +321,7 @@ func _watchdog() -> void:
 
 ## 收尾存档还原（正常收尾与看门狗共用）：删摆拍档、探针前真实档还位
 func _restore_save() -> void:
-	var gp := ProjectSettings.globalize_path("user://huodai_save.json")
+	var gp := ProjectSettings.globalize_path(HDData.SAVE_PATH)
 	if FileAccess.file_exists(gp):
 		DirAccess.remove_absolute(gp)
 	if save_bak != "":
@@ -330,7 +330,10 @@ func _restore_save() -> void:
 
 func _initialize() -> void:
 	_watchdog()
-	var save := "user://huodai_save.json"
+	# 存档隔离 v2（2026-10-27）：探针写独立档，真实档结构性零接触
+	# （bak 备份链保留作双保险，作用于探针档自身）
+	HDData.SAVE_PATH = "user://huodai_save_probe.json"
+	var save := HDData.SAVE_PATH
 	var gp0 := ProjectSettings.globalize_path(save)
 	# 自愈（2026-10-18 10:04 harness 超时强杀实证）：bak 在 = 上一次探针没走
 	# 收尾还原就死了，bak 里才是探针前真实档、当前文件可能是摆拍档——先复位

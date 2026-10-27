@@ -125,7 +125,10 @@ const SECURE_MAX := SECURE_BASE + 2          # 安全箱上限 4 格
 ## 中档出发装备参考价（M4A1 1,800 + 3.5× 光学镜 1,800 + 300 发 ×₵6）：
 ## 经济门槛 A = 中位局战利品 ÷ KIT_REF 落在 1.2–1.6
 const KIT_REF := 5400
-const SAVE_PATH := "user://huodai_save.json"
+# static var（2026-10-27 定案）：测试/探针 _initialize 首行重定向到独立档
+# （huodai_save_test/probe.json）——真实档结构性零接触。旧版 const + 测试
+# 「删真实档→跑完写回测试态」直接毁实机进度（用户报告实锤，教训入册）
+static var SAVE_PATH := "user://huodai_save.json"
 
 ## ---- 第三阶段：内容深度（2026-10 改进方案第 5/6 节）----
 const RAID_TIME := 1500.0                       # 局时 25 分钟；超时未撤离 = 失踪（视同阵亡）

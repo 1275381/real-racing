@@ -47,8 +47,10 @@ func _menu_labels_text(n: Node) -> String:
 	return out
 
 func _initialize() -> void:
-	# 存档隔离：删掉上一次探针留下的存档，结果不依赖运行顺序
-	var save := "user://huodai_save.json"
+	# 存档隔离 v2（2026-10-27）：整套测试重定向到独立测试档——真实档零接触
+	# （旧版删真实档+收尾写回测试态，每跑一次回归毁一次实机进度，用户实锤）
+	HDData.SAVE_PATH = "user://huodai_save_test.json"
+	var save := HDData.SAVE_PATH
 	if FileAccess.file_exists(save):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(save))
 	var scene: PackedScene = load("res://main.tscn")
