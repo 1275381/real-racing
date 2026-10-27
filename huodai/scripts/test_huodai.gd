@@ -1930,6 +1930,8 @@ func _run() -> void:
 	main._start_mission({"primary": "sr25", "secondary": "pistol"})   # 重进场：cap/套件生效
 	await frames(8)
 	check("装套件：弹匣自动 20→45", main.guns._mag_cap() == 45)
+	check("装套件：进场实装 45 发（enter 装填修复——旧版 cap0 只认 M14）",
+		main.guns.ammo == 45, "ammo=%d" % main.guns.ammo)
 	# 三次定案（2026-10-26）：B 键切换开火模式——默认全自动（1069rpm 连发），
 	# B→MK4 式三连发（轮内同 1069rpm+轮间锁），再 B→全自动；靶场/实战都可用
 	main.guns.ammo = 999
@@ -1976,6 +1978,36 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("切回全自动：按住连发恢复（0.4s ≈7 发）", sr_auto2 >= 6 and sr_auto2 <= 8,
 		"shots=%d" % sr_auto2)
+	# 制退补偿实测（2026-10-27 用户报告「后坐力非常大」）：无套件 vs 套件
+	# 各一发 pitch 比 ≈0.45（recoil_mul_to，握把未装口径）
+	main.stash.m14_mods.erase("fullauto")
+	main._sync_m14_mods_env()
+	main._start_mission({"primary": "sr25", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 99
+	main.guns.update(1.0 / 60.0)
+	main.player.recoil_pitch = 0.0
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var rp0: float = main.player.recoil_pitch
+	for i in 15:   # 清冷却
+		main.guns.update(1.0 / 60.0)
+	main.stash.m14_mods.append("fullauto")
+	main._sync_m14_mods_env()
+	main._start_mission({"primary": "sr25", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 99
+	main.guns.update(1.0 / 60.0)
+	main.player.recoil_pitch = 0.0
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var rp1: float = main.player.recoil_pitch
+	main.guns.update(1.0 / 60.0)
+	check("套件制退补偿 ≈45%（pitch 实测）",
+		rp1 < rp0 * 0.6 and rp1 > rp0 * 0.3,
+		"rp0=%.4f rp1=%.4f" % [rp0, rp1])
 	main.stash.m14_mods.erase("fullauto")   # 夹具复位（后续按未购口径）
 	main._sync_m14_mods_env()
 	# m250 550rpm（2026-10-19 用户定案 cd 0.1091 精确对齐 desc）+ 扳机延迟

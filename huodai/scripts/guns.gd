@@ -163,10 +163,13 @@ const SR25_MODS := {
 	# 2026-10-26 三次定案（用户）：B 键切换开火模式——默认全自动（1069rpm 连发），
 	# 按 B 切 MK4 式三连发（轮内同 1069rpm + 轮间锁 0.1s），再按 B 切回全自动。
 	# 字段族：cd_to=全自动节拍覆写 / burst_to+burst_cd_to+burst_gap_to=三连发形态
+	# recoil_mul_to=0.45（2026-10-27 用户报告「后坐力非常大」）：RECOIL sr25
+	# 单发 0.32 是半自动 364rpm 手感——1069rpm 下每秒冲量 3× 步枪还会被连发
+	# 累增项滚雪球；射速转换套件自带制退补偿（两轴同乘）
 	"fullauto": {"name": "SR25 全自动套件", "price": 6800,
-		"desc": "快慢机改装（1069rpm·B 切换全自动/三连发）+ 45 发专用长匣：弹匣 20→45",
+		"desc": "快慢机改装（1069rpm·B 切换全自动/三连发·制退补偿）+ 45 发专用长匣：弹匣 20→45",
 		"auto_to": true, "cd_to": 0.0561, "burst_to": 3, "burst_cd_to": 0.0561,
-		"burst_gap_to": 0.1, "mag_to": 45},
+		"burst_gap_to": 0.1, "mag_to": 45, "recoil_mul_to": 0.45},
 }
 
 

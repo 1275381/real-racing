@@ -216,6 +216,11 @@ func enter(loadout: Dictionary) -> void:
 		var cap0 := int(gi.get("mag", 12))
 		if gid == "m14" and _m14_mod("extmag"):
 			cap0 = 30
+		# SR25 全自动套件 45 发专用长匣（2026-10-27 用户报告「开局只装 25 发」
+		# 根因：cap0 只认 M14 扩容匣，套件 mag_to 没进进场装填——同样按 gid
+		# 直查 provider，cur_id 此时未设）
+		if gid == "sr25" and _m14_mod("fullauto"):
+			cap0 = int(Guns.SR25_MODS["fullauto"]["mag_to"])
 		_slots[slot] = {"id": gid, "ammo": cap0,
 				"reserve": _reserve_for_gun(gid)}
 		# 同槽换了枪才重建枪模；同枪复用已有 holder（重复进场不堆积）。
@@ -544,6 +549,10 @@ func try_fire() -> void:
 	# 几乎无感（内机匣在聚合物外壳内后坐吸收冲量）；其余枪/超点射之后不触发
 	var rc: Array = RECOIL.get(cur_id, [0.4, 0.2, 0.25])
 	var base: float = (0.6 if _aiming else 1.0) * wear_mul
+	# SR25 全自动套件制退补偿（recoil_mul_to，两轴同乘——1069rpm 射速转换的
+	# 配套；半自动原厂不受影响）
+	if cur_id == "sr25" and _m14_mod("fullauto"):
+		base *= float(Guns.SR25_MODS["fullauto"]["recoil_mul_to"])
 	var hmul: float = base * _mod_muls().x   # 水平漂移乘数（通用握把 recoil_mul）
 	var vmul: float = base * _vy_mul()       # 垂直上顶乘数（共振前握把 vy_mul 专属）
 	if not (_g.get("cd_profile", []) as Array).is_empty() \
