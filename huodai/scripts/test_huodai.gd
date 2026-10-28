@@ -46,6 +46,21 @@ func _menu_labels_text(n: Node) -> String:
 		out += _menu_labels_text(c)
 	return out
 
+## 枪模根全部 MeshInstance 顶点求和（装配审计用）
+func _mesh_verts(root: Node3D) -> int:
+	var n := 0
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var nd: Node = stack.pop_back()
+		if nd is MeshInstance3D:
+			var mi := nd as MeshInstance3D
+			if mi.mesh != null:
+				n += int(mi.mesh.get_faces().size() / 3)
+		for c in nd.get_children():
+			stack.push_back(c)
+	return n
+
+
 func _initialize() -> void:
 	# 存档隔离 v2（2026-10-27）：整套测试重定向到独立测试档——真实档零接触
 	# （旧版删真实档+收尾写回测试态，每跑一次回归毁一次实机进度，用户实锤）
@@ -2105,6 +2120,36 @@ func _run() -> void:
 		pitch1 < pitch0 * 0.5 and pitch1 > pitch0 * 0.1,
 		"p0=%.4f p1=%.4f" % [pitch0, pitch1])
 	main.stash.equip_grip("rifle", "none")   # 夹具复位（卸握把）
+	# 镜体增高架（2026-10-28 用户定案）：红点装其上抬高 RISER_H——aim_y 差
+	# 精确等于抬高量（ADS 对位自动跟随的证据），建模件在位（HD_NO_BL 强制
+	# 程序化路径下量 riser 盒）；装卸 toggle 与买断态
+	main.stash.cash = 99999
+	check("购增高架（₵1200 买断）", main.stash.buy_riser()
+		or main.stash.owns_riser())
+	main.stash.scopes_owned.append("reddot")
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main.stash.equip_scope("rifle", "reddot")
+	if main.stash.riser_on("rifle"):            # 强制归零：基线=无增高架
+		main.stash.toggle_riser("rifle")
+	# 确定性直测（dbg 已证）：build+读 rd_aim_y meta——卸/装差恰 RISER_H，
+	# ADS 对位（_mount_slot aim_y→update 摆位）消费同一数值链自动跟随
+	var r_no: Node3D = main.guns._build_gun_visual("rifle")
+	var aim0: float = float(r_no.get_meta("rd_aim_y", -1.0))
+	var v_no: int = _mesh_verts(r_no)
+	r_no.free()
+	check("无增高架基线：aim_y 与顶点在位", aim0 > 0.0 and v_no > 0,
+		"aim0=%.4f v=%d" % [aim0, v_no])
+	main.stash.toggle_riser("rifle")
+	var r_yes: Node3D = main.guns._build_gun_visual("rifle")
+	var aim1: float = float(r_yes.get_meta("rd_aim_y", -1.0))
+	var v_yes: int = _mesh_verts(r_yes)
+	r_yes.free()
+	check("增高架抬高 aim_y 恰 RISER_H（ADS 自动对位）",
+		absf(aim1 - aim0 - HDGuns.RISER_H) < 0.002,
+		"aim0=%.4f aim1=%.4f rise=%.4f" % [aim0, aim1, aim1 - aim0])
+	check("增高架建模件在位（装/卸顶点差 >0）", v_yes > v_no,
+		"v_no=%d v_yes=%d" % [v_no, v_yes])
+	main.stash.toggle_riser("rifle")   # 夹具复位（卸下）
 	# MK4 三连发（2026-10-25 用户定案）：点一下=一个三连发（松手打完为止），
 	# 按住不重复；「全自动枪管」配件（MK4_MODS.autobarrel，M14 配件同链）解锁全自动
 	main.stash.m14_mods.erase("autobarrel")   # 夹具：确保未购（幂等）

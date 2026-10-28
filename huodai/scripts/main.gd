@@ -95,6 +95,7 @@ func _ready() -> void:
 	# 通用前握把（GRIPS）查询闭包——2026-10-27 接活（此前 provider 悬空）
 	guns.grip_muls_provider = func(gid: String): return stash.grip_muls(gid)
 	guns.grip_vy_provider = func(gid: String): return stash.grip_vy_mul(gid)
+	guns.riser_provider = func(gid: String): return stash.riser_on(gid)
 	guns.hit_enemy.connect(_on_hit_enemy)
 	guns.fired.connect(_on_player_fired)
 	# 第四阶段：耐久（库存耐久 − 本局磨损）/ 消音器（stash 按枪查）/ 卡壳播报

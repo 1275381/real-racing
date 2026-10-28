@@ -2077,6 +2077,34 @@ func _render_market(pg: VBoxContainer) -> void:
 	gbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	gbtn.pressed.connect(_cycle_grip_for.bind(ammo_id))
 	grow.add_child(gbtn)
+	# 增高架行（2026-10-28）：红点/全息装其上抬高——首购 ₵1200 买断通用，
+	# 之后每枪开关装卸；只对装红点/全息的枪有意义（其他镜提示）
+	var r_on := _stash.riser_on(ammo_id)
+	var rrow := HBoxContainer.new()
+	rrow.add_theme_constant_override("separation", 8)
+	rrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.add_child(rrow)
+	var rstate := "已装" if r_on else "未装"
+	var rlbl := _mk_label("镜体增高架（红点/全息抬高，ADS 自动对位）", 13, COL_TEXT)
+	rlbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rlbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	rrow.add_child(rlbl)
+	var rbtn := _mk_btn("%s · %s" % ["装卸切换" if _stash.owns_riser() else "购断 ₵%s" % _fmt(HDStash.RISER_PRICE), rstate], 13)
+	_style_btn(rbtn, false, COL_OK if r_on else COL_ACCENT, 10)
+	rbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var rgid := str(ammo_id)
+	rbtn.pressed.connect(func():
+		if not _stash.owns_riser():
+			if _stash.buy_riser():
+				show_hint("已购断镜体增高架 —— 回改枪台/此处给枪装卸")
+			else:
+				show_hint("现金不足 —— 增高架需 ₵%s" % _fmt(HDStash.RISER_PRICE))
+			return
+		var on_now := _stash.toggle_riser(rgid)
+		show_hint("「%s」增高架 %s（红点/全息生效）" % [
+				String(Guns.gun_by_id(rgid).get("name", rgid)),
+				"已装" if on_now else "已卸"]))
+	rrow.add_child(rbtn)
 
 	# ⑤ 专属配件区（2026-10 M14 护木/扩容匣；2026-10-25 MK4 全自动枪管并入）：
 	# 按枪分组渲染（拥有该枪才显示购买意义）；行式布局同②瞄具区：已购置灰/未购「购买」

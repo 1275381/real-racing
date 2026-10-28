@@ -47,6 +47,10 @@ var throwables: Dictionary = {"frag": 0, "smoke": 0, "flash": 0}
 ## 钥匙卡库存（2026-10-24 用户定案「钥匙卡需要购买」）：lock_id → 件数；
 ## 开局自动注入背包（带入即风险——阵亡丢失，与局内拾取的钥匙同通道）
 var keycards: Dictionary = {}
+## 镜体增高架（2026-10-28）：gun_id → true（每枪开关；₵1200 一次买断通用），
+## 装上后该枪红点/全息抬高 RISER_H（hd_guns._scope_visual riser 参数）
+var riser_fit: Dictionary = {}
+var risers_owned := false             # 增高架买断态（通用件）
 
 
 func _init() -> void:
@@ -83,6 +87,8 @@ func _serialize() -> Dictionary:
 		"ammo_kinds_owned": ammo_kinds_owned,
 		"throwables": throwables,
 		"keycards": keycards,
+		"riser_fit": riser_fit,
+		"risers_owned": risers_owned,
 		"secure_slots": secure_slots,
 		"durability": durability,
 		"sup_owned": sup_owned,
@@ -277,6 +283,8 @@ func _load() -> void:
 			ammo_kind[str(gk2)] = kk
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
+	riser_fit = {}
+	risers_owned = false
 	var raw_th := _to_dict(d.get("throwables", null))
 	for tk in ["frag", "smoke", "flash"]:
 		throwables[tk] = clampi(_to_i(raw_th.get(tk, 0)), 0,
@@ -289,6 +297,13 @@ func _load() -> void:
 	for kid in raw_kc.keys():
 		if lock_ids.has(str(kid)):
 			keycards[str(kid)] = clampi(_to_i(raw_kc[kid]), 0, HDData.KEY_STOCK_MAX)
+	# 镜体增高架（老档无字段 = 全空；真值归一化）
+	riser_fit = {}
+	risers_owned = false
+	var raw_riser := _to_dict(d.get("riser_fit", null))
+	for rk in raw_riser.keys():
+		if bool(raw_riser[rk]):
+			riser_fit[str(rk)] = true
 
 	# 第四阶段：耐久（0..100，缺键=全新）/ 消音器（按枪，随枪丢）/ 首局引导
 	durability = {}
@@ -328,6 +343,8 @@ func _apply_defaults() -> void:
 	ammo_kinds_owned = {}
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
+	riser_fit = {}
+	risers_owned = false
 	secure_slots = HDData.SECURE_BASE
 	durability = {}
 	sup_owned = []
@@ -416,6 +433,41 @@ func consume_throwable(kind: String) -> bool:
 	throwables[kind] = n - 1
 	save()
 	return true
+
+
+## 镜体增高架（2026-10-28）：一次买断（通用件 ₵1200）→ 每枪开关装卸
+const RISER_PRICE := 1200
+
+func buy_riser() -> bool:
+	if risers_owned:
+		return true
+	if cash < RISER_PRICE:
+		return false
+	cash -= RISER_PRICE
+	risers_owned = true
+	save()
+	changed.emit()
+	return true
+
+
+func owns_riser() -> bool:
+	return risers_owned
+
+
+func riser_on(gun_id: String) -> bool:
+	return bool(riser_fit.get(gun_id, false))
+
+
+func toggle_riser(gun_id: String) -> bool:
+	if not risers_owned:
+		return false
+	if riser_on(gun_id):
+		riser_fit.erase(gun_id)
+	else:
+		riser_fit[gun_id] = true
+	save()
+	changed.emit()
+	return riser_on(gun_id)
 
 
 ## 买一把钥匙卡（2026-10-24 用户定案）：上限 KEY_STOCK_MAX / 钱 insufficient 拒

@@ -907,6 +907,43 @@ func _initialize() -> void:
 		shot("res://out/shot_ads_rdd_%s.png" % gid0)
 		Input.action_release("hd_scope")
 		await wait_until(func(): return main.player.ads <= 0.4)
+	# ---- 18a3 增高架图证（2026-10-28）：rifle+reddot 装增高架开镜特写 vs
+	#      无增高架对照——镜体抬高 RISER_H、底座/立柱/顶短轨可见
+	main.stash.cash = 99999
+	if not main.stash.owns_riser():
+		main.stash.buy_riser()
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.stash.equip_scope("rifle", "reddot")
+	var oldr0: Dictionary = main.guns._guns["primary"]
+	(oldr0["holder"] as Node3D).visible = false
+	(oldr0["holder"] as Node3D).queue_free()
+	(oldr0["flash"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.guns._mount_slot("primary")
+	main.guns._equip("primary")
+	Input.action_press("hd_scope")
+	await wait_until(func(): return main.player.ads >= 1.0)
+	await frames(4)
+	shot("res://out/shot_riser_off.png")
+	Input.action_release("hd_scope")
+	await wait_until(func(): return main.player.ads <= 0.4)
+	main.stash.toggle_riser("rifle")
+	var oldr1: Dictionary = main.guns._guns["primary"]
+	(oldr1["holder"] as Node3D).visible = false
+	(oldr1["holder"] as Node3D).queue_free()
+	(oldr1["flash"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.guns._mount_slot("primary")
+	main.guns._equip("primary")
+	Input.action_press("hd_scope")
+	await wait_until(func(): return main.player.ads >= 1.0)
+	await frames(4)
+	shot("res://out/shot_riser_on.png")
+	Input.action_release("hd_scope")
+	await wait_until(func(): return main.player.ads <= 0.4)
+	main.stash.toggle_riser("rifle")
 	# scope 段收尾：恢复 mp7 在枪（下段 shot_gun_cover_all 依赖「逐枪循环
 	# 收尾正是 mp7」的摆位前提）；镜装配不还原（收尾存档还原兜底）
 	main.stash.loadout = {"primary": "mp7", "secondary": "pistol"}

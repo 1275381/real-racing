@@ -35,6 +35,7 @@ const ADS_SPEED := 5.0
 const MAG_REST_T := 4.0                            # 落地弹匣停留秒数（之后渐隐回收）
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
 const RD_WIN_W := 0.06     # 红点镜玻璃窗宽（枪身局部 m）——无框反射式大窗
+const RISER_H := 0.024            # 镜体增高架抬高量（2026-10-28；rd_aim_y/AABB 顶自动跟随）
 const RD_WIN_H := 0.045    # 红点镜玻璃窗高：窗顶=全镜最高件（_local_aabb 顶即窗顶）
 const FIRE_GATE := 1e-6    # 开火门残差容差（秒）：60·cd 为整数帧的枪（如 vector
                            # 0.05=3 帧）IEEE 双精度 3f 与 cd 差 ~1e-18，曾把节拍
@@ -612,6 +613,7 @@ func _mag_cap() -> int:
 ## M14 配件解锁查询（main 注入 stash 查询闭包；未注入 = false 原版行为）
 var m14_mods_provider: Callable = Callable()
 var grip_muls_provider: Callable = Callable()
+var riser_provider: Callable = Callable()   # 镜体增高架查询（2026-10-28：per-gun bool）
 var grip_vy_provider: Callable = Callable()   # 垂直后坐乘数（共振前握把 vy_mul）
 ## 第四阶段：耐久（func(gun_id)->0..100，含本局磨损）/ 消音器（func(gun_id)->bool）；
 ## 未注入 = 全新无消音（探针/测试裸调行为不变）
@@ -1161,14 +1163,17 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 	# 落到下方 else 通用挂载——2026-10-27 修复：旧版此处有 sr25 pass 分支把
 	# 改装镜整段吞掉，开镜只剩 HUD 分划点、无框镜体全无（全枪开镜审计实锤）
 	else:
-		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z)
+		var riser_on := s_kind == "reddot" or s_kind == "holo"
+		if riser_on and riser_provider != null and riser_provider.is_valid():
+			riser_on = bool(riser_provider.call(gun_id))
+		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z, riser_on)
 	return root
 
 
 ## 枪顶瞄具模型：按已装备瞄具风格装镜（iron=机瞄准星片）。
 ## HUD 分划由别的模块画，这里只管 3D 镜体（onfoot._scope_visual 简化移植）
 func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
-		front_z: float) -> void:
+		front_z: float, riser := false) -> void:
 	var mk := func(c: Color, glow := 0.0) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
@@ -1210,6 +1215,17 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 		mi.rotation_degrees = Vector3(90, 0, 0)
 		mi.position = pos
 		parent.add_child(mi)
+	# 镜体增高架（2026-10-28 用户定案）：骑枪顶轨的底座+双立柱+顶短轨，
+	# 红点/全息装在其顶面（抬高 RISER_H）——镜体/玻璃/rd_aim_y 全部从
+	# top_y 派生，抬高挂点即全链自动跟随（ADS 对位零额外改动）
+	if riser and (kind == "reddot" or kind == "holo"):
+		var rh := RISER_H
+		var rz := mid_z - 0.045
+		box.call(Vector3(0.05, 0.008, 0.10), Vector3(0, top_y + 0.004, rz), dk)
+		box.call(Vector3(0.012, rh, 0.028), Vector3(-0.016, top_y + 0.008 + rh * 0.5, rz), dk)
+		box.call(Vector3(0.012, rh, 0.028), Vector3(0.016, top_y + 0.008 + rh * 0.5, rz), dk)
+		box.call(Vector3(0.052, 0.008, 0.084), Vector3(0, top_y + 0.010 + rh, rz), dk)
+		top_y += rh
 	# 写实化第五轮：Blender 建模瞄具（tools/blender/guns/optic_*.py，原点 = 镜座
 	# 安装面中心，尺寸按枪模同档放大）。红点镜只换镜体，玻璃片/内投影红点/
 	# aim_y 仍走下方代码；模型缺失回退原方块版
