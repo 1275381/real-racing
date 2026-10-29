@@ -25,6 +25,8 @@ var scopes_owned: Array = []          # 已购瞄具 id 列表
 var scope_fit: Dictionary = {}        # gun_id -> scope_id 或 "iron"
 var grips_owned: Array = []           # 已购握把/护木 id 列表（GRIPS 表，2026-10 M14 首接入）
 var grip_fit: Dictionary = {}         # gun_id -> grip_id 或 "none"
+var rear_grips_owned: Array = []      # 已购后握把 id 列表（REAR_GRIPS 表，2026-10-29 幻影后握把）
+var rear_grip_fit: Dictionary = {}    # gun_id -> rear_grip_id 或 "none"（per-gun，照 grip_fit 先例）
 var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0, "contracts": 0}
@@ -76,6 +78,8 @@ func _serialize() -> Dictionary:
 		"scope_fit": scope_fit,
 		"grips_owned": grips_owned,
 		"grip_fit": grip_fit,
+		"rear_grips_owned": rear_grips_owned,
+		"rear_grip_fit": rear_grip_fit,
 		"m14_mods": m14_mods,
 		"ammo_inv": ammo_inv,
 		"loadout": loadout,
@@ -204,13 +208,44 @@ func _load() -> void:
 			else:
 				grip_fit[gk] = gval
 
-	# M14 专属配件（合法 id 过滤）
+	# 后握把拥有与装配（2026-10-29 幻影后握把；老档无字段 = 空表，兼容）——
+	# 归一化口径照握把："none"/"" 归一化、未知 id 丢弃
+	var valid_rears: Array = []
+	for rg in Guns.REAR_GRIPS:
+		valid_rears.append(str(rg["id"]))
+	rear_grips_owned = ["none"]
+	var raw_rgo: Variant = d.get("rear_grips_owned", null)
+	if typeof(raw_rgo) == TYPE_ARRAY:
+		for id in raw_rgo:
+			var rgid := str(id)
+			if valid_rears.has(rgid) and not rear_grips_owned.has(rgid):
+				rear_grips_owned.append(rgid)
+	rear_grip_fit = {}
+	var raw_rgf: Variant = d.get("rear_grip_fit", null)
+	if typeof(raw_rgf) == TYPE_DICTIONARY:
+		for key in raw_rgf.keys():
+			var rk := str(key)
+			var rval := str(raw_rgf[key])
+			if not valid_guns.has(rk):
+				continue
+			if rval == "" or rval == "none" or not valid_rears.has(rval):
+				rear_grip_fit[rk] = "none"
+			else:
+				rear_grip_fit[rk] = rval
+
+	# 专属配件（合法 id 过滤——2026-10-29 校验扩到四张专属配件表：存储共用
+	# m14_mods 数组（id 全局唯一），此前只滤 M14_MODS 会把已购 MK4/SR25
+	# 配件在读档时静默清掉——同链存储的读档口径与 buy_m14_mod 对齐）
 	m14_mods = []
+	var mod_ok := {}
+	for tbl in [Guns.M14_MODS, Guns.MK4_MODS, Guns.SR25_MODS, Guns.SKEL_STOCK]:
+		for mk in (tbl as Dictionary).keys():
+			mod_ok[str(mk)] = true
 	var raw_m14: Variant = d.get("m14_mods", null)
 	if typeof(raw_m14) == TYPE_ARRAY:
 		for id in raw_m14:
 			var mid := str(id)
-			if Guns.M14_MODS.has(mid) and not m14_mods.has(mid):
+			if mod_ok.has(mid) and not m14_mods.has(mid):
 				m14_mods.append(mid)
 
 	# 出发配置（主副不可同枪；副武器可空——阵亡丢枪后只剩一把时）
@@ -333,6 +368,8 @@ func _apply_defaults() -> void:
 	scope_fit = {}
 	grips_owned = ["none"]
 	grip_fit = {}
+	rear_grips_owned = ["none"]
+	rear_grip_fit = {}
 	ammo_inv = {}
 	loadout = {"primary": "rifle", "secondary": "pistol"}
 	stats = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0, "contracts": 0}
@@ -747,6 +784,53 @@ func grip_muls(gun_id: String) -> Vector2:
 			maxf(0.5, float(gr.get("ads_mul", 1.0))))
 
 
+## ---- 后握把（2026-10-29 幻影后握把，照握把链先例）----
+
+## 购买后握把（"none" 恒免费恒拥有；照 buy_grip 同款容错）
+func buy_rear_grip(id: String) -> bool:
+	if id == "" or id == "none" or owns_rear_grip(id):
+		return true
+	var rg := Guns.rear_grip_by_id(id)
+	if rg.is_empty():
+		return false
+	var price := maxi(0, _to_i(rg.get("price", 0)))
+	if cash < price:
+		return false
+	cash -= price
+	rear_grips_owned.append(id)
+	save()
+	changed.emit()
+	return true
+
+
+func owns_rear_grip(id: String) -> bool:
+	return id == "none" or rear_grips_owned.has(id)
+
+
+## 装配后握把（per-gun，多枪可复用；未拥有/空值归一化为 "none"）
+func equip_rear_grip(gun_id: String, grip_id: String) -> void:
+	var gid := "none" if grip_id == "" or not owns_rear_grip(grip_id) else grip_id
+	rear_grip_fit[gun_id] = gid
+	save()
+	changed.emit()
+
+
+## 当前枪后握把 id（未装 = "none"）——hd_guns 视觉挂件与大厅行共用
+func rear_grip_id(gun_id: String) -> String:
+	return str(rear_grip_fit.get(gun_id, "none"))
+
+
+## 当前枪后握把的开镜速度乘数；未装 = 1.0——hd_guns._mod_muls 消费
+func rear_grip_ads_mul(gun_id: String) -> float:
+	var gid := rear_grip_id(gun_id)
+	if gid == "none":
+		return 1.0
+	var rg := Guns.rear_grip_by_id(gid)
+	if rg.is_empty():
+		return 1.0
+	return maxf(0.5, float(rg.get("ads_mul", 1.0)))
+
+
 ## M14 专属配件（foregrip/extmag）：交易行⑤区购买，bool 解锁持久化——
 ## 借 m14_mods 列表存（可扩多枪专属件）；hd_guns 开火/出厂读 m14_mods_on
 var m14_mods: Array = []              # 已购 M14 配件 id：["foregrip"]/["extmag"]
@@ -754,13 +838,15 @@ var m14_mods: Array = []              # 已购 M14 配件 id：["foregrip"]/["ex
 func buy_m14_mod(id: String) -> bool:
 	if m14_mods.has(id):
 		return true
-	# 校验放宽到三张专属配件表（2026-10-25 MK4 / 2026-10-26 SR25 并入同链）：
-	# 存储共用 m14_mods 数组（id 全局唯一）
+	# 校验放宽到四张专属配件表（2026-10-25 MK4 / 2026-10-26 SR25 /
+	# 2026-10-29 骨架狙击枪托并入同链）：存储共用 m14_mods 数组（id 全局唯一）
 	var md: Dictionary = Guns.M14_MODS.get(id, {})
 	if md.is_empty():
 		md = Guns.MK4_MODS.get(id, {})
 	if md.is_empty():
 		md = Guns.SR25_MODS.get(id, {})
+	if md.is_empty():
+		md = Guns.SKEL_STOCK.get(id, {})
 	if md.is_empty():
 		return false
 	var price := maxi(0, _to_i(md.get("price", 0)))

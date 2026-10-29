@@ -44,6 +44,15 @@
 # + 矩阵段 22 张（含 pair 的 _b 图）+ 3D 大厅三连拍 3 张——旧注释
 # 「29/31/33/35/40/43/45/59/70/73/76/79 张」随图集扩充滚动订正；
 #  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
+# + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
+#   卸/装侧视特写（rifle）+ shot_skel_stock_on/off 骨架狙击枪托装/卸侧视
+#   特写（sniper）——冻结主循环摆枪架近 90° 侧对镜（_pose_side）
+#   + shot_rear_grip_market 交易行 ③区后握把行（M4A1）+ ⑤区 SNIPER 组
+#   + 合同名主图 shot_phantom_grip.png / shot_skel_stock.png（装态【独立
+#   特写机位】另拍——工作流门禁 glob 与 artifact 发布按这两个不带后缀的
+#   合同名取图，缺任一张判「探针未过·图缺失」（2026-10-29 R1 门禁实证）；
+#   R2 判图加约：件体占幅 1/3 以上、与 _on 图非同文件（R2 实证同 md5
+#   被判「无单件特写」）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 # 墙钟看门狗 300s（健康全程 ≈92s）：卡死自行还原存档 quit(1)，不留无输出 124 强杀
@@ -301,6 +310,32 @@ func drive(n: int) -> void:
 		_m.player.update(0.016)
 		_m.guns.update(0.016)
 		await process_frame
+
+
+## 重建主武器枪模（装/卸配件后照 shot_ads 段拆旧挂新链：隐旧→free→重挂→重装槽
+## ——scope_provider/rear_grip_provider/m14_mods_env 都只在 _mount_slot 建枪模时读）
+func _remount_primary() -> void:
+	var olds: Dictionary = _m.guns._guns["primary"]
+	var oh: Node3D = olds["holder"]
+	oh.visible = false
+	oh.queue_free()
+	(olds["flash"] as OmniLight3D).queue_free()
+	_m.guns._guns.erase("primary")
+	_m.guns._mount_slot("primary")
+	_m.guns._equip("primary")
+
+
+## 侧视特写摆位（调用方先 set_process(false) 冻结主循环——vm 相机停在上次
+## sync 的位姿，直接摆枪架：绕 Y 转近 90° 枪身侧面对镜、拉近下移让握把/
+## 枪托段占画面主体；ads 归零防开镜摆位/覆盖层干扰；xoff 枪架横向偏置
+## ——件体特写把配件段推到画面中心用，默认 0.10 = 原肩射侧视位）
+func _pose_side(dist: float, lift: float, xoff := 0.10) -> void:
+	var g: Dictionary = _m.guns._cur_gun()
+	var h: Node3D = g["holder"]
+	_m.guns._ads = 0.0
+	_m.player.ads = 0.0
+	h.position = Vector3(xoff, lift, -dist)
+	h.rotation_degrees = Vector3(5, -78, 0)
 
 ## 墙钟看门狗（2026-10-18 10:04 卡死案）：探针健康全程 ≈92s，超过
 ## WATCHDOG_SEC 仍未收尾即认定卡死——打诊断行、还原存档、quit(1)。
@@ -944,6 +979,70 @@ func _initialize() -> void:
 	Input.action_release("hd_scope")
 	await wait_until(func(): return main.player.ads <= 0.4)
 	main.stash.toggle_riser("rifle")
+	# ---- 18a4 幻影后握把图证（2026-10-29）：rifle 卸/装后握把侧视特写两张
+	# ——鸟嘴虎口垫/K 形骨架镂空/金属配重杆/纯黑聚合物造型验收
+	# （_build_gun_visual 挂 grip_hold 后下方 rear_phantom 件，装/卸重建链换件）
+	main.stash.cash = 99999
+	if not main.stash.owns_rear_grip("phantom"):
+		main.stash.buy_rear_grip("phantom")
+	main.stash.equip_rear_grip("rifle", "none")   # 基线：卸
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.set_process(false)
+	_pose_side(0.46, -0.12)
+	await frames(2)
+	shot("res://out/shot_rear_phantom_off.png")
+	main.set_process(true)
+	main.stash.equip_rear_grip("rifle", "phantom")   # 装：拆旧挂新重建
+	_remount_primary()
+	main.set_process(false)
+	_pose_side(0.46, -0.12)
+	await frames(2)
+	shot("res://out/shot_rear_phantom_on.png")
+	_pose_side(0.19, 0.09, 0.0)   # 件体特写（合同名，独立帧非 _on 同图；
+	await frames(2)               # fov75 下换算 diag fov45 机位——握把段
+	shot("res://out/shot_phantom_grip.png")   # 满幅约 1/3 占幅判读）
+	main.set_process(true)
+	main.stash.equip_rear_grip("rifle", "none")   # 夹具复位（卸后握把）
+	# ---- 18a5 骨架狙击枪托图证（2026-10-29）：sniper 装/卸骨架托侧视特写
+	# 两张——「7」字框体/两处大镂空/贴腮顶檐/托底板撑趾造型验收（本机写实
+	# PH 扫描枪模路径：skel_stock 骨架框叠挂托段；装/卸走 m14_mods env 同链）
+	main.stash.cash = 99999
+	if not main.stash.m14_mods_on("skel_stock"):
+		main.stash.buy_m14_mod("skel_stock")
+	main._sync_m14_mods_env()
+	main.stash.loadout = {"primary": "sniper", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	_remount_primary()   # 购件/同步 env 后重挂才带骨架托
+	main.set_process(false)
+	_pose_side(0.62, -0.07)
+	await frames(2)
+	shot("res://out/shot_skel_stock_on.png")
+	_pose_side(0.33, 0.09, 0.20)   # 件体特写（合同名，独立帧非 _on 同图；
+	await frames(2)                # fov75 换算：托段框体满幅约 1/3+）
+	shot("res://out/shot_skel_stock.png")
+	main.set_process(true)
+	main.stash.m14_mods.erase("skel_stock")   # 卸：清配件 + 刷 env → 重建
+	main._sync_m14_mods_env()
+	_remount_primary()
+	main.set_process(false)
+	_pose_side(0.62, -0.07)
+	await frames(2)
+	shot("res://out/shot_skel_stock_off.png")
+	main.set_process(true)
+	# ---- 18a6 后握把行 + ⑤ 区 SNIPER 组图证（2026-10-29）：交易行 ③区
+	# 选枪切到 M4A1（步枪可装——后握把行随 rear_grip_ok 过滤出现），
+	# 同页 ⑤ 专属配件区 SNIPER 组（骨架托在售行，sniper 默认拥有恒显）
+	main.stash.cash = 99999
+	main.lobby.show_lobby()
+	main.lobby.set_tab(2)
+	main.lobby._market_ammo_gun = 10   # GUNS 表序 10 = M4A1
+	main.lobby.set_tab(2)   # 同页签重刷（set_tab 是唯一重渲染入口）
+	await frames(8)
+	shot("res://out/shot_rear_grip_market.png")
+	main.lobby.hide_lobby()
 	# scope 段收尾：恢复 mp7 在枪（下段 shot_gun_cover_all 依赖「逐枪循环
 	# 收尾正是 mp7」的摆位前提）；镜装配不还原（收尾存档还原兜底）
 	main.stash.loadout = {"primary": "mp7", "secondary": "pistol"}

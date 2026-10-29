@@ -268,9 +268,13 @@ static func _collect_meshes(node: Node3D, root: Node3D,
 						st.begin(Mesh.PRIMITIVE_TRIANGLES)
 						segs.append([mat, st, 0.0, 0])
 					st.append_from(m, s, rel)
-			# 命名锚点保留登记（含带网格的锚节点——几何照常合并，锚点空重建）
+			# 命名锚点保留登记（含带网格的锚节点——几何照常合并，锚点空重建）：
+			# grip_hold / mag_* 之外，后握把（rear_phantom）与骨架狙击枪托
+			# （skel_stock）两个配件建模件同名保留（2026-10-29 审计判据——
+			# 探针/回归按名找件，一体成型后几何并入 unibody、空锚重建）
 			var cname := String(c3.name)
-			if cname == "grip_hold" or cname.begins_with("mag_"):
+			if cname == "grip_hold" or cname.begins_with("mag_") \
+					or cname == "rear_phantom" or cname == "skel_stock":
 				keepers.append([cname, rel])
 			_collect_meshes(c3, root, segs, keepers)
 

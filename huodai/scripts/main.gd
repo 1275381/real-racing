@@ -96,6 +96,8 @@ func _ready() -> void:
 	guns.grip_muls_provider = func(gid: String): return stash.grip_muls(gid)
 	guns.grip_vy_provider = func(gid: String): return stash.grip_vy_mul(gid)
 	guns.riser_provider = func(gid: String): return stash.riser_on(gid)
+	# 后握把（2026-10-29 幻影后握把）：per-gun 装配 id 查询（视觉挂件 + ads_mul 同源）
+	guns.rear_grip_provider = func(gid: String): return stash.rear_grip_id(gid)
 	guns.hit_enemy.connect(_on_hit_enemy)
 	guns.fired.connect(_on_player_fired)
 	# 第四阶段：耐久（库存耐久 − 本局磨损）/ 消音器（stash 按枪查）/ 卡壳播报

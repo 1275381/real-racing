@@ -172,6 +172,18 @@ const SR25_MODS := {
 		"burst_gap_to": 0.1, "mag_to": 45, "recoil_mul_to": 0.45},
 }
 
+## 骨架狙击枪托（2026-10-29 deltaforcetools 烽火地带数据考证「骨架狙擊槍托」，
+## 站内 ID 34703；deltaforce.th.gl 797 件索引无同名条目故属性以前者为准）：
+## sniper 专属一体式骨架镂空托（黑色哑光聚合物、0.1kg 轻量、可快拆、交易所在售）
+## ——社区所称「高据枪高操控」万金油狙击托；腰射/压枪明显让位（本作只建模
+## 后坐与开镜两轴）。走 m14_mods 同链存储（id 全局唯一，buy/owns 链同源），
+## 表字段约定：ads_mul/recoil_mul = 装上后的开镜/后坐乘数（hd_guns 消费）
+const SKEL_STOCK := {
+	"skel_stock": {"name": "骨架狙击枪托", "price": 3600,
+		"desc": "操控速度 +10% · 后坐力 -10%（开镜使用为主，腰射让位）",
+		"ads_mul": 1.10, "recoil_mul": 0.90},
+}
+
 
 ## 大战场兵种配发枪械（不进枪械店）
 const BATTLE_GUNS := [
@@ -261,6 +273,26 @@ static func grip_by_id(id: String) -> Dictionary:
 		if g["id"] == id:
 			return g
 	return GRIPS[0]
+
+
+## 后握把（2026-10-29 幻影后握把落地，三角洲考证）：AR 手枪握把式后握把、
+## 纯黑哑光聚合物、紫色稀有度（0.2kg/1×1 格，deltaforce.th.gl item_13030000111，
+## 参考价约 35,535 哈夫币按本作经济折 ₵2,800）——操控速度型：牺牲少量据枪
+## 稳定（本作不建模）换开镜/举镜操控响应，适配高机动改法。per-gun 装配
+## （stash rear_grip_fit，照 GRIPS/grip_fit 先例），全步枪/冲锋枪可装
+const REAR_GRIPS := [
+	{"id": "none", "name": "无后握把", "desc": "原始手感", "price": 0,
+		"ads_mul": 1.0},
+	{"id": "phantom", "name": "幻影后握把", "desc": "操控速度 +15%", "price": 2800,
+		"ads_mul": 1.15},
+]
+
+
+static func rear_grip_by_id(id: String) -> Dictionary:
+	for g in REAR_GRIPS:
+		if g["id"] == id:
+			return g
+	return REAR_GRIPS[0]
 
 
 ## 瞄具的倍率档（固定倍率的瞄具只有一档）

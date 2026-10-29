@@ -2150,6 +2150,133 @@ func _run() -> void:
 	check("增高架建模件在位（装/卸顶点差 >0）", v_yes > v_no,
 		"v_no=%d v_yes=%d" % [v_no, v_yes])
 	main.stash.toggle_riser("rifle")   # 夹具复位（卸下）
+	# 幻影后握把（2026-10-29 三角洲考证落地）：REAR_GRIPS 表 + per-gun
+	# rear_grip_fit（照 grip_fit 先例）+ _mod_muls 开镜消费点 + rear_phantom
+	# 建模件在位（命名节点 + 顶点差）+ 老档兼容（空表）
+	var ph_def: Dictionary = Guns.rear_grip_by_id("phantom")
+	check("幻影后握把在表（ads_mul 1.15 档）", not ph_def.is_empty()
+		and str(ph_def.get("id", "")) == "phantom"
+		and absf(float(ph_def["ads_mul"]) - 1.15) < 0.001, str(ph_def))
+	main.stash.cash = 99999
+	check("购幻影后握把（₵2800 入拥有集）", main.stash.buy_rear_grip("phantom")
+		and main.stash.owns_rear_grip("phantom"))
+	main.stash.equip_rear_grip("rifle", "phantom")
+	check("rear_grip_fit 落位（rifle→phantom）+ 未装枪回 1.0",
+		main.stash.rear_grip_id("rifle") == "phantom"
+			and is_equal_approx(main.stash.rear_grip_ads_mul("smg"), 1.0)
+			and absf(main.stash.rear_grip_ads_mul("rifle") - 1.15) < 0.001,
+		"fit=%s mul=%.4f" % [main.stash.rear_grip_id("rifle"),
+			main.stash.rear_grip_ads_mul("rifle")])
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(8)
+	var mm_rp: Vector2 = main.guns._mod_muls()
+	check("后握把开镜乘数进 _mod_muls（装=×1.15）", absf(mm_rp.y - 1.15) < 0.001,
+		str(mm_rp))
+	# 建模件在位：卸/装 _build_gun_visual 对比——rear_phantom 命名节点 + 顶点差
+	# （一体成型后几何并入 unibody、命名锚点由合并器保留——hd_gunlib keepers）
+	main.stash.equip_rear_grip("rifle", "none")
+	var rg_no: Node3D = main.guns._build_gun_visual("rifle")
+	var rgv_no: int = _mesh_verts(rg_no)
+	var rg_node_no: bool = rg_no.find_child("rear_phantom", true, false) != null
+	rg_no.free()
+	main.stash.equip_rear_grip("rifle", "phantom")
+	var rg_yes: Node3D = main.guns._build_gun_visual("rifle")
+	var rgv_yes: int = _mesh_verts(rg_yes)
+	var rg_node_yes: bool = rg_yes.find_child("rear_phantom", true, false) != null
+	rg_yes.free()
+	check("rear_phantom 建模件在位（卸=无节点 · 装=有节点 + 顶点差>0）",
+		(not rg_node_no) and rg_node_yes and rgv_yes > rgv_no,
+		"v_no=%d v_yes=%d" % [rgv_no, rgv_yes])
+	main.stash.equip_rear_grip("rifle", "none")   # 夹具复位（卸后握把）
+	# 骨架狙击枪托（2026-10-29 deltaforcetools 考证）：SKEL_STOCK 专属表
+	# （m14_mods 同链存储）+ sniper _mod_muls/_vy_mul 消费点 + skel_stock
+	# 建模件在位（写实枪模路径叠挂 / 程序化路径原托替换，两端都有命名节点）
+	var sk_def: Dictionary = Guns.SKEL_STOCK["skel_stock"]
+	check("骨架狙击枪托在表（ads 1.10 / recoil 0.90）",
+		absf(float(sk_def["ads_mul"]) - 1.10) < 0.001
+			and absf(float(sk_def["recoil_mul"]) - 0.90) < 0.001, str(sk_def))
+	var sk_no: Node3D = main.guns._build_gun_visual("sniper")
+	var skv_no: int = _mesh_verts(sk_no)
+	var sk_node_no: bool = sk_no.find_child("skel_stock", true, false) != null
+	sk_no.free()
+	main.stash.cash = 99999
+	check("购骨架托（M14 配件同链 buy_m14_mod）", main.stash.buy_m14_mod("skel_stock")
+		and main.stash.m14_mods_on("skel_stock"))
+	main._sync_m14_mods_env()
+	var sk_yes: Node3D = main.guns._build_gun_visual("sniper")
+	var skv_yes: int = _mesh_verts(sk_yes)
+	var sk_node_yes: bool = sk_yes.find_child("skel_stock", true, false) != null
+	sk_yes.free()
+	check("skel_stock 建模件在位（卸=无 · 装=有 + 顶点差>0）",
+		(not sk_node_no) and sk_node_yes and skv_yes != skv_no,
+		"v_no=%d v_yes=%d" % [skv_no, skv_yes])
+	main._start_mission({"primary": "sniper", "secondary": "pistol"})
+	await frames(8)
+	var mm_sk: Vector2 = main.guns._mod_muls()
+	check("骨架托数值进 _mod_muls（sniper ads ×1.10 · recoil ×0.90）",
+		absf(mm_sk.y - 1.10) < 0.001 and absf(mm_sk.x - 0.90) < 0.001, str(mm_sk))
+	check("骨架托后坐 -10% 进 _vy_mul（pitch 轴同乘）",
+		absf(main.guns._vy_mul() - 0.90) < 0.001,
+		"vy=%.4f" % main.guns._vy_mul())
+	# 程序化回退路径验证：sniper 不在 BL_GUNS（写实件是 PH 扫描模型，
+	# HD_NO_BL 只断 Blender 枪）——照 mk4 全自动枪管「工厂直调」先例，
+	# 直接调 legacy 枪匠 = 强制程序化枪身：原托替换（木托三件不建）+
+	# skel_stock 命名节点原位落成
+	OS.set_environment("HD_NO_BL", "1")
+	OS.set_environment("HD_M14_MODS", "")
+	var skl_base: Node3D = HDGuns._old5_build_legacy("sniper")
+	var sklv_base: int = _mesh_verts(skl_base)
+	var skl_node_base: bool = skl_base.find_child("skel_stock", true, false) != null
+	skl_base.free()
+	OS.set_environment("HD_M14_MODS", "skel_stock,")
+	var skl_rep: Node3D = HDGuns._old5_build_legacy("sniper")
+	var sklv_rep: int = _mesh_verts(skl_rep)
+	var skl_node_rep: bool = skl_rep.find_child("skel_stock", true, false) != null
+	skl_rep.free()
+	OS.set_environment("HD_NO_BL", "")
+	OS.set_environment("HD_M14_MODS", "")
+	check("程序化路径骨架托原托替换（skel_stock 节点在位 + 木托顶点差）",
+		(not skl_node_base) and skl_node_rep and sklv_rep != sklv_base,
+		"base=%d rep=%d" % [sklv_base, sklv_rep])
+	# 老档兼容：无 rear_grips_owned/rear_grip_fit/m14_mods 字段的 v2 存档
+	# 读入 = 后握把表空 + 缺省 none + 专属配件空表（不崩不误装）
+	var f_old := FileAccess.open(HDData.SAVE_PATH, FileAccess.WRITE)
+	f_old.store_string(JSON.stringify({"v": 2, "cash": 500,
+		"guns_owned": ["rifle", "sniper"],
+		"loadout": {"primary": "rifle", "secondary": "pistol"}}))
+	f_old.close()
+	var st_old := HDStash.new()
+	check("老档兼容：后握把/专属托表全空（无字段=缺省 none 不崩）",
+		st_old.rear_grips_owned == ["none"] and st_old.rear_grip_fit.is_empty()
+			and st_old.rear_grip_id("rifle") == "none"
+			and is_equal_approx(st_old.rear_grip_ads_mul("rifle"), 1.0)
+			and not st_old.owns_rear_grip("phantom") and st_old.m14_mods.is_empty())
+	st_old.cash = 99999
+	st_old.buy_rear_grip("phantom")
+	st_old.equip_rear_grip("rifle", "phantom")
+	st_old.buy_m14_mod("skel_stock")
+	var st_rt := HDStash.new()
+	check("存档往返：rear_grip_fit + skel_stock（四表同链）读回保留",
+		st_rt.owns_rear_grip("phantom") and st_rt.rear_grip_id("rifle") == "phantom"
+			and st_rt.m14_mods_on("skel_stock"))
+	main.stash.save()   # 写回测试主档
+	main.stash.m14_mods.erase("skel_stock")   # 夹具复位（后续按未购口径）
+	main._sync_m14_mods_env()
+	# 交易行入口可见性：③区后握把行（选枪 M4A1，步枪可装——行随
+	# rear_grip_ok 过滤出现）+ ⑤区 SNIPER 组骨架托行（sniper 默认拥有恒显）
+	main.stash.guns_owned = ["pistol", "smg", "rifle", "shotgun", "sniper",
+		"m14", "mk4", "sr25"]   # ⑤组需要 M14/MK4/SR25 在册（摆拍，收尾不还原）
+	main.lobby.show_lobby()
+	main.lobby.set_tab(2)
+	main.lobby._market_ammo_gun = 10   # GUNS 表序 10 = M4A1
+	main.lobby.set_tab(2)   # 同页签重刷（set_tab 是唯一重渲染入口）
+	await frames(2)
+	var mkt_rg := _menu_labels_text(main.lobby)
+	check("交易行入口：③区后握把行 + ⑤区 SNIPER 组骨架托行可见",
+		mkt_rg.contains("后握把：") and mkt_rg.contains("[SNIPER] 骨架狙击枪托"),
+		"后握把行=%s 骨架托行=%s" % [mkt_rg.contains("后握把："),
+			mkt_rg.contains("[SNIPER] 骨架狙击枪托")])
+	main.lobby.hide_lobby()
 	# MK4 三连发（2026-10-25 用户定案）：点一下=一个三连发（松手打完为止），
 	# 按住不重复；「全自动枪管」配件（MK4_MODS.autobarrel，M14 配件同链）解锁全自动
 	main.stash.m14_mods.erase("autobarrel")   # 夹具：确保未购（幂等）

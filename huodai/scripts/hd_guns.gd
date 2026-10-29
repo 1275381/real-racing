@@ -615,6 +615,7 @@ var m14_mods_provider: Callable = Callable()
 var grip_muls_provider: Callable = Callable()
 var riser_provider: Callable = Callable()   # 镜体增高架查询（2026-10-28：per-gun bool）
 var grip_vy_provider: Callable = Callable()   # 垂直后坐乘数（共振前握把 vy_mul）
+var rear_grip_provider: Callable = Callable()   # 后握把装配查询（2026-10-29 幻影后握把：per-gun id/"none"）
 ## 第四阶段：耐久（func(gun_id)->0..100，含本局磨损）/ 消音器（func(gun_id)->bool）；
 ## 未注入 = 全新无消音（探针/测试裸调行为不变）
 var dur_provider: Callable = Callable()
@@ -741,6 +742,18 @@ func _mod_muls() -> Vector2:
 	if grip_muls_provider != null and grip_muls_provider.is_valid():
 		var gm: Vector2 = grip_muls_provider.call(cur_id)
 		v = Vector2(v.x * gm.x, v.y * gm.y)
+	# 幻影后握把（2026-10-29）：REAR_GRIPS ads_mul——操控速度 +15% 档
+	# （stash rear_grip_ads_mul 同链口径，未装/未注入 = 1.0 零变化）
+	if rear_grip_provider != null and rear_grip_provider.is_valid():
+		var rg := Guns.rear_grip_by_id(str(rear_grip_provider.call(cur_id)))
+		if not rg.is_empty() and str(rg.get("id", "none")) != "none":
+			v = Vector2(v.x, v.y * maxf(0.5, float(rg.get("ads_mul", 1.0))))
+	# 骨架狙击枪托（2026-10-29）：sniper 专属——ads ×1.10 / recoil ×0.90
+	# （SKEL_STOCK 表字段驱动，m14_mods 同链解锁态）
+	if cur_id == "sniper" and _m14_mod("skel_stock"):
+		var sk: Dictionary = Guns.SKEL_STOCK["skel_stock"]
+		v = Vector2(v.x * maxf(0.0, float(sk.get("recoil_mul", 1.0))),
+				v.y * maxf(0.5, float(sk.get("ads_mul", 1.0))))
 	return v
 
 
@@ -750,6 +763,9 @@ func _vy_mul() -> float:
 	var m := 0.55 if (cur_id == "m14" and _m14_mod("foregrip")) else 1.0
 	if grip_vy_provider != null and grip_vy_provider.is_valid():
 		m *= float(grip_vy_provider.call(cur_id))
+	# 骨架狙击枪托（2026-10-29）：后坐 -10% 对 pitch 上顶同生效
+	if cur_id == "sniper" and _m14_mod("skel_stock"):
+		m *= maxf(0.0, float(Guns.SKEL_STOCK["skel_stock"].get("recoil_mul", 1.0)))
 	return m
 
 
@@ -1099,6 +1115,19 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	else:
 		# 兜底（大战场 lmg 等未列枪）：空枪身 + 默认机瞄位（原行为等值）
 		root = _finish_gun(Node3D.new(), gun_id, Vector3(0.085, -0.1, -0.5))
+	# 幻影后握把（2026-10-29）：步枪/冲锋枪册挂握把锚（grip_hold）后下方的
+	# 骨架式后握把件——provider 未注入（探针/测试裸调）或未装 = 不挂零变化。
+	# 挂在 HOLD_DELTA 平移前：mount 为 root 直接子节点，Δ 随直接子节点平移同源
+	if rear_grip_provider != null and rear_grip_provider.is_valid():
+		var rg_id := str(rear_grip_provider.call(gun_id))
+		if rg_id != "" and rg_id != "none" and rear_grip_ok(gun_id):
+			_attach_rear_phantom(root)
+	# 骨架狙击枪托（2026-10-29）：sniper 专属骨架托——程序化回退枪身已在
+	# 枪匠内替换原托（自带同名 skel_stock 节点），这里只补写实枪模（PH 扫描
+	# 件原托不可拆）路径的骨架框叠挂
+	if gun_id == "sniper" and _m14_mod("skel_stock") \
+			and root.find_child("skel_stock", true, false) == null:
+		_attach_skel_stock(root)
 	# 持枪对齐：枪身+镜体整体平移 Δ（见 HOLD_DELTA 表头注释）——握把顶锚
 	# 统一落 MK4 基准；镜体随枪同移（scope_anchor 语义不变），AABB 与 ADS
 	# 摆位自动含 Δ，枪架局部三锚在 _mount_slot/try_fire 按 Δ×GUN_SCALE 随动
@@ -3841,12 +3870,245 @@ static func _old5_sniper() -> Node3D:
 	# = (0, 0.0126, 0.0819)——8 角点与旧模偏差 ≤0.03mm（矩阵精算）
 	GUN_LIB.grip(root, dark, 0.14, Vector3(0, 0.0126, 0.0819), 15.0,
 			0.05, 0.09)
-	# 枪托（木，微下斜 3°）+ 抬腮板 + 橡胶托底板
-	GUN_LIB.chamfer_box(root, wood, Vector3(0.05, 0.10, 0.34),
-			Vector3(0, -0.045, 0.30), Vector3(-3, 0, 0), 0.003, 10)
-	GUN_LIB.chamfer_box(root, wood, Vector3(0.045, 0.05, 0.12),
-			Vector3(0, 0.015, 0.40), Vector3.ZERO, 0.002, 6)
-	GUN_LIB.chamfer_box(root, dark, Vector3(0.054, 0.11, 0.014),
-			Vector3(0, -0.036, 0.47), Vector3(-3, 0, 0), 0.0012, 6)
+	# 枪托（木，微下斜 3°）+ 抬腮板 + 橡胶托底板——骨架狙击枪托（2026-10-29
+	# 专属配件，HD_M14_MODS 含 skel_stock 时）原托替换：木托三件不建，骨架
+	# 托框体原位落成（独立命名节点 skel_stock 供审计；锚取托腕锚/旧托两端，
+	# 与写实枪模路径 _attach_skel_stock 共用同一 sculpt 工厂）
+	if OS.get_environment("HD_M14_MODS").contains("skel_stock"):
+		root.add_child(_skel_stock_node(0.135, 0.465, 0.042, -0.062))
+	else:
+		GUN_LIB.chamfer_box(root, wood, Vector3(0.05, 0.10, 0.34),
+				Vector3(0, -0.045, 0.30), Vector3(-3, 0, 0), 0.003, 10)
+		GUN_LIB.chamfer_box(root, wood, Vector3(0.045, 0.05, 0.12),
+				Vector3(0, 0.015, 0.40), Vector3.ZERO, 0.002, 6)
+		GUN_LIB.chamfer_box(root, dark, Vector3(0.054, 0.11, 0.014),
+				Vector3(0, -0.036, 0.47), Vector3(-3, 0, 0), 0.0012, 6)
 	return root
+
+
+## ---------------- 配件建模件（2026-10-29 幻影后握把 + 骨架狙击枪托） ----------------
+
+
+## 幻影后握把可装枪型（全步枪/冲锋枪，三角洲定位 SG552/K416 等高机动改法）：
+## 步枪册 + 冲锋枪册 + 旧五枪的 M7 步枪/汤姆逊冲锋枪——手枪/霰弹/狙击/机枪
+## 无 AR 式握把座不卖。挂件判据（_build_gun_visual）与交易行③区行可见性同源
+static func rear_grip_ok(id: String) -> bool:
+	return _ar_has(id) or _smg_has(id) or id == "rifle" or id == "smg"
+
+
+## 配件建模件材质工厂（本段专用，不进各枪册材质包）：纯黑哑光聚合物
+## （幻影系配色/骨架托框体）+ 装饰钢（斜向配重杆/销孔圈——金属光泽件）。
+## 参数口径同 _old5_mats：关深度测试 + render_priority 10 + 微自发光
+static func _acc_mats() -> Dictionary:
+	var mk := func(c: Color, e: Color, rough := 0.85, met := 0.0) -> StandardMaterial3D:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.roughness = rough
+		m.metallic = met
+		m.metallic_specular = 0.1
+		m.no_depth_test = true
+		m.render_priority = 10
+		m.emission_enabled = true
+		m.emission = e
+		m.emission_energy_multiplier = 0.32
+		return m
+	return {
+		"polymer": mk.call(Color(0.055, 0.058, 0.062), Color(0.05, 0.052, 0.056)),
+		"dark": mk.call(Color(0.10, 0.11, 0.125), Color(0.125, 0.14, 0.155)),
+		"steel": mk.call(Color(0.42, 0.44, 0.48), Color(0.14, 0.15, 0.16), 0.35, 0.75),
+	}
+
+
+## 幻影后握把建模件（ref_phantom_grip ref_01-04 考证，命名节点 rear_phantom
+## 供审计）：AR 手枪握把式后握把骨架件，握把锚（grip_hold）后下方延伸——
+## 上端「鸟嘴」虎口垫（上翘尖端前勾，识别度最高轮廓）/ 中部 K 形镂空
+## （两块对顶梯形开窗 + 斜向连梁）/ 下腔金属光泽配重杆 / 前缘横向防滑纹 /
+## 平直底盖 + 前缘下端指位凸台 / 顶部方块连接段带圆销孔（可快拆读法）。
+## 挂点统一偏移：可拆握把枪（程序化枪身，grip_hold 子树即原握把全部
+## 盒件）隐藏原握把、幻影件贴握把顶锚原位而下——官方图幻影是唯一握把
+## （R3 验收④）；写实枪模（BL unibody 整枪网格，原握把不可拆）保持
+## mount 后移/下移让位到原握把轮廓之外（R2 验收①），倾角随各枪
+## grip_hold 实际旋转（写实枪模锚无旋转时回 AR 基准 18°）
+## R3 验收① K 形镂空可读（2026-10-29）：竖轨减薄 0.006→0.004 并外移
+## ±0.012（窗宽 0.016→0.020）、斜梁减薄 0.010→0.007，另沿窗缘（竖轨
+## 内缘/顶横带下缘/底盖上缘）加钢亮边——件体近黑自发光互相无对比，
+## 4x 放大整块黑板，亮边勾出双窗负形
+static func _attach_rear_phantom(root: Node3D) -> void:
+	var gh: Node = root.find_child("grip_hold", true, false)
+	if gh == null or not (gh is Node3D):
+		return
+	var g3 := gh as Node3D
+	var stock_off: Vector3 = Vector3(0.0, -0.024, 0.024)   # 写实让位
+	if g3.find_children("*", "MeshInstance3D", true, false).is_empty():
+		g3.visible = false   # 可拆枪：隐藏原握把（grip_hold 子树=握把盒）
+		stock_off = Vector3(0.0, -0.005, 0.002)
+	var tilt: float = g3.rotation_degrees.x
+	if absf(tilt) < 0.5:
+		tilt = -18.0   # 写实枪模 grip_hold 锚无旋转：AR 握把基准后倾
+	var mats := _acc_mats()
+	var poly: StandardMaterial3D = mats["polymer"]
+	var dark: StandardMaterial3D = mats["dark"]
+	var steel: StandardMaterial3D = mats["steel"]
+	var mount := Node3D.new()
+	mount.name = "rear_phantom"
+	mount.position = g3.position + stock_off
+	mount.rotation_degrees = Vector3(tilt, 0, 0)
+	root.add_child(mount)
+	# 顶部方块连接段（斜切平面）+ 圆销孔（钢销横穿——可快拆）
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.032, 0.018, 0.026),
+			Vector3(0, 0.0, 0.012), Vector3(0, 0, 0), 0.0015, 4)
+	var pin := CylinderMesh.new()
+	pin.top_radius = 0.0042
+	pin.bottom_radius = 0.0042
+	pin.height = 0.034
+	pin.radial_segments = 10
+	pin.rings = 1
+	pin.material = steel
+	var pin_mi := MeshInstance3D.new()
+	pin_mi.mesh = pin
+	pin_mi.rotation_degrees = Vector3(0, 0, 90)
+	pin_mi.position = Vector3(0, 0.0, 0.012)
+	mount.add_child(pin_mi)
+	# 鸟嘴虎口垫：主板上翘（顶向后掠）+ 尖端前勾小件
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.026, 0.030, 0.010),
+			Vector3(0, 0.008, 0.026), Vector3(40, 0, 0), 0.001, 3)
+	GUN_LIB.chamfer_box(mount, dark, Vector3(0.018, 0.016, 0.008),
+			Vector3(0, 0.025, 0.028), Vector3(-55, 0, 0), 0.0008, 3)
+	# K 形镂空骨架：顶横带 + 前缘竖条（K 竖笔）+ 斜向连梁 + 后缘竖条
+	# ——单层 z-y 平面框（R3 定罪：x 双轨侧视投影互叠错位把窗填成整块
+	# 黑板，改单层后双窗负形在侧视投影直接可读；钢亮边沿各条内缘勾窗框线）
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.028, 0.008, 0.026),
+			Vector3(0, -0.010, 0.016), Vector3.ZERO, 0.001, 3)
+	GUN_LIB.chamfer_box(mount, steel, Vector3(0.020, 0.0022, 0.020),
+			Vector3(0, -0.0145, 0.016), Vector3.ZERO, 0.0005, 2)
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.005, 0.052, 0.008),
+			Vector3(0, -0.040, 0.009), Vector3.ZERO, 0.0006, 3)
+	GUN_LIB.chamfer_box(mount, steel, Vector3(0.0055, 0.048, 0.0035),
+			Vector3(0, -0.040, 0.0135), Vector3.ZERO, 0.0004, 2)
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.005, 0.048, 0.007),
+			Vector3(0, -0.039, 0.019), Vector3(32, 0, 0), 0.0006, 3)
+	GUN_LIB.chamfer_box(mount, steel, Vector3(0.0055, 0.044, 0.0028),
+			Vector3(0, -0.039, 0.0215), Vector3(32, 0, 0), 0.0004, 2)
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.005, 0.052, 0.008),
+			Vector3(0, -0.040, 0.028), Vector3.ZERO, 0.0006, 3)
+	# 下侧镂空腔金属光泽斜向配重杆（ref_01 渲染图识别件）
+	var rod := CylinderMesh.new()
+	rod.top_radius = 0.0032
+	rod.bottom_radius = 0.0032
+	rod.height = 0.042
+	rod.radial_segments = 8
+	rod.rings = 1
+	rod.material = steel
+	var rod_mi := MeshInstance3D.new()
+	rod_mi.mesh = rod
+	rod_mi.rotation_degrees = Vector3(55, 0, 0)
+	rod_mi.position = Vector3(0, -0.052, 0.014)
+	mount.add_child(rod_mi)
+	# 前缘虎口面细密横向防滑纹 ×5
+	for i in 5:
+		GUN_LIB.chamfer_box(mount, dark, Vector3(0.024, 0.0022, 0.004),
+				Vector3(0, -0.026 - 0.006 * float(i), 0.0295), Vector3.ZERO,
+				0.0005, 2)
+	# 平直底盖 + 前缘下端小指位凸台（底盖上缘钢亮边勾下窗下缘）
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.030, 0.010, 0.024),
+			Vector3(0, -0.068, 0.014), Vector3.ZERO, 0.001, 3)
+	GUN_LIB.chamfer_box(mount, steel, Vector3(0.024, 0.0022, 0.018),
+			Vector3(0, -0.0625, 0.014), Vector3.ZERO, 0.0005, 2)
+	GUN_LIB.chamfer_box(mount, poly, Vector3(0.012, 0.009, 0.016),
+			Vector3(0, -0.061, -0.001), Vector3.ZERO, 0.0008, 2)
+
+
+## 骨架狙击枪托建模件（ref_skel_stock ref_01-04 考证，命名节点 skel_stock
+## 供审计）：一体式骨架镂空托、侧视前低后高「7」字框体——前端管状抱箍
+## （上角三条平行斜向减重槽）/ 顶板圆形通孔（销/背带位）/ 平直厚实顶檐
+## 即贴腮面 / 框体两处大镂空（上窗近矩形、下窗直通托底梯形，竖梁分隔）/
+## 后段实心托底板带两条纵向凸棱、底端外撇撑趾。固定长度整体托（考证渲染
+## 未见调节机构）。参数锚定：z0 抱箍前沿 / z1 托底板 / y_top 贴腮面 /
+## y_bot 下缘梁——程序化回退路径传枪匠定值，写实枪模路径按托腕锚+全枪
+## AABB 实测推导（_attach_skel_stock）
+static func _skel_stock_node(z0: float, z1: float, y_top: float,
+		y_bot: float) -> Node3D:
+	var n := Node3D.new()
+	n.name = "skel_stock"
+	var mats := _acc_mats()
+	var poly: StandardMaterial3D = mats["polymer"]
+	var dark: StandardMaterial3D = mats["dark"]
+	var steel: StandardMaterial3D = mats["steel"]
+	var span := maxf(0.10, z1 - z0)
+	var mid := (z0 + z1) * 0.5
+	var h := maxf(0.05, y_top - y_bot)
+	var yc := (y_top + y_bot) * 0.5
+	# 前端管状抱箍（托腕位）+ 上角三条平行斜向减重开槽——R2 验收内嵌
+	# （2026-10-29）：槽块原心 y_top−0.014 悬在管投影之外呈悬浮鳍，改
+	# y=yc+0.010 让块体 [yc, yc+0.020] 全落管体投影（管心 yc−0.006、外
+	# 半径 0.029 → 投影 [yc−0.035, yc+0.023]）；材质关深度测试会透管
+	# 显形，内嵌后即「抱箍上角斜向减重槽」读法
+	GUN_LIB.tube(n, poly, 0.040, 0.058,
+			Vector3(0, yc - 0.006, z0 + 0.020), Vector3(90, 0, 0), 0.004,
+			0, null, 3, 24)
+	for i in 3:
+		GUN_LIB.chamfer_box(n, dark, Vector3(0.006, 0.020, 0.007),
+				Vector3(0, yc + 0.010, z0 + 0.008 + 0.011 * float(i)),
+				Vector3(38, 0, 0), 0.0006, 2)
+	# 平直厚实顶檐（贴腮面）+ 顶板圆形通孔（钢圈销/背带位）
+	GUN_LIB.chamfer_box(n, poly, Vector3(0.042, 0.014, span * 0.86),
+			Vector3(0, y_top, mid + 0.012), Vector3.ZERO, 0.002, 6)
+	GUN_LIB.torus_ring(n, steel, 0.005, 0.009,
+			Vector3(0, y_top + 0.008, z0 + 0.052), Vector3.ZERO, 12, 6)
+	# 前立柱（「7」字起笔，前低后高）
+	GUN_LIB.chamfer_box(n, poly, Vector3(0.038, h * 0.9, 0.012),
+			Vector3(0, yc + 0.004, z0 + 0.048), Vector3.ZERO, 0.0012, 4)
+	# 框体中部竖梁（两窗分隔）+ 梁上销孔（钢销横穿）
+	GUN_LIB.chamfer_box(n, poly, Vector3(0.038, h * 0.9, 0.013),
+			Vector3(0, yc + 0.002, mid + 0.010), Vector3.ZERO, 0.0012, 4)
+	var hole := CylinderMesh.new()
+	hole.top_radius = 0.0045
+	hole.bottom_radius = 0.0045
+	hole.height = 0.042
+	hole.radial_segments = 8
+	hole.rings = 1
+	hole.material = dark
+	var hole_mi := MeshInstance3D.new()
+	hole_mi.mesh = hole
+	hole_mi.rotation_degrees = Vector3(0, 0, 90)
+	hole_mi.position = Vector3(0, yc + 0.002, mid + 0.010)
+	n.add_child(hole_mi)
+	# 下缘梁（下窗直通托底的梯形大窗下沿，微下斜）
+	GUN_LIB.chamfer_box(n, poly, Vector3(0.038, 0.012, span * 0.78),
+			Vector3(0, y_bot, mid + 0.008), Vector3(-2, 0, 0), 0.0012, 5)
+	# 后段实心托底板（向后微弧）+ 两条纵向凸棱加强筋
+	GUN_LIB.chamfer_box(n, poly, Vector3(0.044, h + 0.030, 0.014),
+			Vector3(0, yc - 0.008, z1), Vector3(-4, 0, 0), 0.0015, 6)
+	for sx in [-1.0, 1.0]:
+		GUN_LIB.chamfer_box(n, poly, Vector3(0.005, h * 0.8, 0.006),
+				Vector3(sx * 0.012, yc - 0.008, z1 + 0.010),
+				Vector3(-4, 0, 0), 0.0006, 2)
+	# 底端外撇撑趾
+	GUN_LIB.chamfer_box(n, poly, Vector3(0.048, 0.016, 0.030),
+			Vector3(0, y_bot - 0.012, z1 - 0.012), Vector3(-16, 0, 0),
+			0.001, 4)
+	return n
+
+
+## 写实枪模（PH 扫描件）路径的骨架托叠挂：扫描网格原托不可拆，骨架框
+## 包在托段外——锚定托腕锚（grip_hold）+ 全枪 AABB 托底端实测推导
+## （程序化回退路径已在枪匠内原位替换，不经过此处）
+## R2 验收按实测托形收紧（2026-10-29）：sniper 原托逐带实测（diag_acc，
+## 2cm 带 y_min/y_max）——托尾端 z=bb.end.z、托下缘自 −0.075 渐降到
+## −0.163——z1 后移让托底板盖过尾端；y_bot 压到原托最低点外，框条全
+## 轮廓外露、窗负形可读
+## R3 验收贴合度（2026-10-29）：下缘梁上缘(=y_bot+0.006)与木托最低点
+## −0.1633 只余 0.7mm、趾尖没入梁上缘 2mm——y_bot 再降 4mm（g3.y−0.152，
+## 脱开 4.7mm）；顶檐悬在脊线上 18~24mm、框体比原托高三成——y_top 收到
+## g3.y+0.018（顶檐底距脊线 1~5mm 不嵌）；托底板悬出尾面后 10mm——z1 收
+## 回 end−0.002（板后缘超 5mm、板体贴尾面），框体高 h=0.170 仅比原托
+## 0.153 高 11%
+static func _attach_skel_stock(root: Node3D) -> void:
+	var gh: Node = root.find_child("grip_hold", true, false)
+	var bb := _aabb_in(root, root)
+	if gh == null or not (gh is Node3D) or bb.size.z <= 0.0:
+		return
+	var g3 := gh as Node3D
+	root.add_child(_skel_stock_node(g3.position.z + 0.055, bb.end.z - 0.002,
+			g3.position.y + 0.018, g3.position.y - 0.152))
 

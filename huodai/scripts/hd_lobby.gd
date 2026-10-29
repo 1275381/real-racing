@@ -2077,6 +2077,26 @@ func _render_market(pg: VBoxContainer) -> void:
 	gbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	gbtn.pressed.connect(_cycle_grip_for.bind(ammo_id))
 	grow.add_child(gbtn)
+	# 后握把行（2026-10-29 幻影后握把）：步枪/冲锋枪可装（AR 式握把座）——
+	# 选中枪的后握把循环：未购现场买（钱不够提示）、已购直接换装、循环回
+	# none 卸下（REAR_GRIPS 表，无/幻影 两档；stash buy/equip_rear_grip）
+	if HDGuns.rear_grip_ok(ammo_id):
+		var rgfit := str(_stash.rear_grip_fit.get(ammo_id, "none"))
+		var rgdef: Dictionary = Guns.rear_grip_by_id(rgfit)
+		var rgrow := HBoxContainer.new()
+		rgrow.add_theme_constant_override("separation", 8)
+		rgrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		av.add_child(rgrow)
+		var rglbl := _mk_label("后握把：%s（%s）" % [
+				str(rgdef.get("name", rgfit)), str(rgdef.get("desc", ""))], 13, COL_TEXT)
+		rglbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rglbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		rgrow.add_child(rglbl)
+		var rgbtn := _mk_btn("换/购后握把 ▸", 13)
+		_style_btn(rgbtn, false, COL_ACCENT, 10)
+		rgbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		rgbtn.pressed.connect(_cycle_rear_grip_for.bind(ammo_id))
+		rgrow.add_child(rgbtn)
 	# 增高架行（2026-10-28）：红点/全息装其上抬高——首购 ₵1200 买断通用，
 	# 之后每枪开关装卸；只对装红点/全息的枪有意义（其他镜提示）
 	var r_on := _stash.riser_on(ammo_id)
@@ -2106,8 +2126,9 @@ func _render_market(pg: VBoxContainer) -> void:
 				"已装" if on_now else "已卸"]))
 	rrow.add_child(rbtn)
 
-	# ⑤ 专属配件区（2026-10 M14 护木/扩容匣；2026-10-25 MK4 全自动枪管并入）：
-	# 按枪分组渲染（拥有该枪才显示购买意义）；行式布局同②瞄具区：已购置灰/未购「购买」
+	# ⑤ 专属配件区（2026-10 M14 护木/扩容匣；2026-10-25 MK4 全自动枪管并入；
+	# 2026-10-29 骨架狙击枪托 sniper 组并入）：按枪分组渲染（拥有该枪才显示
+	# 购买意义）；行式布局同②瞄具区：已购置灰/未购「购买」
 	var mod_groups: Array = []
 	if _stash.guns_owned.has("m14"):
 		mod_groups.append(["M14", Guns.M14_MODS])
@@ -2115,6 +2136,8 @@ func _render_market(pg: VBoxContainer) -> void:
 		mod_groups.append(["MK4", Guns.MK4_MODS])
 	if _stash.guns_owned.has("sr25"):
 		mod_groups.append(["SR25", Guns.SR25_MODS])
+	if _stash.guns_owned.has("sniper"):
+		mod_groups.append(["SNIPER", Guns.SKEL_STOCK])
 	if not mod_groups.is_empty():
 		right.add_child(_mk_sec_title(4, "⑤ 专属配件"))
 		var mod_row_i := 0
@@ -2373,6 +2396,36 @@ func _cycle_grip_for(gid: String) -> void:
 		_stash.equip_grip(gid, nxt)
 		show_hint("「%s」握把 → %s" % [String(Guns.gun_by_id(gid).get("name", gid)),
 				String(Guns.grip_by_id(nxt).get("desc", ""))])
+
+
+## 后握把循环（2026-10-29 幻影后握把）：无/幻影 两档——下一档未购现场买
+## （钱不够提示）、已购直接换装、循环回 none 卸下——REAR_GRIPS 表驱动，
+## 步枪/冲锋枪（HDGuns.rear_grip_ok 同源判据，行入口已过滤）
+func _cycle_rear_grip_for(gid: String) -> void:
+	var ids: Array = []
+	for rg in Guns.REAR_GRIPS:
+		ids.append(str(rg["id"]))
+	var cur_i := ids.find(str(_stash.rear_grip_fit.get(gid, "none")))
+	var nxt_r: String = ids[(cur_i + 1) % ids.size()]
+	if nxt_r == "none":
+		_stash.equip_rear_grip(gid, "none")
+		show_hint("「%s」后握把卸下" % String(Guns.gun_by_id(gid).get("name", gid)))
+		return
+	if not _stash.owns_rear_grip(nxt_r):
+		if _stash.buy_rear_grip(nxt_r):
+			_stash.equip_rear_grip(gid, nxt_r)
+			show_hint("%s 已购装「%s」—— %s" % [
+					String(Guns.gun_by_id(gid).get("name", gid)),
+					String(Guns.rear_grip_by_id(nxt_r).get("name", nxt_r)),
+					String(Guns.rear_grip_by_id(nxt_r).get("desc", ""))])
+		else:
+			show_hint("现金不足 —— %s 需 ₵%s" % [
+					String(Guns.rear_grip_by_id(nxt_r).get("name", nxt_r)),
+					_fmt(_to_int(Guns.rear_grip_by_id(nxt_r).get("price", 0)))])
+		return
+	_stash.equip_rear_grip(gid, nxt_r)
+	show_hint("「%s」后握把 → %s" % [String(Guns.gun_by_id(gid).get("name", gid)),
+			String(Guns.rear_grip_by_id(nxt_r).get("desc", ""))])
 
 
 ## N 键循环该枪弹种（阶段 D）：未购现场买（钱不够提示），已购直接换装
