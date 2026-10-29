@@ -3,7 +3,7 @@
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 冲锋枪册五枪（mp5/p90/uzi/vector/mp7）+
-#         步枪册八枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25）+ 旧五枪 +
+#         步枪册九枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437）+ 旧五枪 +
 #         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
@@ -691,7 +691,7 @@ func _run() -> void:
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
-			"m250", "mp7", "asval", "k416", "an94", "sr25"]:
+			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -919,16 +919,18 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册八枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	# 27. 高模顶点红线：步枪册九枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
 	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
 	#     步枪 2026-10 并册、an94 商店超点射突击步枪 2026-10 并册、
-	#     sr25 商店半自动 DMR 2026-10 并册）
+	#     sr25 商店半自动 DMR 2026-10 并册、k437 .300 BLK 突击步枪
+	#     2026-10-29 并册）
 	#     逐把枪身根总顶点 ≥ 8× 低模基线（走
 	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
-	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25 独立命名弹匣节点；
-	#     POLY_MIN/POLY_BASE 见 HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57
-	#     的 8 倍）
-	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25"]:
+	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437 独立命名弹匣
+	#     节点；POLY_MIN/POLY_BASE 见 HDGunLib——门槛与 mk4 同口径 =
+	#     盒×24 + 柱×57 的 8 倍）
+	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
+			"k437"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -1026,6 +1028,43 @@ func _run() -> void:
 			and int(HDData.AMMO_PRICE["sr25"]) == 8,
 		"reserve=%s price=%s" % [str(HDData.RESERVE.get("sr25", "缺")),
 			str(HDData.AMMO_PRICE.get("sr25", "缺"))])
+
+	# 27f. K437 商店枪专项（2026-10-29 并册·S4 现役 .300 BLK 突击步枪）：
+	#      考证断言四件（照 27b K416 段先例）——
+	#      ① 独立命名弹匣锚点 mag_k437 在枪身根下（30 发 .300 大弧烟灰匣，
+	#        换弹手沿 mag_of 锚跟随的契约件，#27 循环只查 mag_* 存在性，
+	#        这里锁名；一体成型合并后锚点空重建仍在——contract 见
+	#        HDGunLib.merge_unibody）
+	#      ② 简介射速「780发每分」与 cd 换算一致 ±1%（60/0.0769=780.2，
+	#        ref_02/04/09 面板直读 + gamersky/ali213 多源一致）
+	#      ③ 全自动缺省（auto 不写 = true，面板 Modes Auto/Single；不带
+	#        cd_profile/burst——纯突击步枪）+ 弹匣 30（45 发扩容匣为改装
+	#        件不入册）
+	#      ④ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；.300 BLK 与 rifle 弹族同单价 6）
+	var k4_root: Node3D = HDGuns._ar_build("k437")
+	var k4_mag: Node = k4_root.find_child("mag_k437", true, false)
+	check("K437 独立命名弹匣锚点 mag_k437 在根下", k4_mag != null,
+		"node=%s" % (str(k4_mag.name) if k4_mag != null else "无"))
+	k4_root.free()
+	var k4_def: Dictionary = Guns.gun_by_id("k437")
+	var k4_rpm := 60.0 / float(k4_def["cd"])
+	check("K437 简介射速 780发每分与 cd 换算一致（±1%）",
+		str(k4_def["desc"]).contains("780发每分")
+			and absf(k4_rpm - 780.0) / 780.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(k4_def["cd"]), k4_rpm])
+	check("K437 全自动缺省 + 弹匣 30 + 无特殊机制字段",
+		bool(k4_def.get("auto", true)) and int(k4_def["mag"]) == 30
+			and not k4_def.has("cd_profile") and not k4_def.has("burst")
+			and not k4_def.has("trigger_delay"),
+		"auto=%s mag=%s cd_profile=%s" % [str(k4_def.get("auto")),
+			str(k4_def.get("mag")), str(k4_def.get("cd_profile", "无"))])
+	check("K437 备弹/购弹双表在表（.300 BLK 与步枪弹族同单价 6）",
+		(HDData.RESERVE as Dictionary).has("k437")
+			and (HDData.AMMO_PRICE as Dictionary).has("k437")
+			and int(HDData.AMMO_PRICE["k437"]) == 6,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("k437", "缺")),
+			str(HDData.AMMO_PRICE.get("k437", "缺"))])
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -2446,7 +2485,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，七处 m250/mp7/m14/asval/k416/an94/sr25）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，八处 m250/mp7/m14/asval/k416/an94/sr25/k437）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

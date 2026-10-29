@@ -37,6 +37,11 @@ extends RefCounted
 ##          含镜体筒环件约 100 顶点调用；红线 POLY_MIN 同步 33384→32000，
 ##          拆镜后实测 32565 仍在红线上）→ 实测以 count_vertices 为准
 ##          （目标 ≥10000，红线 POLY_MIN["sr25"]）
+##   k437   基线 2346（74 盒×24 + 8 柱×57，2026-10-29 商店枪·S4 现役 .300
+##          BLK 突击步枪，新枪无旧模按建模调用清点，逐行确权见 POLY_BASE
+##          注；柱少因枪管几乎全被护木包住、出厂裸冠——盒多柱少的布局）
+##          → 实测以 count_vertices 为准（目标 ≥10000，红线 18776 =
+##          8× 基线，见 HDGunLib.POLY_MIN["k437"]）
 ##   门槛 = 8× 基线，见 HDGunLib.POLY_MIN（test_huodai.gd #27 实测断言）。
 
 const GUN_LIB := preload("res://scripts/hd_gunlib.gd")
@@ -62,6 +67,8 @@ static func build(id: String, mats: Dictionary) -> Node3D:
 			_ar_an94(mats, root)
 		"sr25":
 			_ar_sr25(mats, root)
+		"k437":
+			_ar_k437(mats, root)
 		_:
 			pass   # 未知 id：不落任何部件，返回空枪身根
 	return root
@@ -1406,3 +1413,214 @@ static func _ar_sr25(mats: Dictionary, root: Node3D) -> void:
 			cm_c += Vector3(0.0, -cos(ra), -sin(ra)) * cm_step
 		GUN_LIB.chamfer_box(mag, ply, Vector3(0.052, 0.007, 0.082),
 				cm_c, Vector3(4.0 * float(i), 0, 0), 0.0008, 2)
+
+
+## K437 突击步枪（烽火地带现役突击步枪考证，.300 BLK，2026-10-29 商店枪）
+## 考证特征逐条落件（HDGunLib 高模重建——基线与红线见 HDGunLib.POLY_MIN
+## ["k437"]；整体布局照 ref_01/ref_04/ref_07/ref_10：传统 AR 式上下机匣分体
+## 中长卡宾、整机哑光石墨黑，枪身 z -0.615(裸冠口) 到 +0.369(托底垫) 全长
+## ≈0.98 模型尺——比 K416（1.05）修长一档：中长管 + 骨架托收短）：
+## ①整体布局：AR 式上/下机匣分体、非无托（平顶上机匣顶面即②全长轨座），
+##   黑色阳极氧化铝机匣 + 黑聚合物护木/握把/弹匣（polymer 主体 + 近黑金属
+##   细节 + 亮钢小件提层次，全枪哑光石墨黑 ref_01/04/07/10）
+## ②全长皮卡汀尼顶轨：单根轨基从机匣尾直通护木前端 + 连续楔齿×8 + 轨基
+##   减重镂空暗槽×3（ref_10「轨条带减重镂空」）；机匣尾部上方 AR 式顶部
+##   拉机柄凸台（T 杆 + 双翼——样式为看图推断，未见侧拉柄）
+## ③细长自由浮置护木（全枪最强识别件）：细长倒角盒主体 + 两侧各一排大型
+##   斜向平行四边形散热开槽×4（Rx(35°) 斜置暗板读「斜槽」，ref_04/07/08/
+##   10）+ 底部短导轨段（横齿×3，下挂前握把安装位）+ 顶轨衔接桥（轨基
+##   骑护木顶）+ 前端收口环
+## ④出厂翻折式机械瞄具（前后各一，展开态建模，ref_04/07/10）：护木前端
+##   轨上翻折准星（基座 + 圆柱准星 + 双护耳）+ 机匣尾轨上翻折觇孔照门
+##   （基座 + 后仰觇孔板 + 双耳）——真实机瞄为建模件（_finish_gun iron
+##   分支跳过兜底机瞄片，同 k416/sr25 先例；改装镜走通用 else 挂载，
+##   严禁 sr25 镜体丢失式 pass 分支回归）
+## ⑤三角镂空骨架式折叠托（AAC 蜜獾/Q 系轮廓，ref_04/07 默认托）：铰链块
+##   + 铰链销 + 折叠解锁钮 + 缓冲短管 + 托体上杆（微下斜）+ 贴腮板 + 下
+##   斜撑（与上杆围出三角镂空）+ 托底板 + 橡胶抵肩垫 + 托底前钩；改装可
+##   换骨架狙击枪托（社区满改标配——SKEL_STOCK 生态自动可装，不入厂）
+## ⑥弹匣：.300 BLK 弧形聚合物匣（烟灰半透明按材质纪律读烟黑聚合物），
+##   mag_k437 独立命名节点 + curved_mag 四段 8° 弧（弧度大于 STANAG 5°
+##   微弧、小于 AK 13°——大弧烟灰匣 ref_02/05/07）+ 两面横肋×3 + 匣侧
+##   DAF 白标（kmark）——30 发默认匣（45 发扩容匣为改装件不入册）
+## ⑦机匣印字与红点缀：弹匣井上方 DAF 白标 + 机匣右侧白色枪号刻印（ref_01
+##   /03「302-0436601」样式）+ 快慢机红点缀（bakelite 暖橙读红，sr25 侧瞄
+##   红点同法）
+## ⑧手枪握把：后倾 20° 带指槽人体工学聚合物握把（grip 高模件，指棱×3）+
+##   一体式扳机护圈（底梁 + 前后柱与下机匣连成一体，ref_01/04）+ AR 标准
+##   控件（弹匣卡笋/空仓挂机/下导轨衔接段）
+## ⑨枪口：枪管几乎全被护木包住（裸露段仅 0.115）+ 出厂裸冠无消焰器
+##   （口环读冠，ref_04；改装可装鸟笼消焰器/特工一体消音枪管——枪口配件
+##   走改装生态，本件为出厂态）
+static func _ar_k437(mats: Dictionary, root: Node3D) -> void:
+	var ply: StandardMaterial3D = mats["polymer"]   # ① 黑聚合物主体（机匣/护木/托/握把/弹匣）
+	var met: StandardMaterial3D = mats["dark"]      # ① 近黑金属细节（轨/枪管/斜槽/控件）
+	var stl: StandardMaterial3D = mats["steel"]     # ① 亮钢小件（准星/销/扳机/背带环/冠环）
+	var rub: StandardMaterial3D = mats["m14dark"]   # ⑤ 橡胶抵肩垫（sr25 托垫同件）
+	var mrk: StandardMaterial3D = mats["kmark"]     # ⑦ 白色刻印（DAF 标/枪号）
+	var bkl: StandardMaterial3D = mats["bakelite"]  # ⑦ 快慢机红点缀（暖橙读红）
+	# ① AR 式上下机匣分体：平顶上机匣（s24 高分段：顶轨线高光顺滑直角棱
+	#    消除，顶面即②全长轨座）+ 下机匣（弹匣井/握把座一体）——非无托
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.055, 0.062, 0.26),
+			Vector3(0, 0.034, -0.02), Vector3.ZERO, 0.003, 24)
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.05, 0.052, 0.20),
+			Vector3(0, -0.018, 0.01), Vector3.ZERO, 0.0025, 16)
+	# ⑥ 弹匣井（下机匣前下，井底 y -0.0945 对 mag_k437 匣顶 -0.058 嵌入
+	#    防接缝，k416 同井位）
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.054, 0.085, 0.09),
+			Vector3(0, -0.052, -0.155), Vector3.ZERO, 0.002, 12)
+	# ② 全长皮卡汀尼顶轨：单根轨基（机匣尾 z +0.16 直通护木头 z -0.47）+
+	#    连续楔齿×8（机匣段/护木段齿列连续无分段感）
+	GUN_LIB.chamfer_box(root, met, Vector3(0.028, 0.012, 0.63),
+			Vector3(0, 0.071, -0.155), Vector3.ZERO, 0.0015, 10)
+	for i in 8:
+		GUN_LIB.chamfer_box(root, met, Vector3(0.031, 0.006, 0.016),
+				Vector3(0, 0.08, -0.44 + 0.075 * float(i)), Vector3.ZERO,
+				0.0012, 5)
+	# ② 轨基减重镂空暗槽×3（ref_10 轨条镂空——聚合物暗板嵌轨基读「挖空」）
+	for i in 3:
+		GUN_LIB.chamfer_box(root, ply, Vector3(0.029, 0.006, 0.012),
+				Vector3(0, 0.071, -0.325 + 0.15 * float(i)), Vector3.ZERO,
+				0.0008, 2)
+	# ② AR 式顶部拉机柄凸台（机匣尾：T 杆 + 双翼三件——看图推断样式）
+	GUN_LIB.chamfer_box(root, met, Vector3(0.028, 0.007, 0.018),
+			Vector3(0, 0.068, 0.105), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.012, 0.006, 0.012),
+			Vector3(-0.017, 0.068, 0.105), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.012, 0.006, 0.012),
+			Vector3(0.017, 0.068, 0.105), Vector3.ZERO, 0.0008, 3)
+	# ① 机匣右侧带防尘盖抛壳窗（盖板贴合右侧面，AR 系同族件）
+	GUN_LIB.chamfer_box(root, met, Vector3(0.004, 0.024, 0.068),
+			Vector3(0.0285, 0.032, -0.045), Vector3.ZERO, 0.0008, 3)
+	# ⑦ 弹匣井上方 DAF 白标 + 机匣右侧白色枪号刻印（ref_01/02/03 印字）
+	GUN_LIB.chamfer_box(root, mrk, Vector3(0.002, 0.005, 0.028),
+			Vector3(-0.0283, -0.026, -0.135), Vector3.ZERO, 0.0005, 2)
+	GUN_LIB.chamfer_box(root, mrk, Vector3(0.002, 0.004, 0.030),
+			Vector3(0.0283, 0.030, 0.015), Vector3.ZERO, 0.0005, 2)
+	# ⑦ 快慢机红点缀（右侧控件暖橙小杆——ref_01/03 红色点缀）
+	GUN_LIB.chamfer_box(root, bkl, Vector3(0.004, 0.010, 0.024),
+			Vector3(0.0285, 0.006, 0.032), Vector3.ZERO, 0.0005, 2)
+	# ⑧ AR 标准控件：右侧弹匣卡笋 / 左侧空仓挂机杆 / 下导轨衔接段
+	GUN_LIB.chamfer_box(root, met, Vector3(0.006, 0.012, 0.018),
+			Vector3(0.029, -0.022, -0.105), Vector3.ZERO, 0.0006, 2)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.005, 0.013, 0.036),
+			Vector3(-0.0285, 0.008, -0.035), Vector3.ZERO, 0.0006, 2)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.03, 0.008, 0.10),
+			Vector3(0, -0.048, -0.14), Vector3.ZERO, 0.0008, 6)
+	# ③ 细长自由浮置护木（最强识别件）：细长倒角盒主体（0.052 宽比 k416
+	#    0.056 窄——「更修长」）+ 顶轨衔接桥（轨基骑护木顶的过渡件）
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.052, 0.058, 0.36),
+			Vector3(0, 0.030, -0.32), Vector3.ZERO, 0.003, 24)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.030, 0.018, 0.36),
+			Vector3(0, 0.062, -0.32), Vector3.ZERO, 0.0012, 12)
+	# ③ 两侧各一排大型斜向平行四边形散热开槽×4（Rx(35°) 斜置暗板微凸侧面
+	#    1mm 读「斜槽」——斜切口朝前上，ref_04/07/08/10 特征全枪最强）
+	for sx in [-1.0, 1.0]:
+		var fx := float(sx)
+		for i in 4:
+			GUN_LIB.chamfer_box(root, met, Vector3(0.005, 0.020, 0.058),
+					Vector3(0.027 * fx, 0.020, -0.40 + 0.08 * float(i)),
+					Vector3(35, 0, 0), 0.0008, 3)
+	# ③ 底部短导轨段（下挂前握把安装位）+ 横齿×3——凸出护木底面
+	GUN_LIB.chamfer_box(root, met, Vector3(0.024, 0.008, 0.12),
+			Vector3(0, -0.004, -0.30), Vector3.ZERO, 0.0008, 4)
+	for i in 3:
+		GUN_LIB.chamfer_box(root, met, Vector3(0.026, 0.005, 0.014),
+				Vector3(0, -0.011, -0.345 + 0.045 * float(i)), Vector3.ZERO,
+				0.0006, 2)
+	# ③ 护木前端收口环（浮置护木收口）
+	GUN_LIB.chamfer_box(root, met, Vector3(0.056, 0.062, 0.014),
+			Vector3(0, 0.030, -0.497), Vector3.ZERO, 0.001, 8)
+	# ⑨ 枪管裸露段（护木前短露段 0.115，36 段高分段）+ 裸冠口环（出厂
+	#    无消焰器的裸冠——亮钢口环读冠缘，ref_04）
+	GUN_LIB.barrel(root, met, 0.115, 0.020, Vector3(0, 0.03, -0.5575),
+			Vector3(90, 0, 0), 0, 36)
+	GUN_LIB.torus_ring(root, stl, 0.0085, 0.0115, Vector3(0, 0.03, -0.608),
+			Vector3(90, 0, 0))
+	# ④ 前翻折准星（护木前端轨上，展开态）：基座 + 圆柱准星 + 双护耳
+	GUN_LIB.chamfer_box(root, met, Vector3(0.02, 0.012, 0.026),
+			Vector3(0, 0.086, -0.44), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.barrel(root, stl, 0.014, 0.005, Vector3(0, 0.098, -0.44),
+			Vector3.ZERO, 0, 16)
+	for sx in [-1.0, 1.0]:
+		GUN_LIB.chamfer_box(root, stl, Vector3(0.005, 0.018, 0.012),
+				Vector3(0.008 * float(sx), 0.096, -0.44), Vector3.ZERO,
+				0.0006, 3)
+	# ④ 后翻折觇孔照门（机匣尾轨上，展开态）：基座 + 后仰觇孔板 + 双耳
+	GUN_LIB.chamfer_box(root, met, Vector3(0.02, 0.012, 0.026),
+			Vector3(0, 0.086, 0.085), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.005, 0.02, 0.006),
+			Vector3(0, 0.098, 0.09), Vector3(-10, 0, 0), 0.0006, 3)
+	for sx in [-1.0, 1.0]:
+		GUN_LIB.chamfer_box(root, stl, Vector3(0.005, 0.016, 0.010),
+				Vector3(0.009 * float(sx), 0.095, 0.095), Vector3.ZERO,
+				0.0006, 3)
+	# ⑤ 三角镂空骨架式折叠托（AAC 蜜獾/Q 系轮廓，展开态）：铰链块 + 铰链
+	#    销 + 折叠解锁钮 + 缓冲短管（seg32 开筒壁厚断面）
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.044, 0.050, 0.045),
+			Vector3(0, 0.034, 0.130), Vector3.ZERO, 0.002, 16)
+	GUN_LIB.barrel(root, stl, 0.050, 0.010, Vector3(0, 0.038, 0.132),
+			Vector3(0, 0, 90), 0, 16)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.008, 0.016, 0.020),
+			Vector3(0.026, 0.030, 0.130), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.tube(root, met, 0.06, 0.036, Vector3(0, 0.020, 0.180),
+			Vector3(90, 0, 0), 0.004, 0, null, 3, 32)
+	# ⑤ 托体上杆（微下斜 Rx(5°)——托尾线向抵肩垫渐降）+ 贴腮板（顶杆上
+	#    另起一层，随杆微倾）+ 下斜撑（Rx(28°) 从下机匣后斜插托底板下角
+	#    ——与上杆围出三角镂空）
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.024, 0.026, 0.17),
+			Vector3(0, 0.030, 0.285), Vector3(5, 0, 0), 0.0015, 8)
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.040, 0.014, 0.12),
+			Vector3(0, 0.050, 0.27), Vector3(5, 0, 0), 0.001, 6)
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.018, 0.018, 0.20),
+			Vector3(0, -0.010, 0.26), Vector3(28, 0, 0), 0.0015, 8)
+	# ⑤ 托底板 + 橡胶抵肩垫 + 托底前钩（三角托收尾三件）
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.038, 0.105, 0.014),
+			Vector3(0, -0.008, 0.352), Vector3.ZERO, 0.0015, 12)
+	GUN_LIB.chamfer_box(root, rub, Vector3(0.046, 0.100, 0.010),
+			Vector3(0, -0.010, 0.364), Vector3.ZERO, 0.0012, 10)
+	GUN_LIB.chamfer_box(root, ply, Vector3(0.034, 0.020, 0.030),
+			Vector3(0, -0.046, 0.336), Vector3.ZERO, 0.001, 4)
+	# ⑦ 一体式扳机护圈（底梁 + 前后柱与下机匣连成一体）+ 扳机
+	GUN_LIB.chamfer_box(root, met, Vector3(0.012, 0.008, 0.07),
+			Vector3(0, -0.062, 0.015), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.012, 0.030, 0.008),
+			Vector3(0, -0.046, -0.016), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.chamfer_box(root, met, Vector3(0.012, 0.028, 0.008),
+			Vector3(0, -0.047, 0.046), Vector3.ZERO, 0.0008, 3)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.008, 0.024, 0.008),
+			Vector3(0, -0.041, 0.014), Vector3(10, 0, 0), 0.0006, 2)
+	# ⑧ 后握把（后倾 20° 带指槽人体工学聚合物握把，指棱×3）：grip() 顶锚
+	#    = 旋转支点，HOLD_DELTA 精算锚点（见 hd_guns.gd k437 条目：Δ =
+	#    MK4 基准 (0,-0.022,-0.0018) − 本锚 (0,-0.030,0.075)，AR 式握把
+	#    与 k416/an94/sr25 同锚）
+	GUN_LIB.grip(root, ply, 0.092, Vector3(0, -0.030, 0.075), 20.0,
+			0.036, 0.05, stl, 3)
+	# ⑫ 背带环×2（护木底中段 + 托底板左下，环面 ⊥ X 竖环）
+	GUN_LIB.torus_ring(root, stl, 0.004, 0.011, Vector3(0, -0.014, -0.20),
+			Vector3(0, 0, 90), 28, 18)
+	GUN_LIB.torus_ring(root, stl, 0.004, 0.011,
+			Vector3(-0.022, -0.035, 0.335), Vector3(0, 0, 90), 28, 18)
+	# ⑥ 30 发 .300 BLK 大弧烟灰匣（独立命名节点 mag_k437：原点=匣顶中心，
+	#    curved_mag 向下生长、8° 四段弧弧向前——弧度大于 STANAG 5° 微弧、
+	#    小于 AK 13°；动画匣 show:false 照 k416「匣形由枪身件表达」先例，
+	#    见 _ar_mag_of）
+	var mag := Node3D.new()
+	mag.name = "mag_k437"
+	mag.position = Vector3(0, -0.058, -0.155)
+	root.add_child(mag)
+	GUN_LIB.curved_mag(mag, ply, Vector3(0.05, 0.19, 0.085), 8.0, 4, 3)
+	# ⑥ 两面横向肋条×3（随匣弧逐段转角 0/8/16°——肋条比匣身宽 4mm 两面
+	#    同时出肋，黑聚合物同色靠几何凸起读影；步进/弧向逐段复刻
+	#    curved_mag 的段心算法，asval/k416 匣肋同法）
+	var cm_step := 0.19 / 4.0
+	var cm_c := Vector3(0, -cm_step * 0.5, 0)
+	for i in 3:
+		if i > 0:
+			var ra := deg_to_rad(8.0 * (float(i) - 0.5))
+			cm_c += Vector3(0.0, -cos(ra), -sin(ra)) * cm_step
+		GUN_LIB.chamfer_box(mag, ply, Vector3(0.054, 0.007, 0.089),
+				cm_c, Vector3(8.0 * float(i), 0, 0), 0.0008, 2)
+	# ⑥ 匣侧 DAF 白标（烟灰匣身白色印刷标——ref_02/05/07「DAF」）
+	GUN_LIB.chamfer_box(mag, mrk, Vector3(0.002, 0.022, 0.034),
+			Vector3(-0.0255, -0.052, 0.004), Vector3.ZERO, 0.0005, 2)

@@ -111,6 +111,12 @@ const RECOIL := {
 	# 按住连发时消费，auto=false 枪实际不触达）；水平漂移最窄同 m14
 	# （DMR 精度定位，重枪体 + 浮置护木吸振）
 	"sr25": [0.32, 0.10, 0.06],
+	# k437 .300 BLK 中口径步枪（2026-10-29 商店枪，S4 现役）：单发推力
+	# k416（5.56 0.17）与 scarh（7.62 0.26）之间——重弹比 5.56 沉一档、
+	# 轻装药比 7.62 NATO 温和；连发累增同 5.56 档（780rpm 比 k416 880rpm
+	# 慢、冲量累积更缓）；水平漂移窄一档（三角洲「压枪稳」定位 + 考证
+	# 垂直 35/水平 28 比值）
+	"k437": [0.20, 0.08, 0.10],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1164,7 +1170,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 叠上去会在枪顶悬一块黑方块；模型缺失回退程序化枪时照常挂
 		pass
 	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
-			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25") \
+			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25"
+			or gun_id == "k437") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1186,6 +1193,10 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 折叠觇孔照门为考证建模件（_ar_sr25 ④，ref_04 特写），叠 iron
 		# 兜底片会与真实照门叠影（原厂不带瞄准镜——2026-10-26 用户定案，
 		# 改装镜走通用 else 路径）
+		# k437 同例（2026-10-29 商店枪）：护木前端翻折准星 + 机匣尾轨上
+		# 翻折觇孔照门为出厂自带考证建模件（_ar_k437 ④，ref_04/07/10），
+		# 叠 iron 兜底片会与真实照门叠影——改装镜（reddot/holo/optic/
+		# thermal）照常落下方 else 通用挂载，不设 pass 吞镜分支
 		pass
 	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
 	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
@@ -1690,6 +1701,10 @@ const HOLD_DELTA := {
 	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
 	# （AR 式握把与 k416/an94 同锚）
 	"sr25": Vector3(0, 0.008, -0.0768),
+	# k437 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_k437 握把顶锚
+	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	# （AR 式握把与 k416/an94/sr25 同锚）
+	"k437": Vector3(0, 0.008, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2733,7 +2748,7 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25", "k437"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
@@ -2748,6 +2763,10 @@ const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25"]
 # sr25（2026-10 商店枪 SR25 射手步枪）：群星赛季新枪并入步枪册——几何体在
 # hd_gun_ar.gd _ar_sr25（HDGunLib 高模件，KAC 浮置肋条护木 + 大直径战术
 # 消音器 + 伸缩精准枪托；半自动 tap 门见 guns.gd auto=false）
+# k437（2026-10-29 商店枪 K437 突击步枪）：烽火地带 S4 现役 .300 BLK 突击
+# 步枪并入步枪册——几何体在 hd_gun_ar.gd _ar_k437（HDGunLib 高模件，斜槽
+# 浮置护木 + 三角镂空骨架折叠托 + 前后翻折机械瞄具 + 出厂裸冠；与 K416
+# 的区分 = 斜槽护木/骨架折叠托/.300 大弧弹匣）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2847,6 +2866,16 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 缩放基准，同 m14/k416 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.073, -0.138),
 					"size": Vector3(0.048, 0.155, 0.078), "show": false}
+		"k437":
+			# 特征⑥ 30 发 .300 BLK 大弧烟灰匣（弧度大于 STANAG、小于 AK，
+			# 匣侧 DAF 白印 + 横肋×3）：真匣是枪身建模件（mag_k437 独立命名
+			# 节点 + curved_mag 四段 8° 弧 + 横肋×3），动画匣隐（照 k416
+			# 「匣形由枪身件表达」先例）；pos=换弹手锚（枪身局部匣中段
+			# (0,-0.153,-0.162)——匣顶 -0.058 下行 2 段弧步、z 含 8° 弧向前
+			# 偏，+Δ(0,0.008,-0.0768) 后 ×0.62 ≈ (0,-0.090,-0.148)）、
+			# size=匣外形（掉匣替身缩放基准，同 k416 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.090, -0.148),
+					"size": Vector3(0.05, 0.19, 0.085), "show": false}
 	return {}
 
 
@@ -2890,6 +2919,13 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# 准星）——折叠准星 + 尾部轨上折叠觇孔照门均为建模件（ref_04 特
 			# 写），iron 不叠兜底机瞄片，见 _finish_gun
 			return Vector3(0.083, -0.06, -0.48)
+		"k437":
+			# (my, mz, fz) = 镜座安装面高 0.083（全长顶轨楔齿尖，k416/sr25
+			# 同值）/ 镜体中心 z -0.06（机匣中段）/ 前准星 z -0.44（护木前端
+			# 翻折准星）——前后翻折式机械瞄具均为建模件（ref_04/07/10 出厂
+			# 自带），iron 不叠兜底机瞄片，见 _finish_gun；改装镜走通用 else
+			# 挂载（红点/全息 + 增高架生态自动可装）
+			return Vector3(0.083, -0.06, -0.44)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 

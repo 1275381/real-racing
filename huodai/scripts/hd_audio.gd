@@ -227,6 +227,19 @@ const SHOT_TUNE := {
 		"tail": {"dur": 0.33, "bright": 0.27, "gain": 0.35},
 		"gain": 0.94,
 	},
+	# K437：饱满偏沉——.300 BLK 中口径（2026-10-29 商店枪·S4 现役，780rpm
+	# 全自动）：口径在 5.56（k416/m4a1）与 7.62 NATO（scarh）之间的 30 cali
+	# 重弹——boom 比 k416 明显更沉（126Hz，重弹「咚」感是 .300 BLK 的听感
+	# 标识）、三角占比加厚；crack 时长居中（轻装药短管爆裂不过分拖）；tail
+	# 中长明快（中长卡宾开阔余响）；连发节拍 77ms 不糊（780rpm 稍慢于
+	# k416 的 880，每发独立可辨）
+	"k437": {
+		"click": {"freq": 4300.0, "dur": 0.007, "gain": 0.44},
+		"crack": {"dur": 0.050, "gain": 0.89},
+		"boom": {"freq": 126.0, "dur": 0.054, "tri": 0.38, "gain": 0.66},
+		"tail": {"dur": 0.27, "bright": 0.35, "gain": 0.30},
+		"gain": 0.87,
+	},
 }
 
 var _pool: Array[AudioStreamPlayer] = []

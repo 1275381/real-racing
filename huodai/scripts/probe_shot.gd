@@ -34,16 +34,16 @@
 # shot_cover_m250_ads 长枪 ADS / shot_gun_m14_cover 商店枪 M14 贴墙 /
 # shot_gun_asval_cover 商店枪 AS Val 贴墙 / shot_gun_k416_cover 商店枪
 # K416 贴墙 / shot_gun_an94_cover 商店枪 AN-94 贴墙 / shot_gun_sr25_cover
-# 商店枪 SR25 贴墙——①②③⑦⑪⑫⑬⑭⑮ 各带 _b 图，两组 a/b 隐枪差分取稳定
+# 商店枪 SR25 贴墙 / shot_gun_k437_cover 商店枪 K437 贴墙——①②③⑦⑪⑫
+# ⑬⑭⑮⑯ 各带 _b 图，两组 a/b 隐枪差分取稳定
 # 交集判裂，修后门槛全部「稳定完整（大域 1）」；
 # m14 贴掩体 pair 直接回应「注意枪身分裂」：一体成型+独立视口下掩体帧枪体必须完整）
-# （共 87 张：56 处 shot() 调用（其中 9 处 pair 各出 a/_b 双图；
-# 逐枪美照/scope 两组循环随迭代展开 20+6 张）+
-# 逐枪美照循环 20 把（全量在册：十五把新枪 + 旧五枪，2026-10 判图补图；
-# K416/AN-94/SR25 并册追加）+ scope 瞄具系列 6 张（2026-10 判图补图）
-# + 矩阵段 22 张（含 pair 的 _b 图）+ 3D 大厅三连拍 3 张——旧注释
-# 「29/31/33/35/40/43/45/59/70/73/76/79 张」随图集扩充滚动订正；
-#  腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
+# （机械清点 2026-10-29：shot() 调用点 80 处、其中 10 处 pair 各出 a/_b
+# 双图 → 出图 80+10=90 张；逐枪美照循环 21 把 + 红点开镜审计循环 21 把
+# （K437 均并入）+ scope 瞄具系列 6 张 + 矩阵段 + 3D 大厅三连拍——
+# 旧注释「共 87 张 / 56 处 / 9 处 pair / 矩阵段 22 张」在 HEAD 时已与
+# 机械清点差 1（88 张），滚动订正以 grep 计数为准）
+# 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
 #   卸/装侧视特写（rifle）+ shot_skel_stock_on/off 骨架狙击枪托装/卸侧视
 #   特写（sniper）——冻结主循环摆枪架近 90° 侧对镜（_pose_side）
@@ -863,10 +863,11 @@ func _initialize() -> void:
 	# pistol/smg/rifle/shotgun/sniper 并入 + 商店枪 M14/AS Val 并册——此前枪照
 	# 缺图无法验收）；2026-10 商店枪 K416 并册追加；2026-10 商店枪 AN-94
 	# 并册追加（S12 微光赛季超点射新枪）；2026-10 商店枪 SR25 并册追加
-	# （群星赛季半自动 DMR）
+	# （群星赛季半自动 DMR）；2026-10-29 商店枪 K437 并册追加（S4 现役
+	# .300 BLK 突击步枪）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
-			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "pistol",
-			"smg", "rifle", "shotgun", "sniper"]:
+			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
+			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -922,8 +923,8 @@ func _initialize() -> void:
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
-			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "pistol",
-			"smg", "rifle", "shotgun", "sniper"]:
+			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
+			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
 		await frames(20)
@@ -1475,6 +1476,30 @@ func _initialize() -> void:
 	_set_ads_mx(1.0)
 	await frames(2)
 	await shot("res://out/shot_gun_sr25_cover.png", false, true)
+	# ⑯ k437 ADS 1.0 正贴（2026-10-29 商店枪 K437 并册「验分裂」验收，照
+	#    m14/asval/k416/an94/sr25 pair 模式）：一体成型 unibody + vm 独立
+	#    视口下掩体帧枪体必须完整——斜槽护木 + 骨架折叠托的镂空件最考验
+	#    合并网格的掩体帧完整性，走 pair 判裂（两组 a/b 隐枪差分取稳定
+	#    交集，大域 ≥2 = 稳定裂即 FAIL）；换枪重进 MISSION 走 guns.enter
+	#    同槽换 id 重建链，顺带复核新枪挂载公共链
+	main.stash.guns_owned.append("k437")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "k437", "secondary": "pistol"}
+	main._start_mission({"primary": "k437", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm8: Dictionary = main.soldiers.soldiers[i]
+		sm8["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm8["engaged"] = false
+		sm8["moving"] = false
+		sm8["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	await shot("res://out/shot_gun_k437_cover.png", false, true)
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
