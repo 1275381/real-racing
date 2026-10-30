@@ -3263,10 +3263,11 @@ func _run() -> void:
 
 	# ===== 脚步实录（Kenney Impact Sounds，CC0）=====
 	main.audio.ensure()
-	check("实录脚步已载入：沙地 5 条 + 混凝土 5 条", (main.audio._step_rec.get("sand", []) as Array).size() == 5
+	check("实录脚步已载入：混凝土 5 条（沙地已改合成器——雪地实录在沙地场景听感错位）", (main.audio._step_rec.get("concrete", []) as Array).size() == 5
 		and (main.audio._step_rec.get("concrete", []) as Array).size() == 5)
-	check("脚步取实录（Ogg）而非合成兜底", main.audio._pick_step("sand")[0] is AudioStreamOggVorbis
-		and main.audio._pick_step("concrete")[0] is AudioStreamOggVorbis)
+	check("脚步：混凝土取实录（Ogg）· 沙地取合成（WAV，2026-10-30 修「诡异」）",
+		main.audio._pick_step("concrete")[0] is AudioStreamOggVorbis
+			and main.audio._pick_step("sand")[0] is AudioStreamWAV)
 	var hall_p: Vector3 = HDData.HALL_CENTER
 	hall_p.y = main.world.ground_height(hall_p.x, hall_p.z, -10.0)
 	check("地下靶馆地坪判硬地（混凝土脚步）", absf(main.world.ground_height(hall_p.x, hall_p.z, hall_p.y + 0.5)) > 0.02)

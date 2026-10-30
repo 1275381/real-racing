@@ -254,7 +254,10 @@ var _steps: Array[AudioStreamWAV] = []   # 合成脚步（沙地军靴）6 个�
 ## assets/audio/footsteps/LICENSE_Kenney_ImpactSounds.txt）：沙地用 snow 组（压实
 ## 颗粒的嘎吱声最像沙砾），地下靶馆/坡道/入口房等硬地坪用 concrete 组
 const STEP_DIR := "res://assets/audio/footsteps/"
-const STEP_SETS := {"sand": "snow", "concrete": "concrete"}
+# 2026-10-30 用户报告「脚步声诡异」修复：sand 不再用 snow 实录（雪地嘎吱声
+# 在沙漠/干土场景听感错位）——沙地走 _make_step 合成器（脚跟/脚掌双击+沙粒
+# 泊松+擦地带通的物理建模，本就是为沙地写的）；实录池只挂 concrete
+const STEP_SETS := {"concrete": "concrete"}
 const STEP_REC_DB := -4.3   # 实录样本比合成版响（RMS 0.09 vs 0.055）：按同响度对齐
 var _step_rec := {}         # 地面 -> Array[AudioStream]
 var _step_foot := 1.0                     # 左右脚交替（音高 ±3%，不重复同一变体）
@@ -345,7 +348,7 @@ func play_step_3d(pos: Vector3, running: bool, surface := "sand") -> void:
 	p.attenuation_filter_cutoff_hz = 6000.0
 	p.attenuation_filter_db = -10.0
 	p.volume_db = linear_to_db(0.95 if running else 0.7) + float(pk[1]) + randf_range(-1.5, 1.5)
-	p.pitch_scale = randf_range(0.9, 1.04)   # 略压低：军靴比雪地鞋沉
+	p.pitch_scale = randf_range(0.95, 1.07)
 	p.play()
 
 
@@ -358,7 +361,7 @@ func play_step(loud: float, surface := "sand") -> void:
 	_step_foot = -_step_foot
 	p.stream = pk[0]
 	p.volume_db = linear_to_db(maxf(loud, 0.02)) - 9.0 + float(pk[1]) + randf_range(-1.5, 1.0)
-	p.pitch_scale = (0.97 + 0.03 * _step_foot) * randf_range(0.97, 1.03)
+	p.pitch_scale = (0.97 + 0.03 * _step_foot) * randf_range(0.96, 1.08)
 	p.play()
 
 
