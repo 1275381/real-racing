@@ -259,13 +259,41 @@ const CONSUMABLES := {
 	"pills": {"name": "止痛药", "icon": "医疗", "rarity": 0, "value": 60, "use_t": 1.2},
 	"plate": {"name": "护甲板", "icon": "防具", "rarity": 2, "value": 260, "use_t": 2.0},
 	"ammo": {"name": "弹药盒", "icon": "弹药", "rarity": 0, "value": 90, "use_t": 1.5},
+	# 高级护甲（2026-10-29 护甲机制）：使用=穿上（player.wear_armor）——
+	# 4/5/6 级只从局内出（容器额外物资/精英/首领掉落）；1-3 级走交易行起始甲
+	"armor4": {"name": "四级甲", "icon": "防具", "rarity": 4, "value": 3200, "use_t": 2.0},
+	"armor5": {"name": "五级甲", "icon": "防具", "rarity": 5, "value": 6800, "use_t": 2.0},
+	"armor6": {"name": "六级甲", "icon": "防具", "rarity": 6, "value": 12000, "use_t": 2.0},
 }
 const USE_KEYS := ["medkit", "pills", "plate", "ammo"]   # 键 3/4/5/6 依次对应
 const MEDKIT_HEAL := 50.0          # 医疗包：读条 3 s 后回 50
 const PILLS_HEAL := 20.0           # 止痛药：8 s 内缓回 20
 const PILLS_TIME := 8.0
 const PLATE_ARMOR := 50.0          # 护甲板：+50 护甲（上限 100）
-const ARMOR_MAX := 100.0
+const ARMOR_MAX := 100.0   # 旧常数（护甲板恢复参照；上限现随护甲等级走）
+## ---- 护甲等级（2026-10-29 用户定案，照三角洲 1-6 级）----
+## 护甲=装备物（CONSUMABLES armor2..armor6，Tab/数字键穿上）：穿上后
+## player.armor 上限=该级耐久、armor_lv=等级。被击结算走穿透系数表
+## （PEN_COEF：弹等级 vs 甲等级差 → 入肉倍率，三角洲实测 0/50/75/100%）+
+## 甲伤（GUNS.ad）削甲；碎甲溢出按剩余比例 100% 入肉（三角洲公式简化版）
+const ARMOR_CLASSES := {
+	1: {"name": "一级甲", "dur": 30.0, "color": Color(0.75, 0.75, 0.75)},
+	2: {"name": "二级甲", "dur": 45.0, "color": Color(0.5, 0.85, 0.5)},
+	3: {"name": "三级甲", "dur": 60.0, "color": Color(0.4, 0.6, 1.0)},
+	4: {"name": "四级甲", "dur": 80.0, "color": Color(0.75, 0.5, 1.0)},
+	5: {"name": "五级甲", "dur": 100.0, "color": Color(1.0, 0.8, 0.35)},
+	6: {"name": "六级甲", "dur": 130.0, "color": Color(1.0, 0.45, 0.3)},
+}
+## 穿透系数：弹等级 - 甲等级 → 入肉倍率（≥+2 与无甲部位 = 100%）
+const PEN_COEF := {"-2": 0.0, "-1": 0.5, "0": 0.75, "1": 1.0, "2": 1.0}
+
+
+## 穿透系数查表（pen=弹等级，alv=甲等级；alv<=0 = 无甲全额）
+static func pen_coef(pen: int, alv: int) -> float:
+	if alv <= 0:
+		return 1.0
+	var d := clampi(pen - alv, -2, 2)
+	return float(PEN_COEF[str(d)])
 const ARMOR_ABSORB := 0.6          # 护甲吸收 60% 伤害（吸多少扣多少护甲）
 const AMMO_BOX_MAGS := 2           # 弹药盒：当前枪 +2 匣备弹
 
@@ -274,10 +302,10 @@ const AMMO_BOX_MAGS := 2           # 弹药盒：当前枪 +2 匣备弹
 ## 多出药品。物资是额外掉落、不顶替变卖物：经济门槛 A 不被稀释，背包也更快塞满，
 ## 逼出「用掉还是扔掉」的取舍
 const CONTAINER_CLASS := {
-	"weapon": {"name": "武器箱", "search": 1.8, "use_p": 0.45, "pool": [["ammo", 60], ["plate", 40]]},
+	"weapon": {"name": "武器箱", "search": 1.8, "use_p": 0.45, "pool": [["ammo", 55], ["plate", 35], ["armor4", 10]]},
 	"medical": {"name": "医疗箱", "search": 1.8, "use_p": 0.55, "pool": [["medkit", 45], ["pills", 55]]},
 	"crate": {"name": "杂物箱", "search": 1.8, "use_p": 0.15,
-		"pool": [["medkit", 25], ["pills", 25], ["plate", 25], ["ammo", 25]]},
+		"pool": [["medkit", 24], ["pills", 24], ["plate", 22], ["ammo", 24], ["armor4", 6]]},
 	"safe": {"name": "保险箱", "search": 5.0, "use_p": 0.0, "pool": [], "min_rarity": 2},
 	# 首领保险柜（第四阶段）：首领守着，搜 6 s、只出红色及以上
 	"vault": {"name": "首领保险柜", "search": 6.0, "use_p": 0.0, "pool": [], "min_rarity": 5},
@@ -290,12 +318,15 @@ const CONTAINER_CLASS := {
 ## hp 生命；armor 护甲（身体中弹先吸 ENEMY_ARMOR_ABSORB，爆头无视护甲）；
 ## spread 散布倍率（越小越准）；dmg 伤害倍率；pause 射击间歇倍率；react 首发反应倍率
 const ENEMY_TIERS := {
-	"regular": {"name": "士兵", "hp": 100.0, "armor": 0.0, "spread": 1.0, "dmg": 1.0, "pause": 1.0, "react": 1.0},
-	"elite": {"name": "精英", "hp": 100.0, "armor": 60.0, "spread": 0.65, "dmg": 1.2, "pause": 0.8, "react": 0.7},
-	"boss": {"name": "首领", "hp": 260.0, "armor": 100.0, "spread": 0.5, "dmg": 1.5, "pause": 0.65, "react": 0.5},
-	"scav": {"name": "搜刮者", "hp": 120.0, "armor": 40.0, "spread": 0.8, "dmg": 1.1, "pause": 0.85, "react": 0.8},
+	# alv = 甲等级（2026-10-29 护甲机制）：玩家弹 pen 与之差查 PEN_COEF
+	"regular": {"name": "士兵", "hp": 100.0, "armor": 0.0, "alv": 0, "spread": 1.0, "dmg": 1.0, "pause": 1.0, "react": 1.0},
+	"elite": {"name": "精英", "hp": 100.0, "armor": 60.0, "alv": 4, "spread": 0.65, "dmg": 1.2, "pause": 0.8, "react": 0.7},
+	"boss": {"name": "首领", "hp": 260.0, "armor": 100.0, "alv": 5, "spread": 0.5, "dmg": 1.5, "pause": 0.65, "react": 0.5},
+	"scav": {"name": "搜刮者", "hp": 120.0, "armor": 40.0, "alv": 2, "spread": 0.8, "dmg": 1.1, "pause": 0.85, "react": 0.8},
 }
-const ENEMY_ARMOR_ABSORB := 0.5   # 敌方护甲吸收比例（吸多少扣多少护甲）
+const ENEMY_ARMOR_ABSORB := 0.5   # 旧常数（保留兼容；新结算走 PEN_COEF+甲伤）
+const ENEMY_GUN_AD := 40.0        # 敌方枪械甲伤（打玩家甲的削甲量，三角洲 5.56 档）
+const ENEMY_GUN_PEN := 2          # 敌方弹穿透等级（普通弹）
 const ELITE_ZONES := ["center", "dam"]   # 精英只在高价值区：同区巡逻点每 3 名第 2 名是精英
 const ELITE_EVERY := 3
 ## 首领 ×2：守在首领保险柜旁（中心核心巷道 / 大坝坝底），不巡逻，搜索也不离家远；

@@ -51,7 +51,8 @@ var pos := Vector3.ZERO
 var yaw := 0.0
 var pitch := 0.0
 var health := 100.0
-var armor := 0.0          # 护甲（护甲板 +50，上限 100；吸收 60% 伤害，吸多少扣多少）
+var armor := 0.0          # 护甲耐久（上限随 armor_lv 等级耐久走）
+var armor_lv := 0         # 护甲等级 0-6（0=无甲；CONSUMABLES armor2..6 穿上）
 var dead := false
 var recoil_pitch := 0.0   # HDGuns 每发写入（视角上顶，rad）
 var recoil_yaw := 0.0     # HDGuns 每发写入（水平漂移，rad）
@@ -183,7 +184,6 @@ func _process(_delta: float) -> void:
 func enter(spawn: Vector3) -> void:
 	pos = spawn
 	health = 100.0
-	armor = 0.0
 	dead = false
 	recoil_pitch = 0.0
 	recoil_yaw = 0.0
@@ -300,13 +300,36 @@ func eye_pos() -> Vector3:
 
 
 ## 中弹：先过护甲（吸收 60%，吸多少扣多少护甲），余量扣血，归零判死（died 只发一次）
-func hit(dmg: float) -> void:
+## 当前护甲等级的耐久上限（armor_lv 0=无甲；三角洲 ARMOR_CLASSES）
+func armor_max() -> float:
+	if armor_lv <= 0:
+		return 0.0
+	var c: Dictionary = HDData.ARMOR_CLASSES.get(armor_lv, {})
+	return float(c.get("dur", 0.0))
+
+
+## 穿上护甲（新甲满耐久；旧甲替换作废）
+func wear_armor(lv: int) -> void:
+	armor_lv = lv
+	armor = armor_max()
+
+
+## 受击三角洲结算（2026-10-29）：有甲 → 甲伤削耐久 + 入肉按穿透系数；
+## 碎甲溢出按剩余比例全额入肉；无甲全额入肉
+func hit(dmg: float, ad := 0.0, pen := 2) -> void:
 	if dead:
 		return
-	if armor > 0.0:
-		var ab := minf(armor, dmg * HDData.ARMOR_ABSORB)
-		armor -= ab
-		dmg -= ab
+	if armor_lv > 0 and armor > 0.0:
+		var coef := HDData.pen_coef(pen, armor_lv)
+		var armor_dmg := maxf(0.0, ad)
+		if armor <= armor_dmg:
+			var ratio := armor / maxf(armor_dmg, 0.01)
+			armor = 0.0
+			armor_lv = 0
+			dmg = dmg * coef * ratio + dmg * (1.0 - ratio)
+		else:
+			armor -= armor_dmg
+			dmg *= coef
 	health = maxf(0.0, health - dmg)
 	if health <= 0.0:
 		dead = true

@@ -2159,6 +2159,90 @@ func _run() -> void:
 		pitch1 < pitch0 * 0.5 and pitch1 > pitch0 * 0.1,
 		"p0=%.4f p1=%.4f" % [pitch0, pitch1])
 	main.stash.equip_grip("rifle", "none")   # 夹具复位（卸握把）
+	# 30. 护甲机制（2026-10-29 用户定案，照三角洲）：穿透系数表 / 敌甲伤结算 /
+	#     碎甲溢出 / 玩家被打三角洲结算 / 全枪 ad 字段 / 起始甲与高级甲
+	check("穿甲系数表（0/50/75/100%）",
+		HDData.pen_coef(2, 4) == 0.0 and HDData.pen_coef(3, 4) == 0.5
+			and HDData.pen_coef(4, 4) == 0.75 and HDData.pen_coef(5, 4) == 1.0
+			and HDData.pen_coef(4, 0) == 1.0)
+	var ad_missing: Array = []
+	for gd0 in Guns.GUNS:
+		if not (gd0 as Dictionary).has("ad"):
+			ad_missing.append(str(gd0["id"]))
+	check("全枪 ad 甲伤字段齐（21 把）", ad_missing.is_empty(), str(ad_missing))
+	check("ad 锚点符合三角洲同源（m250=53 / sniper=58 / an94=38）",
+		int(Guns.gun_by_id("m250")["ad"]) == 53 and int(Guns.gun_by_id("sniper")["ad"]) == 58
+			and int(Guns.gun_by_id("an94")["ad"]) == 38)
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(8)
+	# 敌甲伤结算：elite（alv4 甲60）吃 standard（pen2 → 系数 0%）零入肉但削甲
+	# 环境隔离：冻结 AI tick（set_process 拦不住 main._step_mission 显式 update）
+	main.soldiers.frozen = true
+	for si_am in main.soldiers.soldiers.size():
+		var s0am: Dictionary = main.soldiers.soldiers[si_am]
+		s0am["pos"] = Vector3(0, 300, float(si_am) * 3.0)
+	var am_el := -1
+	for si_am in main.soldiers.soldiers.size():
+		var s0am: Dictionary = main.soldiers.soldiers[si_am]
+		if str(s0am.get("tier", "")) == "elite":
+			am_el = si_am
+			break
+	check("找到精英作甲伤靶", am_el >= 0)
+	if am_el >= 0:
+		var t: Dictionary = main.soldiers.soldiers[am_el]
+		t["pos"] = main.player.pos + Vector3(2.0, 0.0, 0.0)
+		t["dead"] = false
+		t["hp"] = 100.0
+		t["armor"] = 60.0
+		t["alv"] = 4   # 夹具归位：elite 满血满甲（防前序段打过）
+		var hp0: float = float(t["hp"])
+		var ar0: float = float(t["armor"])
+		var r_low: Dictionary = main.soldiers.apply_hit(am_el, 40.0, false, 40.0, 2)
+		check("低 2 级弹打 4 级甲：零入肉 · 甲伤 40 削耐久",
+			absf(float(t["hp"]) - hp0) < 0.01 and absf(float(t["armor"]) - (ar0 - 40.0)) < 0.01,
+			"hp=%.1f armor=%.1f" % [float(t["hp"]), float(t["armor"])])
+		main.soldiers.apply_hit(am_el, 0.0, false, 0.0, 4)   # 零伤害探针：读当前 coef 效果
+		check("探针：零伤害零削甲（状态未漂移）", absf(float(t["hp"]) - hp0) < 0.01
+			and absf(float(t["armor"]) - 20.0) < 0.01,
+			"hp=%.1f armor=%.1f" % [float(t["hp"]), float(t["armor"])])
+		# 此时甲已被「低 2 级弹」削到 20 ≤ 甲伤 40 → 本发碎甲（三角洲公式）：
+		# 被甲吃掉的份额（ratio=20/40）按穿透系数 0.75 打折入肉，溢出份额全额
+		var pre_hp: float = float(t["hp"])
+		var pre_alv: int = int(t["alv"])
+		main.soldiers.apply_hit(am_el, 40.0, false, 40.0, 4)
+		check("同级弹碎甲：入肉 35（穿透过甲吃掉份额 + 溢出全额）",
+			absf(float(t["hp"]) - 65.0) < 0.01 and float(t["armor"]) == 0.0
+				and int(t["alv"]) == 0,
+			"pre=%.1f/%d post=%.1f/0" % [pre_hp, pre_alv, float(t["hp"])])
+		# 恢复甲再验标准同级（非碎甲）路径：75% 入肉 30 · 甲 60→20
+		t["armor"] = 60.0
+		t["alv"] = 4
+		var hp2: float = float(t["hp"])   # apply 前 65
+		main.soldiers.apply_hit(am_el, 40.0, false, 40.0, 4)
+		check("同级弹非碎甲：75% 入肉 30 · 甲削 40",
+			absf(float(t["hp"]) - (hp2 - 30.0)) < 0.01
+				and absf(float(t["armor"]) - 20.0) < 0.01,
+			"hp=%.1f armor=%.1f" % [float(t["hp"]), float(t["armor"])])
+	# 玩家被打：穿二级甲（耐久 45）吃敌弹 40 甲伤 → 系数 0.75 → 入肉 30 · 甲扣 40
+	main.player.wear_armor(2)
+	var p_hp0: float = main.player.health
+	main.player.armor = 45.0
+	main.player.hit(40.0, 40.0, 2)
+	check("玩家二级甲吃 5.56 弹：入肉 30 · 甲扣 40（三角洲同级 75%）",
+		absf(main.player.health - (p_hp0 - 30.0)) < 0.01
+			and absf(main.player.armor - 5.0) < 0.01,
+		"hp=%.1f armor=%.1f" % [main.player.health, main.player.armor])
+	# 起始甲：③区购买 → 进场自动穿
+	main.stash.cash = 99999
+	check("购起始三级甲（₵1600）", main.stash.buy_start_armor(3)
+		and main.stash.armor_buy_lv == 3)
+	main._start_mission({"primary": "rifle", "secondary": "pistol"})
+	await frames(6)
+	check("进场自动穿三级甲（耐久 60）", main.player.armor_lv == 3
+		and absf(main.player.armor_max() - 60.0) < 0.01
+		and absf(main.player.armor - 60.0) < 0.01,
+		"lv=%d armor=%.0f buy_lv=%d" % [main.player.armor_lv, main.player.armor,
+			main.stash.armor_buy_lv])
 	# 镜体增高架（2026-10-28 用户定案）：红点装其上抬高 RISER_H——aim_y 差
 	# 精确等于抬高量（ADS 对位自动跟随的证据），建模件在位（HD_NO_BL 强制
 	# 程序化路径下量 riser 盒）；装卸 toggle 与买断态
@@ -2188,6 +2272,7 @@ func _run() -> void:
 		"aim0=%.4f aim1=%.4f rise=%.4f" % [aim0, aim1, aim1 - aim0])
 	check("增高架建模件在位（装/卸顶点差 >0）", v_yes > v_no,
 		"v_no=%d v_yes=%d" % [v_no, v_yes])
+	main.soldiers.frozen = false   # 恢复 AI tick
 	main.stash.toggle_riser("rifle")   # 夹具复位（卸下）
 	# 幻影后握把（2026-10-29 三角洲考证落地）：REAR_GRIPS 表 + per-gun
 	# rear_grip_fit（照 grip_fit 先例）+ _mod_muls 开镜消费点 + rear_phantom
@@ -2701,10 +2786,16 @@ func _run() -> void:
 	main._route_key(KEY_5)
 	for i in 130:
 		main._step_use(1.0 / 60.0)
-	check("护甲板 +50 护甲", absf(main.player.armor - 50.0) < 0.01, "armor=%.1f" % main.player.armor)
-	main.player.hit(20.0)
-	check("护甲吸收 60% 伤害", absf(main.player.health - 82.0) < 0.01
-		and absf(main.player.armor - 38.0) < 0.01,
+	main.player.health = 100.0
+	main.player.wear_armor(2)   # 二级甲（上限 45）：护甲板 +50 封顶在耐久上限
+	main._route_key(KEY_5)
+	for i in 130:
+		main._step_use(1.0 / 60.0)
+	check("护甲板 +50 封顶在二级甲耐久 45", absf(main.player.armor - 45.0) < 0.01, "armor=%.1f" % main.player.armor)
+	main.player.hit(20.0, 40.0, 2)   # 2026-10-29 三角洲结算：5.56 敌弹甲伤 40 · pen2
+	check("二级甲吃 5.56 弹：同级 75% 入肉 · 甲扣 40（45→5）",
+		absf(main.player.health - 85.0) < 0.01
+			and absf(main.player.armor - 5.0) < 0.01,
 		"hp=%.1f armor=%.1f" % [main.player.health, main.player.armor])
 	var res0: int = main.guns.reserve
 	main._route_key(KEY_6)
@@ -2815,12 +2906,12 @@ func _run() -> void:
 			ei = i
 			break
 	var el: Dictionary = main.soldiers.soldiers[ei]
-	var r_ar: Dictionary = main.soldiers.apply_hit(ei, 40.0, false)
-	check("精英护甲吸收一半身体伤害", absf(float(el["hp"]) - 80.0) < 0.01
-		and absf(float(el["armor"]) - 40.0) < 0.01 and bool(r_ar.get("armor", false)),
+	var r_ar: Dictionary = main.soldiers.apply_hit(ei, 40.0, false, 40.0, 2)
+	check("精英 4 级甲 vs 2 级弹：零入肉 · 甲削 40（60→20）", absf(float(el["hp"]) - 100.0) < 0.01
+		and absf(float(el["armor"]) - 20.0) < 0.01 and bool(r_ar.get("armor", false)),
 		"hp=%.1f armor=%.1f" % [float(el["hp"]), float(el["armor"])])
 	main.soldiers.apply_hit(ei, 40.0, true)
-	check("爆头无视护甲", absf(float(el["hp"]) - 40.0) < 0.01 and absf(float(el["armor"]) - 40.0) < 0.01,
+	check("爆头无视护甲", absf(float(el["hp"]) - 60.0) < 0.01 and absf(float(el["armor"]) - 20.0) < 0.01,
 		"hp=%.1f armor=%.1f" % [float(el["hp"]), float(el["armor"])])
 	check("精英/首领更准更狠", float(HDData.ENEMY_TIERS["elite"]["spread"]) < 1.0
 		and float(HDData.ENEMY_TIERS["boss"]["spread"]) < float(HDData.ENEMY_TIERS["elite"]["spread"])
@@ -2836,9 +2927,10 @@ func _run() -> void:
 	var g_n0: int = main.loot.ground_count()
 	var bi: int = main.soldiers.soldiers.find(bs)
 	main.soldiers.apply_hit(bi, 999.0, true)
-	var drop_ok: bool = main.loot.ground_count() == g_n0 + 1
+	# 2026-10-29 首领额外必掉五级甲（护甲机制高级甲来源）：掉落数 +1
+	var drop_ok: bool = main.loot.ground_count() == g_n0 + 2
 	if drop_ok:
-		drop_ok = int(main.loot._ground[main.loot._ground.size() - 1]["item"]["rarity"]) >= HDData.BOSS_DROP_MIN
+		drop_ok = int(main.loot._ground[main.loot._ground.size() - 2]["item"]["rarity"]) >= HDData.BOSS_DROP_MIN
 	check("首领阵亡掉落金色及以上", drop_ok, "ground=%d" % main.loot.ground_count())
 	main.soldiers.reset_all()
 	check("重开后首领满血满甲", float(bs["hp"]) == float(HDData.ENEMY_TIERS["boss"]["hp"])

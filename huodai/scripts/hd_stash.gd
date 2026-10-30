@@ -52,6 +52,9 @@ var keycards: Dictionary = {}
 ## 镜体增高架（2026-10-28）：gun_id → true（每枪开关；₵1200 一次买断通用），
 ## 装上后该枪红点/全息抬高 RISER_H（hd_guns._scope_visual riser 参数）
 var riser_fit: Dictionary = {}
+## 起始护甲等级（2026-10-29 护甲机制：③区购买 1-3 级，开局自动穿上；
+## 4-6 级只从局内出——精英/首领掉落与容器额外物资）
+var armor_buy_lv := 0
 var risers_owned := false             # 增高架买断态（通用件）
 
 
@@ -92,6 +95,7 @@ func _serialize() -> Dictionary:
 		"throwables": throwables,
 		"keycards": keycards,
 		"riser_fit": riser_fit,
+		"armor_buy_lv": armor_buy_lv,
 		"risers_owned": risers_owned,
 		"secure_slots": secure_slots,
 		"durability": durability,
@@ -319,6 +323,7 @@ func _load() -> void:
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
 	riser_fit = {}
+	armor_buy_lv = 0
 	risers_owned = false
 	var raw_th := _to_dict(d.get("throwables", null))
 	for tk in ["frag", "smoke", "flash"]:
@@ -334,6 +339,7 @@ func _load() -> void:
 			keycards[str(kid)] = clampi(_to_i(raw_kc[kid]), 0, HDData.KEY_STOCK_MAX)
 	# 镜体增高架（老档无字段 = 全空；真值归一化）
 	riser_fit = {}
+	armor_buy_lv = 0
 	risers_owned = false
 	var raw_riser := _to_dict(d.get("riser_fit", null))
 	for rk in raw_riser.keys():
@@ -381,6 +387,7 @@ func _apply_defaults() -> void:
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
 	riser_fit = {}
+	armor_buy_lv = 0
 	risers_owned = false
 	secure_slots = HDData.SECURE_BASE
 	durability = {}
@@ -489,6 +496,21 @@ func buy_riser() -> bool:
 
 func owns_riser() -> bool:
 	return risers_owned
+
+
+## 购起始护甲（③区）：lv 1-3（4-6 级只局内出），买更高档自动替换低档；
+## 同级重复购买拒（已拥有）
+func buy_start_armor(lv: int) -> bool:
+	if lv < 1 or lv > 3 or armor_buy_lv >= lv:
+		return false
+	var price: int = [0, 600, 1000, 1600][lv]
+	if cash < price:
+		return false
+	cash -= price
+	armor_buy_lv = lv
+	save()
+	changed.emit()
+	return true
 
 
 func riser_on(gun_id: String) -> bool:

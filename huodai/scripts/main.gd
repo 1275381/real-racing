@@ -290,6 +290,8 @@ func _start_mission(loadout: Dictionary) -> void:
 		for drop in locks.roll_key_drops(randi(), world.container_spots):
 			loot._spawn_ground(drop["item"], drop["pos"])
 		_inject_keycards()
+	if stash.armor_buy_lv > 0:
+		player.wear_armor(stash.armor_buy_lv)   # 起始甲（③区购买档）满耐久上场
 	# 随机出生（每图 5 处图缘，改进方案第 6 节）
 	var sp_list: Array = world.spawn_points()
 	var sp: Vector3 = sp_list[randi() % sp_list.size()]
@@ -646,7 +648,7 @@ func _on_lock_unlocked(lock_id: String) -> void:
 
 ## 敌弹命中：扣血 + 受击方向弧（来袭方向相对视线：0 正前、+ 右侧）
 func _on_player_hit(dmg: float, from: Vector3) -> void:
-	player.hit(dmg)
+	player.hit(dmg, HDData.ENEMY_GUN_AD, HDData.ENEMY_GUN_PEN)
 	var to := from - player.pos
 	var fwd := Vector2(sin(player.yaw), cos(player.yaw))
 	var right := Vector2(-cos(player.yaw), sin(player.yaw))
@@ -788,7 +790,7 @@ func _step_mission(dt: float) -> void:
 	_step_lever(dt)
 	_step_tut(dt)
 	_step_use(dt)
-	hud.set_armor(player.armor)
+	hud.set_armor(player.armor, player.armor_lv)
 	hud.set_uses(loot.use_counts())
 	# 危险区横幅（中心与大坝同为高危红区；坝兵横幅走玩家 zone_at 实时裁决）
 	var pz: String = world.zone_at(player.pos.x, player.pos.z)
@@ -1052,9 +1054,17 @@ func _use_item(kind: String) -> void:
 	if kind == "medkit" and player.health >= 100.0:
 		hud.feed("血量已满", Color(0.85, 0.87, 0.82))
 		return
-	if kind == "plate" and player.armor >= HDData.ARMOR_MAX:
+	if kind == "plate" and player.armor >= player.armor_max():
 		hud.feed("护甲已满", Color(0.85, 0.87, 0.82))
 		return
+	if kind.begins_with("armor"):
+		# 高级护甲（2026-10-29 护甲机制）：读条完成穿上（效果在 _step_use
+		# match 分支——照 plate 模式，这里只守卫同甲级满耐久）
+		var lv := int(kind.trim_prefix("armor"))
+		if player.armor_lv >= lv and player.armor >= player.armor_max():
+			hud.feed("%s 耐久已满" % str(HDData.ARMOR_CLASSES[lv]["name"]),
+					Color(0.85, 0.87, 0.82))
+			return
 	_using = {"kind": kind, "t": 0.0, "dur": float(c["use_t"])}
 
 func _step_use(dt: float) -> void:
@@ -1080,10 +1090,14 @@ func _step_use(dt: float) -> void:
 		"pills":
 			_regen_left += HDData.PILLS_HEAL
 		"plate":
-			player.armor = minf(HDData.ARMOR_MAX, player.armor + HDData.PLATE_ARMOR)
+			player.armor = minf(player.armor_max(), player.armor + HDData.PLATE_ARMOR)
 		"ammo":
 			var mag := int(Guns.gun_by_id(guns.cur_id).get("mag", 30))
 			guns.reserve += mag * HDData.AMMO_BOX_MAGS
+		"armor4", "armor5", "armor6":
+			player.wear_armor(int(kind.trim_prefix("armor")))
+			hud.feed("已穿上%s（耐久 %d）" % [str(HDData.ARMOR_CLASSES[int(kind.trim_prefix("armor"))]["name"]),
+					int(player.armor_max())], Color(0.49, 0.89, 0.66))
 	hud.feed("用掉 %s" % str(c["name"]), HDData.RARITY[int(c["rarity"])]["color"])
 	_refresh_bag_hud()
 

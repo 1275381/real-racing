@@ -2225,6 +2225,29 @@ func _render_market(pg: VBoxContainer) -> void:
 				show_hint("买不了：%s（每种最多 %d 把或现金不足 ₵%s）" % [str(ld["key"]),
 						HDData.KEY_STOCK_MAX, _fmt(HDData.KEY_PRICE)]))
 		krow.add_child(kb)
+	# 起始护甲行（2026-10-29 护甲机制）：1-3 级 ₵600/1000/1600 递进购买
+	# （买高档自动替换低档），开局自动穿满耐久；4-6 级只局内出
+	var amarow := HBoxContainer.new()
+	arow.add_theme_constant_override("separation", 6)
+	arow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.add_child(amarow)
+	var anames := {1: "一级甲", 2: "二级甲", 3: "三级甲"}
+	var aprices := {1: 600, 2: 1000, 3: 1600}
+	for alv in [1, 2, 3]:
+		var owned_lv: bool = _stash.armor_buy_lv >= int(alv)
+		var ab := _mk_btn("%s ₵%s%s" % [str(anames[alv]), _fmt(int(aprices[alv])),
+				("·自带" if owned_lv else "")], 12)
+		_style_btn(ab, false, COL_OK if owned_lv else COL_ACCENT, 8)
+		ab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ab.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var alv0 := int(alv)
+		ab.pressed.connect(func():
+			if _stash.buy_start_armor(alv0):
+				show_hint("已购%s —— 开局自动穿着（满耐久）" % str(anames[alv0]))
+			else:
+				show_hint("买不了：%s（已拥有同级或更高级 / 现金不足 ₵%s）" % [
+						str(anames[alv0]), _fmt(int(aprices[alv0]))]))
+		amarow.add_child(ab)
 	# ④ 仓库·战利品条（原仓库页并入，底部通栏）：变卖链路=④段回车+钮双入口，零丢失
 	_render_warehouse_strip(pg)
 

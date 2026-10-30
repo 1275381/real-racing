@@ -109,6 +109,7 @@ var _world                 # HDWorld（鸭子）：patrol_spots/obstacles_near/g
 var _player                # HDPlayer（鸭子）：pos（可选 dead/health/move_speed 走 get() 探测）
 var _audio                 # HDAudio（鸭子）：play_shot("rifle")
 var _bodies: Array = []    # 每兵一个模型槽 {node,ap,mesh,mats,anim,fading,faded}
+var frozen := false            # 审计冻结开关（2026-10-29：甲伤数值断言期停 AI tick）
 var _tracers               # 曳光池（自己持有，敌弹橙色）
 var _ai_acc := 0.0
 var _all_dead_sent := false
@@ -261,6 +262,8 @@ func _tier(s: Dictionary) -> Dictionary:
 
 
 func update(dt: float, raid_active: bool) -> void:
+	if frozen:
+		return   # 审计冻结（2026-10-29）：甲伤数值断言期停 AI 互战噪声
 	if _tracers != null:
 		_tracers.tick(dt)
 	if raid_active:
@@ -303,19 +306,33 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 
 
 ## 玩家子弹结算（爆头 ×2 已在 guns 侧乘好）；打死了发 death 动画 + killed 播报
-func apply_hit(i: int, dmg: float, head: bool) -> Dictionary:
+func apply_hit(i: int, dmg: float, head: bool, ad := 0.0, pen := 2) -> Dictionary:
 	if i < 0 or i >= soldiers.size():
 		return {"killed": false}
 	var s: Dictionary = soldiers[i]
 	if s["dead"]:
 		return {"killed": false}
-	# 精英/首领护甲：身体中弹先吸 ENEMY_ARMOR_ABSORB（吸多少扣多少护甲），爆头无视护甲
+	# 护甲结算（2026-10-29 三角洲式）：有甲（alv>0）身体命中 → 甲伤削耐久
+	# （击穿与否不影响削甲量）+ 入肉按穿透系数；碎甲溢出按剩余比例 100% 入肉；
+	# 爆头照旧无视护甲
 	var armor_hit := false
-	if not head and float(s.get("armor", 0.0)) > 0.0:
-		var ab := minf(float(s["armor"]), dmg * HDData.ENEMY_ARMOR_ABSORB)
-		s["armor"] = float(s["armor"]) - ab
-		dmg -= ab
+	var alv := int(_tier(s).get("alv", 0))
+	if not head and alv > 0 and float(s.get("armor", 0.0)) > 0.0:
 		armor_hit = true
+		var armor_dur := float(s["armor"])
+		var coef := HDData.pen_coef(pen, alv)
+		var flesh := dmg * coef
+		var armor_dmg := maxf(0.0, ad)
+		if armor_dur <= armor_dmg:
+			# 碎甲（三角洲公式）：被甲吃掉的份额（ratio）按穿透系数打折入肉，
+			# 溢出份额（1-ratio）全额入肉
+			var ratio := armor_dur / maxf(armor_dmg, 0.01)
+			s["armor"] = 0.0
+			s["alv"] = 0
+			dmg = dmg * coef * ratio + dmg * (1.0 - ratio)
+		else:
+			s["armor"] = armor_dur - armor_dmg
+			dmg = flesh
 	s["hp"] = float(s["hp"]) - dmg
 	if float(s["hp"]) > 0.0:
 		_alert(s, _peye(), true)   # 受击即还击：转向玩家、120 m 内进入交战、找掩体
@@ -340,8 +357,11 @@ func _die(i: int, by_player: bool) -> void:
 		(s["loot"] as Array).clear()
 		if randf() < 0.5:
 			drops.append(HDData.make_consumable(HDData.USE_KEYS[randi() % HDData.USE_KEYS.size()]))
+	elif str(s["tier"]) == "elite":
+		drops.append(HDData.make_consumable("armor4"))   # 精英必掉四级甲（高级甲主来源）
 	elif str(s["tier"]) == "boss":
 		drops.append(HDData.roll_min(str(s["zone"]), HDData.BOSS_DROP_MIN))
+		drops.append(HDData.make_consumable("armor5"))   # 首领加掉五级甲
 	if not drops.is_empty():
 		dropped.emit(drops, s["pos"])
 	if by_player:

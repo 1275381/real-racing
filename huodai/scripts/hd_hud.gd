@@ -634,13 +634,21 @@ func set_tutorial(step: int, total: int, text: String) -> void:
 
 
 ## 护甲条（0 隐藏）
-func set_armor(a: float) -> void:
+func set_armor(a: float, lv := 0) -> void:
 	if _armor_row == null:
 		setup()
-	_armor_row.visible = a > 0.5
-	var filled := int(round(clampf(a / HDData.ARMOR_MAX, 0.0, 1.0) * float(_armor_segs.size())))
+	_armor_row.visible = a > 0.5 or lv > 0
+	var maxd := 30.0 if lv <= 1 else float(HDData.ARMOR_CLASSES.get(maxi(lv, 1), {}).get("dur", 100.0))
+	var filled := int(round(clampf(a / maxd, 0.0, 1.0) * float(_armor_segs.size())))
+	var seg_col := Color(0.35, 0.65, 1.0)
+	if lv >= 6:
+		seg_col = Color(1.0, 0.45, 0.3)
+	elif lv >= 5:
+		seg_col = Color(1.0, 0.8, 0.35)
+	elif lv >= 4:
+		seg_col = Color(0.75, 0.5, 1.0)
 	for i in _armor_segs.size():
-		(_armor_segs[i] as ColorRect).color = Color(0.35, 0.65, 1.0) if i < filled else Color(0.14, 0.18, 0.15, 0.9)
+		(_armor_segs[i] as ColorRect).color = seg_col if i < filled else Color(0.14, 0.18, 0.15, 0.9)
 
 
 ## 物资件数快捷栏
