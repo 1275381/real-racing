@@ -1,5 +1,10 @@
 ; Engine configuration file.
-; 烽火地带（Godot 版）—— 独立工程：搜刮→撤离 FPS（网页 fps.html 的移植）
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -16,6 +21,5 @@ window/size/viewport_height=810
 
 [rendering]
 
-; 渲染器用默认 Forward+（曾误抄赛车工程的 mobile/gl_compatibility，画质最差）
-anti_aliasing/quality/msaa_3d=2
 lights_and_shadows/directional_shadow/size=2048
+anti_aliasing/quality/msaa_3d=2
