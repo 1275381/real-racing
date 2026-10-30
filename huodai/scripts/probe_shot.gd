@@ -34,13 +34,15 @@
 # shot_cover_m250_ads 长枪 ADS / shot_gun_m14_cover 商店枪 M14 贴墙 /
 # shot_gun_asval_cover 商店枪 AS Val 贴墙 / shot_gun_k416_cover 商店枪
 # K416 贴墙 / shot_gun_an94_cover 商店枪 AN-94 贴墙 / shot_gun_sr25_cover
-# 商店枪 SR25 贴墙 / shot_gun_k437_cover 商店枪 K437 贴墙——①②③⑦⑪⑫
-# ⑬⑭⑮⑯ 各带 _b 图，两组 a/b 隐枪差分取稳定
+# 商店枪 SR25 贴墙 / shot_gun_k437_cover 商店枪 K437 贴墙 /
+# shot_gun_qcq171_cover 商店枪 QCQ171 贴墙（⑰，2026-10-30 并册）——
+# ①②③⑦⑪⑫
+# ⑬⑭⑮⑯⑰ 各带 _b 图，两组 a/b 隐枪差分取稳定
 # 交集判裂，修后门槛全部「稳定完整（大域 1）」；
 # m14 贴掩体 pair 直接回应「注意枪身分裂」：一体成型+独立视口下掩体帧枪体必须完整）
 # （机械清点 2026-10-29：shot() 调用点 80 处、其中 10 处 pair 各出 a/_b
-# 双图 → 出图 80+10=90 张；逐枪美照循环 21 把 + 红点开镜审计循环 21 把
-# （K437 均并入）+ scope 瞄具系列 6 张 + 矩阵段 + 3D 大厅三连拍——
+# 双图 → 出图 80+10=90 张；逐枪美照循环 22 把 + 红点开镜审计循环 22 把
+# （K437/QCQ171 均并入）+ scope 瞄具系列 6 张 + 矩阵段 + 3D 大厅三连拍——
 # 旧注释「共 87 张 / 56 处 / 9 处 pair / 矩阵段 22 张」在 HEAD 时已与
 # 机械清点差 1（88 张），滚动订正以 grep 计数为准）
 # 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
@@ -55,7 +57,9 @@
 #   被判「无单件特写」）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
-# 墙钟看门狗 300s（健康全程 ≈92s）：卡死自行还原存档 quit(1)，不留无输出 124 强杀
+# 墙钟看门狗 390s（2026-10-30 第 1 轮门禁修复上调：22 枪×2 循环 + 10 组
+# pair 规模下健康全程实测 ≈305s，旧值 300s 连安静机都判超时；390 仍低于
+# harness 420s 强杀）：卡死自行还原存档 quit(1)，不留无输出 124 强杀
 # 存档自愈：启动时若见 .probe_bak（上次被强杀未还原）先复位再备份，防真实档被顶掉
 extends SceneTree
 
@@ -65,10 +69,62 @@ var shots_saved: int = 0   # 实存截图数（headless 下跳过保存，只跑
 var save_bak := ""      # 非空 = 探针前有真实存档，收尾还原（探针装瞄具会触发 save()）
 var _m                  # main 引用（shot() 收暂停菜单护栏用，_initialize 里赋值）
 var _done := false      # 收尾旗：看门狗据此不误杀正常收尾
-const WATCHDOG_SEC := 300.0   # 全程墙钟上限（健康全程 ≈92s，5 倍冗余）——
-                              # 卡死时自行收尾还原存档并 quit(1)，不留给
-                              # harness 超时强杀（强杀会孤儿化 probe_bak，
-                              # 2026-10-18 10:04 实证）
+const WATCHDOG_SEC := 390.0   # 全程墙钟上限——必须低于 harness 侧 420s 强杀
+                              # （workflow safeRun timeoutMs=420000，探针超时被
+                              # 外部杀=无收尾还原、probe_bak 孤儿化）。2026-10-30
+                              # 第 1 轮门禁实证旧值 300s 已不够用：22 枪×2 循环
+                              # + 10 组 pair 后健康全程实测 ≈305s（安静机），
+                              # 带载 ≈350~430s——300s 看门狗把健康跑判成超时
+                              # quit(1)＝门禁退出码 1 的直接根因。存图线程化
+                              # （_save_png_async）+ 窗口置顶（防 macOS 遮挡
+                              # 节流）后健康全程 ≈270s；390 = 看门狗仍是兜底
+                              # 而非常态，且留 30s 给收尾还原再退出
+var _png_jobs: Array = []   # 进行中的存图任务 {img, th}——显式持 Image 引用，
+                            # 收割前实例必活（2026-10-30 实证：Callable 不钉
+                            # RefCounted 实例，线程迟于局部引用消亡执行时报
+                            # 「previously freed instance」丢图 120 张）
+
+
+## PNG 落盘后台化（2026-10-30 第 1 轮门禁修复）：save_png 编码 1152×648
+## 实测 0.3~0.5s/张 × ~90 张 ≈ 40s 纯 CPU，原先同步做把全程顶过看门狗
+## （305s > 300s → quit(1)，门禁退出码 1 的直接根因）。编码移工作线程与
+## 渲染帧重叠；任务表持 Image 强引用直到线程收割，实例生命周期不赌
+## Callable 的引用语义。池满（8）或起线程失败回退同步写——文件必达
+## 优先于提速
+func _save_png_async(img: Image, path: String) -> void:
+	_reap_png_jobs()
+	if _png_jobs.size() >= 8:
+		img.save_png(path)
+		return
+	var th := Thread.new()
+	if th.start(Callable(img, "save_png").bind(path)) == OK:
+		_png_jobs.append({"img": img, "th": th})
+	else:
+		img.save_png(path)
+
+
+## 收割已结束的存图线程（同步、不等待；_save_png_async 池满时与 _drain_pngs 共用）
+func _reap_png_jobs() -> void:
+	for i in range(_png_jobs.size() - 1, -1, -1):
+		var th: Thread = _png_jobs[i]["th"]
+		if not th.is_alive():
+			th.wait_to_finish()
+			_png_jobs.remove_at(i)
+
+
+## 收尾收割存图线程（正常收尾与看门狗强制收尾共用）：逐帧回收已结束
+## 任务，上限 10s；超时对残余线程 wait_to_finish 阻塞清账——退出前文件
+## 必须齐全
+func _drain_pngs() -> void:
+	var deadline := Time.get_ticks_msec() + 10000
+	while Time.get_ticks_msec() < deadline:
+		_reap_png_jobs()
+		if _png_jobs.is_empty():
+			return
+		await process_frame
+	for j in _png_jobs:
+		(j["th"] as Thread).wait_to_finish()
+	_png_jobs.clear()
 
 func frames(n: int) -> void:
 	for i in n:
@@ -89,6 +145,7 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 			return true
 		await process_frame
 	return pred.call()
+
 
 ## 截图统一出口：headless（无渲染目标）下 get_image() 返回 null——
 ## 直接对 null 调 save_png 会抛脚本错误断掉 _initialize 协程，quit() 永远
@@ -113,7 +170,7 @@ func shot(path: String, keep_menu := false, pair := false) -> void:
 	if img == null:
 		print("[probe] 跳过截图 %s（headless 渲染目标无图像）" % path)
 		return
-	img.save_png(path)
+	_save_png_async(img, path)
 	shots_saved += 1
 
 
@@ -231,11 +288,11 @@ func _shot_pair(path: String) -> void:
 	if _m != null and _m.player.vm_viewport != null:
 		va = _m.player.vm_viewport.get_texture().get_image()
 	var tag: String = path.get_file().get_basename()
-	ia1.save_png(path)
+	_save_png_async(ia1, path)
 	shots_saved += 1
 	var ib1 := await _ab_once()
 	if ib1 != null:
-		ib1.save_png(path.replace(".png", "_b.png"))
+		_save_png_async(ib1, path.replace(".png", "_b.png"))
 		shots_saved += 1
 	var m1: Dictionary = _diff_mask(ia1, ib1) if ib1 != null else {}
 	# 组2：位姿不变再来一组（SSAO 换相位），只算差分不落盘
@@ -351,6 +408,7 @@ func _watchdog() -> void:
 		return
 	print("[probe] 看门狗超时（%.0fs 未跑完）——强制收尾还原存档" % WATCHDOG_SEC)
 	_restore_save()
+	await _drain_pngs()   # 已抓帧的图先落盘再退（部分图证好过缺图）
 	quit(1)
 
 
@@ -365,6 +423,17 @@ func _restore_save() -> void:
 
 func _initialize() -> void:
 	_watchdog()
+	# 窗口置顶（2026-10-30 第 1 轮门禁修复）：探针多由 harness 从终端拉起，
+	# Godot 窗口开在终端后面被完全遮挡时 macOS 会遮挡节流/App Nap——实测
+	# 尾段 34s 零产出（帧率跌至近停）把全程拖过看门狗。置顶保合成不断流。
+	# 配套两件防误杀（20:18 实证：置顶窗口 90s 处被点关，Godot 默认关窗即
+	# 退出 → 拦腰 quit(0)、RID 泄漏刷屏、图证断半）：①关窗/Cmd-Q 不再退出
+	# （跑完自撤置顶、进程自退）②窗口标题明示「勿关」
+	if DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_flag(
+				DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
+		DisplayServer.window_set_title("烽火地带 · 探针运行中（约 2 分钟，请勿关闭）")
+	auto_accept_quit = false   # 关窗/Cmd-Q 不退出（SceneTree 属性）
 	# 存档隔离 v2（2026-10-27）：探针写独立档，真实档结构性零接触
 	# （bak 备份链保留作双保险，作用于探针档自身）
 	HDData.SAVE_PATH = "user://huodai_save_probe.json"
@@ -864,9 +933,11 @@ func _initialize() -> void:
 	# 缺图无法验收）；2026-10 商店枪 K416 并册追加；2026-10 商店枪 AN-94
 	# 并册追加（S12 微光赛季超点射新枪）；2026-10 商店枪 SR25 并册追加
 	# （群星赛季半自动 DMR）；2026-10-29 商店枪 K437 并册追加（S4 现役
-	# .300 BLK 突击步枪）
+	# .300 BLK 突击步枪）；2026-10-30 商店枪 QCQ171 并册追加（9×19mm 冲锋枪
+	# ·册属冲锋枪 SMG_IDS/几何体 hd_gun_ar.gd _ar_qcq171）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
+			"qcq171",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
@@ -924,6 +995,7 @@ func _initialize() -> void:
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
+			"qcq171",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
@@ -1529,6 +1601,32 @@ func _initialize() -> void:
 	_set_ads_mx(1.0)
 	await frames(2)
 	await shot("res://out/shot_gun_k437_cover.png", false, true)
+	# ⑰ qcq171 ADS 1.0 正贴（2026-10-30 商店枪 QCQ171 并册「验分裂」验收，
+	#     照 m14/asval/k416/an94/sr25/k437 pair 模式）：一体成型 unibody +
+	#     vm 独立视口下掩体帧枪体必须完整——常规有托布局全长 ≈0.80 模型尺
+	#     紧凑冲锋枪（消焰器口 -0.475 到托底板 +0.32），双杆银灰伸缩托 +
+	#     每杆 4 长条减重孔 + M-LOK 侧槽的镂空/负形件密度考验合并网格的
+	#     掩体帧完整性，走 pair 判裂（两组 a/b 隐枪差分取稳定交集，大域
+	#     ≥2 = 稳定裂即 FAIL）；换枪重进 MISSION 走 guns.enter 同槽换 id
+	#     重建链，顺带复核新枪挂载公共链
+	main.stash.guns_owned.append("qcq171")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "qcq171", "secondary": "pistol"}
+	main._start_mission({"primary": "qcq171", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm9: Dictionary = main.soldiers.soldiers[i]
+		sm9["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm9["engaged"] = false
+		sm9["moving"] = false
+		sm9["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	await shot("res://out/shot_gun_qcq171_cover.png", false, true)
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
@@ -1589,5 +1687,9 @@ func _initialize() -> void:
 	# （与看门狗强制收尾共用 _restore_save）
 	_done = true
 	_restore_save()
+	await _drain_pngs()   # 全部存图线程收账后再退（文件齐全性合同）
+	if DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_flag(
+				DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, false)
 	main.free()
 	quit(0)

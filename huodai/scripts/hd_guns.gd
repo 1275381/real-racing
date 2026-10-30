@@ -117,6 +117,12 @@ const RECOIL := {
 	# 慢、冲量累积更缓）；水平漂移窄一档（三角洲「压枪稳」定位 + 考证
 	# 垂直 35/水平 28 比值）
 	"k437": [0.20, 0.08, 0.10],
+	# qcq171 9mm 冲锋枪（2026-10-30 商店枪·9×19mm，763rpm 全自动）：单发
+	# 推力比 mp5（9mm 0.12）沉一档、比 uzi（0.15）稍柔——9×19 重弹头打出
+	# dmg 25（全冲锋枪册最高单发）但低膛压手枪弹冲量有限 + 2.70kg 直托抵肩
+	# 线（三角洲「后坐力控制 47」中位档）；连发累增 9mm 档温和；水平漂移
+	# 9mm 冲锋枪窄档（763rpm 比 uzi 600rpm 快，横漂放大就压不住）
+	"qcq171": [0.14, 0.06, 0.09],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1171,7 +1177,7 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		pass
 	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
 			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25"
-			or gun_id == "k437") \
+			or gun_id == "k437" or gun_id == "qcq171") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1197,6 +1203,11 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 翻折觇孔照门为出厂自带考证建模件（_ar_k437 ④，ref_04/07/10），
 		# 叠 iron 兜底片会与真实照门叠影——改装镜（reddot/holo/optic/
 		# thermal）照常落下方 else 通用挂载，不设 pass 吞镜分支
+		# qcq171 同例（2026-10-30 商店枪·冲锋枪册）：护木前端片状准星 +
+		# 机匣尾轨上翻转觇孔照门为白板考证建模件（_ar_qcq171 ⑧，用户图
+		# ref_00 白板状态；ref_01 游戏改装常态为全息镜——走通用挂载），
+		# 叠 iron 兜底片会与真实照门叠影；改装镜照常落 else 通用挂载，
+		# 不设 pass 吞镜分支
 		pass
 	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
 	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
@@ -1705,6 +1716,10 @@ const HOLD_DELTA := {
 	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
 	# （AR 式握把与 k416/an94/sr25 同锚）
 	"k437": Vector3(0, 0.008, -0.0768),
+	# qcq171 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_qcq171 握把顶锚
+	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	# （AR 式握把与 k416/k437 同锚；册属冲锋枪 SMG_IDS、几何体在 hd_gun_ar.gd）
+	"qcq171": Vector3(0, 0.008, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -1719,7 +1734,7 @@ static func _hold_delta(gid: String) -> Vector3:
 		return HOLD_DELTA[gid]
 	return Vector3.ZERO
 
-const SMG_IDS := ["mp5", "p90", "uzi", "vector", "mk4", "mp7"]
+const SMG_IDS := ["mp5", "p90", "uzi", "vector", "mk4", "mp7", "qcq171"]
 
 
 ## 是否冲锋枪册枪型（_build_gun_visual 分发用）
@@ -1746,6 +1761,11 @@ static func _smg_build(id: String) -> Node3D:
 			return _smg_mk4()
 		"mp7":
 			return _smg_mp7()
+		# qcq171（2026-10-30 商店冲锋枪）：常规有托布局照步枪册几何语言建模
+		# ——几何体在 hd_gun_ar.gd _ar_qcq171（AR_LIB.build 同链分发，材质走
+		# _ar_mats 传参注入；册属冲锋枪由 SMG_IDS 索引到此）
+		"qcq171":
+			return AR_LIB.build(id, _ar_mats())
 	return Node3D.new()
 
 
@@ -1793,6 +1813,17 @@ static func _smg_mag_of(id: String) -> Dictionary:
 			## (0,-0.23,0.052)×0.62）、size=掉匣替身缩放基准（=匣外形参数）
 			return {"pos": Vector3(0.0, -0.143, 0.032),
 					"size": Vector3(0.034, 0.195, 0.054), "show": false}
+		"qcq171":
+			## 9×19mm 30 发黑直匣（不透明、微前倾 6°）：真匣是枪身建模件
+			## （mag_qcq171 独立命名节点 + curved_mag 两段 3° 近直微弧 + 横肋
+			## ×2，几何体在 hd_gun_ar.gd _ar_qcq171），动画匣隐（同 k437
+			## 「匣形由枪身件表达」先例）；pos=换弹手锚（枪身局部匣中段
+			## (0,-0.137,-0.124)——匣顶 -0.055 下行半匣长 0.0825、z 含 6° 前
+			## 倾与 3° 弧向前偏，+Δ(0,0.008,-0.0768) 后 ×0.62 ≈ (0,-0.080,
+			## -0.124)）、size=匣外形（掉匣替身缩放基准，同 k437 口径用枪身
+			## 局部原值）
+			return {"pos": Vector3(0.0, -0.080, -0.124),
+					"size": Vector3(0.046, 0.165, 0.075), "show": false}
 	return {}
 
 
@@ -1818,6 +1849,13 @@ static func _smg_scope_anchor(id: String) -> Vector3:
 		"mp7":
 			## 分段顶轨齿顶 0.056 / 机匣中后段（拉机柄槽后）/ 轨前准星座
 			return Vector3(0.054, -0.05, -0.268)
+		"qcq171":
+			## 全长顶轨齿顶 0.0786（机匣尾直通护木前端连成一线）/ 机匣中段
+			## z -0.05 / 前准星 z -0.335（护木前端片状准星）——翻转觇孔照门 +
+			## 片状准星均为建模件（hd_gun_ar.gd _ar_qcq171 ⑧），iron 不叠兜底
+			## 机瞄片，见 _finish_gun；改装镜走通用 else 挂载（红点/全息 +
+			## 增高架生态自动可装）
+			return Vector3(0.079, -0.05, -0.335)
 	return Vector3(0.085, -0.1, -0.5)
 
 

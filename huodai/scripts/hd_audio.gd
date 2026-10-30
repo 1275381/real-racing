@@ -240,6 +240,19 @@ const SHOT_TUNE := {
 		"tail": {"dur": 0.27, "bright": 0.35, "gain": 0.30},
 		"gain": 0.87,
 	},
+	# QCQ171：干脆饱满——9×19mm 小口径快节奏冲锋枪（2026-10-30 商店枪，
+	# 763rpm 全自动）：9mm 手枪弹 mp5 档为骨（click 亮脆/boom 高短）+ 短
+	# 卡宾枪管（450m/s 初速比手枪长）抬一档厚度——crack 稍拖长读「短管
+	# 卡宾」、boom 比 mp5 沉一档（重弹头 25 伤冲锋枪册最高单发）、tail
+	# 明快收束；连发节拍 79ms（763rpm 比 mp5 800rpm 稍慢）每发独立可辨，
+	# 快节奏哒哒声不糊
+	"qcq171": {
+		"click": {"freq": 4700.0, "dur": 0.006, "gain": 0.40},
+		"crack": {"dur": 0.038, "gain": 0.85},
+		"boom": {"freq": 148.0, "dur": 0.042, "tri": 0.16, "gain": 0.52},
+		"tail": {"dur": 0.14, "bright": 0.44, "gain": 0.21},
+		"gain": 0.69,
+	},
 }
 
 var _pool: Array[AudioStreamPlayer] = []

@@ -2,7 +2,7 @@
 #       + 实战/靶场语义分流：靶场练习弹免费零消耗（绝不回写库存）+ 暂停菜单模式分化文案
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
-#       + 高模顶点红线：MK4 + 冲锋枪册五枪（mp5/p90/uzi/vector/mp7）+
+#       + 高模顶点红线：MK4 + 冲锋枪册六枪（mp5/p90/uzi/vector/mp7/qcq171）+
 #         步枪册九枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437）+ 旧五枪 +
 #         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
@@ -691,7 +691,7 @@ func _run() -> void:
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
-			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437"]:
+			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -1066,6 +1066,52 @@ func _run() -> void:
 		"reserve=%s price=%s" % [str(HDData.RESERVE.get("k437", "缺")),
 			str(HDData.AMMO_PRICE.get("k437", "缺"))])
 
+	# 27g. QCQ171 商店枪专项（2026-10-30 并册·9×19mm 冲锋枪·册属冲锋枪
+	#      SMG_IDS/几何体在 hd_gun_ar.gd）：考证断言六件（照 27b K416 段
+	#      先例）——
+	#      ① 独立命名弹匣锚点 mag_qcq171 在枪身根下（30 发黑直匣微前倾 6°，
+	#        换弹手沿 mag_of 锚跟随的契约件，#29 循环只查 mag_* 存在性，
+	#        这里锁名；走 _smg_build 分发入口——册属冲锋枪、分发到 AR_LIB）
+	#      ② 简介射速「763发每分」与 cd 换算一致 ±1%（60/0.0786=763.4，
+	#        三角洲烽火面板双源直读 orzice/qieyou）
+	#      ③ 全自动缺省（auto 不写 = true，面板单发/全自动；不带
+	#        cd_profile/burst/trigger_delay——纯全自动冲锋枪）+ 弹匣 30
+	#      ④ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；9×19mm 冲锋枪弹族同单价 4）
+	#      ⑤ 后坐表 RECOIL 落位（缺键吃 [0.4,0.2,0.25] 兜底后坐爆炸）
+	#      ⑥ 枪声调音表 SHOT_TUNE 在位（四层枪声 qcq171 专项档）+ ad 甲伤
+	#        字段在位（2026-10-29 护甲机制全枪必带——面板护甲伤 33 直读）
+	var q_root: Node3D = HDGuns._smg_build("qcq171")
+	var q_mag: Node = q_root.find_child("mag_qcq171", true, false)
+	check("QCQ171 独立命名弹匣锚点 mag_qcq171 在根下", q_mag != null,
+		"node=%s" % (str(q_mag.name) if q_mag != null else "无"))
+	q_root.free()
+	var q_def: Dictionary = Guns.gun_by_id("qcq171")
+	var q_rpm := 60.0 / float(q_def["cd"])
+	check("QCQ171 简介射速 763发每分与 cd 换算一致（±1%）",
+		str(q_def["desc"]).contains("763发每分")
+			and absf(q_rpm - 763.0) / 763.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(q_def["cd"]), q_rpm])
+	check("QCQ171 全自动缺省 + 弹匣 30 + 无特殊机制字段",
+		bool(q_def.get("auto", true)) and int(q_def["mag"]) == 30
+			and not q_def.has("cd_profile") and not q_def.has("burst")
+			and not q_def.has("trigger_delay"),
+		"auto=%s mag=%s cd_profile=%s" % [str(q_def.get("auto")),
+			str(q_def.get("mag")), str(q_def.get("cd_profile", "无"))])
+	check("QCQ171 备弹/购弹双表在表（9×19mm 冲锋枪弹族同单价 4）",
+		(HDData.RESERVE as Dictionary).has("qcq171")
+			and (HDData.AMMO_PRICE as Dictionary).has("qcq171")
+			and int(HDData.AMMO_PRICE["qcq171"]) == 4,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("qcq171", "缺")),
+			str(HDData.AMMO_PRICE.get("qcq171", "缺"))])
+	check("QCQ171 后坐表 RECOIL 落位 + 枪声调音表 SHOT_TUNE 在位 + ad 甲伤字段在位",
+		(HDGuns.RECOIL as Dictionary).has("qcq171")
+			and (HDAudio.SHOT_TUNE as Dictionary).has("qcq171")
+			and q_def.has("ad") and int(q_def["ad"]) == 33,
+		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("qcq171",
+				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("qcq171")),
+			str(q_def.get("ad", "缺"))])
+
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
 	#     ≥ 8× 低模基线（走 _old5_build 分发入口，只数枪身、不含
@@ -1080,12 +1126,15 @@ func _run() -> void:
 				int(GUN_LIB.POLY_BASE[gid])])
 		o5_root.free()
 
-	# 29. 高模顶点红线：冲锋枪册五枪（mp5/p90/uzi/vector/mp7，HDGunLib 高模
-	#     重建）逐把枪身根总顶点 ≥ 8× 低模基线（走 _smg_build 分发入口，口径
-	#     同 #26/#27/#28；mp5/p90/mp7 的静置真匣是独立命名弹匣节点（mag_curved/
-	#     mag_top/mag_pdw，mag_of show=false）；uzi/vector 匣插握把、由动画匣
-	#     表达（show=true）故无静置建模件、无节点断言；mk4 在 #26 单列）
-	for gid in ["mp5", "p90", "uzi", "vector", "mp7"]:
+	# 29. 高模顶点红线：冲锋枪册六枪（mp5/p90/uzi/vector/mp7/qcq171，
+	#     HDGunLib 高模重建）逐把枪身根总顶点 ≥ 8× 低模基线（走 _smg_build
+	#     分发入口，口径同 #26/#27/#28；mp5/p90/mp7/qcq171 的静置真匣是独立
+	#     命名弹匣节点（mag_curved/mag_top/mag_pdw/mag_qcq171，mag_of
+	#     show=false）；uzi/vector 匣插握把、由动画匣表达（show=true）故无
+	#     静置建模件、无节点断言；mk4 在 #26 单列；qcq171 几何体在
+	#     hd_gun_ar.gd _ar_qcq171——册属冲锋枪、_smg_build 分发到 AR_LIB
+	#     同链（2026-10-30 商店枪并册追加））
+	for gid in ["mp5", "p90", "uzi", "vector", "mp7", "qcq171"]:
 		var smg_root: Node3D = HDGuns._smg_build(gid)
 		var smg_verts: int = GUN_LIB.count_vertices(smg_root)
 		check("冲锋枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -2570,7 +2619,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，八处 m250/mp7/m14/asval/k416/an94/sr25/k437）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，九处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})
