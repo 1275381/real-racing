@@ -1293,6 +1293,25 @@ class ScopeOverlay extends Control:
 
 	func _draw() -> void:
 		var c := size * 0.5
+		# 高倍镜镜框（2026-10-30 用户报告「高倍镜没有镜框」）：optic/sniper/thermal
+		# 画镜筒观感——圆形视场黑环 + 环外四角压暗。旧渐晕因「机瞄角更黑」被整体
+		# 移除误伤了高倍镜（分划悬浮全屏读不出「在镜内」）；iron/reddot/holo 维持无框
+		if kind == "optic" or kind == "sniper" or kind == "thermal":
+			var r_scope: float = minf(size.x, size.y) * (0.36 if kind == "sniper" else 0.40)
+			# 环外四角：径向渐变压黑（从环缘到屏角 0.88 不透明）
+			var corner: Vector2 = Vector2(size.x, size.y)
+			var r_max: float = c.length()
+			for k in 12:
+				var t0: float = lerp(r_scope, r_max, float(k) / 12.0)
+				var t1: float = lerp(r_scope, r_max, float(k + 1) / 12.0)
+				var a0: float = clampf((float(k) / 12.0) ** 1.6 * 0.88, 0.0, 0.88)
+				draw_arc(c, (t0 + t1) * 0.5, 0.0, TAU, 48,
+						Color(0.02, 0.02, 0.02, a0), t1 - t0 + 1.5)
+			# 视场黑环边缘（细亮线内衬让环缘干净不锯齿）
+			draw_arc(c, r_scope, 0.0, TAU, 96, Color(0.02, 0.02, 0.02, 0.97),
+					maxf(6.0, size.y * 0.012))
+			draw_arc(c, r_scope - maxf(3.0, size.y * 0.006), 0.0, TAU, 96,
+					Color(0.12, 0.13, 0.12, 0.5), 2.0)
 		match kind:
 			"reddot":
 				# 无框红点镜：镜体已无环框 → 分划只留中心红点（旧 26px 红圈

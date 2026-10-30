@@ -1044,6 +1044,35 @@ func _initialize() -> void:
 	await frames(8)
 	shot("res://out/shot_rear_grip_market.png")
 	main.lobby.hide_lobby()
+	# ---- 18a4 高倍镜镜框图证（2026-10-30 用户报告「高倍镜没有镜框」）：
+	#      optic/sniper ADS 各一张——镜筒黑环+环外压暗应在位
+	main.stash.scopes_owned.append("optic")
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.stash.equip_scope("rifle", "optic")
+	var oldf0: Dictionary = main.guns._guns["primary"]
+	(oldf0["holder"] as Node3D).visible = false
+	(oldf0["holder"] as Node3D).queue_free()
+	(oldf0["flash"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.guns._mount_slot("primary")
+	main.guns._equip("primary")
+	Input.action_press("hd_scope")
+	await wait_until(func(): return main.player.ads >= 1.0)
+	await frames(4)
+	shot("res://out/shot_scope_frame_optic.png")
+	Input.action_release("hd_scope")
+	await wait_until(func(): return main.player.ads <= 0.4)
+	main.stash.loadout = {"primary": "sniper", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	Input.action_press("hd_scope")
+	await wait_until(func(): return main.player.ads >= 1.0)
+	await frames(4)
+	shot("res://out/shot_scope_frame_sniper.png")
+	Input.action_release("hd_scope")
+	await wait_until(func(): return main.player.ads <= 0.4)
 	# scope 段收尾：恢复 mp7 在枪（下段 shot_gun_cover_all 依赖「逐枪循环
 	# 收尾正是 mp7」的摆位前提）；镜装配不还原（收尾存档还原兜底）
 	main.stash.loadout = {"primary": "mp7", "secondary": "pistol"}
