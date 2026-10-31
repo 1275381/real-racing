@@ -1,11 +1,12 @@
 class_name HDTargets
 extends Node3D
-## 烽火地带 —— 室内靶馆靶道（3 条 ×2 靶），移植自网页版 js/fps/targets.js：
-## 射击线在馆心 +Z 侧（玩家站位 hall_center + (x∈{-2,0,2}, 0, +11)，面朝 -Z），
-## 靶道沿 -Z 延伸，三道靶距射击线 10/16/22m，挡弹墙在最远端（HDWorld 建馆）。
-## 每道 2 靶：固定立靶 + 摆动靶（绕吊点 ±30° 正弦摆）；靶 = 立杆 + 半身靶板
-## （躯干方块 + 头圆，躯干白圈红心）；命中倒靶（rotation.x 后仰倒下）、按距离
-## 计分 25/50/75，1.9s 后自动立起。倒地途中/倒地靶 raycast 不判定。
+## 烽火地带 —— 室内靶馆靶道（3 条 ×2 靶）。
+## 2026-10-31 用户定案改版：靶 = 人形训练假人（头/躯干/双臂/腿 + 底座，胸口
+## 靶环保留计分视觉锚），站在馆内地坪上（root.y = 馆心 + HALL_FLOOR_Y——旧版
+## root.y=0 悬在馆内地坪上方 6.94m，即用户报告「靶在靶场上面」的根因）。
+## 倒靶改绕脚底后仰（pivot 落到脚底 y=0），摆动靶绕脚 ±30°（不倒翁式）。
+## 射击线在馆心 +Z 侧（+11），三道靶距 10/16/22m；命中假人躯干/头 AABB、
+## 按距离计分 25/50/75，1.9s 后自动立起；倒地途中/倒地不判定。
 
 signal score_changed(score: int)
 
@@ -20,11 +21,12 @@ const SWING_PERIOD := [1.6, 2.0, 2.4]   # 摆动周期（按道错开）
 const AUTO_RISE := 1.9                  # 倒靶 1.9s 后自动立起
 const FALL_TIME := 0.28                 # 倒下动画时长
 const RISE_TIME := 0.3                  # 立起动画时长
-const POST_H := 1.05                    # 立杆高（吊点/铰点高度）
+const POST_H := 0.0                     # 假人 pivot=脚底（旧立杆吊点已废）
 const MIN_HIT_D := 0.1                  # 贴脸忽略（与网页版 t>0.1 同源）
-## 靶板命中盒（pivot 本地：覆盖躯干 0.5×0.62 + 头圆 r0.10 的保守 AABB）
-const HIT_C := Vector3(0.0, -0.42, 0.0)
-const HIT_H := Vector3(0.3, 0.44, 0.07)
+## 假人命中盒（pivot 本地=脚底原点：覆盖腿到头全身 1.55m 的保守 AABB，
+## 躯干/头为主——2026-10-31 假人改版随假人全身重新标定）
+const HIT_C := Vector3(0.0, 0.85, 0.0)
+const HIT_H := Vector3(0.26, 0.72, 0.12)
 
 var score: int = 0
 var best: int = 0
@@ -43,11 +45,15 @@ func build(hall_center: Vector3) -> void:
 	_targets.clear()
 	score = 0
 	_ensure_mats()
+	# 假人站馆内地坪（2026-10-31 修「靶在靶场上面」：旧版 root.y=馆心 y=0，
+	# 悬空 6.94m；现在 y=馆心 + HALL_FLOOR_Y，与玩家射击线同一地面）
 	for lane in 3:
 		var dist: float = LANE_DIST[lane]
 		var fire_z := hall_center.z + FIRE_DZ - dist
-		_make_target(hall_center.x + LANE_DX[lane] + FIXED_DX, fire_z, lane, false)
-		_make_target(hall_center.x + LANE_DX[lane] + SWING_DX, fire_z, lane, true)
+		_make_target(hall_center.x + LANE_DX[lane] + FIXED_DX,
+				hall_center.y + HDData.HALL_FLOOR_Y, fire_z, lane, false)
+		_make_target(hall_center.x + LANE_DX[lane] + SWING_DX,
+				hall_center.y + HDData.HALL_FLOOR_Y, fire_z, lane, true)
 
 
 func update(dt: float) -> void:
@@ -93,7 +99,7 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 		var cs := cos(ang)
 		var sn := sin(ang)
 		var ox := from.x - root.position.x
-		var oy := from.y - (root.position.y + POST_H)
+		var oy := from.y - (root.position.y + piv.position.y)
 		var oz := from.z - root.position.z
 		var lo := Vector3(cs * ox + sn * oy, -sn * ox + cs * oy, oz)
 		var ld := Vector3(cs * dir.x + sn * dir.y, -sn * dir.x + cs * dir.y, dir.z)
@@ -180,61 +186,104 @@ func _ensure_mats() -> void:
 
 
 ## 单个靶：立杆 + 吊点 pivot + 半身靶板（躯干方块/头圆/白圈/红心）
-func _make_target(x: float, z: float, lane: int, swing: bool) -> void:
+func _make_target(x: float, floor_y: float, z: float, lane: int, swing: bool) -> void:
 	var root := Node3D.new()
-	root.position = Vector3(x, 0.0, z)
+	root.position = Vector3(x, floor_y, z)
 	add_child(root)
-	# 立杆
-	var post := MeshInstance3D.new()
-	var pm := CylinderMesh.new()
-	pm.top_radius = 0.035
-	pm.bottom_radius = 0.05
-	pm.height = POST_H
-	pm.material = _m_post
-	post.mesh = pm
-	post.position = Vector3(0.0, POST_H * 0.5, 0.0)
-	root.add_child(post)
-	# 吊点（摆动绕 Z / 倒靶绕 X 都作用在 pivot 上）
+	# 底座圆盘（假人站稳 + 倒靶旋转的视觉承接）
+	var base := MeshInstance3D.new()
+	var bm0 := CylinderMesh.new()
+	bm0.top_radius = 0.2
+	bm0.bottom_radius = 0.24
+	bm0.height = 0.05
+	bm0.material = _m_post
+	base.mesh = bm0
+	base.position = Vector3(0.0, 0.025, 0.0)
+	root.add_child(base)
+	# pivot=脚底（2026-10-31 假人改版：倒靶绕脚后仰、摆动绕脚不倒翁摆）
 	var piv := Node3D.new()
-	piv.position = Vector3(0.0, POST_H, 0.0)
+	piv.position = Vector3(0.0, 0.05, 0.0)
 	root.add_child(piv)
-	# 躯干方块（板挂在吊点下方，面朝 ±Z 射手）
+	var m_body: StandardMaterial3D = _m_board   # 假人本体：做旧米黄
+	var m_joint: StandardMaterial3D = _m_post    # 关节/腿：深灰
+	# 双腿（0.04→0.62）
+	for lx in [-0.065, 0.065]:
+		var leg := MeshInstance3D.new()
+		var lm := BoxMesh.new()
+		lm.size = Vector3(0.09, 0.58, 0.1)
+		lm.material = m_joint
+		leg.mesh = lm
+		leg.position = Vector3(lx, 0.33, 0.0)
+		piv.add_child(leg)
+	# 骨盆（0.62→0.76）
+	var pelvis := MeshInstance3D.new()
+	var pm2 := BoxMesh.new()
+	pm2.size = Vector3(0.3, 0.14, 0.16)
+	pm2.material = m_body
+	pelvis.mesh = pm2
+	pelvis.position = Vector3(0.0, 0.69, 0.0)
+	piv.add_child(pelvis)
+	# 躯干（0.76→1.28，上宽下窄两段拼）
 	var torso := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.5, 0.62, 0.05)
-	bm.material = _m_board
-	torso.mesh = bm
-	torso.position = Vector3(0.0, -0.31, 0.0)
+	var tm := BoxMesh.new()
+	tm.size = Vector3(0.34, 0.4, 0.15)
+	tm.material = m_body
+	torso.mesh = tm
+	torso.position = Vector3(0.0, 0.97, 0.0)
 	piv.add_child(torso)
-	# 头圆（圆片）
+	var chest := MeshInstance3D.new()
+	var cm2 := BoxMesh.new()
+	cm2.size = Vector3(0.42, 0.14, 0.15)
+	cm2.material = m_body
+	chest.mesh = cm2
+	chest.position = Vector3(0.0, 1.22, 0.0)
+	piv.add_child(chest)
+	# 双臂垂放（肩块下挂）
+	for ax in [-0.245, 0.245]:
+		var arm := MeshInstance3D.new()
+		var am := BoxMesh.new()
+		am.size = Vector3(0.07, 0.46, 0.08)
+		am.material = m_body
+		arm.mesh = am
+		arm.position = Vector3(ax, 0.95, 0.0)
+		piv.add_child(arm)
+	# 颈（1.28→1.38）
+	var neck := MeshInstance3D.new()
+	var nm := CylinderMesh.new()
+	nm.top_radius = 0.03
+	nm.bottom_radius = 0.035
+	nm.height = 0.1
+	nm.material = m_joint
+	neck.mesh = nm
+	neck.position = Vector3(0.0, 1.33, 0.0)
+	piv.add_child(neck)
+	# 头（球，中心 1.46）
 	var head := MeshInstance3D.new()
-	var hm := CylinderMesh.new()
-	hm.top_radius = 0.1
-	hm.bottom_radius = 0.1
-	hm.height = 0.05
-	hm.material = _m_board
+	var hm := SphereMesh.new()
+	hm.radius = 0.095
+	hm.height = 0.19
+	hm.material = m_body
 	head.mesh = hm
-	head.rotation.x = PI * 0.5
-	head.position = Vector3(0.0, -0.7, 0.0)
+	head.position = Vector3(0.0, 1.46, 0.0)
 	piv.add_child(head)
-	# 白圈 + 红心（躯干正面）
+	# 胸口靶环 + 红心（计分视觉锚，贴胸前 z+）
 	var ring := MeshInstance3D.new()
 	var rm := TorusMesh.new()
-	rm.inner_radius = 0.1
-	rm.outer_radius = 0.135
+	rm.inner_radius = 0.085
+	rm.outer_radius = 0.115
 	rm.material = _m_ring
 	ring.mesh = rm
-	ring.position = Vector3(0.0, -0.31, 0.04)
+	ring.position = Vector3(0.0, 1.0, 0.085)
 	piv.add_child(ring)
 	var heart := MeshInstance3D.new()
 	var dm := CylinderMesh.new()
-	dm.top_radius = 0.045
-	dm.bottom_radius = 0.045
+	dm.top_radius = 0.038
+	dm.bottom_radius = 0.038
 	dm.height = 0.02
 	dm.material = _m_heart
 	heart.mesh = dm
 	heart.rotation.x = PI * 0.5
-	heart.position = Vector3(0.0, -0.31, 0.058)
+	heart.position = Vector3(0.0, 1.0, 0.095)
 	piv.add_child(heart)
 	_targets.append({"root": root, "pivot": piv, "lane": lane, "swing": swing,
 		"period": float(SWING_PERIOD[lane % SWING_PERIOD.size()]),

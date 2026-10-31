@@ -556,6 +556,18 @@ func _run() -> void:
 	var sc0: int = main.targets.score
 	main.targets.on_hit(0)
 	check("靶子计分", main.targets.score > sc0)
+	# 2026-10-31 假人改版：假人站馆内地坪（root.y=馆心-6.94，旧版悬空 y=0
+	# 即用户报告「靶在靶场上面」）+ 站姿眼高射线能命中假人命中盒
+	var dummy_root: Node3D = main.targets._targets[0]["root"]
+	check("靶场假人站馆内地坪（不悬空）",
+		absf(dummy_root.position.y - (HDData.HALL_CENTER.y + HDData.HALL_FLOOR_Y)) < 0.01,
+		"root.y=%.2f 应=%.2f" % [dummy_root.position.y,
+			HDData.HALL_CENTER.y + HDData.HALL_FLOOR_Y])
+	var eye := Vector3(main.player.pos.x, main.player.pos.y + 1.55, main.player.pos.z)
+	var aim: Vector3 = main.targets._targets[1]["root"].position + Vector3(0, 1.0, 0) - eye   # 1 号靶（0 号刚被打倒，倒靶不判定）
+	var rc: Dictionary = main.targets.raycast(eye, aim.normalized(), aim.length() + 2.0)
+	check("射击线眼高射线命中假人（改版命中盒）", str(rc.get("type", "")) == "target",
+		"type=%s d=%.2f" % [str(rc.get("type")), float(rc.get("d", -1.0))])
 
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
 	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——
