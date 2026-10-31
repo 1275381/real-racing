@@ -1174,9 +1174,13 @@ func _route_key(code: int) -> void:
 	# 对局内：B 切换 SR25 全自动套件开火模式（2026-10-26 用户三次定案：
 	# 默认全自动，B→三连发，再 B→全自动；靶场也可切——练习模式切换）
 	if code == KEY_B and (mode == Mode.MISSION or mode == Mode.RANGE):
+		# B 键开火模式切换（2026-10-31 扩展）：AN-94 枪自带三连发切换；
+		# SR25 需全自动套件——播报按当前枪组织
 		var fmode := guns.toggle_fire_mode()
 		if fmode != "":
-			hud.feed("SR25 开火模式：%s（1069rpm）" % ("三连发" if fmode == "burst" else "全自动"),
+			var gname := String(Guns.gun_by_id(guns.cur_id).get("name", guns.cur_id))
+			var default_name := "全自动" if guns.cur_id != "an94" else "超点射（前三发 1800）"
+			hud.feed("%s 开火模式：%s" % [gname, "三连发（1800rpm）" if fmode == "burst" else default_name],
 					Color(0.95, 0.85, 0.4))
 			return
 	# 对局内：Esc 菜单

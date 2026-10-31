@@ -983,15 +983,16 @@ func _run() -> void:
 	a_root.free()
 	var a_def: Dictionary = Guns.gun_by_id("an94")
 	var a_prof: Array = a_def.get("cd_profile", [])
-	check("AN-94 简介双射速文案与 cd/cd_profile 换算一致（±1%）",
-		str(a_def["desc"]).contains("前两发 1800")
+	check("AN-94 简介射速文案与 cd/cd_profile 换算一致（±1%，2026-10-31 前三发增强）",
+		str(a_def["desc"]).contains("前三发 1800")
 			and str(a_def["desc"]).contains("600发每分")
 			and absf(60.0 / float(a_def["cd"]) - 600.0) / 600.0 <= 0.01
-			and a_prof.size() > 0
-			and absf(60.0 / float(a_prof[0]) - 1800.0) / 1800.0 <= 0.01,
+			and a_prof.size() >= 2
+			and absf(60.0 / float(a_prof[0]) - 1800.0) / 1800.0 <= 0.01
+			and absf(60.0 / float(a_prof[1]) - 1800.0) / 1800.0 <= 0.01,
 		"cd=%s prof=%s" % [str(a_def["cd"]), str(a_prof)])
-	check("AN-94 射速档案在位（首对 0.0333 + 稳态 0.1 == cd 末位同源）",
-		a_prof.size() == 2 and is_equal_approx(float(a_prof[1]), float(a_def["cd"])),
+	check("AN-94 射速档案在位（前三发 0.0333 ×2 + 稳态 0.1 == cd 末位同源）",
+		a_prof.size() == 3 and is_equal_approx(float(a_prof[2]), float(a_def["cd"])),
 		"prof=%s" % str(a_prof))
 	check("AN-94 全自动缺省 + 弹匣 30 + 备弹/购弹双表在表",
 		bool(a_def.get("auto", true)) and int(a_def["mag"]) == 30
@@ -2604,20 +2605,28 @@ func _run() -> void:
 	Input.action_release("hd_fire")
 	var an94_shots: int = 999 - main.guns.ammo
 	main.guns.update(1.0 / 60.0)
-	check("an94 超点射 5s 按压实测 51 发 ±1（首对 1800 + 稳态 600）",
-		absf(an94_shots - 51.0) <= 1.0, "shots=%d/300帧（5s）" % an94_shots)
+	check("an94 超点射 5s 按压实测 53 发 ±1（前三发 1800 + 稳态 600，2026-10-31 增强）",
+		absf(an94_shots - 53.0) <= 1.0, "shots=%d/300帧（5s）" % an94_shots)
 	var pair_gap: float = -1.0
 	if burst_frames.size() >= 2:
 		pair_gap = float(burst_frames[1] - burst_frames[0]) / 60.0
 	check("an94 按压内首对间隔 ≤0.05s（1800rpm=2 帧）",
 		pair_gap >= 0.0 and pair_gap <= 0.05,
 		"首对间隔=%.4fs（帧 %s）" % [pair_gap, str(burst_frames.slice(0, 2))])
-	var steady_gap: float = -1.0
+	# 2026-10-31 增强：前三发都 1800rpm——第 2→3 发间隔仍 ≤0.05s，
+	# 第 3→4 发才回落稳态 600rpm（0.1s）
+	var third_gap: float = -1.0
 	if burst_frames.size() >= 3:
-		steady_gap = float(burst_frames[2] - burst_frames[1]) / 60.0
-	check("an94 首对之后回落稳态 600rpm（6 帧 ±1）",
+		third_gap = float(burst_frames[2] - burst_frames[1]) / 60.0
+	check("an94 第 2→3 发仍 1800rpm（≤0.05s，前三发增强）",
+		third_gap >= 0.0 and third_gap <= 0.05,
+		"第2→3发间隔=%.4fs（帧 %s）" % [third_gap, str(burst_frames.slice(0, 3))])
+	var steady_gap: float = -1.0
+	if burst_frames.size() >= 4:
+		steady_gap = float(burst_frames[3] - burst_frames[2]) / 60.0
+	check("an94 第 3→4 发回落稳态 600rpm（6 帧 ±1）",
 		steady_gap >= 0.08 and steady_gap <= 0.12,
-		"第2→3发间隔=%.4fs" % steady_gap)
+		"第3→4发间隔=%.4fs" % steady_gap)
 	# ③ 松开再按：按压计数复位，又一对新的 1800rpm 超点射
 	await frames(8)
 	main.guns.update(1.0 / 60.0)
@@ -2637,6 +2646,42 @@ func _run() -> void:
 	check("an94 松开再按首对间隔复位（再一对 1800rpm）",
 		re_gap >= 0.0 and re_gap <= 0.05,
 		"再按首对间隔=%.4fs（帧 %s）" % [re_gap, str(re_frames.slice(0, 2))])
+	# ④ B 键三连发模式（2026-10-31 用户定案）：默认超点射连发；B 切三连发——
+	#    tap 一下恰 3 发（1800rpm 轮内）；轮间锁内 tap 不起射；按住不连发；
+	#    再 B 切回超点射
+	check("an94 默认超点射模式（非三连发）", not main.guns._an94_burst_mode)
+	var fm94: String = main.guns.toggle_fire_mode()
+	check("B 切换 → 三连发模式", fm94 == "burst" and main.guns._an94_burst_mode)
+	await frames(2)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	for i in 12:
+		main.guns.update(1.0 / 60.0)
+	var b3_shots: int = 999 - main.guns.ammo
+	check("an94 三连发：点一下恰 3 发（1800rpm 轮内）", b3_shots == 3,
+		"shots=%d" % b3_shots)
+	main.guns._burst_gap = 0.1   # 模拟轮刚打完（锁窗口内）
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	for i in 12:
+		main.guns.update(1.0 / 60.0)
+	var b3_locked: int = 999 - main.guns.ammo - b3_shots
+	check("an94 三连发轮间锁：锁内 tap 不起射", b3_locked == 0, "extra=%d" % b3_locked)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 30:   # 按住 0.5s：三连发模式只出首段 3 发（按住不连发）
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var b3_hold: int = 999 - main.guns.ammo
+	check("an94 三连发按住不连发（只 3 发）", b3_hold == 3, "shots=%d" % b3_hold)
+	var fm94b: String = main.guns.toggle_fire_mode()
+	check("再 B 切回超点射", fm94b == "auto" and not main.guns._an94_burst_mode)
+	main.guns.update(1.0 / 60.0)
 	# ④ 纯增量回归：抽 akm（545rpm）/ k416（880rpm）长程 RPM 原值不动
 	for rpm_gid in ["akm", "k416"]:
 		var rpm_exp: float = 60.0 / float(Guns.gun_by_id(rpm_gid)["cd"])

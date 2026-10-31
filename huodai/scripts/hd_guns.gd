@@ -41,9 +41,10 @@ const FIRE_GATE := 1e-6    # 开火门残差容差（秒）：60·cd 为整数�
                            # 0.05=3 帧）IEEE 双精度 3f 与 cd 差 ~1e-18，曾把节拍
                            # 多推 1 帧（1200rpm 掉到 900）；容差远小于任何非整除
                            # 余量（最小 ~0.008），只吸收残差不偷跑
-const BURST_SOFT_SHOTS := 2   # 射速档案（cd_profile）枪按压内「前两发」判定数：
+const BURST_SOFT_SHOTS := 3   # 射速档案（cd_profile）枪按压内「前三发」判定数
+                              # （2026-10-31 用户定案：超点射前三发 1800rpm，软后坐随动）：
                               # 超点射对射窗口（AN-94 现实 2 发点射管）
-const BURST_SOFT_MUL := 0.35  # 超点射前两发后坐乘数（AN-94 延迟后坐的真实弹道
+const BURST_SOFT_MUL := 0.35  # 超点射前三发后坐乘数（AN-94 延迟后坐的真实弹道
                               # 特征：钢制内机匣在聚合物外壳内后坐吸掉对射冲量，
                               # 扣扳机打出的头两发垂直跳动极小——三角洲爆料
                               # 「前两发射速极快、后坐力极低」同源）
@@ -181,6 +182,8 @@ var _burst_left := 0       # 三连发剩余发数（表 burst>0 的枪——MK4
 var _burst_cd_ov := 0.0    # 配件覆写的轮内间隔秒（SR25 套件 burst_cd_to；0=无覆写）
 var _kit_gap_ov := 0.0     # 配件覆写的轮间锁秒（SR25 套件 burst_gap_to；0=无覆写）
 var _kit_cd_ov := 0.0      # 配件覆写的全自动节拍秒（SR25 套件 cd_to；0=无覆写）
+var _an94_burst_mode := false  # AN-94 三连发模式（B 键切换，2026-10-31 用户定案；
+                               # 枪自带无需配件——真实 AN-94 就有模式切换）
 var _kit_burst_mode := false  # SR25 套件开火模式（false=全自动缺省 / true=三连发，
                               # B 键切换——2026-10-26 用户三次定案）
 var _burst_gap := 0.0      # 轮间锁剩余秒（表 burst_gap：点射打完后的强制间隔——
@@ -212,6 +215,7 @@ func enter(loadout: Dictionary) -> void:
 	_press_shots = 0   # 进场清零按压计数（cd_profile 射速档案档位）
 	_trig_delay = 0.0  # 进场清零扳机蓄力（trigger_delay）
 	_burst_left = 0    # 进场清零三连发计数（burst）
+	_an94_burst_mode = false   # 进场回超点射缺省（B 切换不跨局）
 	_burst_gap = 0.0   # 进场清零轮间锁（burst_gap）
 	_ads = 0.0
 	_aiming = false
@@ -317,6 +321,8 @@ func update(dt: float) -> void:
 	# 100ms 才能点下一轮——面板 800rpm 即含间隔的平均值）：锁内起不了新点射。
 	# 全自动解锁走配件（m14_mods_provider 注入 autobarrel——存储链与 M14 同源）
 	var burst_n := int(_g.get("burst", 0))
+	if cur_id == "an94" and _an94_burst_mode:
+		burst_n = 3   # AN-94 三连发模式（B 切换）：走 MK4 式点射分支
 	if sr25_kit and _kit_burst_mode:
 		burst_n = int(Guns.SR25_MODS["fullauto"]["burst_to"])
 		_burst_cd_ov = float(Guns.SR25_MODS["fullauto"]["burst_cd_to"])
@@ -612,6 +618,12 @@ func start_reload() -> void:
 ## 调时未注入 = 原弹容，行为不变）
 ## SR25 套件 B 键切换开火模式：返回新模式（"auto"/"burst"），未装套件返回 ""
 func toggle_fire_mode() -> String:
+	# AN-94 三连发模式（2026-10-31 用户定案）：枪自带 B 键切换，无需配件
+	if cur_id == "an94":
+		_an94_burst_mode = not _an94_burst_mode
+		_burst_left = 0
+		_burst_gap = 0.0
+		return "burst" if _an94_burst_mode else "auto"
 	if not (cur_id == "sr25" and _m14_mod("fullauto")):
 		return ""
 	_kit_burst_mode = not _kit_burst_mode
@@ -910,6 +922,7 @@ func _equip(slot: String) -> void:
 	_burst_left = 0    # 切枪中止点射（新枪按自己的节奏来）
 	_burst_gap = 0.0   # 切枪清轮间锁
 	_kit_burst_mode = false   # 切枪回全自动缺省（别的枪没有模式态）
+	_an94_burst_mode = false   # 切枪回超点射缺省
 	_falling = false
 	_mag_landed = false
 	_hide_hand()
