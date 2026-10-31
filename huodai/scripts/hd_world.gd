@@ -661,8 +661,8 @@ func _build_env() -> void:
 	# 三刀：①阴影距离 300→160（坝顶远景阴影本就看不清，明暗由 AOsuffice）
 	# ②blur 1.0→0.6（贴图带宽减负）③PSSM 斜切 2 段（默认 4 段对大静态场景
 	# 过度细分）；阴影视觉质量靠 bias/opacity 维持，判图以截图回归兜底
-	_sun.directional_shadow_max_distance = 160.0
-	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	_sun.directional_shadow_max_distance = 120.0
+	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	_sun.shadow_bias = 0.06
 	_sun.shadow_blur = 0.6
 	_sun.shadow_opacity = 0.9

@@ -12,7 +12,7 @@ extends RefCounted
 ## no_batch 元数据的节点（撤离信标/电闸这类局内会改的件）。
 ## 无 class_name（新脚本一律 preload）
 
-const CELL := 4096.0
+const CELL := 128.0
 const MAX_VERTS := 4000
 const BLDG_VERTS := 16000
 const FLAT_H := 0.35
@@ -48,7 +48,7 @@ static func run(root: Node3D) -> Dictionary:
 		var c := xf.origin
 		var cell := Vector2i(floori(c.x / CELL), floori(c.z / CELL))
 		if mi.mesh is ArrayMesh:
-			cell = Vector2i(9999, 9999)   # 多材质建筑：全图按材质合一张（顶点总量小，剔除粒度无所谓）
+			cell = Vector2i(9999, 9999)   # 多材质建筑：全图按材质合一张（按原点分格试过：DC 反升 293 张/出生点3 987——宽视角分组数×遍数主导，剔除救不回）
 		# 贴地薄件（铺装/路缘/车辙/标线，高 < FLAT_H）的影子看不见：并进不投影组，
 		# 省掉两段阴影贴图里的绘制
 		var shadow := mi.cast_shadow
@@ -56,10 +56,18 @@ static func run(root: Node3D) -> Dictionary:
 			shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		for p in parts:
 			var mat2: Material = p[1]
-			var key := "%d|%d|%d|%d,%d" % [mat2.get_instance_id(), int(shadow), mi.layers,
-					cell.x, cell.y]
+			# 分组键=渲染属性哈希（非实例 id）：五个构建器各自 new 的同色同装
+			# 扮材质安全并组（视觉零变化）——2026-10-31 出生点 DC 超 800 的
+			# 根因就是同色多实例裂组（90 色 → 300+ 组）。keep_map 界也进键：
+			# 馆体（keep）与地图内容（换图即拆）同材质不许并一张——否则合并
+			# 网格不继承 keep_map，换图时馆体视觉被整体 free（latent bug，
+			# 去重后同色必并、必然触发）
+			var keep := _keep_flag(mi)
+			var key := "%s|%d|%d|%d,%d|%d" % [_mat_key(mat2), int(shadow), mi.layers,
+					cell.x, cell.y, int(keep)]
 			if not groups.has(key):
-				groups[key] = {"mat": mat2, "shadow": shadow, "layers": mi.layers, "items": []}
+				groups[key] = {"mat": mat2, "shadow": shadow, "layers": mi.layers,
+					"keep": keep, "items": []}
 			(groups[key]["items"] as Array).append([mi.mesh, int(p[0]), xf])
 		victims.append(mi)
 	var made := 0
@@ -77,6 +85,8 @@ static func run(root: Node3D) -> Dictionary:
 		out.mesh = am
 		out.cast_shadow = g["shadow"]
 		out.layers = g["layers"]
+		if bool(g["keep"]):
+			out.set_meta("keep_map", true)   # 换图保留（馆体批次）
 		root.add_child(out)
 		made += 1
 	for mi in victims:
@@ -123,6 +133,36 @@ static func _is_blend(mat: Material) -> bool:
 		return bm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA \
 				or bm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS
 	return mat is ShaderMaterial   # 自定义着色器（可能依赖模型空间/顶点色）不动
+
+
+## 渲染属性哈希：两个 StandardMaterial3D 哈希相同 → 逐像素渲染一致，可安全
+## 共用一张合并网格。只收构建器实际会变的属性（色/粗造/金属/UV 变换/
+## 发光/贴图组/剔除面），漏收的罕见属性按保守不合并处理（ShaderMaterial
+## 一律不并——_is_blend 已拦）
+static func _mat_key(mat: Material) -> String:
+	if mat is ShaderMaterial or not (mat is StandardMaterial3D):
+		return str(mat.get_instance_id())   # 非标准材质按实例隔离（保守不并）
+	var m := mat as StandardMaterial3D
+	# str(texture)：null → "<null>"、对象 → 带实例 id 的串，两者都稳定可哈希
+	# （get_instance_id() 对 null 会崩——boot 冒烟 2805 条实锤）
+	var tex: String = str(m.albedo_texture) + "/" + str(m.normal_texture) + "/" \
+			+ str(m.roughness_texture) + "/" + str(m.metallic_texture) + "/" \
+			+ str(m.emission_texture)
+	return "%s|%s|%s|%s|%s|%s|%s|%s|%d|%s" % [
+			m.albedo_color.to_html(true), str(m.roughness), str(m.metallic),
+			str(m.uv1_scale), str(m.uv1_offset), str(m.uv1_triplanar),
+			m.emission.to_html(true) if m.emission_enabled else "off",
+			str(m.emission_energy_multiplier), int(m.cull_mode), tex]
+
+
+## 自身或祖先带 keep_map 元数据（馆体等换图保留件——批次需与地图内容隔离）
+static func _keep_flag(mi: Node3D) -> bool:
+	var p: Node = mi
+	while p != null:
+		if p.has_meta("keep_map"):
+			return true
+		p = p.get_parent()
+	return false
 
 
 static func _rel_xform(mi: Node3D, root: Node3D) -> Transform3D:
