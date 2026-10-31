@@ -2,13 +2,15 @@ class_name HDTargets
 extends Node3D
 ## 烽火地带 —— 室内靶馆靶道（3 条 ×2 靶）。
 ## 2026-10-31 靶场 2.0（用户四连需求）：① 假人带血量（DUMMY_HP=100，打空
-## 才倒、自动立起时回满血——不再一打就倒）；② 摆动靶四模式可调（G 键循环
-## 慢/中/快/随机——随机=每 1~2.2s 随机换摆速，速度阶跃角度连续）；③ 靶距
-## 三道统一可调 1~200m（T/Y 键 ±5m，分值=靶距米数）；④ 馆体拉深 210m 配合
-## 远距靶道（hd_world 参考图重做）。
+## 才倒、自动立起时回满血——不再一打就倒）；② 移动靶四模式可调（G 键循环
+## 慢/中/快/随机——随机=每 1~2.2s 随机换移速）；③ 靶距三道统一可调
+## 1~200m（T/Y 键 ±5m，分值=靶距米数）；④ 馆体拉深 210m 配合远距靶道。
+## 移动靶=左右平移（2026-10-31 用户定案「平移不是摆动」）：滑轨式横移
+## ±0.95m、比固定靶后退 3.5m（同 z 错开——相邻道平移假人永不互穿），
+## 底座圆盘随假人同移（滑车观感）+ 脚下钢轨视觉件。
 ## 假人=人形训练假人（头/躯干/双臂/腿+底座，胸口靶环保留计分视觉锚），
-## 站馆内地坪（root.y = 馆心 + HALL_FLOOR_Y）；倒靶绕脚底后仰、摆动绕脚
-## 不倒翁摆；倒地途中/倒地不判定。
+## 站馆内地坪（root.y = 馆心 + HALL_FLOOR_Y）；倒靶绕脚底后仰；
+## 倒地途中/倒地不判定。
 
 signal score_changed(score: int)
 signal dummy_hit(hp_left: float, killed: bool)   # 命中反馈（main 接 hitmark/播报）
@@ -16,8 +18,9 @@ signal dummy_hit(hp_left: float, killed: bool)   # 命中反馈（main 接 hitma
 const LANE_DX := [-2.0, 0.0, 2.0]       # 三条射击位横向间距
 const FIRE_DZ := 11.0                   # 射击线在馆心 +Z 侧的距离
 const FIXED_DX := -0.6                  # 固定靶在道内左偏
-const SWING_DX := 0.6                   # 摆动靶在道内右偏
-const SWING_DEG := 30.0                 # 摆动靶 ±30°
+const SWING_DX := 0.6                   # 移动靶滑轨中心在道内右偏
+const SWING_AMP := 0.95                 # 移动靶左右平移半幅（m，滑轨全长 1.9m）
+const SWING_DEPTH := 3.5                # 移动靶比固定靶后退（m，同 z 错开防互穿）
 const AUTO_RISE := 1.9                  # 倒靶 1.9s 后自动立起
 const FALL_TIME := 0.28                 # 倒下动画时长
 const RISE_TIME := 0.3                  # 立起动画时长
@@ -27,14 +30,14 @@ const MIN_HIT_D := 0.1                  # 贴脸忽略（与网页版 t>0.1 同�
 ## 躯干/头为主——2026-10-31 假人改版随假人全身重新标定）
 const HIT_C := Vector3(0.0, 0.85, 0.0)
 const HIT_H := Vector3(0.26, 0.72, 0.12)
-## 血量 / 靶距 / 摆动（2026-10-31 需求 ①②③）
+## 血量 / 靶距 / 移动（2026-10-31 需求 ①②③）
 const DUMMY_HP := 100.0                 # 用户定案「至少 100 血」
 const DIST_MIN := 1.0                   # 靶距下限（m）
 const DIST_MAX := 200.0                 # 靶距上限（m）——馆深 210m 的内界
 const DIST_STEP := 5.0                  # T/Y 每按一次 ±5m
 const DIST_DEF := 25.0                  # 默认靶距
 const SWING_MODE_NAMES := ["慢速", "中速", "快速", "随机"]
-const SWING_MODE_PERIOD := [3.4, 2.0, 1.0]   # 模式 0/1/2 摆动周期（s）；3=随机
+const SWING_MODE_PERIOD := [3.4, 2.0, 1.0]   # 模式 0/1/2 平移周期（s）；3=随机
 
 var score: int = 0
 var best: int = 0
@@ -43,6 +46,7 @@ var swing_mode := 1                     # 0 慢 / 1 中 / 2 快 / 3 随机
 
 var _hall_c: Vector3 = Vector3.ZERO
 var _targets: Array = []   # {root,pivot,lane,swing,ph,r_per,r_t,hp,alive,down_t,rise_t}
+var _rails: Array = []     # 移动靶钢轨（随靶距重摆）
 var _m_post: StandardMaterial3D
 var _m_board: StandardMaterial3D
 var _m_ring: StandardMaterial3D
@@ -53,6 +57,9 @@ func build(hall_center: Vector3) -> void:
 	for tg in _targets:
 		(tg["root"] as Node3D).queue_free()
 	_targets.clear()
+	for r in _rails:
+		(r as Node3D).queue_free()
+	_rails.clear()
 	score = 0
 	_hall_c = hall_center
 	_ensure_mats()
@@ -60,10 +67,21 @@ func build(hall_center: Vector3) -> void:
 	for lane in 3:
 		var floor_y: float = _hall_c.y + HDData.HALL_FLOOR_Y
 		_make_target(_hall_c.x + LANE_DX[lane] + FIXED_DX, floor_y, fire_z, lane, false)
-		_make_target(_hall_c.x + LANE_DX[lane] + SWING_DX, floor_y, fire_z, lane, true)
+		_make_target(_hall_c.x + LANE_DX[lane] + SWING_DX, floor_y,
+				fire_z - SWING_DEPTH, lane, true)
+		# 移动靶钢轨（平移视觉锚：长 2.8m 低轨，贴地 3cm）
+		var rail := MeshInstance3D.new()
+		var rm2 := BoxMesh.new()
+		rm2.size = Vector3(SWING_AMP * 2.0 + 0.9, 0.06, 0.12)
+		rm2.material = _m_post
+		rail.mesh = rm2
+		rail.position = Vector3(_hall_c.x + LANE_DX[lane] + SWING_DX,
+				floor_y + 0.03, fire_z - SWING_DEPTH)
+		add_child(rail)
+		_rails.append(rail)
 
 
-## 调靶距（三道统一 1~200m）：重摆全体假人 + 立起回满血（换距=换一轮）
+## 调靶距（三道统一 1~200m）：重摆全体假人与钢轨 + 立起回满血（换距=换一轮）
 func set_range_dist(d: float) -> bool:
 	var nd := clampf(d, DIST_MIN, DIST_MAX)
 	if is_equal_approx(nd, range_dist):
@@ -71,8 +89,11 @@ func set_range_dist(d: float) -> bool:
 	range_dist = nd
 	var fire_z := _hall_c.z + FIRE_DZ - range_dist
 	for tg in _targets:
-		(tg["root"] as Node3D).position.z = fire_z
+		var z_t: float = fire_z if not bool(tg["swing"]) else fire_z - SWING_DEPTH
+		(tg["root"] as Node3D).position.z = z_t
 		_revive(tg)
+	for r in _rails:
+		(r as Node3D).position.z = fire_z - SWING_DEPTH
 	return true
 
 
@@ -84,12 +105,13 @@ func cycle_swing_mode() -> void:
 func update(dt: float) -> void:
 	for tg in _targets:
 		var piv: Node3D = tg["pivot"]
-		# 摆动靶：绕脚 ±30° 不倒翁摆（alive 才摆，倒下即停）；速度由
-		# swing_mode 决定，随机模式 _swing_period 内随机换档
+		# 移动靶：左右平移（滑轨式 ±SWING_AMP，alive 才移，倒下即停）；
+		# 移速由 swing_mode 决定，随机模式 _swing_period 内随机换档——
+		# sin 相位累积制：换速率时位置连续不瞬移
 		if bool(tg["swing"]) and bool(tg["alive"]):
 			var per := _swing_period(tg, dt)
 			tg["ph"] = float(tg["ph"]) + dt * TAU / maxf(per, 0.2)
-			piv.rotation.z = deg_to_rad(SWING_DEG) * sin(float(tg["ph"]))
+			piv.position.x = SWING_AMP * sin(float(tg["ph"]))
 		# 倒下 / 自动立起动画（rotation.x 后仰倒）
 		if not bool(tg["alive"]):
 			if float(tg["down_t"]) >= 0.0:
@@ -121,15 +143,12 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 			continue
 		var root: Node3D = tg["root"]
 		var piv: Node3D = tg["pivot"]
-		# 世界 → pivot 本地（脚底平移 + 绕 Z 反旋转，摆动角即 rotation.z）
-		var ang := piv.rotation.z
-		var cs := cos(ang)
-		var sn := sin(ang)
-		var ox := from.x - root.position.x
+		# 世界 → pivot 本地（root 平移 + pivot 横移量；移动靶无旋转——平移制）
+		var ox := from.x - (root.position.x + piv.position.x)
 		var oy := from.y - (root.position.y + POST_H)
 		var oz := from.z - root.position.z
-		var lo := Vector3(cs * ox + sn * oy, -sn * ox + cs * oy, oz)
-		var ld := Vector3(cs * dir.x + sn * dir.y, -sn * dir.x + cs * dir.y, dir.z)
+		var lo := Vector3(ox, oy, oz)
+		var ld := dir
 		# 对命中 AABB（中心 HIT_C 半 HIT_H）做平板求交
 		var t0 := 0.0
 		var t1 := best_d
@@ -204,8 +223,8 @@ func _revive(tg: Dictionary) -> void:
 	(tg["pivot"] as Node3D).rotation = Vector3.ZERO
 
 
-## 摆动周期：定档模式查表；随机模式每 1.0~2.2s 在 0.7~3.4s 重抽
-## （速度阶跃、角度连续——换速率不动 sin 相位，不瞬移）
+## 平移周期：定档模式查表；随机模式每 1.0~2.2s 在 0.7~3.4s 重抽
+## （速度阶跃、位置连续——换速率不动 sin 相位，不瞬移）
 func _swing_period(tg: Dictionary, dt: float) -> float:
 	if swing_mode < SWING_MODE_PERIOD.size():
 		return SWING_MODE_PERIOD[swing_mode]
@@ -239,7 +258,11 @@ func _make_target(x: float, floor_y: float, z: float, lane: int, swing: bool) ->
 	var root := Node3D.new()
 	root.position = Vector3(x, floor_y, z)
 	add_child(root)
-	# 底座圆盘（假人站稳 + 倒靶旋转的视觉承接）
+	# pivot=脚底（倒靶绕脚后仰；移动靶 pivot.position.x 沿轨平移）
+	var piv := Node3D.new()
+	piv.position = Vector3(0.0, 0.05, 0.0)
+	root.add_child(piv)
+	# 底座圆盘挂在 pivot 下（随假人左右平移=滑车观感；倒靶时随整体绕脚翻）
 	var base := MeshInstance3D.new()
 	var bm0 := CylinderMesh.new()
 	bm0.top_radius = 0.2
@@ -247,12 +270,8 @@ func _make_target(x: float, floor_y: float, z: float, lane: int, swing: bool) ->
 	bm0.height = 0.05
 	bm0.material = _m_post
 	base.mesh = bm0
-	base.position = Vector3(0.0, 0.025, 0.0)
-	root.add_child(base)
-	# pivot=脚底（倒靶绕脚后仰、摆动绕脚不倒翁摆）
-	var piv := Node3D.new()
-	piv.position = Vector3(0.0, 0.05, 0.0)
-	root.add_child(piv)
+	base.position = Vector3(0.0, -0.025, 0.0)
+	piv.add_child(base)
 	var m_body: StandardMaterial3D = _m_board   # 假人本体：做旧米黄
 	var m_joint: StandardMaterial3D = _m_post    # 关节/腿：深灰
 	# 双腿（0.04→0.62）

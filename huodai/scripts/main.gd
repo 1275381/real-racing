@@ -881,7 +881,7 @@ func _step_range(dt: float) -> void:
 	targets.update(dt)
 	hud.set_ammo(guns.ammo, guns.reserve)
 	hud.set_health(player.health, 100.0)
-	hud.set_score(targets.score, targets.best, "靶距 %dm · 摆动 %s · T/Y 调距 G 摆速"
+	hud.set_score(targets.score, targets.best, "靶距 %dm · 移动 %s · T/Y 调距 G 移速"
 			% [int(targets.range_dist), HDTargets.SWING_MODE_NAMES[targets.swing_mode]])
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
@@ -1196,7 +1196,7 @@ func _route_key(code: int) -> void:
 			hud.feed("%s 开火模式：%s" % [gname, "三连发（1800rpm）" if fmode == "burst" else default_name],
 					Color(0.95, 0.85, 0.4))
 			return
-	# 靶场 2.0（2026-10-31）：T/Y 调靶距（±5m，钳制 1~200）、G 循环摆动
+	# 靶场 2.0（2026-10-31）：T/Y 调靶距（±5m，钳制 1~200）、G 循环移动
 	# 模式（慢/中/快/随机）——两键只挂 RANGE（T/Y/G 对局内空闲）
 	if mode == Mode.RANGE and (code == KEY_T or code == KEY_Y):
 		targets.set_range_dist(targets.range_dist
@@ -1206,7 +1206,7 @@ func _route_key(code: int) -> void:
 		return
 	if mode == Mode.RANGE and code == KEY_G:
 		targets.cycle_swing_mode()
-		hud.toast("摆动靶：%s（G 切换）"
+		hud.toast("移动靶：%s（G 切换）"
 				% HDTargets.SWING_MODE_NAMES[targets.swing_mode], Color(0.55, 0.9, 0.75))
 		return
 	# 对局内：Esc 菜单

@@ -592,6 +592,15 @@ func _run() -> void:
 	main.targets.set_range_dist(200.0)
 	check("靶距可调至 200m（假人随距重摆）", absf(float(main.targets._targets[2]["root"].position.z)
 			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 200.0)) < 0.01)
+	check("移动靶比固定靶后退 3.5m（同 z 错开防互穿）", absf(
+			float(main.targets._targets[3]["root"].position.z)
+			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 200.0 - HDTargets.SWING_DEPTH)) < 0.01)
+	var px0: float = float(main.targets._targets[1]["pivot"].position.x)
+	main.targets.update(0.3)
+	main.targets.update(0.3)
+	var px1: float = float(main.targets._targets[1]["pivot"].position.x)
+	check("移动靶左右平移（横移随时间变化且限幅）", absf(px1) <= HDTargets.SWING_AMP + 0.01
+			and absf(px1 - px0) > 0.001, "x %.2f→%.2f" % [px0, px1])
 	var eye2 := Vector3(main.player.pos.x, main.player.pos.y + 1.55, main.player.pos.z)
 	var aim2: Vector3 = main.targets._targets[2]["root"].position + Vector3(0, 1.0, 0) - eye2
 	var rc2: Dictionary = main.targets.raycast(eye2, aim2.normalized(), aim2.length() + 2.0)
