@@ -1179,9 +1179,9 @@ func _initialize() -> void:
 
 	# ---- 附加验收 18b：shot_gun_cover_all / shot_gun_cover_glass —— 贴掩体
 	# 枪模可读性图证（2026-10「贴掩体枪身分裂/吞枪」复发回归）：站位=地下
-	# 靶馆射击位隔断墙（2026-10 判图迁移：HALL_CENTER=(120,130) 入地后地坪
-	# -6.94，此前 598 地表机位实拍只剩天空雾——隔断墙 x=121.06 面 ±X、高
-	# 1.2m，贴墙 0.64m）——cam(121.70,-5.39,143.0) yaw=PI 面 -Z 射击线；
+	# 靶馆射击位隔断墙（2026-10-31 靶馆迁图外独立空间 HALL_CENTER=(600,600)
+	# 后机位改常量推导：隔断墙 cx+1 面 +X、高 1.2m，贴墙 0.64m；旧 z=cz+15
+	# 恰在 +Z 墙门洞里，封门后内收 cz+13.5）——yaw=PI 面 -Z 射击线；
 	# set_indoor(true) 手动切馆内雾/环境光（冻结主循环后位置判定不跑）；
 	# set_process(false) 冻结主循环防相机追尾 + 收 HUD。
 	# A=shot_gun_cover_all：mp7 贴普通掩体（逐枪美照循环收尾正是 mp7 在
@@ -1193,7 +1193,7 @@ func _initialize() -> void:
 	var hud_cv: bool = main.hud.visible
 	main.hud.visible = false
 	main.world.set_indoor(true)
-	main.player.cam.position = Vector3(121.70, -5.39, 145.0)
+	main.player.cam.position = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.cam.rotation = Vector3(-0.12, PI, 0)
 	await frames(6)
 	shot("res://out/shot_gun_cover_all.png")
@@ -1204,7 +1204,7 @@ func _initialize() -> void:
 	await frames(20)
 	main.set_process(false)
 	main.world.set_indoor(true)
-	main.player.cam.position = Vector3(121.70, -5.39, 145.0)
+	main.player.cam.position = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.cam.rotation = Vector3(-0.12, PI, 0)
 	await frames(6)
 	shot("res://out/shot_gun_cover_glass.png")
@@ -1367,12 +1367,14 @@ func _initialize() -> void:
 		sm["moving"] = false
 		sm["state"] = "combat"
 		main.soldiers._write_pose(i)
-	# 靶馆隔断墙正贴机位（2026-10 判图迁移：旧坝底位/598 地表位在靶馆
-	# 入地后均已无掩体、实拍只剩天空雾——机位迁入地下馆贴 x=121.06 面
-	# ±X 隔断墙、贴墙 0.64m，眼高地坪 -6.94+1.55，同 shot_gun_cover 段
-	# 站位）：pos.y 交给 update 压回地坪、此后每场景重写 pos/yaw/pitch
+	# 靶馆隔断墙正贴机位（2026-10-31 迁图外独立空间后改常量推导：贴
+	# cx+1 面 +X 隔断墙、贴墙 0.64m，眼高地坪 -6.94+1.55；pos.y 初值取
+	# 地下域（旧 1.55 靠连廊无条件分支贴地，连廊拆后会被 hint 守卫
+	# 判地表拽上地面）、z=cz+13.5（旧 cz+15 在已封的门洞里），同
+	# shot_gun_cover 段站位）：pos.y 交给 update 压回地坪、此后每场景
+	# 重写 pos/yaw/pitch
 	main.world.set_indoor(true)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1457,7 +1459,7 @@ func _initialize() -> void:
 		if main.player.ads >= 0.99:
 			break
 	main.world.set_indoor(true)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)   # 回正贴机位再横移
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)   # 回正贴机位再横移
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	await drive(2)
@@ -1480,7 +1482,7 @@ func _initialize() -> void:
 		sm2["moving"] = false
 		sm2["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1502,7 +1504,7 @@ func _initialize() -> void:
 		sm3["moving"] = false
 		sm3["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1525,7 +1527,7 @@ func _initialize() -> void:
 		sm4["moving"] = false
 		sm4["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1548,7 +1550,7 @@ func _initialize() -> void:
 		sm5["moving"] = false
 		sm5["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1572,7 +1574,7 @@ func _initialize() -> void:
 		sm6["moving"] = false
 		sm6["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1596,7 +1598,7 @@ func _initialize() -> void:
 		sm7["moving"] = false
 		sm7["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1620,7 +1622,7 @@ func _initialize() -> void:
 		sm8["moving"] = false
 		sm8["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1646,7 +1648,7 @@ func _initialize() -> void:
 		sm9["moving"] = false
 		sm9["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)
@@ -1672,7 +1674,7 @@ func _initialize() -> void:
 		sm10["moving"] = false
 		sm10["state"] = "combat"
 		main.soldiers._write_pose(i)
-	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 1.70, HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 13.5)
 	main.player.yaw = PI
 	main.player.pitch = 0.0
 	main.player.update(0.016)

@@ -564,7 +564,9 @@ func _run() -> void:
 		"root.y=%.2f 应=%.2f" % [dummy_root.position.y,
 			HDData.HALL_CENTER.y + HDData.HALL_FLOOR_Y])
 	var eye := Vector3(main.player.pos.x, main.player.pos.y + 1.55, main.player.pos.z)
-	var aim: Vector3 = main.targets._targets[1]["root"].position + Vector3(0, 1.0, 0) - eye   # 1 号靶（0 号刚被打倒，倒靶不判定）
+	# 2 号靶 = 1 道固定靶（0 号刚被打倒不判定；1 号是摆动靶 phase0=randf
+	# 相位随机，瞄它会随相位抖动漏射线——2026-10-31 二跑实证改为固定靶）
+	var aim: Vector3 = main.targets._targets[2]["root"].position + Vector3(0, 1.0, 0) - eye
 	var rc: Dictionary = main.targets.raycast(eye, aim.normalized(), aim.length() + 2.0)
 	check("射击线眼高射线命中假人（改版命中盒）", str(rc.get("type", "")) == "target",
 		"type=%s d=%.2f" % [str(rc.get("type")), float(rc.get("d", -1.0))])
@@ -671,8 +673,9 @@ func _run() -> void:
 		and absf(float(sc_sn.get("zoom", 0.0)) - 6.0) < 0.01,
 		"kind=%s zoom=%.2f" % [str(sc_sn.get("kind")), float(sc_sn.get("zoom", 0.0))])
 
-	# 13. 地下靶馆地坪分层（2026-10 靶馆入地回归）：地下域 hint 馆内 -6.94 /
-	#     坡道线性 / 地表 hint 馆上方仍 0（地表行走不受脚下馆体影响）
+	# 13. 地下靶馆地坪分层（2026-10-31 靶馆迁图外独立空间）：地下域 hint
+	#     馆内 -6.94 / 地表 hint 馆上方仍 0 / 馆内豁免地图钳制 / 旧入口
+	#     结构（坡道/入口房/连廊）坐标已还原地表
 	check("地下馆内地坪 -6.94", absf(main.world.ground_height(
 		HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, -10.0)
 		- (-6.94)) < 0.001,
@@ -680,9 +683,13 @@ func _run() -> void:
 			HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, -10.0))
 	check("馆上方地表仍 0（hint 守卫）", absf(main.world.ground_height(
 		HDData.HALL_CENTER.x, HDData.HALL_CENTER.z, 0.0)) < 0.001)
-	check("坡道顶端 0.06 / 底端 -6.94", absf(main.world.ground_height(
-		120.0, 157.0, 0.0) - 0.06) < 0.001
-		and absf(main.world.ground_height(120.0, 147.0, -6.8) + 6.94) < 0.001)
+	check("靶馆独立空间：馆内豁免钳制/图内不豁免", main.world.in_separate_space(
+			HDData.HALL_CENTER + Vector3(0.0, HDData.HALL_FLOOR_Y + 1.6, 0.0))
+			and not main.world.in_separate_space(Vector3(0.0, 1.6, 0.0)))
+	check("旧入口/坡道坐标已还原地表（结构拆除）", absf(main.world.ground_height(
+			120.0, 154.0, -10.0)) < 0.001
+			and absf(main.world.ground_height(120.0, 150.0, -10.0)) < 0.001
+			and absf(main.world.ground_height(120.0, 147.0, -6.8)) < 0.001)
 	check("馆外大地 0.0", absf(main.world.ground_height(0.0, 0.0)) < 0.001)
 	check("射位出生贴地坪", absf(main.player.pos.y
 		- main.world.ground_height(main.player.pos.x, main.player.pos.z,

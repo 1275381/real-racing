@@ -848,7 +848,7 @@ func _step_world_only(dt: float) -> void:
 	hud.set_extract(_extract_t, HDData.EXTRACT_HOLD)
 
 ## 玩家脚步（2D 轻声）：每走一步响一声，疾跑更响更密、蹲走几乎无声；
-## 脚下不是沙漠地面（入口房地坪 / 坡道 / 地下靶馆）换混凝土脚步
+## 脚下不是沙漠地面（地下靶馆地坪）换混凝土脚步
 func _step_footsteps() -> void:
 	var mv := Vector2(player.pos.x - _last_ppos.x, player.pos.z - _last_ppos.z).length()
 	_last_ppos = player.pos

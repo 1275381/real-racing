@@ -90,16 +90,7 @@ const HALL_H := 5.0
 const HALL_WALL_T := 0.5          # 墙厚
 const HALL_FIRE_DZ := 11.0        # 射击线距馆心（+Z 侧）
 const HALL_TRAP_T := 0.6          # 尽端挡弹墙厚度（-Z 端）
-const HALL_FLOOR_Y := -6.94       # 地下馆地坪（2026-10 用户定案「靶场做在地下」）：馆顶 -1.94，地表 0 之下 1.94m 覆土；地表入口房在馆北 (120,154)，阶梯坡道下行
-
-## 地下入口几何常量（_build_entrance 与 ground_height 分层共用）
-const HALL_RAMP_X0 := 116.0       # 坡道/连廊西缘
-const HALL_RAMP_X1 := 124.0       # 坡道/连廊东缘（8m 宽）
-const HALL_RAMP_Z0 := 147.0       # 坡道底端（接地下连廊）
-const HALL_RAMP_Z1 := 157.0       # 坡道顶端（入口房地坪面）
-const HALL_HOUSE_Z0 := 147.0      # 入口房南墙
-const HALL_HOUSE_Z1 := 161.0      # 入口房北墙
-const HALL_TUNNEL_Z0 := 143.0     # 地下连廊北端（接馆 +Z 墙门洞）
+const HALL_FLOOR_Y := -6.94       # 地下馆地坪：馆顶 -1.94 覆土 1.94m；馆在图外独立空间（600,600），无地表入口，进出只走传送
 
 ## 撤离信标（绿色发光柱 + 地面绿环）
 const EXTRACT_BEACON_H := 2.6
@@ -297,7 +288,6 @@ func build() -> void:
 	_build_ground()
 	_build_boundary()   # 隐形边界墙（两图同界）：一次建成、换图保留
 	_build_hall()
-	_build_entrance()
 	_build_map()
 
 
@@ -594,39 +584,24 @@ func in_hall(x: float, z: float) -> bool:
 	return absf(x - c.x) <= HALL_HX and absf(z - c.z) <= HALL_HZ
 
 
-## 是否处于地图外独立空间（旧 e515451 靶馆外迁语义）：靶馆已回归地图地下，
-## 地图钳制在图内全程安全；保留函数（玩家行走仍调用）但恒 false——
-## 地下馆在图内，钳制不会误拽
+## 是否处于图外独立空间（靶馆，2026-10-31 用户定案「独立空间，不与任何地图
+## 连在一起」）：馆体在 ±170 图界外 (600,600)，馆内必须豁免地图钳制
+## （hd_player.update 调用——否则馆内出生的玩家每帧被拽回地图角，相机跟飞）；
+## 馆体四墙+吊顶全是障碍，封闭空间内不跑钳制也出不去
 func in_separate_space(p: Vector3) -> bool:
-	return false
+	return in_hall(p.x, p.z)
 
 
-## 是否处于地下域（靶馆/连廊，y 低于馆顶 -1.94）：HDPlayer.update 的地图
-## 边界钳制对地下域无需豁免（馆体在图内），保留函数供Walking 语义判断
+## 是否处于地下域（y 低于馆顶 -1.94）：语义判断保留（ground_height 的
+## hint 守卫阈值同源）
 func in_underground(p: Vector3) -> bool:
 	return p.y < HALL_FLOOR_Y + HALL_H - 0.5
 
 
-## 地面高度（分层采样）：地表 0 / 入口房地坪 0.06 / 阶梯坡道线性下行 /
-## 地下连廊与馆内地坪 HALL_FLOOR_Y。分层契约：
-## - 坡道/连廊无条件返回（唯一进出通道，且都在入口房/覆土结构内部）
-## - 馆体矩形带 y_hint 守卫：地表行走（y_hint ≥ 馆顶）不受脚下的馆影响
-##   ——否则地表玩家走到馆上方会被拽进地下
+## 地面高度（分层采样）：地表 0 / 馆体矩形带 y_hint 守卫（馆在图外，
+## 守卫仍保留——探针/传送先落地下域再采样，语义与地表行走分层不变）
 func ground_height(x: float, z: float, y_hint := 100.0) -> float:
-	# 阶梯坡道（入口房内开洞，南向下行）：z 157→147 线性 0.06→-6.88
-	if x >= HALL_RAMP_X0 and x <= HALL_RAMP_X1 \
-			and z >= HALL_RAMP_Z0 and z <= HALL_RAMP_Z1:
-		return 0.06 - (HALL_RAMP_Z1 - z) * ((0.06 - HALL_FLOOR_Y)
-				/ (HALL_RAMP_Z1 - HALL_RAMP_Z0))
-	# 地下连廊（坡道底→馆 +Z 门洞，覆土之下）
-	if x >= HALL_RAMP_X0 and x <= HALL_RAMP_X1 \
-			and z >= HALL_TUNNEL_Z0 and z < HALL_RAMP_Z0:
-		return HALL_FLOOR_Y
-	# 入口房地坪（坡道开洞之外的房内地板）
-	if x >= HALL_RAMP_X0 - 4.0 and x <= HALL_RAMP_X1 + 4.0 \
-			and z >= HALL_HOUSE_Z0 and z <= HALL_HOUSE_Z1:
-		return 0.06
-	# 馆体矩形：仅地下域生效
+	# 馆体矩形：仅地下域生效（hint ≥ 馆顶 = 地表行走不受脚下馆体影响）
 	if in_hall(x, z):
 		if y_hint < HALL_FLOOR_Y + HALL_H - 0.5:
 			return HALL_FLOOR_Y
@@ -1344,15 +1319,12 @@ func _build_hall() -> void:
 			HALL_HX * 2.0, HALL_H, HALL_TRAP_T, mat_trap)
 	_add_obstacle(cx, cz - HALL_HZ + HALL_TRAP_T * 0.5, HALL_HX, HALL_TRAP_T * 0.5,
 			HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
-	# +Z 墙（射击线后方）：中央门洞 x∈[116,124] 接地下连廊（坡道从入口房
-	# 下行到此）——2026-10 靶馆入地，门洞恢复；两段墙各 18m
-	var seg := (HALL_HX * 2.0 - 8.0) * 0.5
-	for side in [-1.0, 1.0]:
-		var wx: float = cx + side * (HALL_HX - seg * 0.5)
-		_hall_box(wx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
-				seg, HALL_H, HALL_WALL_T, mat_concrete)
-		_add_obstacle(wx, cz + HALL_HZ - HALL_WALL_T * 0.5, seg * 0.5,
-				HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
+	# +Z 墙（射击线后方）：整面无门（2026-10-31 靶馆迁图外独立空间，旧门洞
+	# 接地下连廊的物理连接已随入口房/坡道/连廊整体拆除，进出只走传送）
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
+			HALL_HX * 2.0, HALL_H, HALL_WALL_T, mat_concrete)
+	_add_obstacle(cx, cz + HALL_HZ - HALL_WALL_T * 0.5, HALL_HX,
+			HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
 	# 西墙 / 东墙
 	for side in [-1.0, 1.0]:
 		var wz := cz
@@ -1411,92 +1383,7 @@ func _build_hall() -> void:
 		add_child(num)
 
 
-## 地下靶馆地表入口（2026-10 用户定案「靶场做在地下」）：入口房 16×14
-## （x∈[112,128] z∈[147,161]，北墙门洞朝撤离点大道）+ 房内阶梯坡道开洞
-## （x∈[116,124] 南向下行 10m 落差 6.94m）+ 地下连廊（z∈[143,147] 接馆
-## +Z 门洞）。地表不空白：房子+绿信标是东南角地标；阶梯=ground_height
-## 线性坡（行走贴地自然下行），坡道/连廊都在结构体内部（围墙+顶板包死，
-## 不会从地表误坠）。
-func _build_entrance() -> void:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.52, 0.51, 0.49)
-	mat.roughness = 0.95
-	var mat_dark := StandardMaterial3D.new()
-	mat_dark.albedo_color = Color(0.2, 0.21, 0.22)
-	mat_dark.roughness = 0.9
-	var wall_h := 3.5
-	var top_y := 0.06 + wall_h
-
-	# 入口房地坪：坡道开洞（x 116..124）之外三块板
-	_hall_box(114.0, 0.06 - 0.15, 154.0, 4.0, 0.3, 14.0, mat)
-	_hall_box(126.0, 0.06 - 0.15, 154.0, 4.0, 0.3, 14.0, mat)
-	_hall_box(120.0, 0.06 - 0.15, 159.0, 16.0, 0.3, 4.0, mat)
-	# 房顶（含坡道段上方——坡道在房体内部下行，顶板包死防坠）
-	_hall_box(120.0, top_y + 0.25, 154.0, 16.0, 0.5, 14.0, mat)
-	_add_obstacle(120.0, 154.0, 8.0, 7.0, top_y + 0.5, top_y, true)
-	# 北墙（门洞 x∈[117,123] 朝大道）两段 + 门楣
-	for side in [-1.0, 1.0]:
-		var nx: float = 120.0 + side * (5.0 + 3.0)
-		_hall_box(nx, 0.06 + wall_h * 0.5, 161.0, 5.0, wall_h, 0.5, mat)
-		_add_obstacle(nx, 161.0, 2.5, 0.25, top_y, -0.1, true)
-	_hall_box(120.0, top_y - 0.35, 161.0, 6.0, 0.7, 0.5, mat)
-	# 南墙（坡道开洞 x∈[116,124] 之上两段，墙脚落在坡道侧墙上沿）
-	for side in [-1.0, 1.0]:
-		var sx: float = 120.0 + side * 6.0
-		_hall_box(sx, 0.06 + wall_h * 0.5, 147.0, 4.0, wall_h, 0.5, mat)
-		_add_obstacle(sx, 147.0, 2.0, 0.25, top_y, -0.1, true)
-	_hall_box(120.0, top_y - 0.35, 147.0, 8.0, 0.7, 0.5, mat)
-	# 西墙 / 东墙
-	for side in [-1.0, 1.0]:
-		var wx: float = 120.0 + side * 8.0
-		_hall_box(wx, 0.06 + wall_h * 0.5, 154.0, 0.5, wall_h, 14.0, mat)
-		_add_obstacle(wx, 154.0, 0.25, 7.0, top_y, -0.1, true)
-	# 阶梯坡道（10 级踏步，每级 1m 深 × 0.7m 高——与 ground_height 坡道
-	# 线性（落差 7.0/10m）对齐；踏步体从坡底 -7.1 实心填到各级踏面）
-	for k in 10:
-		var step_top: float = 0.06 - 0.7 * (float(k) + 1.0)
-		var step_h: float = step_top - (-7.1)
-		_hall_box(120.0, -7.1 + step_h * 0.5, 156.5 - float(k),
-				8.0, step_h, 1.0, mat)
-		if k % 2 == 0:
-			_hall_box(120.0, step_top + 0.011, 156.5 - float(k),
-					8.0, 0.02, 0.9, mat_dark)   # 踏面防滑暗条
-	# 坡道侧墙（开洞两沿，从坡底到房内地坪）
-	for side in [-1.0, 1.0]:
-		var rx: float = 120.0 + side * 4.25
-		_hall_box(rx, -3.52, 152.0, 0.5, 7.16, 10.0, mat)
-		_add_obstacle(rx, 152.0, 0.25, 5.0, 0.06, -7.1, true)
-	# 地下连廊（坡道底→馆门洞）：两侧墙 + 顶板
-	for side in [-1.0, 1.0]:
-		var tx: float = 120.0 + side * 4.25
-		_hall_box(tx, -4.2, 145.0, 0.5, 5.66, 4.0, mat)
-		_add_obstacle(tx, 145.0, 0.25, 2.0, -1.44, -7.1, true)
-	_hall_box(120.0, -1.69, 145.0, 8.0, 0.5, 4.0, mat)
-	_add_obstacle(120.0, 145.0, 4.0, 2.0, -1.44, -1.94, true)
-	# 入口房内照明 + 坡道中段照明 + 门头绿信标（东南角地标）
-	var hl := OmniLight3D.new()
-	hl.light_color = Color(1.0, 0.96, 0.88)
-	hl.light_energy = 1.1
-	hl.omni_range = 12.0
-	hl.position = Vector3(120.0, 2.8, 154.0)
-	add_child(hl)
-	hl.set_meta("keep_map", true)
-	var rl := OmniLight3D.new()
-	rl.light_color = Color(0.95, 0.93, 0.85)
-	rl.light_energy = 0.9
-	rl.omni_range = 14.0
-	rl.position = Vector3(120.0, -1.2, 152.0)
-	add_child(rl)
-	rl.set_meta("keep_map", true)
-	var beacon_mat := StandardMaterial3D.new()
-	beacon_mat.albedo_color = Color(0.08, 0.28, 0.13)
-	beacon_mat.emission_enabled = true
-	beacon_mat.emission = Color(0.25, 0.9, 0.42)
-	beacon_mat.emission_energy_multiplier = 1.2
-	_hall_box(120.0, top_y - 0.1, 160.7, 4.0, 0.2, 0.2, beacon_mat)
-
-
-## 靶馆构件盒体（纯视觉，不登记 obstacles——由调用方按需登记）；馆体/入口房
+## 靶馆构件盒体（纯视觉，不登记 obstacles——由调用方按需登记）；馆体
 ## 两图同坐标共享（keep_map：set_map 换图保留）
 func _hall_box(x: float, y: float, z: float, w: float, h: float, d: float,
 		mat: StandardMaterial3D) -> void:
