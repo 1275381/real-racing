@@ -3,8 +3,8 @@
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 冲锋枪册六枪（mp5/p90/uzi/vector/mp7/qcq171）+
-#         步枪册九枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437）+ 旧五枪 +
-#         机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
+#         步枪册十枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437/tenglong）+
+#         旧五枪 + 机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
@@ -687,11 +687,12 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：十二把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：十七把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
-			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171"]:
+			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171",
+			"tenglong"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -919,18 +920,19 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册九枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	# 27. 高模顶点红线：步枪册十枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
 	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
 	#     步枪 2026-10 并册、an94 商店超点射突击步枪 2026-10 并册、
 	#     sr25 商店半自动 DMR 2026-10 并册、k437 .300 BLK 突击步枪
-	#     2026-10-29 并册）
+	#     2026-10-29 并册、tenglong 5.8×42mm 国产腾龙突击步枪
+	#     2026-10-31 并册）
 	#     逐把枪身根总顶点 ≥ 8× 低模基线（走
 	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
-	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437 独立命名弹匣
-	#     节点；POLY_MIN/POLY_BASE 见 HDGunLib——门槛与 mk4 同口径 =
-	#     盒×24 + 柱×57 的 8 倍）
+	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437/mag_tenglong
+	#     独立命名弹匣节点；POLY_MIN/POLY_BASE 见 HDGunLib——门槛与 mk4
+	#     同口径 = 盒×24 + 柱×57 的 8 倍）
 	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
-			"k437"]:
+			"k437", "tenglong"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -1111,6 +1113,54 @@ func _run() -> void:
 		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("qcq171",
 				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("qcq171")),
 			str(q_def.get("ad", "缺"))])
+
+	# 27h. 腾龙商店枪专项（2026-10-31 并册·国产 QBZ-191「191式」5.8×42mm
+	#      突击步枪·游戏更名「腾龙」）：考证断言六件（照 27f K437/27g QCQ171
+	#      段先例）——
+	#      ① 独立命名弹匣锚点 mag_tenglong 在枪身根下（30 发 PMAG 风弧匣带
+	#        透明观察窗 + 黄色底板，换弹手沿 mag_of 锚跟随的契约件，#27 循环
+	#        只查 mag_* 存在性，这里锁名；走 _ar_build 分发入口）
+	#      ② 简介射速「706发每分」与 cd 换算一致 ±1%（60/0.0850=705.9，
+	#        gamersky S7 攻略 + qieyou 两源直读一致；「装高速导气 759rpm」
+	#        为三角洲改装生态、白板不入册）
+	#      ③ 全自动缺省（auto 不写 = true，面板全自动+单发；不带
+	#        cd_profile/burst/trigger_delay——纯全自动突击步枪）+ 弹匣 30
+	#        （45 扩容匣/60 弹鼓为改装件不入册）
+	#      ④ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；5.8×42mm 按国产小口径与步枪弹族同单价 6）
+	#      ⑤ 后坐表 RECOIL 落位（缺键吃 [0.4,0.2,0.25] 兜底后坐爆炸）
+	#      ⑥ 枪声调音表 SHOT_TUNE 在位（四层枪声 tenglong 专项档）+ ad 甲伤
+	#        字段在位（2026-10-29 护甲机制全枪必带——S7 面板护甲伤 38 直读）
+	var tl_root: Node3D = HDGuns._ar_build("tenglong")
+	var tl_mag: Node = tl_root.find_child("mag_tenglong", true, false)
+	check("腾龙独立命名弹匣锚点 mag_tenglong 在根下", tl_mag != null,
+		"node=%s" % (str(tl_mag.name) if tl_mag != null else "无"))
+	tl_root.free()
+	var tl_def: Dictionary = Guns.gun_by_id("tenglong")
+	var tl_rpm := 60.0 / float(tl_def["cd"])
+	check("腾龙简介射速 706发每分与 cd 换算一致（±1%）",
+		str(tl_def["desc"]).contains("706发每分")
+			and absf(tl_rpm - 706.0) / 706.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(tl_def["cd"]), tl_rpm])
+	check("腾龙全自动缺省 + 弹匣 30 + 无特殊机制字段",
+		bool(tl_def.get("auto", true)) and int(tl_def["mag"]) == 30
+			and not tl_def.has("cd_profile") and not tl_def.has("burst")
+			and not tl_def.has("trigger_delay"),
+		"auto=%s mag=%s cd_profile=%s" % [str(tl_def.get("auto")),
+			str(tl_def.get("mag")), str(tl_def.get("cd_profile", "无"))])
+	check("腾龙备弹/购弹双表在表（5.8×42mm 与步枪弹族同单价 6）",
+		(HDData.RESERVE as Dictionary).has("tenglong")
+			and (HDData.AMMO_PRICE as Dictionary).has("tenglong")
+			and int(HDData.AMMO_PRICE["tenglong"]) == 6,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("tenglong", "缺")),
+			str(HDData.AMMO_PRICE.get("tenglong", "缺"))])
+	check("腾龙后坐表 RECOIL 落位 + 枪声调音表 SHOT_TUNE 在位 + ad 甲伤字段在位",
+		(HDGuns.RECOIL as Dictionary).has("tenglong")
+			and (HDAudio.SHOT_TUNE as Dictionary).has("tenglong")
+			and tl_def.has("ad") and int(tl_def["ad"]) == 38,
+		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("tenglong",
+				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("tenglong")),
+			str(tl_def.get("ad", "缺"))])
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -2619,7 +2669,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，九处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，十处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

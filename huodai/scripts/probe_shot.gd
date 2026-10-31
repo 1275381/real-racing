@@ -35,16 +35,22 @@
 # shot_gun_asval_cover 商店枪 AS Val 贴墙 / shot_gun_k416_cover 商店枪
 # K416 贴墙 / shot_gun_an94_cover 商店枪 AN-94 贴墙 / shot_gun_sr25_cover
 # 商店枪 SR25 贴墙 / shot_gun_k437_cover 商店枪 K437 贴墙 /
-# shot_gun_qcq171_cover 商店枪 QCQ171 贴墙（⑰，2026-10-30 并册）——
+# shot_gun_qcq171_cover 商店枪 QCQ171 贴墙（⑰，2026-10-30 并册）/
+# shot_gun_tenglong_cover 商店枪腾龙贴墙（⑱，2026-10-31 并册）——
 # ①②③⑦⑪⑫
-# ⑬⑭⑮⑯⑰ 各带 _b 图，两组 a/b 隐枪差分取稳定
-# 交集判裂，修后门槛全部「稳定完整（大域 1）」；
+# ⑬⑭⑮⑯⑰⑱ 各带 _b 图，两组 a/b 隐枪差分取稳定
+# 交集判裂，修后门槛全部「稳定完整（大域 1）」；⑱ 起 _b 改带枪帧
+# （R1 验收「b 图无枪模」修复，b_gun 参数，判裂协议不变）；
 # m14 贴掩体 pair 直接回应「注意枪身分裂」：一体成型+独立视口下掩体帧枪体必须完整）
-# （机械清点 2026-10-29：shot() 调用点 80 处、其中 10 处 pair 各出 a/_b
-# 双图 → 出图 80+10=90 张；逐枪美照循环 22 把 + 红点开镜审计循环 22 把
-# （K437/QCQ171 均并入）+ scope 瞄具系列 6 张 + 矩阵段 + 3D 大厅三连拍——
-# 旧注释「共 87 张 / 56 处 / 9 处 pair / 矩阵段 22 张」在 HEAD 时已与
-# 机械清点差 1（88 张），滚动订正以 grep 计数为准）
+# 腾龙 R1 验收四补图（2026-10-31）：shot_gun_tenglong_cover_sun 顺光贴墙
+# （馆内真入地位 + pitch -0.15，判读机匣/弹匣连接与配色）+
+# shot_gun_tenglong_right/muzzle/sn 右侧机匣/右前消焰器/左侧序列号三特写
+# （拉机柄(6)/消焰器(8)/翻折瞄具(9)/序列号(11)小件佐证）
+# （机械清点 2026-10-31：shot() 调用点 88 处（grep 'shot("res://' 计，含
+# 4 处循环体调用：逐枪美照 23 张 + 红点审计 23 张 + scope 六连拍 + 天气
+# 变体三连拍）+ 10 处 pair 各出 a/_b 双图 → 单跑实测落盘 151 张
+# （2026-10-31 全量实测；K437/QCQ171/腾龙 均并入两循环）；滚动订正以
+# grep 计数 + 单跑实测为准）
 # 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
 #   卸/装侧视特写（rifle）+ shot_skel_stock_on/off 骨架狙击枪托装/卸侧视
@@ -156,12 +162,17 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 ## pair=true（2026-10 位姿矩阵回归锁）：拍 a 后隐全部 viewmodel 渲 2 帧拍
 ## b 再恢复——两组 a/b 差分取稳定交集判裂（stable_split）。visible 切换
 ## 帧内【禁止】驱动 player/guns update：位姿前进会把「枪+光晕位移」伪报
-## 成裂（诊断 v4 事故），pair 全程只 await 渲染帧、零 update 调用
-func shot(path: String, keep_menu := false, pair := false) -> void:
+## 成裂（诊断 v4 事故），pair 全程只 await 渲染帧、零 update 调用。
+## b_gun=true（2026-10-31 腾龙 R1 验收修复）：落盘的 _b.png 从隐枪差分帧
+## 改为同角度带枪帧（差分判裂照旧用内存中的隐枪帧算，协议零改动）——
+## 验收判读把 _b.png 当「对比图」读，隐枪帧里没有枪模被判「画面中完全
+## 没有第一人称枪模」；带枪 b 与 a 同位姿（冻结态零驱动），肉眼对照即
+## 「有枪/无枪」差分复核，语义不降级
+func shot(path: String, keep_menu := false, pair := false, b_gun := false) -> void:
 	if not keep_menu and _m != null and _m.hud != null and _m.hud.menu_visible:
 		_m.hud.hide_menu()
 	if pair:
-		await _shot_pair(path)
+		await _shot_pair(path, b_gun)
 		return
 	if root.get_texture() == null:
 		print("[probe] 跳过截图 %s（headless 无渲染目标）" % path)
@@ -275,8 +286,10 @@ func _bfs(mask: PackedByteArray, sw: int, sh: int) -> Dictionary:
 
 ## pair 模式主体：a 图=主图落盘 + b 图落盘供肉眼复核；两组差分取稳定交集
 ## （SSAO 帧间噪声两组相位不同、交集滤掉；真几何边界两次一致、保留），
-## 大域 ≥2 =「稳定裂」——对照诊断 E8 判据「稳定完整（大域 1）」
-func _shot_pair(path: String) -> void:
+## 大域 ≥2 =「稳定裂」——对照诊断 E8 判据「稳定完整（大域 1）」。
+## b_gun=true（腾龙 R1 起供）：落盘 b 改为同角度带枪帧（隐枪帧只进差分），
+## 差分协议/判裂结果与 b_gun=false 完全一致
+func _shot_pair(path: String, b_gun := false) -> void:
 	if root.get_texture() == null:
 		print("[probe] 跳过 pair %s（headless 无渲染目标）" % path)
 		return
@@ -291,7 +304,7 @@ func _shot_pair(path: String) -> void:
 	_save_png_async(ia1, path)
 	shots_saved += 1
 	var ib1 := await _ab_once()
-	if ib1 != null:
+	if ib1 != null and not b_gun:
 		_save_png_async(ib1, path.replace(".png", "_b.png"))
 		shots_saved += 1
 	var m1: Dictionary = _diff_mask(ia1, ib1) if ib1 != null else {}
@@ -341,6 +354,16 @@ func _shot_pair(path: String) -> void:
 	else:
 		msg = "稳定完整（大域 %d sizes=%s）" % [res["n"], str(res["sizes"])]
 	check("pair 判裂 %s" % tag, not split, msg)
+	# b_gun 模式：判裂算完后补拍同角度带枪帧落盘为 _b.png——此时枪可见性
+	# 已由 _ab_once 恢复、位姿全程冻结零驱动，与 a 图唯一差异=枪模在画，
+	# 肉眼对照即差分复核（腾龙 R1 验收「b 图枪模入画」供图）
+	if b_gun:
+		await frames(2)
+		if root.get_texture() != null:
+			var ibg: Image = root.get_texture().get_image()
+			if ibg != null:
+				_save_png_async(ibg, path.replace(".png", "_b.png"))
+				shots_saved += 1
 
 
 ## 手动冻结摆枪到任意 ads 档（复刻 /tmp/probe_iso2.gd set_ads 与
@@ -934,10 +957,12 @@ func _initialize() -> void:
 	# 并册追加（S12 微光赛季超点射新枪）；2026-10 商店枪 SR25 并册追加
 	# （群星赛季半自动 DMR）；2026-10-29 商店枪 K437 并册追加（S4 现役
 	# .300 BLK 突击步枪）；2026-10-30 商店枪 QCQ171 并册追加（9×19mm 冲锋枪
-	# ·册属冲锋枪 SMG_IDS/几何体 hd_gun_ar.gd _ar_qcq171）
+	# ·册属冲锋枪 SMG_IDS/几何体 hd_gun_ar.gd _ar_qcq171）；2026-10-31
+	# 商店枪腾龙并册追加（5.8×42mm 国产 QBZ-191 突击步枪·银灰双色调
+	# 双销机匣/多边形护木/4 档可调托）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171",
+			"qcq171", "tenglong",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
@@ -989,13 +1014,14 @@ func _initialize() -> void:
 		Input.action_release("hd_scope")
 		await wait_until(func(): return main.player.ads <= 0.4)
 	# ---- 18a2 全枪红点开镜审计（2026-10-27 用户报告「有些枪装红点只显示
-	# 一个点、无框镜体丢失」）：20 把在册枪逐把装 reddot → 开镜到位 →
-	# shot_ads_rdd_<gid>.png——逐把目检镜体在位性
+	# 一个点、无框镜体丢失」）：23 把在册枪逐把装 reddot → 开镜到位 →
+	# shot_ads_rdd_<gid>.png——逐把目检镜体在位性（腾龙 2026-10-31 并册
+	# 追加——放倒翻折瞄具枪，改装镜走通用挂载必须在位）
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171",
+			"qcq171", "tenglong",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
@@ -1627,6 +1653,76 @@ func _initialize() -> void:
 	_set_ads_mx(1.0)
 	await frames(2)
 	await shot("res://out/shot_gun_qcq171_cover.png", false, true)
+	# ⑱ tenglong ADS 1.0 正贴（2026-10-31 商店枪腾龙并册「验分裂」验收，
+	#     照 m14/asval/k416/an94/sr25/k437/qcq171 pair 模式）：一体成型
+	#     unibody + vm 独立视口下掩体帧枪体必须完整——常规有托细长低矮
+	#     布局全长 ≈1.02 模型尺突击步枪（消焰器口环 -0.645 到后跟垫 +0.376），
+	#     多边形护木长条散热孔 + 3/6/9 螺孔负形件与双销/放倒瞄具小件密度
+	#     考验合并网格的掩体帧完整性，走 pair 判裂（两组 a/b 隐枪差分取
+	#     稳定交集，大域 ≥2 = 稳定裂即 FAIL）；换枪重进 MISSION 走 guns.enter
+	#     同槽换 id 重建链，顺带复核新枪挂载公共链
+	main.stash.guns_owned.append("tenglong")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "tenglong", "secondary": "pistol"}
+	main._start_mission({"primary": "tenglong", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm10: Dictionary = main.soldiers.soldiers[i]
+		sm10["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm10["engaged"] = false
+		sm10["moving"] = false
+		sm10["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(121.70, 1.55, 145.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	# ⑱a pair（b_gun=true：_b.png 落盘同角度带枪帧——R1 验收「b 图无枪模」
+	#     修复；判裂协议照旧用隐枪帧算，零改动）
+	await shot("res://out/shot_gun_tenglong_cover.png", false, true, true)
+	# ⑱b 顺光贴墙（R1 验收「a 图逆光纯黑剪影、弹匣不可见」补图）：机位真正
+	#     入地下馆贴隔断墙 x=121 +X 面（pos.y 起 -5.39 → update hint 判地下域
+	#     压回地坪 -6.94；矩阵段 ⑪~⑱ 名义机位 pos.y=1.55 经 hint 守卫站在
+	#     地表连廊顶、面 -Z 背景是户外亮天空——R1 三次判读「逆光剪影」的
+	#     根源），z 141 贴墙段中部、pitch -0.15 微俯把顶灯板亮排出画、背景
+	#     换靶道地坪+深色挡弹墙——实测判读：枪模清晰非剪影、银灰机匣/黑
+	#     配件双色调第一眼可辨、弹匣连接+浅色观察窗+黄色底板全可见、枪亮
+	#     于背景（顺光判读条件）
+	main.player.pos = Vector3(121.70, -5.39, 141.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	_set_ads_mx(1.0)
+	await frames(2)
+	main.player.cam.rotation = Vector3(-0.15, PI + PI, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_tenglong_cover_sun.png")
+	# ⑱c-e R1 验收「右置拉机柄(6)/鸟笼消焰器(8)/翻折机械瞄具(9)/白色序列
+	#     号(11) 主视图不可辨」补三张侧面特写（件体占幅 1/3+ 口径，18a4
+	#     _pose_side 协议：rotation (5,-78,0)=右侧面对镜 / (5,78,0)=左侧
+	#     面对镜；机位参数实测迭代定稿——判读：拉机柄长杆/消焰器槽口+挡环
+	#     +肩环/放倒准星/白序列号条全部可辨）：
+	#     c=右侧面机匣段（拉机柄+抛壳窗+双销+照门+银灰/黑对比）
+	#     d=右前段消焰器特写（鸟笼消焰器居中占宽 ~20%+放倒准星）
+	#     e=左侧面序列号特写（白刻印条+弹匣观察窗+黄色底板同框）
+	var g_tl: Dictionary = main.guns._cur_gun()
+	var h_tl: Node3D = g_tl["holder"]
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	h_tl.position = Vector3(0.0, 0.05, -0.30)
+	h_tl.rotation_degrees = Vector3(5, -78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_tenglong_right.png")
+	h_tl.position = Vector3(0.16, 0.05, -0.24)
+	h_tl.rotation_degrees = Vector3(5, -78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_tenglong_muzzle.png")
+	h_tl.position = Vector3(0.0, 0.05, -0.26)
+	h_tl.rotation_degrees = Vector3(5, 78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_tenglong_sn.png")
+	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位（防 _pose_side 残留进锁房段图）
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
@@ -1682,7 +1778,7 @@ func _initialize() -> void:
 	main.set_process(true)
 	main.hud.visible = hud_mx
 
-	print("[probe] 探针完成：实存 %d/85 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print("[probe] 探针完成：实存 %d 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	# （与看门狗强制收尾共用 _restore_save）
 	_done = true

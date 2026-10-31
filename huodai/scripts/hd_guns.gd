@@ -123,6 +123,14 @@ const RECOIL := {
 	# 线（三角洲「后坐力控制 47」中位档）；连发累增 9mm 档温和；水平漂移
 	# 9mm 冲锋枪窄档（763rpm 比 uzi 600rpm 快，横漂放大就压不住）
 	"qcq171": [0.14, 0.06, 0.09],
+	# tenglong 5.8×42mm 国产小口径步枪（2026-10-31 商店枪·QBZ-191「腾龙」，
+	# 706rpm 全自动）：单发推力 m4a1/k416（5.56 0.16/0.17）与 k437
+	# （.300 0.20）之间——5.8×42 DBP-191 弹能量比 5.56 沉一档（重弹头）、
+	# 但 3.1kg 实枪全重 + 4 档可调托直托抵肩线抵消（三角洲面板「后坐力
+	# 控制 42」中位偏稳档）；连发累增 5.56 档温和（706rpm 节拍比 k416 880
+	# 慢、冲量累积更缓）；水平漂移窄档（dmg 25 低单发高弹密度的压制定位，
+	# 横漂放大就压不住）
+	"tenglong": [0.18, 0.07, 0.10],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1177,7 +1185,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		pass
 	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
 			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25"
-			or gun_id == "k437" or gun_id == "qcq171") \
+			or gun_id == "k437" or gun_id == "qcq171"
+			or gun_id == "tenglong") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1208,6 +1217,11 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# ref_00 白板状态；ref_01 游戏改装常态为全息镜——走通用挂载），
 		# 叠 iron 兜底片会与真实照门叠影；改装镜照常落 else 通用挂载，
 		# 不设 pass 吞镜分支
+		# tenglong 同例（2026-10-31 商店枪·腾龙 QBZ-191）：前后翻折式机械
+		# 瞄具为放倒态考证建模件（_ar_tenglong ⑨，ref_01「平时放倒让位
+		# 光学镜」——放倒薄片贴轨，区别于 k437 展开态），叠 iron 兜底片会
+		# 悬浮轨顶与放倒瞄具叠影；改装镜照常落 else 通用挂载，不设 pass
+		# 吞镜分支
 		pass
 	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
 	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
@@ -1720,6 +1734,10 @@ const HOLD_DELTA := {
 	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
 	# （AR 式握把与 k416/k437 同锚；册属冲锋枪 SMG_IDS、几何体在 hd_gun_ar.gd）
 	"qcq171": Vector3(0, 0.008, -0.0768),
+	# tenglong 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − _ar_tenglong 握把顶锚
+	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	# （AR 式握把与 k416/k437/sr25/qcq171 同锚）
+	"tenglong": Vector3(0, 0.008, -0.0768),
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),
@@ -2786,7 +2804,8 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	parent.add_child(mi)
 	return mi
 
-const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25", "k437"]
+const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
+		"k437", "tenglong"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
@@ -2805,6 +2824,11 @@ const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
 # 步枪并入步枪册——几何体在 hd_gun_ar.gd _ar_k437（HDGunLib 高模件，斜槽
 # 浮置护木 + 三角镂空骨架折叠托 + 前后翻折机械瞄具 + 出厂裸冠；与 K416
 # 的区分 = 斜槽护木/骨架折叠托/.300 大弧弹匣）
+# tenglong（2026-10-31 商店枪腾龙突击步枪）：国产 QBZ-191「191式」考证
+# 并入步枪册——几何体在 hd_gun_ar.gd _ar_tenglong（HDGunLib 高模件，常规
+# 有托双销机匣 + 银灰/黑双色调 + 全长平顶轨 + 多边形护木长条散热孔 +
+# 4 档可调托 + 放倒翻折瞄具 + PMAG 风透明窗黄底板弧匣；与 QCQ171 的
+# 区分 = 银灰机匣双色调/多边形护木/实心可调托（QCQ171 全黑+双杆银托））
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -2914,6 +2938,16 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# size=匣外形（掉匣替身缩放基准，同 k416 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.090, -0.148),
 					"size": Vector3(0.05, 0.19, 0.085), "show": false}
+		"tenglong":
+			# 特征⑦ 30 发 5.8×42mm PMAG 风弧匣（透明余弹观察窗 + 黄色底板 +
+			# 横肋×2）：真匣是枪身建模件（mag_tenglong 独立命名节点 +
+			# curved_mag 三段 6° 微弧 + 窗条 + 沙黄底板），动画匣隐（照 k437
+			# 「匣形由枪身件表达」先例）；pos=换弹手锚（枪身局部匣中段
+			# (0,-0.1455,-0.148)——匣顶 -0.058 下行半匣长 0.0875、z 含 6°
+			# 弧向前偏，+Δ(0,0.008,-0.0768) 后 ×0.62 ≈ (0,-0.085,-0.139)）、
+			# size=匣外形（掉匣替身缩放基准，同 k437 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.085, -0.139),
+					"size": Vector3(0.05, 0.175, 0.086), "show": false}
 	return {}
 
 
@@ -2964,6 +2998,14 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# 自带），iron 不叠兜底机瞄片，见 _finish_gun；改装镜走通用 else
 			# 挂载（红点/全息 + 增高架生态自动可装）
 			return Vector3(0.083, -0.06, -0.44)
+		"tenglong":
+			# (my, mz, fz) = 镜座安装面高 0.083（全长银灰顶轨楔齿尖，k416/
+			# k437/sr25 同值）/ 镜体中心 z -0.06（机匣中段）/ 前准星 z -0.435
+			# （护木前端放倒翻折准星）——前后翻折式机械瞄具均为放倒态建模
+			# 件（ref_01「平时放倒让位光学镜」），iron 不叠兜底机瞄片，见
+			# _finish_gun；改装镜走通用 else 挂载（红点/全息 + 增高架生态
+			# 自动可装；列装 QMK-152 3× 棱镜镜按工程纪律不自带倍率）
+			return Vector3(0.083, -0.06, -0.435)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 
@@ -3081,6 +3123,18 @@ static func _ar_mats() -> Dictionary:
 			Color(0.15, 0.16, 0.175), 0.6)
 	var m14dark: StandardMaterial3D = mk14.call(Color(0.149, 0.157, 0.169),
 			Color(0.17, 0.18, 0.195), 0.9)
+	# ---- 腾龙突击步枪专用银灰机匣色（2026-10-31 商店枪·R1 验收修复：判读
+	#      三次均「远达不到明显银灰」——腾龙原引 m14steel 磷化深灰 #3A3D40
+	#      在 vm 光照（vm_sun 0.55 + ambient 0.58）下读作深灰/黑剪影，与黑
+	#      配件 polymer #121315 双色调不可辨。腾龙考证③「游戏渲染银灰机匣
+	#      + 黑色护木/枪托」要求机匣第一眼可辨，立专用色 tlsteel 铝合金银灰
+	#      #8B9299：albedo 0.545 级——介于 vwear 冷灰磨损 0.431 与 kmark 白
+	#      刻印 0.616 之间，对 polymer 黑件反差 ≈7.8×；emission 家族比例
+	#      ≈1.1× albedo；roughness 0.9 消端面镜面爆白（m14steel 首轮 0.5
+	#      半光泽端面爆白教训）。只腾龙 _ar_tenglong 引用，m14steel 本身
+	#      与 M14 等其他枪零改动）----
+	var tlsteel: StandardMaterial3D = mk14.call(Color(0.545, 0.573, 0.608),
+			Color(0.60, 0.63, 0.665), 0.9)
 	# ---- AS Val 特种突击步枪专用五色（2026-10 商店枪，官方考证配色；mk14
 	#      闭包同参复用——glow 0.32 家族口径，暗处可读三件套不缺）----
 	#      vsteel 黑色磷化钢 #1B1D1F（机匣/消音器/枪托骨架，rough 0.95 消
@@ -3108,6 +3162,7 @@ static func _ar_mats() -> Dictionary:
 			"walnut": walnut, "polymer": polymer, "blued": blued,
 			"bakelite": bakelite, "m14walnut": m14walnut, "m14fg": m14fg,
 			"m14steel": m14steel, "m14black": m14black, "m14dark": m14dark,
+			"tlsteel": tlsteel,
 			"vsteel": vsteel, "vpolym": vpolym, "vplum": vplum,
 			"vwear": vwear, "vcover": vcover, "kmark": kmark}
 
