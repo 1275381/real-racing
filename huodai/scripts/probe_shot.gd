@@ -868,6 +868,15 @@ func _initialize() -> void:
 	await frames(40)
 	shot("res://out/shot_range.png")
 
+	# ---- 靶场 2.0 图证（2026-10-31 用户四连需求）：T/Y 可调靶距的 200m
+	#      远距档纵深一条（长条灯组/距离标记/沙堆尽端应可辨）——拍完复位
+	#      默认 25m，不影响后续段落
+	main.targets.set_range_dist(200.0)
+	await frames(6)
+	shot("res://out/shot_range_200m.png")
+	main.targets.set_range_dist(HDTargets.DIST_DEF)
+	await frames(4)
+
 	# ---- 靶场暂停菜单（模式分化图证）：进靶场按 Esc 开菜单截整屏——
 	#      「靶场暂停」标题 +「1 重开靶场 / 2 离开靶场（回大厅）」两项，
 	#      无「行动/战斗/放弃」字样；keep_menu 直拍（不收菜单护栏）

@@ -566,7 +566,7 @@ func try_fire() -> void:
 			var hd: float = dmg * (HEADSHOT_MUL if head else 1.0)
 			hit_enemy.emit(kind, int(h["i"]), end, hd, head)
 		elif kind == "target" and targets != null:
-			targets.on_hit(int(h["i"]))
+			targets.on_hit(int(h["i"]), dmg)   # 血量制（2026-10-31）：按枪伤害扣血
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；

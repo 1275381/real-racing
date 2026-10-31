@@ -83,13 +83,15 @@ const FALLBACK_COLOR := {
 	"warehouse": Color(0.54, 0.52, 0.47), "wreck": Color(0.42, 0.37, 0.34),
 }
 
-## 靶馆壳体（44 宽 ×5 高 ×30 深，混凝土封闭；射击线在馆心 +Z 侧）
+## 靶馆壳体（44 宽 ×5 高 ×225 深=210 靶道+15 后区；混凝土封闭；射击线在
+## 馆心 +Z 侧 +11。2026-10-31 靶场 2.0 参考图重做：馆体拉深容纳 1~200m
+## 可调靶距，玻璃/钢框隔断+射击台+横梁灯组+沙堆挡弹+涂鸦/橙光点缀）
 const HALL_HX := 22.0
-const HALL_HZ := 15.0
+const HALL_BACK := 210.0         # -Z 靶道纵深（200m 最远靶 + 沙堆缓冲）
+const HALL_FRONT := 15.0         # +Z 射击线后区（射击线 +11、+Z 墙 +15）
 const HALL_H := 5.0
 const HALL_WALL_T := 0.5          # 墙厚
 const HALL_FIRE_DZ := 11.0        # 射击线距馆心（+Z 侧）
-const HALL_TRAP_T := 0.6          # 尽端挡弹墙厚度（-Z 端）
 const HALL_FLOOR_Y := -6.94       # 地下馆地坪：馆顶 -1.94 覆土 1.94m；馆在图外独立空间（600,600），无地表入口，进出只走传送
 
 ## 撤离信标（绿色发光柱 + 地面绿环）
@@ -578,10 +580,11 @@ func set_lever_pulled(pulled: bool) -> void:
 		_lever_handle.rotation.z = deg_to_rad(100.0) if pulled else 0.0   # 朝屋内扳下
 
 
-## 是否在靶馆矩形内（含墙体）
+## 是否在靶馆矩形内（含墙体；-Z 纵深 210 / +Z 后区 15 非对称）
 func in_hall(x: float, z: float) -> bool:
 	var c := HDData.HALL_CENTER
-	return absf(x - c.x) <= HALL_HX and absf(z - c.z) <= HALL_HZ
+	return absf(x - c.x) <= HALL_HX \
+			and z >= c.z - HALL_BACK and z <= c.z + HALL_FRONT
 
 
 ## 是否处于图外独立空间（靶馆，2026-10-31 用户定案「独立空间，不与任何地图
@@ -1292,95 +1295,253 @@ func _build_lever(p: Vector3) -> void:
 
 # ================= 室内靶馆 =================
 
-## 混凝土封闭壳 44×5×30：地坪/吊顶/四面墙（+Z 墙留门洞）/顶部成排灯板/
-## 射击位隔断墙 ×3 / 黄黑警示条 / 车道编号 5/6/7 / 尽端挡弹墙；
-## 壳体全部注册 obstacles（挡子弹与走人；完全封闭——独立空间只靠传送进出）。
+## 靶场 2.0 参考图重做（2026-10-31）：混凝土壳 44×5×225（-Z 210 靶道 +
+## +Z 15 后区）+ 玻璃/钢框隔断 ×3 + 青绿台面射击台 ×3 + 横梁与成排长条
+## 灯组 + 黄色射道标线/编号 + 25~200m 距离标记 + 尽端沙堆挡弹坡 + 涂鸦/
+## 红牌/橙光龛/缆线卷/弹药箱/监控点缀。壳体/隔断/射击台注册 obstacles
+## （射击台 0.95m、隔断 2.2m——眼高 1.62 的弹道从台上方过）；完全封闭，
+## 独立空间只靠传送进出。
 func _build_hall() -> void:
 	var c := HDData.HALL_CENTER
 	var cx := c.x
 	var cz := c.z
+	# ---- 材质族（参考图：冷灰蓝主调 + 黄/橙点缀 + 青绿台面）----
 	var mat_concrete := StandardMaterial3D.new()
 	mat_concrete.albedo_color = Color(0.56, 0.55, 0.53)
 	mat_concrete.roughness = 0.95
-	var mat_trap := StandardMaterial3D.new()
-	mat_trap.albedo_color = Color(0.18, 0.19, 0.2)   # 尽端挡弹墙：深色橡胶缓弹板
-	mat_trap.roughness = 0.9
-
-	# 地坪 / 吊顶：地坪顶面 = HALL_FLOOR_Y（-6.94，地下埋深）；吊顶保持
-	# 馆内净高 HALL_H，吊顶之上覆土 1.94m 到地表
-	_hall_box(cx, HALL_FLOOR_Y - 0.15, cz, HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
-	_hall_box(cx, HALL_FLOOR_Y + HALL_H + 0.15, cz,
-			HALL_HX * 2.0, 0.3, HALL_HZ * 2.0, mat_concrete)
-	# 吊顶障碍（top/bot 过滤）：地下玩家被挡在馆内、地表玩家/子弹从覆土上走不下来
-	_add_obstacle(cx, cz, HALL_HX, HALL_HZ,
-			HALL_FLOOR_Y + HALL_H + 0.3, HALL_FLOOR_Y + HALL_H, true)
-	# -Z 尽端挡弹墙（整面，靶道最深 22m + 缓冲；底部落在地坪上）
-	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz - HALL_HZ + HALL_TRAP_T * 0.5,
-			HALL_HX * 2.0, HALL_H, HALL_TRAP_T, mat_trap)
-	_add_obstacle(cx, cz - HALL_HZ + HALL_TRAP_T * 0.5, HALL_HX, HALL_TRAP_T * 0.5,
-			HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
-	# +Z 墙（射击线后方）：整面无门（2026-10-31 靶馆迁图外独立空间，旧门洞
-	# 接地下连廊的物理连接已随入口房/坡道/连廊整体拆除，进出只走传送）
-	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_HZ - HALL_WALL_T * 0.5,
-			HALL_HX * 2.0, HALL_H, HALL_WALL_T, mat_concrete)
-	_add_obstacle(cx, cz + HALL_HZ - HALL_WALL_T * 0.5, HALL_HX,
-			HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
-	# 西墙 / 东墙
-	for side in [-1.0, 1.0]:
-		var wz := cz
-		_hall_box(cx + side * (HALL_HX - HALL_WALL_T * 0.5), HALL_FLOOR_Y + HALL_H * 0.5,
-				wz, HALL_WALL_T, HALL_H, HALL_HZ * 2.0, mat_concrete)
-		_add_obstacle(cx + side * (HALL_HX - HALL_WALL_T * 0.5), wz,
-				HALL_WALL_T * 0.5, HALL_HZ, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
-
-	# 顶部成排发光灯板（3 排 ×5 列）+ 3 盏暖白点光（室内人工照明）
+	var mat_steel := StandardMaterial3D.new()
+	mat_steel.albedo_color = Color(0.24, 0.25, 0.27)
+	mat_steel.roughness = 0.55
+	mat_steel.metallic = 0.45
+	var mat_glass := StandardMaterial3D.new()
+	mat_glass.albedo_color = Color(0.62, 0.8, 0.78, 0.26)
+	mat_glass.roughness = 0.15
+	mat_glass.metallic = 0.1
+	mat_glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var mat_sand := StandardMaterial3D.new()
+	mat_sand.albedo_color = Color(0.63, 0.53, 0.34)
+	mat_sand.roughness = 1.0
+	var mat_yellow := StandardMaterial3D.new()
+	mat_yellow.albedo_color = Color(0.85, 0.66, 0.1)
+	mat_yellow.roughness = 0.8
+	var mat_white := StandardMaterial3D.new()
+	mat_white.albedo_color = Color(0.9, 0.9, 0.88)
+	mat_white.roughness = 0.9
+	var mat_bench := StandardMaterial3D.new()
+	mat_bench.albedo_color = Color(0.3, 0.62, 0.54)
+	mat_bench.roughness = 0.6
+	var mat_olive := StandardMaterial3D.new()
+	mat_olive.albedo_color = Color(0.36, 0.38, 0.24)
+	mat_olive.roughness = 0.85
+	var mat_cable := StandardMaterial3D.new()
+	mat_cable.albedo_color = Color(0.72, 0.58, 0.12)
+	mat_cable.roughness = 0.8
+	var mat_orange := StandardMaterial3D.new()
+	mat_orange.albedo_color = Color(0.5, 0.24, 0.06)
+	mat_orange.emission_enabled = true
+	mat_orange.emission = Color(1.0, 0.5, 0.16)
+	mat_orange.emission_energy_multiplier = 1.1
+	var mat_red := StandardMaterial3D.new()
+	mat_red.albedo_color = Color(0.42, 0.1, 0.08)
+	mat_red.emission_enabled = true
+	mat_red.emission = Color(0.8, 0.14, 0.1)
+	mat_red.emission_energy_multiplier = 0.5
 	var lamp_mat := StandardMaterial3D.new()
 	lamp_mat.albedo_color = Color(0.9, 0.88, 0.8)
 	lamp_mat.emission_enabled = true
 	lamp_mat.emission = Color(0.98, 0.95, 0.85)
 	lamp_mat.emission_energy_multiplier = 2.0
-	for pz in [cz - 8.0, cz, cz + 8.0]:
-		for k in 5:
-			var px := cx - 15.0 + float(k) * 7.5
-			_hall_box(px, HALL_FLOOR_Y + HALL_H - 0.1, pz, 4.2, 0.1, 0.62, lamp_mat)
-	for lp in [Vector3(cx - 8.0, HALL_FLOOR_Y + HALL_H - 0.6, cz),
-			Vector3(cx + 8.0, HALL_FLOOR_Y + HALL_H - 0.6, cz),
-			Vector3(cx, HALL_FLOOR_Y + HALL_H - 0.6, cz - 8.0)]:
+
+	# ---- 地坪 / 吊顶 / 四面墙（225 全长；-Z 尽端墙 + 沙堆挡弹坡）----
+	var z_mid := cz + (HALL_FRONT - HALL_BACK) * 0.5
+	var z_len := HALL_BACK + HALL_FRONT
+	_hall_box(cx, HALL_FLOOR_Y - 0.15, z_mid, HALL_HX * 2.0, 0.3, z_len, mat_concrete)
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H + 0.15, z_mid,
+			HALL_HX * 2.0, 0.3, z_len, mat_concrete)
+	_add_obstacle(cx, z_mid, HALL_HX, z_len * 0.5,
+			HALL_FLOOR_Y + HALL_H + 0.3, HALL_FLOOR_Y + HALL_H, true)
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz - HALL_BACK + HALL_WALL_T * 0.5,
+			HALL_HX * 2.0, HALL_H, HALL_WALL_T, mat_concrete)
+	_add_obstacle(cx, cz - HALL_BACK + HALL_WALL_T * 0.5, HALL_HX,
+			HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
+	# +Z 墙（射击线后方整面无门——独立空间只走传送）/ 西东墙 + 立柱节奏
+	_hall_box(cx, HALL_FLOOR_Y + HALL_H * 0.5, cz + HALL_FRONT - HALL_WALL_T * 0.5,
+			HALL_HX * 2.0, HALL_H, HALL_WALL_T, mat_concrete)
+	_add_obstacle(cx, cz + HALL_FRONT - HALL_WALL_T * 0.5, HALL_HX,
+			HALL_WALL_T * 0.5, HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
+	for side in [-1.0, 1.0]:
+		var wx: float = cx + side * (HALL_HX - HALL_WALL_T * 0.5)
+		_hall_box(wx, HALL_FLOOR_Y + HALL_H * 0.5, z_mid,
+				HALL_WALL_T, HALL_H, z_len, mat_concrete)
+		_add_obstacle(wx, z_mid, HALL_WALL_T * 0.5, z_len * 0.5,
+				HALL_FLOOR_Y + HALL_H, HALL_FLOOR_Y - 0.3, true)
+		var pz0 := cz + 8.0
+		while pz0 > cz - HALL_BACK + 6.0:
+			_hall_box(wx, HALL_FLOOR_Y + HALL_H * 0.5, pz0, 0.6, HALL_H, 0.6, mat_steel)
+			pz0 -= 14.0
+
+	# ---- 尽端沙堆挡弹坡（参考图土黄挡土坡：沙带 + 斜坡板）----
+	_hall_box(cx, HALL_FLOOR_Y + 0.06, cz - HALL_BACK + 3.2,
+			HALL_HX * 2.0, 0.12, 6.0, mat_sand)
+	var berm := MeshInstance3D.new()
+	var berm_m := BoxMesh.new()
+	berm_m.size = Vector3(HALL_HX * 2.0, 0.5, 9.0)
+	berm_m.material = mat_sand
+	berm.mesh = berm_m
+	berm.rotation.x = deg_to_rad(-54.0)
+	berm.position = Vector3(cx, HALL_FLOOR_Y + 2.1, cz - HALL_BACK + 4.6)
+	add_child(berm)
+	berm.set_meta("keep_map", true)
+
+	# ---- 横梁（每 12m）+ 长条灯组（3 列 × 每 14m）+ 暖白点光（每 30m）----
+	var bz := cz + 9.0
+	while bz > cz - HALL_BACK + 5.0:
+		_hall_box(cx, HALL_FLOOR_Y + HALL_H - 0.35, bz,
+				HALL_HX * 2.0 - 1.0, 0.35, 0.35, mat_steel)
+		bz -= 12.0
+	var lz := cz + 7.0
+	while lz > cz - HALL_BACK + 5.0:
+		for lx in [-7.0, 0.0, 7.0]:
+			_hall_box(cx + lx, HALL_FLOOR_Y + HALL_H - 0.12, lz, 0.5, 0.08, 9.5, lamp_mat)
+		lz -= 14.0
+	var oz := cz + 5.0
+	while oz > cz - HALL_BACK + 10.0:
 		var l := OmniLight3D.new()
 		l.light_color = Color(1.0, 0.96, 0.88)
-		l.light_energy = 1.2
-		l.omni_range = 24.0
-		l.position = lp
+		l.light_energy = 1.15
+		l.omni_range = 32.0
+		l.position = Vector3(cx, HALL_FLOOR_Y + HALL_H - 0.6, oz)
 		add_child(l)
 		l.set_meta("keep_map", true)
+		oz -= 30.0
 
-	# 射击位隔断墙 ×3（射击线两侧分道 + 西端封头），下实混凝土 1.2m 高（底部落在地坪上）
+	# ---- 玻璃/钢框隔断 ×3（射击线分道；玻璃不登记障碍=子弹可穿，
+	#      整体一道障碍挡人；2.2m 高金属框+青绿玻璃）----
 	for dx in [-3.0, -1.0, 1.0]:
-		var dxz: float = cx + dx
-		_hall_box(dxz, HALL_FLOOR_Y + 0.6, cz + HALL_FIRE_DZ, 0.12, 1.2, 6.0, mat_concrete)
-		_add_obstacle(dxz, cz + HALL_FIRE_DZ, 0.1, 3.0, HALL_FLOOR_Y + 1.2,
+		var px: float = cx + dx
+		_hall_box(px, HALL_FLOOR_Y + 1.25, cz + HALL_FIRE_DZ, 0.05, 1.9, 5.7, mat_glass)
+		_hall_box(px, HALL_FLOOR_Y + 2.22, cz + HALL_FIRE_DZ, 0.12, 0.14, 6.0, mat_steel)
+		_hall_box(px, HALL_FLOOR_Y + 0.3, cz + HALL_FIRE_DZ, 0.5, 0.6, 6.0, mat_steel)
+		for pz in [cz + HALL_FIRE_DZ - 3.0, cz + HALL_FIRE_DZ + 3.0]:
+			_hall_box(px, HALL_FLOOR_Y + 1.1, pz, 0.14, 2.2, 0.14, mat_steel)
+		_add_obstacle(px, cz + HALL_FIRE_DZ, 0.12, 3.0, HALL_FLOOR_Y + 2.2,
 				HALL_FLOOR_Y - 0.1, true)
 
-	# 射击线黄黑警示条（双色交替 BoxMesh 拼一条横带，铺在地坪上方 2cm 防共面闪烁）
+	# ---- 射击台 ×3（青绿台面 0.95m 高，眼高弹道从上方过；台间 1.1m 可走）----
+	for lx in [-2.0, 0.0, 2.0]:
+		var bx: float = cx + lx
+		_hall_box(bx, HALL_FLOOR_Y + 0.91, cz + HALL_FIRE_DZ - 1.0, 0.9, 0.08, 0.7, mat_bench)
+		for lz2 in [-0.25, 0.25]:
+			_hall_box(bx, HALL_FLOOR_Y + 0.44, cz + HALL_FIRE_DZ - 1.0 + lz2,
+					0.08, 0.88, 0.08, mat_steel)
+		_add_obstacle(bx, cz + HALL_FIRE_DZ - 1.0, 0.45, 0.35,
+				HALL_FLOOR_Y + 0.95, HALL_FLOOR_Y - 0.1, true)
+
+	# ---- 地面：射击线黄黑警示条 + 黄色射道纵线 ×3 + 射道编号 1/2/3 ----
 	var hy := HALL_FLOOR_Y + 0.02
 	for k in 20:
 		var sx := cx - 19.0 + float(k) * 2.0
 		var bm := StandardMaterial3D.new()
 		bm.albedo_color = Color(0.78, 0.6, 0.12) if k % 2 == 0 else Color(0.12, 0.12, 0.12)
 		bm.roughness = 0.85
-		_hall_box(sx, hy, cz + HALL_FIRE_DZ - 1.0, 2.0, 0.02, 0.4, bm)
-
-	# 墙面车道编号 5/6/7（挡弹墙内面，面朝 +Z 射手）
+		_hall_box(sx, hy, cz + HALL_FIRE_DZ + 1.6, 2.0, 0.02, 0.4, bm)
+	for dx in [-3.0, -1.0, 1.0]:
+		_hall_box(cx + dx, HALL_FLOOR_Y + 0.02, cz - 26.0, 0.09, 0.02, 68.0, mat_yellow)
 	for i in 3:
-		var num := Label3D.new()
-		num.text = "%d" % (5 + i)
-		num.font_size = 320
-		num.pixel_size = 0.004
-		num.modulate = Color(0.93, 0.9, 0.8)
-		num.outline_size = 16
-		num.position = Vector3(cx - 2.0 + float(i) * 2.0, HALL_FLOOR_Y + 3.2,
-				cz - HALL_HZ + HALL_TRAP_T + 0.05)
-		add_child(num)
+		var lane_no := Label3D.new()
+		lane_no.text = "%d" % (i + 1)
+		lane_no.font_size = 240
+		lane_no.pixel_size = 0.006
+		lane_no.modulate = Color(0.9, 0.72, 0.1)
+		lane_no.outline_size = 12
+		lane_no.rotation.x = -PI * 0.5
+		lane_no.position = Vector3(cx - 2.0 + float(i) * 2.0,
+				HALL_FLOOR_Y + 0.03, cz + HALL_FIRE_DZ + 3.2)
+		add_child(lane_no)
+		lane_no.set_meta("keep_map", true)
+
+	# ---- 距离标记（25/50/100/150/200m：白色横线 + 西侧地面数字）----
+	for d in [25, 50, 100, 150, 200]:
+		var mz := cz + HALL_FIRE_DZ - float(d)
+		_hall_box(cx, HALL_FLOOR_Y + 0.025, mz, HALL_HX * 2.0 - 2.0, 0.02, 0.14, mat_white)
+		var dm := Label3D.new()
+		dm.text = "%dm" % d
+		dm.font_size = 200
+		dm.pixel_size = 0.01
+		dm.modulate = Color(0.92, 0.92, 0.9)
+		dm.outline_size = 10
+		dm.rotation.x = -PI * 0.5
+		dm.position = Vector3(cx - 18.5, HALL_FLOOR_Y + 0.035, mz + 0.9)
+		add_child(dm)
+		dm.set_meta("keep_map", true)
+
+	# ---- 墙面点缀（参考图）：西墙涂鸦「A」红圈 + 东墙橙光龛/红牌 ----
+	var graff := Label3D.new()
+	graff.text = "A"
+	graff.font_size = 900
+	graff.pixel_size = 0.004
+	graff.modulate = Color(0.55, 0.18, 0.14)
+	graff.outline_size = 20
+	graff.rotation.y = PI * 0.5
+	graff.position = Vector3(cx - HALL_HX + 0.7, HALL_FLOOR_Y + 2.8, cz - 4.0)
+	add_child(graff)
+	graff.set_meta("keep_map", true)
+	var g_ring := MeshInstance3D.new()
+	var g_tm := TorusMesh.new()
+	g_tm.inner_radius = 1.15
+	g_tm.outer_radius = 1.32
+	g_tm.material = mat_red
+	g_ring.mesh = g_tm
+	g_ring.rotation.y = PI * 0.5
+	g_ring.position = Vector3(cx - HALL_HX + 0.62, HALL_FLOOR_Y + 2.8, cz - 4.0)
+	add_child(g_ring)
+	g_ring.set_meta("keep_map", true)
+	_hall_box(cx + HALL_HX - 0.35, HALL_FLOOR_Y + 2.3, cz - 6.0, 0.2, 1.4, 2.6, mat_orange)
+	var ol := OmniLight3D.new()
+	ol.light_color = Color(1.0, 0.55, 0.25)
+	ol.light_energy = 0.8
+	ol.omni_range = 12.0
+	ol.position = Vector3(cx + HALL_HX - 2.0, HALL_FLOOR_Y + 2.6, cz - 6.0)
+	add_child(ol)
+	ol.set_meta("keep_map", true)
+	_hall_box(cx + HALL_HX - 0.32, HALL_FLOOR_Y + 3.4, cz + 2.0, 0.16, 0.55, 1.5, mat_red)
+	var sign := Label3D.new()
+	sign.text = "A-7"
+	sign.font_size = 90
+	sign.pixel_size = 0.004
+	sign.modulate = Color(0.95, 0.9, 0.85)
+	sign.outline_size = 8
+	sign.rotation.y = -PI * 0.5
+	sign.position = Vector3(cx + HALL_HX - 0.45, HALL_FLOOR_Y + 3.4, cz + 2.0)
+	add_child(sign)
+	sign.set_meta("keep_map", true)
+
+	# ---- 道具点缀：缆线卷 ×2 + 弹药箱堆 + 监控摄像头 ×2 ----
+	for dz2 in [5.0, 2.4]:
+		var drum := MeshInstance3D.new()
+		var drum_m := TorusMesh.new()
+		drum_m.inner_radius = 0.3
+		drum_m.outer_radius = 0.58
+		drum_m.material = mat_cable
+		drum.mesh = drum_m
+		drum.rotation.x = PI * 0.5
+		drum.position = Vector3(cx + 16.5, HALL_FLOOR_Y + 0.58, cz + dz2)
+		add_child(drum)
+		drum.set_meta("keep_map", true)
+	for bp in [Vector3(-16.0, 0.25, 5.5), Vector3(-15.0, 0.25, 5.2),
+			Vector3(-15.5, 0.75, 5.35)]:
+		_hall_box(cx + bp.x, HALL_FLOOR_Y + bp.y, cz + bp.z, 0.85, 0.5, 0.55, mat_olive)
+	for cam_x in [-20.2, 20.2]:
+		var cam := MeshInstance3D.new()
+		var cam_m := BoxMesh.new()
+		cam_m.size = Vector3(0.36, 0.16, 0.22)
+		cam_m.material = mat_steel
+		cam.mesh = cam_m
+		cam.rotation.y = PI + (0.5 if cam_x < 0.0 else -0.5)
+		cam.rotation.x = 0.45
+		cam.position = Vector3(cx + cam_x, HALL_FLOOR_Y + HALL_H - 0.5, cz + HALL_FRONT - 1.4)
+		add_child(cam)
+		cam.set_meta("keep_map", true)
 
 
 ## 靶馆构件盒体（纯视觉，不登记 obstacles——由调用方按需登记）；馆体

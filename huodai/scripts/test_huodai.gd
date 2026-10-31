@@ -554,7 +554,7 @@ func _run() -> void:
 	await frames(10)
 	check("进入 RANGE", main.mode == main.Mode.RANGE)
 	var sc0: int = main.targets.score
-	main.targets.on_hit(0)
+	main.targets.on_hit(0, 999.0)   # 血量制：一发超额伤害直接打倒（旧 20 伤×5 发太啰嗦）
 	check("靶子计分", main.targets.score > sc0)
 	# 2026-10-31 假人改版：假人站馆内地坪（root.y=馆心-6.94，旧版悬空 y=0
 	# 即用户报告「靶在靶场上面」）+ 站姿眼高射线能命中假人命中盒
@@ -570,6 +570,41 @@ func _run() -> void:
 	var rc: Dictionary = main.targets.raycast(eye, aim.normalized(), aim.length() + 2.0)
 	check("射击线眼高射线命中假人（改版命中盒）", str(rc.get("type", "")) == "target",
 		"type=%s d=%.2f" % [str(rc.get("type")), float(rc.get("d", -1.0))])
+
+	# 10a. 靶场 2.0（2026-10-31 用户四连需求）：血量制 / 靶距 1~200 /
+	#      摆动四模式——上一靶（0 号）已倒，血量断言全部走 reset 后直测
+	main.targets.reset_all()
+	var sc_hp: int = main.targets.score
+	main.targets.on_hit(0, 30.0)
+	check("假人 100 血：单发 30 伤不倒不计分", bool(main.targets._targets[0]["alive"])
+			and absf(float(main.targets._targets[0]["hp"]) - 70.0) < 0.001
+			and main.targets.score == sc_hp,
+		"hp=%.1f" % float(main.targets._targets[0]["hp"]))
+	main.targets.on_hit(0, 30.0)
+	main.targets.on_hit(0, 30.0)
+	main.targets.on_hit(0, 30.0)
+	check("打空血量才倒靶计分（分值=靶距米数）", not bool(main.targets._targets[0]["alive"])
+			and main.targets.score >= sc_hp + 25)
+	for i in 140:
+		main.targets.update(0.05)   # 7s 模拟：> 1.9+0.28+0.3 立起周期
+	check("倒靶 1.9s 后自动立起并回满血", bool(main.targets._targets[0]["alive"])
+			and absf(float(main.targets._targets[0]["hp"]) - 100.0) < 0.001)
+	main.targets.set_range_dist(200.0)
+	check("靶距可调至 200m（假人随距重摆）", absf(float(main.targets._targets[2]["root"].position.z)
+			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 200.0)) < 0.01)
+	var eye2 := Vector3(main.player.pos.x, main.player.pos.y + 1.55, main.player.pos.z)
+	var aim2: Vector3 = main.targets._targets[2]["root"].position + Vector3(0, 1.0, 0) - eye2
+	var rc2: Dictionary = main.targets.raycast(eye2, aim2.normalized(), aim2.length() + 2.0)
+	check("200m 眼高射线命中假人", str(rc2.get("type", "")) == "target",
+		"type=%s d=%.1f" % [str(rc2.get("type")), float(rc2.get("d", -1.0))])
+	main.targets.set_range_dist(300.0)
+	check("靶距上限 200m 钳制", main.targets.range_dist == 200.0)
+	main.targets.set_range_dist(0.5)
+	check("靶距下限 1m 钳制", main.targets.range_dist == 1.0)
+	for i in 4:
+		main.targets.cycle_swing_mode()
+	check("摆动模式四档循环回「中速」", main.targets.swing_mode == 1)
+	main.targets.set_range_dist(HDTargets.DIST_DEF)
 
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
 	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——

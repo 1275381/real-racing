@@ -754,11 +754,12 @@ func set_prompt(text: String, progress: float) -> void:
 	_center.queue_redraw()
 
 
-## 靶场计分（右上角）
-func set_score(score: int, best: int) -> void:
+## 靶场计分（右上角；info 可选第三段——靶距/摆动模式常显，2026-10-31 靶场 2.0）
+func set_score(score: int, best: int, info := "") -> void:
 	if _score_label == null:
 		setup()
-	_score_label.text = "得分 %d · 最佳 %d" % [score, best]
+	_score_label.text = "得分 %d · 最佳 %d%s" % [score, best,
+			(" · " + info) if info != "" else ""]
 	_score_label.visible = true
 	_score_seen = true
 

@@ -100,6 +100,8 @@ func _ready() -> void:
 	guns.rear_grip_provider = func(gid: String): return stash.rear_grip_id(gid)
 	guns.hit_enemy.connect(_on_hit_enemy)
 	guns.fired.connect(_on_player_fired)
+	# 靶场 2.0：假人血量制命中反馈（hitmark + 倒靶播报）
+	targets.dummy_hit.connect(_on_dummy_hit)
 	# 第四阶段：耐久（库存耐久 − 本局磨损）/ 消音器（stash 按枪查）/ 卡壳播报
 	guns.dur_provider = func(gid: String) -> float:
 		return stash.dur_of(gid) - float(_raid_wear.get(gid, 0.0))
@@ -586,6 +588,16 @@ func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: boo
 	hud.hitmark(head, bool(res.get("killed", false)), bool(res.get("armor", false)))
 	audio.play_hit()
 
+## 靶场假人命中反馈（2026-10-31 血量制）：每次命中 hitmark；
+## 血量打空倒靶时播报距离与得分
+func _on_dummy_hit(_hp_left: float, killed: bool) -> void:
+	hud.hitmark(false, killed, false)
+	audio.play_hit()
+	if killed:
+		hud.feed("假人击倒 · %dm · +%d 分" % [int(targets.range_dist),
+				int(round(targets.range_dist))], Color(0.95, 0.85, 0.4))
+
+
 func _on_soldier_killed(info: Dictionary) -> void:
 	_kills += 1
 	var dist: float = float(info.get("dist", 0.0))
@@ -869,7 +881,8 @@ func _step_range(dt: float) -> void:
 	targets.update(dt)
 	hud.set_ammo(guns.ammo, guns.reserve)
 	hud.set_health(player.health, 100.0)
-	hud.set_score(targets.score, targets.best)
+	hud.set_score(targets.score, targets.best, "靶距 %dm · 摆动 %s · T/Y 调距 G 摆速"
+			% [int(targets.range_dist), HDTargets.SWING_MODE_NAMES[targets.swing_mode]])
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
 
@@ -1183,6 +1196,19 @@ func _route_key(code: int) -> void:
 			hud.feed("%s 开火模式：%s" % [gname, "三连发（1800rpm）" if fmode == "burst" else default_name],
 					Color(0.95, 0.85, 0.4))
 			return
+	# 靶场 2.0（2026-10-31）：T/Y 调靶距（±5m，钳制 1~200）、G 循环摆动
+	# 模式（慢/中/快/随机）——两键只挂 RANGE（T/Y/G 对局内空闲）
+	if mode == Mode.RANGE and (code == KEY_T or code == KEY_Y):
+		targets.set_range_dist(targets.range_dist
+				+ (HDTargets.DIST_STEP if code == KEY_Y else -HDTargets.DIST_STEP))
+		hud.toast("靶距 %dm（T 调近 · Y 调远）" % int(targets.range_dist),
+				Color(0.55, 0.9, 0.75))
+		return
+	if mode == Mode.RANGE and code == KEY_G:
+		targets.cycle_swing_mode()
+		hud.toast("摆动靶：%s（G 切换）"
+				% HDTargets.SWING_MODE_NAMES[targets.swing_mode], Color(0.55, 0.9, 0.75))
+		return
 	# 对局内：Esc 菜单
 	if code == KEY_ESCAPE:
 		paused = true
