@@ -153,6 +153,11 @@ func _ready() -> void:
 	hud.inv_use.connect(_on_inv_use)
 	hud.inv_drop.connect(_on_inv_drop)
 	hud.inv_move.connect(_on_inv_move)
+	# 靶场平板（2026-11-01 用户定案：射击台桌面平板 F 开、鼠标拖调数据）
+	hud.pad_dist.connect(func(v: float): targets.set_range_dist(v))
+	hud.pad_mover.connect(func(v: float): targets.set_mover_dist(v))
+	hud.pad_mode.connect(func(i: int): targets.swing_mode = i)
+	hud.pad_closed.connect(_close_range_pad)
 
 	stash = HDStash.new()
 	# 投掷物（阶段 D）：雷/烟/闪 弹道与起爆；7/8/9 键投掷（_route_key）——
@@ -590,6 +595,21 @@ func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: boo
 
 ## 靶场假人命中反馈（2026-10-31 血量制）：每次命中 hitmark；
 ## 血量打空倒靶时播报距离与得分
+## 靶场控制平板开/收（2026-11-01）：开=暂停+显鼠标；收=回对局+捕获鼠标
+func _open_range_pad() -> void:
+	paused = true
+	hud.set_prompt("", 0.0)
+	hud.open_range_pad(targets.range_dist, targets.mover_dist, targets.swing_mode)
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+
+func _close_range_pad() -> void:
+	if mode == Mode.RANGE:
+		paused = false
+	hud.close_range_pad()
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
 func _on_dummy_hit(_hp_left: float, killed: bool) -> void:
 	hud.hitmark(false, killed, false)
 	audio.play_hit()
@@ -881,8 +901,14 @@ func _step_range(dt: float) -> void:
 	targets.update(dt)
 	hud.set_ammo(guns.ammo, guns.reserve)
 	hud.set_health(player.health, 100.0)
-	hud.set_score(targets.score, targets.best, "靶距 %dm · 移动 %s · T/Y 调距 G 移速"
-			% [int(targets.range_dist), HDTargets.SWING_MODE_NAMES[targets.swing_mode]])
+	hud.set_score(targets.score, targets.best, "靶距 %dm · 移动 %dm %s · 台上平板可调"
+			% [int(targets.range_dist), int(targets.mover_dist),
+				HDTargets.SWING_MODE_NAMES[targets.swing_mode]])
+	# 平板近距提示（靶场内唯一提示写者——闲置时清屏，信道纪律）
+	if targets.pad_near(player.pos):
+		hud.set_prompt("按 F 打开靶场控制平板", -1.0)
+	else:
+		hud.set_prompt("", 0.0)
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
 
@@ -1196,6 +1222,12 @@ func _route_key(code: int) -> void:
 			hud.feed("%s 开火模式：%s" % [gname, "三连发（1800rpm）" if fmode == "burst" else default_name],
 					Color(0.95, 0.85, 0.4))
 			return
+	# 靶场平板（2026-11-01）：站射击台平板边按 F 开控制面板（打开即暂停，
+	# 鼠标拖滑条/点按钮；收起回对局）——F 在靶场无其他消费方
+	if mode == Mode.RANGE and code == KEY_F and not hud.pad_open \
+			and targets.pad_near(player.pos):
+		_open_range_pad()
+		return
 	# 靶场 2.0（2026-10-31）：T/Y 调靶距（±5m，钳制 1~200）、G 循环移动
 	# 模式（慢/中/快/随机）——两键只挂 RANGE（T/Y/G 对局内空闲）
 	if mode == Mode.RANGE and (code == KEY_T or code == KEY_Y):

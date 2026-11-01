@@ -30,23 +30,27 @@ const MIN_HIT_D := 0.1                  # 贴脸忽略（与网页版 t>0.1 同�
 ## 躯干/头为主——2026-10-31 假人改版随假人全身重新标定）
 const HIT_C := Vector3(0.0, 0.85, 0.0)
 const HIT_H := Vector3(0.26, 0.72, 0.12)
-## 血量 / 靶距 / 移动（2026-10-31 需求 ①②③）
+## 血量 / 靶距 / 移动（2026-10-31 需求 ①②③；2026-11-01 平板控制升级）
 const DUMMY_HP := 100.0                 # 用户定案「至少 100 血」
-const DIST_MIN := 1.0                   # 靶距下限（m）
-const DIST_MAX := 200.0                 # 靶距上限（m）——馆深 210m 的内界
+const DIST_MIN := 1.0                   # 固定靶距下限（m）
+const DIST_MAX := 200.0                 # 固定靶距上限（m）——馆深 210m 的内界
 const DIST_STEP := 5.0                  # T/Y 每按一次 ±5m
 const DIST_DEF := 25.0                  # 默认靶距
+const MOVER_PRESETS := [25.0, 50.0, 75.0]   # 移动靶三档靶距（平板按钮，用户定案）
 const SWING_MODE_NAMES := ["慢速", "中速", "快速", "随机"]
 const SWING_MODE_PERIOD := [3.4, 2.0, 1.0]   # 模式 0/1/2 平移周期（s）；3=随机
 
 var score: int = 0
 var best: int = 0
-var range_dist := DIST_DEF              # 当前靶距（三道统一）
+var range_dist := DIST_DEF              # 当前固定靶距（三道统一）
+var mover_dist := 25.0                  # 当前移动靶距（三档预设，独立于固定靶）
 var swing_mode := 1                     # 0 慢 / 1 中 / 2 快 / 3 随机
+var tablet_pos := Vector3.ZERO          # 射击台平板世界坐标（近距交互判定）
 
 var _hall_c: Vector3 = Vector3.ZERO
-var _targets: Array = []   # {root,pivot,lane,swing,ph,r_per,r_t,hp,alive,down_t,rise_t}
-var _rails: Array = []     # 移动靶钢轨（随靶距重摆）
+var _targets: Array = []   # {root,pivot,lane,swing,dist,ph,r_per,r_t,hp,alive,down_t,rise_t}
+var _rails: Array = []     # 移动靶钢轨（随移动靶距重摆）
+var _tablet: MeshInstance3D
 var _m_post: StandardMaterial3D
 var _m_board: StandardMaterial3D
 var _m_ring: StandardMaterial3D
@@ -63,12 +67,12 @@ func build(hall_center: Vector3) -> void:
 	score = 0
 	_hall_c = hall_center
 	_ensure_mats()
-	var fire_z := _hall_c.z + FIRE_DZ - range_dist
+	var fixed_z := _hall_c.z + FIRE_DZ - range_dist
+	var mover_z := _hall_c.z + FIRE_DZ - mover_dist - SWING_DEPTH
 	for lane in 3:
 		var floor_y: float = _hall_c.y + HDData.HALL_FLOOR_Y
-		_make_target(_hall_c.x + LANE_DX[lane] + FIXED_DX, floor_y, fire_z, lane, false)
-		_make_target(_hall_c.x + LANE_DX[lane] + SWING_DX, floor_y,
-				fire_z - SWING_DEPTH, lane, true)
+		_make_target(_hall_c.x + LANE_DX[lane] + FIXED_DX, floor_y, fixed_z, lane, false)
+		_make_target(_hall_c.x + LANE_DX[lane] + SWING_DX, floor_y, mover_z, lane, true)
 		# 移动靶钢轨（平移视觉锚：长 2.8m 低轨，贴地 3cm）
 		var rail := MeshInstance3D.new()
 		var rm2 := BoxMesh.new()
@@ -76,24 +80,48 @@ func build(hall_center: Vector3) -> void:
 		rm2.material = _m_post
 		rail.mesh = rm2
 		rail.position = Vector3(_hall_c.x + LANE_DX[lane] + SWING_DX,
-				floor_y + 0.03, fire_z - SWING_DEPTH)
+				floor_y + 0.03, mover_z)
 		add_child(rail)
 		_rails.append(rail)
+	# 射击台控制平板（2026-11-01：中射位台面，近距按 F 开控制面板）
+	tablet_pos = Vector3(_hall_c.x + LANE_DX[1], _hall_c.y + HDData.HALL_FLOOR_Y + 1.03,
+			_hall_c.z + FIRE_DZ - 1.0)
+	_build_tablet()
 
 
-## 调靶距（三道统一 1~200m）：重摆全体假人与钢轨 + 立起回满血（换距=换一轮）
+## 射击台平板近距判定（站中射位台边即可开面板）
+func pad_near(p: Vector3) -> bool:
+	return Vector2(p.x - tablet_pos.x, p.z - tablet_pos.z).length() <= 1.8
+
+
+## 调固定靶距（三道统一 1~200m）：重摆固定假人 + 立起回满血（移动靶不动）
 func set_range_dist(d: float) -> bool:
 	var nd := clampf(d, DIST_MIN, DIST_MAX)
 	if is_equal_approx(nd, range_dist):
 		return false
 	range_dist = nd
-	var fire_z := _hall_c.z + FIRE_DZ - range_dist
+	var z_t := _hall_c.z + FIRE_DZ - range_dist
 	for tg in _targets:
-		var z_t: float = fire_z if not bool(tg["swing"]) else fire_z - SWING_DEPTH
-		(tg["root"] as Node3D).position.z = z_t
-		_revive(tg)
+		if not bool(tg["swing"]):
+			(tg["root"] as Node3D).position.z = z_t
+			tg["dist"] = range_dist
+			_revive(tg)
+	return true
+
+
+## 调移动靶距（三档 25/50/75，平板按钮）：重摆移动假人与钢轨 + 回满血
+func set_mover_dist(d: float) -> bool:
+	if is_equal_approx(d, mover_dist):
+		return false
+	mover_dist = d
+	var z_t := _hall_c.z + FIRE_DZ - mover_dist - SWING_DEPTH
+	for tg in _targets:
+		if bool(tg["swing"]):
+			(tg["root"] as Node3D).position.z = z_t
+			tg["dist"] = mover_dist
+			_revive(tg)
 	for r in _rails:
-		(r as Node3D).position.z = fire_z - SWING_DEPTH
+		(r as Node3D).position.z = z_t
 	return true
 
 
@@ -183,8 +211,9 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	return {"type": "target", "i": best_i, "d": best_d, "point": from + dir * best_d}
 
 
-## 命中扣血（2026-10-31 血量制）：打空才倒，倒靶计分=靶距米数；
-## 未倒发 dummy_hit(hp,false) 供 hitmark，打空发 (0,true)
+## 命中扣血（血量制）：打空才倒，倒靶计分=该假人自己的靶距米数
+## （固定靶 range_dist / 移动靶 mover_dist 各计各的）；未倒发
+## dummy_hit(hp,false) 供 hitmark，打空发 (0,true)
 func on_hit(i: int, dmg: float = 20.0) -> void:
 	if i < 0 or i >= _targets.size():
 		return
@@ -198,7 +227,7 @@ func on_hit(i: int, dmg: float = 20.0) -> void:
 	tg["alive"] = false
 	tg["down_t"] = 0.0
 	tg["rise_t"] = -1.0
-	score += int(round(range_dist))
+	score += int(round(float(tg.get("dist", range_dist))))
 	if score > best:
 		best = score
 	score_changed.emit(score)
@@ -354,5 +383,36 @@ func _make_target(x: float, floor_y: float, z: float, lane: int, swing: bool) ->
 	heart.position = Vector3(0.0, 1.0, 0.095)
 	piv.add_child(heart)
 	_targets.append({"root": root, "pivot": piv, "lane": lane, "swing": swing,
+		"dist": (mover_dist if swing else range_dist),
 		"ph": randf() * TAU, "r_per": 2.0, "r_t": 1.0, "hp": DUMMY_HP,
 		"alive": true, "down_t": -1.0, "rise_t": -1.0})
+
+
+## 射击台平板（视觉件）：深灰外壳 + 青绿发光屏，斜立面向 +Z 射手
+func _build_tablet() -> void:
+	if _tablet != null:
+		_tablet.queue_free()
+	var t := MeshInstance3D.new()
+	var tm := BoxMesh.new()
+	tm.size = Vector3(0.30, 0.02, 0.21)
+	var shell := StandardMaterial3D.new()
+	shell.albedo_color = Color(0.12, 0.13, 0.14)
+	shell.roughness = 0.5
+	tm.material = shell
+	t.mesh = tm
+	t.rotation.x = 0.42
+	t.position = tablet_pos
+	add_child(t)
+	_tablet = t
+	var scr := MeshInstance3D.new()
+	var sm := BoxMesh.new()
+	sm.size = Vector3(0.26, 0.008, 0.17)
+	var scrmat := StandardMaterial3D.new()
+	scrmat.albedo_color = Color(0.1, 0.3, 0.28)
+	scrmat.emission_enabled = true
+	scrmat.emission = Color(0.3, 0.9, 0.8)
+	scrmat.emission_energy_multiplier = 0.9
+	sm.material = scrmat
+	scr.mesh = sm
+	scr.position = Vector3(0.0, 0.013, 0.0)
+	t.add_child(scr)

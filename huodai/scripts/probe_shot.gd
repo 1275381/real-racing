@@ -877,6 +877,15 @@ func _initialize() -> void:
 	main.targets.set_range_dist(HDTargets.DIST_DEF)
 	await frames(4)
 
+	# ---- 靶场 2.0b 图证（2026-11-01）：射击台桌面平板控制面板——滑条拖
+	#      固定靶距 / 移动靶三档按钮 25/50/75 / 移速四档（探针直开面板拍 UI）
+	main.hud.open_range_pad(main.targets.range_dist, main.targets.mover_dist,
+			main.targets.swing_mode)
+	await frames(4)
+	shot("res://out/shot_range_pad.png")
+	main.hud.close_range_pad()
+	await frames(2)
+
 	# ---- 靶场暂停菜单（模式分化图证）：进靶场按 Esc 开菜单截整屏——
 	#      「靶场暂停」标题 +「1 重开靶场 / 2 离开靶场（回大厅）」两项，
 	#      无「行动/战斗/放弃」字样；keep_menu 直拍（不收菜单护栏）

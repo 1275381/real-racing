@@ -592,9 +592,10 @@ func _run() -> void:
 	main.targets.set_range_dist(200.0)
 	check("靶距可调至 200m（假人随距重摆）", absf(float(main.targets._targets[2]["root"].position.z)
 			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 200.0)) < 0.01)
-	check("移动靶比固定靶后退 3.5m（同 z 错开防互穿）", absf(
+	check("移动靶距独立（固定 200m 时移动靶仍在预设档）", absf(
 			float(main.targets._targets[3]["root"].position.z)
-			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 200.0 - HDTargets.SWING_DEPTH)) < 0.01)
+			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 25.0
+				- HDTargets.SWING_DEPTH)) < 0.01)
 	var px0: float = float(main.targets._targets[1]["pivot"].position.x)
 	main.targets.update(0.3)
 	main.targets.update(0.3)
@@ -614,6 +615,26 @@ func _run() -> void:
 		main.targets.cycle_swing_mode()
 	check("摆动模式四档循环回「中速」", main.targets.swing_mode == 1)
 	main.targets.set_range_dist(HDTargets.DIST_DEF)
+
+	# 10b. 靶场平板（2026-11-01 用户定案）：移动靶三档独立调距 + 桌面平板
+	main.targets.set_mover_dist(50.0)
+	check("移动靶三档 50m 生效（固定靶不动）", absf(
+			float(main.targets._targets[1]["root"].position.z)
+			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 50.0
+				- HDTargets.SWING_DEPTH)) < 0.01
+			and absf(float(main.targets._targets[0]["root"].position.z)
+			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - HDTargets.DIST_DEF)) < 0.01)
+	check("桌面平板近距判定（台边可开/馆心不可开）", main.targets.pad_near(
+			HDData.HALL_CENTER + Vector3(0.0, HDData.HALL_FLOOR_Y, HDTargets.FIRE_DZ))
+			and not main.targets.pad_near(HDData.HALL_CENTER))
+	main.hud.open_range_pad(main.targets.range_dist, main.targets.mover_dist,
+			main.targets.swing_mode)
+	check("平板面板可开（滑条/三档/速度按钮就位）", main.hud.pad_open
+			and main.hud._pad_slider != null and main.hud._pad_mover_btns.size() == 3
+			and main.hud._pad_mode_btns.size() == 4)
+	main.hud.close_range_pad()
+	check("平板面板可收", not main.hud.pad_open)
+	main.targets.set_mover_dist(HDTargets.MOVER_PRESETS[0])
 
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
 	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——

@@ -16,6 +16,10 @@ signal inv_close
 signal inv_drop(from_secure: bool, idx: int)
 signal inv_move(from_secure: bool, idx: int)
 signal inv_use(from_secure: bool, idx: int)
+signal pad_dist(v: float)        # 靶场平板：固定靶距滑条（拖动实时发）
+signal pad_mover(v: float)       # 靶场平板：移动靶三档按钮 25/50/75
+signal pad_mode(i: int)          # 靶场平板：移动速度四档按钮
+signal pad_closed
 
 const COL_TEXT := Color(0.85, 0.87, 0.82)
 const COL_ACCENT := Color(1, 0.7, 0.36)
@@ -57,6 +61,12 @@ var _tut_dots: Label
 var _bag_cap := -1
 var _pip_nodes: Array = []
 var _score_label: Label
+var _pad: Control                  # 靶场控制平板面板（2026-11-01：桌面平板 UI）
+var _pad_slider: HSlider
+var _pad_dist_lab: Label
+var _pad_mover_btns: Array = []    # 三档 25/50/75 toggle 按钮
+var _pad_mode_btns: Array = []     # 慢/中/快/随机 toggle 按钮
+var pad_open: bool = false
 var _score_seen := false
 var _extract_panel: Control
 var _extract_label: Label
@@ -764,6 +774,130 @@ func set_score(score: int, best: int, info := "") -> void:
 	_score_seen = true
 
 
+## ===== 靶场控制平板（2026-11-01 用户定案：射击台桌面平板，F 开，鼠标拖） =====
+
+## 打开面板（带当前值初始化；按钮选中态按值点亮）
+func open_range_pad(dist: float, mover: float, mode: int) -> void:
+	if _base == null:
+		setup()
+	if _pad == null:
+		_build_range_pad()
+	_pad_slider.value = dist
+	_refresh_pad_mover(mover)
+	_refresh_pad_mode(mode)
+	_pad.visible = true
+	pad_open = true
+
+
+func close_range_pad() -> void:
+	if _pad != null:
+		_pad.visible = false
+	pad_open = false
+
+
+func _build_range_pad() -> void:
+	_pad = Control.new()
+	_pad.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pad.mouse_filter = Control.MOUSE_FILTER_STOP   # 挡枪口点击（面板外点击不射击）
+	_base.add_child(_pad)
+	var panel := PanelContainer.new()
+	var sb := _sb_flat(Color(0.04, 0.07, 0.07, 0.94), Color(0.3, 0.9, 0.8, 0.5), 1)
+	sb.set_content_margin_all(14)
+	sb.set_corner_radius_all(6)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.offset_left = -230
+	panel.offset_top = -190
+	panel.offset_right = 230
+	panel.offset_bottom = 190
+	_pad.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	var title := Label.new()
+	title.text = "靶场控制平板"
+	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_color_override("font_color", Color(0.3, 0.9, 0.8))
+	box.add_child(title)
+	var lab1 := Label.new()
+	lab1.text = "固定靶距 · 拖动滑条 1~200m"
+	lab1.add_theme_font_size_override("font_size", 18)
+	box.add_child(lab1)
+	var row1 := HBoxContainer.new()
+	row1.add_theme_constant_override("separation", 10)
+	box.add_child(row1)
+	_pad_slider = HSlider.new()
+	_pad_slider.min_value = 1
+	_pad_slider.max_value = 200
+	_pad_slider.step = 1
+	_pad_slider.custom_minimum_size = Vector2(330, 26)
+	_pad_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row1.add_child(_pad_slider)
+	_pad_dist_lab = Label.new()
+	_pad_dist_lab.text = "25m"
+	_pad_dist_lab.add_theme_font_size_override("font_size", 22)
+	_pad_dist_lab.add_theme_color_override("font_color", COL_ACCENT)
+	_pad_dist_lab.custom_minimum_size = Vector2(64, 0)
+	row1.add_child(_pad_dist_lab)
+	_pad_slider.value_changed.connect(func(v: float):
+			_pad_dist_lab.text = "%dm" % int(v)
+			pad_dist.emit(v))
+	var lab2 := Label.new()
+	lab2.text = "移动靶距 · 三档"
+	lab2.add_theme_font_size_override("font_size", 18)
+	box.add_child(lab2)
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 10)
+	box.add_child(row2)
+	for v in [25.0, 50.0, 75.0]:
+		var b := Button.new()
+		b.text = "%dm" % int(v)
+		b.toggle_mode = true
+		b.custom_minimum_size = Vector2(110, 40)
+		var vv: float = v
+		b.pressed.connect(func():
+			_refresh_pad_mover(vv)
+			pad_mover.emit(vv))
+		row2.add_child(b)
+		_pad_mover_btns.append(b)
+	var lab3 := Label.new()
+	lab3.text = "移动速度"
+	lab3.add_theme_font_size_override("font_size", 18)
+	box.add_child(lab3)
+	var row3 := HBoxContainer.new()
+	row3.add_theme_constant_override("separation", 10)
+	box.add_child(row3)
+	var names := ["慢速", "中速", "快速", "随机"]
+	for i in names.size():
+		var b2 := Button.new()
+		b2.text = names[i]
+		b2.toggle_mode = true
+		b2.custom_minimum_size = Vector2(82, 36)
+		var ii := i
+		b2.pressed.connect(func():
+			_refresh_pad_mode(ii)
+			pad_mode.emit(ii))
+		row3.add_child(b2)
+		_pad_mode_btns.append(b2)
+	var close_btn := Button.new()
+	close_btn.text = "收起平板（F）"
+	close_btn.custom_minimum_size = Vector2(0, 38)
+	close_btn.pressed.connect(func(): pad_closed.emit())
+	box.add_child(close_btn)
+
+
+func _refresh_pad_mover(v: float) -> void:
+	for i in _pad_mover_btns.size():
+		var b: Button = _pad_mover_btns[i]
+		b.button_pressed = is_equal_approx(
+				float([25.0, 50.0, 75.0][i]), v)
+
+
+func _refresh_pad_mode(i: int) -> void:
+	for k in _pad_mode_btns.size():
+		(_pad_mode_btns[k] as Button).button_pressed = k == i
+
+
 ## 计分条只属于靶场：行动模式显式关掉（_score_seen 一并复位）
 func set_score_visible(on: bool) -> void:
 	if _score_label == null:
@@ -876,6 +1010,13 @@ func _input(event: InputEvent) -> void:
 	if not k.pressed or k.echo:
 		return
 	var code := k.keycode
+	if pad_open:
+		# 靶场平板（2026-11-01）：F/Esc 收面板（面板打开时 main.paused，本层
+		# process_mode=ALWAYS 仍收键——与暂停菜单同款自处理模式）
+		if code == KEY_F or code == KEY_ESCAPE:
+			pad_closed.emit()
+			get_viewport().set_input_as_handled()
+		return
 	if inv_visible:
 		match code:
 			KEY_TAB, KEY_ESCAPE:
