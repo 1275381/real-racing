@@ -43,8 +43,10 @@ const SWING_MODE_PERIOD := [3.4, 2.0, 1.0]   # 模式 0/1/2 平移周期（s）�
 var score: int = 0
 var best: int = 0
 var range_dist := DIST_DEF              # 当前固定靶距（三道统一）
-var mover_dist := 25.0                  # 当前移动靶距（三档预设，独立于固定靶）
+var mover_dist := 25.0                  # 当前移动靶距（滑条 1~200，快捷 25/50/75）
 var swing_mode := 1                     # 0 慢 / 1 中 / 2 快 / 3 随机
+var armor_lv := 1                       # 假人护甲 1~6 级（2026-11-01 用户需求）
+var dummy_hp_max := 100.0               # 假人血量上限 100~800（同上）
 var tablet_pos := Vector3.ZERO          # 射击台平板世界坐标（近距交互判定）
 
 var _hall_c: Vector3 = Vector3.ZERO
@@ -132,6 +134,42 @@ func cycle_swing_mode() -> void:
 	swing_mode = (swing_mode + 1) % SWING_MODE_NAMES.size()
 
 
+## 调假人护甲（1~6 级，平板按钮）：全体立起回满（新甲新假人）
+func set_armor_lv(lv: int) -> void:
+	armor_lv = clampi(lv, 1, 6)
+	for tg in _targets:
+		_revive(tg)
+
+
+## 调假人血量上限（100~800，平板滑条）：全体立起回满
+func set_dummy_hp(v: float) -> void:
+	dummy_hp_max = clampf(v, 100.0, 800.0)
+	for tg in _targets:
+		_revive(tg)
+
+
+## TTK 静态推演（平板/枪械变化时 main 调）：与 on_hit 同一套甲公式，
+## 返回 {shots, ttk}；cd 取枪稳定射速（cd_profile 取末档）+ 扳机蓄力
+func ttk_sim(dmg: float, ad: float, pen: int, cd: float, delay := 0.0) -> Dictionary:
+	var hp := dummy_hp_max
+	var armor := float(HDData.ARMOR_CLASSES[armor_lv]["dur"])
+	var shots := 0
+	while hp > 0.0 and shots < 400:
+		var d := dmg
+		if armor > 0.0:
+			var coef := HDData.pen_coef(pen, armor_lv)
+			if armor <= ad:
+				var ratio := armor / maxf(ad, 0.01)
+				armor = 0.0
+				d = d * coef * ratio + d * (1.0 - ratio)
+			else:
+				armor -= ad
+				d = d * coef
+		hp -= d
+		shots += 1
+	return {"shots": shots, "ttk": delay + maxf(0.0, float(shots - 1)) * cd}
+
+
 func update(dt: float) -> void:
 	for tg in _targets:
 		var piv: Node3D = tg["pivot"]
@@ -158,7 +196,8 @@ func update(dt: float) -> void:
 				if kr >= 1.0:
 					tg["rise_t"] = -1.0
 					tg["alive"] = true
-					tg["hp"] = DUMMY_HP   # 立起=新假人，血量回满
+					tg["hp"] = dummy_hp_max   # 立起=新假人，血量/甲回满
+					tg["armor"] = float(HDData.ARMOR_CLASSES[armor_lv]["dur"])
 					piv.rotation.x = 0.0
 
 
@@ -213,15 +252,27 @@ func raycast(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	return {"type": "target", "i": best_i, "d": best_d, "point": from + dir * best_d}
 
 
-## 命中扣血（血量制）：打空才倒，倒靶计分=该假人自己的靶距米数
-## （固定靶 range_dist / 移动靶 mover_dist 各计各的）；未倒发
-## dummy_hit(hp,false) 供 hitmark，打空发 (0,true)
-func on_hit(i: int, dmg: float = 20.0) -> void:
+## 命中扣血（血量+护甲制，2026-11-01）：与士兵 apply_hit 同一套三角洲
+## 甲公式（甲伤削耐久/穿透系数入肉/碎甲溢出全额），打空血才倒、计分=
+## 该假人自己的靶距米数；未倒发 dummy_hit(hp,false)、打空发 (0,true)
+func on_hit(i: int, dmg: float, ad := 0.0, pen := 2) -> void:
 	if i < 0 or i >= _targets.size():
 		return
 	var tg: Dictionary = _targets[i]
 	if not bool(tg["alive"]):
 		return
+	if armor_lv > 0 and float(tg["armor"]) > 0.0:
+		var armor_dur := float(tg["armor"])
+		var coef := HDData.pen_coef(pen, armor_lv)
+		var armor_dmg := maxf(0.0, ad)
+		if armor_dur <= armor_dmg:
+			# 碎甲溢出（三角洲公式）：被甲吃的份额按穿透系数打折入肉
+			var ratio := armor_dur / maxf(armor_dmg, 0.01)
+			tg["armor"] = 0.0
+			dmg = dmg * coef * ratio + dmg * (1.0 - ratio)
+		else:
+			tg["armor"] = armor_dur - armor_dmg
+			dmg = dmg * coef
 	tg["hp"] = maxf(0.0, float(tg["hp"]) - dmg)
 	if float(tg["hp"]) > 0.0:
 		dummy_hit.emit(float(tg["hp"]), false)
@@ -250,7 +301,8 @@ func _revive(tg: Dictionary) -> void:
 	tg["alive"] = true
 	tg["down_t"] = -1.0
 	tg["rise_t"] = -1.0
-	tg["hp"] = DUMMY_HP
+	tg["hp"] = dummy_hp_max
+	tg["armor"] = float(HDData.ARMOR_CLASSES[armor_lv]["dur"])   # 立起=新假人新甲
 	(tg["pivot"] as Node3D).rotation = Vector3.ZERO
 
 
@@ -386,7 +438,8 @@ func _make_target(x: float, floor_y: float, z: float, lane: int, swing: bool) ->
 	piv.add_child(heart)
 	_targets.append({"root": root, "pivot": piv, "lane": lane, "swing": swing,
 		"dist": (mover_dist if swing else range_dist),
-		"ph": randf() * TAU, "r_per": 2.0, "r_t": 1.0, "hp": DUMMY_HP,
+		"ph": randf() * TAU, "r_per": 2.0, "r_t": 1.0,
+		"hp": dummy_hp_max, "armor": float(HDData.ARMOR_CLASSES[armor_lv]["dur"]),
 		"alive": true, "down_t": -1.0, "rise_t": -1.0})
 
 

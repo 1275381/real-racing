@@ -649,6 +649,47 @@ func _run() -> void:
 	check("移动靶距上限 200m 钳制", main.targets.mover_dist == 200.0)
 	main.targets.set_mover_dist(HDTargets.MOVER_PRESETS[0])
 
+	# 10c. 靶场 2.0c（2026-11-01 用户需求）：假人护甲 1~6 / 血量 100~800 /
+	#      TTK 推演——护甲走与士兵同套三角洲公式（穿甲前入肉打折、碎甲溢出）
+	main.targets.set_armor_lv(6)
+	main.targets.set_dummy_hp(300.0)
+	check("护甲/血量可调（6甲 300 血）", main.targets.armor_lv == 6
+			and absf(float(main.targets._targets[0]["armor"]) - 130.0) < 0.01
+			and absf(float(main.targets._targets[0]["hp"]) - 300.0) < 0.01)
+	# 标准弹 pen2 vs 6甲：穿差 -2 → 入肉 0%——碎甲前零伤（130 耐久 / 38 甲伤
+	# = 4 发碎甲，第 5 发起全额）
+	main.targets.on_hit(0, 30.0, 38.0, 2)
+	main.targets.on_hit(0, 30.0, 38.0, 2)
+	main.targets.on_hit(0, 30.0, 38.0, 2)
+	check("6 甲 vs 标准弹：碎甲前入肉 0%", absf(float(main.targets._targets[0]["hp"])
+			- 300.0) < 0.01 and float(main.targets._targets[0]["armor"]) > 0.0)
+	main.targets.on_hit(0, 30.0, 38.0, 2)   # 第 4 发碎甲（溢出入肉）
+	main.targets.on_hit(0, 30.0, 38.0, 2)   # 第 5 发全额
+	check("碎甲后全额入肉", float(main.targets._targets[0]["armor"]) == 0.0
+			and float(main.targets._targets[0]["hp"]) < 300.0,
+		"hp=%.1f" % float(main.targets._targets[0]["hp"]))
+	var sim6: Dictionary = main.targets.ttk_sim(30.0, 38.0, 2, 0.085, 0.0)
+	main.targets.set_armor_lv(1)
+	var sim1: Dictionary = main.targets.ttk_sim(30.0, 38.0, 2, 0.085, 0.0)
+	check("TTK 推演：甲越厚击杀越慢", int(sim6["shots"]) > int(sim1["shots"]),
+		"6甲 %d 发 / 1甲 %d 发" % [int(sim6["shots"]), int(sim1["shots"])])
+	# 精确数学锁（先回 100 血）：1甲(耐久30) vs ad40 → 首发碎甲全额 30 →
+	# 100 血 4 发；TTK=(4-1)×0.085=0.255s（rifle 口径，与左上角标签同源）
+	main.targets.set_dummy_hp(100.0)
+	var simx: Dictionary = main.targets.ttk_sim(30.0, 40.0, 2, 0.085, 0.0)
+	check("TTK 精确锁（1甲 100 血 30 伤 ad40 → 4 发 0.26s）",
+			int(simx["shots"]) == 4 and absf(float(simx["ttk"]) - 0.255) < 0.001,
+		"%d 发 %.3fs" % [int(simx["shots"]), float(simx["ttk"])])
+	check("TTK 文本（左上角标签源）", main._range_ttk_text().contains("TTK"),
+		main._range_ttk_text())
+	main.hud.set_ttk(main._range_ttk_text())
+	check("TTK 标签就位", main.hud._ttk_label != null
+			and main.hud._ttk_label.text.contains("TTK"))
+	main.hud.set_ttk("")
+	check("TTK 标签可清（离场隐藏）", not main.hud._ttk_label.visible)
+	main.targets.set_armor_lv(1)
+	main.targets.set_dummy_hp(100.0)
+
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
 	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——
 	#      须在离场前断言：_back_to_lobby 会把菜单复位回实战文案

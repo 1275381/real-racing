@@ -157,7 +157,12 @@ func _ready() -> void:
 	hud.pad_dist.connect(func(v: float): targets.set_range_dist(v))
 	hud.pad_mover.connect(func(v: float): targets.set_mover_dist(v))
 	hud.pad_mode.connect(func(i: int): targets.swing_mode = i)
+	hud.pad_armor.connect(func(lv: int): targets.set_armor_lv(lv))
+	hud.pad_hp.connect(func(v: float): targets.set_dummy_hp(v))
 	hud.pad_closed.connect(_close_range_pad)
+	# 弹种信息（靶场假人甲结算与士兵同源：dmg_mul/pen）
+	guns.ammo_provider = func(gid: String) -> Dictionary:
+		return Guns.ammo_by_id(stash.ammo_kind_of(gid))
 
 	stash = HDStash.new()
 	# 投掷物（阶段 D）：雷/烟/闪 弹道与起爆；7/8/9 键投掷（_route_key）——
@@ -257,6 +262,7 @@ func _reclaim_ammo() -> void:
 ## ---- 模式流转 ----
 func _start_mission(loadout: Dictionary) -> void:
 	mode = Mode.MISSION
+	hud.set_ttk("")   # TTK 只属于靶场（左上角标签离场清空）
 	# 天气变体（阶段 C）：先设全局（AI 视距/枪声半径/战利品运气都读它）再重置世界
 	HDData.variant = str(loadout.get("variant", "clear"))
 	world.apply_variant(HDData.variant)
@@ -435,6 +441,7 @@ func _back_to_lobby() -> void:
 	_abandon_if_live()
 	hud.hide_inventory()
 	mode = Mode.LOBBY
+	hud.set_ttk("")   # TTK 只属于靶场（左上角标签离场清空）
 	# 回大厅恢复晴朗（阶段 C）：大厅期间世界背景与 AI 参数都回缺省态
 	HDData.variant = "clear"
 	world.apply_variant("clear")
@@ -599,7 +606,8 @@ func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: boo
 func _open_range_pad() -> void:
 	paused = true
 	hud.set_prompt("", 0.0)
-	hud.open_range_pad(targets.range_dist, targets.mover_dist, targets.swing_mode)
+	hud.open_range_pad(targets.range_dist, targets.mover_dist, targets.swing_mode,
+			targets.armor_lv, targets.dummy_hp_max)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
@@ -911,8 +919,29 @@ func _step_range(dt: float) -> void:
 		hud.set_prompt("按 F 打开靶场控制平板", -1.0)
 	else:
 		hud.set_prompt("", 0.0)
+	# 左上角 TTK（2026-11-01 用户需求）：当前枪+弹种+假人甲/血实时推演
+	hud.set_ttk(_range_ttk_text())
 	var sc: Dictionary = _scope_for(guns.cur_id)
 	hud.set_scope(str(sc.get("kind", "iron")), float(sc.get("zoom", 1.0)), player.ads > 0.5)
+
+
+## 靶场 TTK 推演：与假人 on_hit 同公式模拟击杀发数，×稳定射速
+## （cd_profile 取末档稳态、含扳机蓄力），文本带假人甲/血上下文
+func _range_ttk_text() -> String:
+	if guns.cur_id == "":
+		return ""
+	var g: Dictionary = Guns.gun_by_id(guns.cur_id)
+	var ammo: Dictionary = Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id))
+	var dmg: float = float(g.get("dmg", 20.0)) * float(ammo.get("dmg_mul", 1.0))
+	var cd: float = float(g.get("cd", 0.1))
+	var prof: Array = g.get("cd_profile", [])
+	if not prof.is_empty():
+		cd = float(prof.back())
+	var sim: Dictionary = targets.ttk_sim(dmg, float(g.get("ad", 0.0)),
+			int(ammo.get("pen", 2)), cd, float(g.get("trigger_delay", 0.0)))
+	return "TTK %.2fs · %d 发 · 假人 %d血/%d甲 · %s" % [
+			float(sim["ttk"]), int(sim["shots"]), int(targets.dummy_hp_max),
+			targets.armor_lv, String(g.get("name", guns.cur_id))]
 
 ## ---- 第三阶段：局时 / 撤离点 / 电闸 / 物资 ----
 

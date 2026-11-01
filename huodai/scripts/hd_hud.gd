@@ -17,8 +17,10 @@ signal inv_drop(from_secure: bool, idx: int)
 signal inv_move(from_secure: bool, idx: int)
 signal inv_use(from_secure: bool, idx: int)
 signal pad_dist(v: float)        # 靶场平板：固定靶距滑条（拖动实时发）
-signal pad_mover(v: float)       # 靶场平板：移动靶三档按钮 25/50/75
+signal pad_mover(v: float)       # 靶场平板：移动靶滑条/三档快捷
 signal pad_mode(i: int)          # 靶场平板：移动速度四档按钮
+signal pad_armor(lv: int)        # 靶场平板：假人护甲 1~6 按钮
+signal pad_hp(v: float)          # 靶场平板：假人血量 100~800 滑条
 signal pad_closed
 
 const COL_TEXT := Color(0.85, 0.87, 0.82)
@@ -67,6 +69,10 @@ var _pad_dist_lab: Label
 var _pad_mover_slider: HSlider     # 移动靶距滑条（2026-11-01 二轮：靶道深 210m，移动靶也要能拉远）
 var _pad_mover_lab: Label
 var _pad_mover_btns: Array = []    # 三档 25/50/75 快捷按钮
+var _pad_armor_btns: Array = []    # 一甲~六甲按钮（2026-11-01）
+var _pad_hp_slider: HSlider        # 假人血量滑条 100~800
+var _pad_hp_lab: Label
+var _ttk_label: Label              # 左上角 TTK（靶场专属）
 var _pad_mode_btns: Array = []     # 慢/中/快/随机 toggle 按钮
 var pad_open: bool = false
 var _score_seen := false
@@ -779,7 +785,7 @@ func set_score(score: int, best: int, info := "") -> void:
 ## ===== 靶场控制平板（2026-11-01 用户定案：射击台桌面平板，F 开，鼠标拖） =====
 
 ## 打开面板（带当前值初始化；按钮选中态按值点亮）
-func open_range_pad(dist: float, mover: float, mode: int) -> void:
+func open_range_pad(dist: float, mover: float, mode: int, armor_lv := 1, hp_max := 100.0) -> void:
 	if _base == null:
 		setup()
 	if _pad == null:
@@ -788,6 +794,8 @@ func open_range_pad(dist: float, mover: float, mode: int) -> void:
 	_pad_mover_slider.value = mover
 	_refresh_pad_mover(mover)
 	_refresh_pad_mode(mode)
+	_refresh_pad_armor(armor_lv)
+	_pad_hp_slider.value = hp_max
 	_pad.visible = true
 	pad_open = true
 
@@ -810,9 +818,9 @@ func _build_range_pad() -> void:
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.offset_left = -230
-	panel.offset_top = -215
+	panel.offset_top = -265
 	panel.offset_right = 230
-	panel.offset_bottom = 215
+	panel.offset_bottom = 265
 	_pad.add_child(panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
@@ -903,6 +911,47 @@ func _build_range_pad() -> void:
 			pad_mode.emit(ii))
 		row3.add_child(b2)
 		_pad_mode_btns.append(b2)
+	var lab4 := Label.new()
+	lab4.text = "假人护甲 · 1~6 级（与枪械甲伤/弹种穿透同套结算）"
+	lab4.add_theme_font_size_override("font_size", 18)
+	box.add_child(lab4)
+	var row4 := HBoxContainer.new()
+	row4.add_theme_constant_override("separation", 8)
+	box.add_child(row4)
+	for lv in 6:
+		var b3 := Button.new()
+		b3.text = "%d甲" % (lv + 1)
+		b3.toggle_mode = true
+		b3.custom_minimum_size = Vector2(64, 36)
+		var ll := lv + 1
+		b3.pressed.connect(func():
+			_refresh_pad_armor(ll)
+			pad_armor.emit(ll))
+		row4.add_child(b3)
+		_pad_armor_btns.append(b3)
+	var lab5 := Label.new()
+	lab5.text = "假人血量 · 拖动滑条 100~800"
+	lab5.add_theme_font_size_override("font_size", 18)
+	box.add_child(lab5)
+	var row5 := HBoxContainer.new()
+	row5.add_theme_constant_override("separation", 10)
+	box.add_child(row5)
+	_pad_hp_slider = HSlider.new()
+	_pad_hp_slider.min_value = 100
+	_pad_hp_slider.max_value = 800
+	_pad_hp_slider.step = 10
+	_pad_hp_slider.custom_minimum_size = Vector2(330, 26)
+	_pad_hp_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row5.add_child(_pad_hp_slider)
+	_pad_hp_lab = Label.new()
+	_pad_hp_lab.text = "100"
+	_pad_hp_lab.add_theme_font_size_override("font_size", 22)
+	_pad_hp_lab.add_theme_color_override("font_color", COL_LOW)
+	_pad_hp_lab.custom_minimum_size = Vector2(64, 0)
+	row5.add_child(_pad_hp_lab)
+	_pad_hp_slider.value_changed.connect(func(v: float):
+			_pad_hp_lab.text = str(int(v))
+			pad_hp.emit(v))
 	var close_btn := Button.new()
 	close_btn.text = "收起平板（F）"
 	close_btn.custom_minimum_size = Vector2(0, 38)
@@ -920,6 +969,29 @@ func _refresh_pad_mover(v: float) -> void:
 func _refresh_pad_mode(i: int) -> void:
 	for k in _pad_mode_btns.size():
 		(_pad_mode_btns[k] as Button).button_pressed = k == i
+
+
+func _refresh_pad_armor(lv: int) -> void:
+	for k in _pad_armor_btns.size():
+		(_pad_armor_btns[k] as Button).button_pressed = k + 1 == lv
+
+
+## 左上角 TTK（靶场专属，2026-11-01 用户需求）：空串隐藏；懒建标签
+func set_ttk(text: String) -> void:
+	if _ttk_label == null:
+		if text == "":
+			return
+		if _base == null:
+			setup()
+		_ttk_label = Label.new()
+		_ttk_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		_ttk_label.offset_left = 14
+		_ttk_label.offset_top = 8
+		_ttk_label.add_theme_font_size_override("font_size", 20)
+		_ttk_label.add_theme_color_override("font_color", Color(0.98, 0.82, 0.4))
+		_base.add_child(_ttk_label)
+	_ttk_label.text = text
+	_ttk_label.visible = text != ""
 
 
 ## 计分条只属于靶场：行动模式显式关掉（_score_seen 一并复位）

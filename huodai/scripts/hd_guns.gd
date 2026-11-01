@@ -566,7 +566,14 @@ func try_fire() -> void:
 			var hd: float = dmg * (HEADSHOT_MUL if head else 1.0)
 			hit_enemy.emit(kind, int(h["i"]), end, hd, head)
 		elif kind == "target" and targets != null:
-			targets.on_hit(int(h["i"]), dmg)   # 血量制（2026-10-31）：按枪伤害扣血
+			# 血量+护甲制（2026-11-01）：弹种倍率/穿透与士兵结算同源
+			var ammo: Dictionary = Guns.ammo_by_id("standard")
+			if ammo_provider.is_valid():
+				var a2: Dictionary = ammo_provider.call(cur_id)
+				if not a2.is_empty():
+					ammo = a2
+			targets.on_hit(int(h["i"]), dmg * float(ammo.get("dmg_mul", 1.0)),
+					float(_g.get("ad", 0.0)), int(ammo.get("pen", 2)))
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；
@@ -652,6 +659,9 @@ var rear_grip_provider: Callable = Callable()   # 后握把装配查询（2026-1
 ## 未注入 = 全新无消音（探针/测试裸调行为不变）
 var dur_provider: Callable = Callable()
 var sup_provider: Callable = Callable()
+## 弹种信息（func(gun_id)->ammo dict，main 注入 stash 链；未注入=标准弹）：
+## 靶场假人（2026-11-01 甲制）要弹种的 dmg_mul/pen，与士兵结算同源
+var ammo_provider: Callable = Callable()
 const SUP_LEN := 0.17      # 消音器长（枪架局部 m）：枪口点前移这么多
 const SUP_R := 0.021
 
