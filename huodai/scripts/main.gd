@@ -634,6 +634,8 @@ func _on_soldier_killed(info: Dictionary) -> void:
 	_kills += 1
 	var dist: float = float(info.get("dist", 0.0))
 	var tier := str(info.get("tier", "regular"))
+	# 阵亡补给盒（2026-11-01 用户定案）：小兵/首领阵亡原地出盒，内含变卖物
+	loot.add_drop_box(Vector3(info.get("pos", player.pos)), tier)
 	if tier == "boss":
 		hud.feed("击杀首领 %s · %dm · 尸体旁有贵重掉落" % [str(info.get("name", "")), int(dist)],
 				Color(1.0, 0.4, 0.3))

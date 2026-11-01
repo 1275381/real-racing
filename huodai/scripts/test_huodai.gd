@@ -3211,13 +3211,45 @@ func _run() -> void:
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(2)
 	var g_n0: int = main.loot.ground_count()
+	var cb_n: int = main.loot._containers.size()   # 补给盒断言基线（首领盒将落此下标）
 	var bi: int = main.soldiers.soldiers.find(bs)
 	main.soldiers.apply_hit(bi, 999.0, true)
+	# 阵亡补给盒（2026-11-01 用户定案）：小兵/首领阵亡原地出盒、盒内变卖物
+	# ——首领盒 5 件紫档下限（kill → killed.pos → add_drop_box 实链）
+	check("首领阵亡原地出现补给盒", main.loot._containers.size() == cb_n + 1
+			and str(main.loot._containers[cb_n].get("cls", "")) == "dropbox"
+			and int(main.loot._containers[cb_n].get("rolls", 0)) == 5,
+		"n=%d" % main.loot._containers.size())
+	main.loot.backpack.clear()
+	main.loot._open(cb_n)
+	var boss_min_ok: bool = main.loot.backpack.size() == 5
+	for it_b in main.loot.backpack:
+		if int((it_b as Dictionary).get("rarity", 0)) < 3:
+			boss_min_ok = false
+	check("首领盒开出 5 件紫档及以上变卖物", boss_min_ok,
+		"n=%d" % main.loot.backpack.size())
 	# 2026-10-29 首领额外必掉五级甲（护甲机制高级甲来源）：掉落数 +1
 	var drop_ok: bool = main.loot.ground_count() == g_n0 + 2
 	if drop_ok:
 		drop_ok = int(main.loot._ground[main.loot._ground.size() - 2]["item"]["rarity"]) >= HDData.BOSS_DROP_MIN
 	check("首领阵亡掉落金色及以上", drop_ok, "ground=%d" % main.loot.ground_count())
+	# 小兵阵亡也出盒（普通 2 件）：reset 后找一名常规兵实链击杀
+	main.soldiers.reset_all()
+	var reg_i := -1
+	for i_r in main.soldiers.soldiers.size():
+		if str(main.soldiers.soldiers[i_r]["tier"]) == "regular" \
+				and not bool(main.soldiers.soldiers[i_r]["dead"]):
+			reg_i = i_r
+			break
+	if reg_i >= 0:
+		var cb_r: int = main.loot._containers.size()
+		main.soldiers.apply_hit(reg_i, 999.0, true)
+		check("小兵阵亡也出盒（普通 2 件）", main.loot._containers.size() == cb_r + 1
+				and int(main.loot._containers[cb_r].get("rolls", 0)) == 2)
+		main.loot.backpack.clear()
+		main.loot._open(cb_r)
+		check("普通盒开出 2 件变卖物", main.loot.backpack.size() == 2,
+			"n=%d" % main.loot.backpack.size())
 	main.soldiers.reset_all()
 	check("重开后首领满血满甲", float(bs["hp"]) == float(HDData.ENEMY_TIERS["boss"]["hp"])
 		and float(bs["armor"]) == float(HDData.ENEMY_TIERS["boss"]["armor"]))

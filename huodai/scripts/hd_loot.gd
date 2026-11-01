@@ -45,7 +45,8 @@ const TYPES := [
 		"size": Vector3(1.5, 1.0, 1.0)},
 ]
 ## 容器分类 → 外观类型（第三阶段：分类决定掉落，外观让玩家远远认得出）
-const CLASS_TYPE := {"weapon": 0, "medical": 1, "crate": 2, "safe": 4, "vault": 4, "airdrop": 5}
+const CLASS_TYPE := {"weapon": 0, "medical": 1, "crate": 2, "safe": 4, "vault": 4, "airdrop": 5,
+	"dropbox": 2}
 const VAULT_LAMP := Color(1.0, 0.3, 0.22)   # 首领保险柜指示灯：红（只出红色及以上）
 const AIRDROP_LAMP := Color(0.75, 0.45, 1.0)   # 空投箱指示灯：紫（紫色及以上）
 ## crate.glb 实测 1.02 见方（原点在底面中心），按类型缩放到 size
@@ -216,6 +217,22 @@ func add_container(pos: Vector3, cls: String) -> int:
 	return _containers.size() - 1
 
 
+## 阵亡补给盒（2026-11-01 用户定案）：小兵/首领阵亡原地生成，内含数件
+## 变卖物——普通/搜刮者 2 件、精英 3 件绿档+、首领 5 件紫档+
+func add_drop_box(pos: Vector3, tier: String) -> int:
+	var rolls := 2
+	var min_r := 0
+	if tier == "elite":
+		rolls = 3
+		min_r = 1
+	elif tier == "boss":
+		rolls = 5
+		min_r = 3
+	_make_container({"pos": pos, "zone": String(_world.zone_at(pos.x, pos.z)),
+			"cls": "dropbox", "dynamic": true, "rolls": rolls, "min_r": min_r})
+	return _containers.size() - 1
+
+
 ## 按 uid 从背包取出一件（开锁消耗钥匙用；不在背包/安全箱返回 false）
 func take_item(uid: String) -> bool:
 	for i in backpack.size():
@@ -351,7 +368,8 @@ func _make_container(spot: Dictionary) -> void:
 	_containers.append({"pos": pos, "zone": spot["zone"], "type": type, "cls": cls,
 		"boss": String(spot.get("boss", "")), "dynamic": bool(spot.get("dynamic", false)), "ob": ob,
 		"searched": false, "root": root, "lid_pivot": lid_pivot, "lamp": lamp,
-		"lamp_mat": lamp_mat, "open_t": 0.0, "phase": randf() * TAU})
+		"lamp_mat": lamp_mat, "open_t": 0.0, "phase": randf() * TAU,
+		"rolls": int(spot.get("rolls", 1)), "min_r": int(spot.get("min_r", -1))})
 
 
 ## 空投箱：橄榄绿军用箱 + 深色包角框 + 两道浅色捆扎带 + 侧面白色模板字块
@@ -534,7 +552,7 @@ func _update_search(dt: float, player_pos: Vector3, interact_held: bool) -> void
 	prompt.emit("按住 F 搜索 %s" % String(cc["name"]), _progress)
 
 
-## 开箱：灯灭盖开 → 按分区 roll 一件；背包未满入包 picked；满包则与最便宜
+## 开箱：灯灭盖开 → 按分区 roll（阵亡补给盒 rolls 件连开）；背包未满入包；满包则与最便宜
 ## 一件比价——新件更值钱就交换（旧件落地），否则新件落在箱前地上（可再捡）
 func _open(i: int, player_pos: Vector3 = Vector3.INF) -> void:
 	var c: Dictionary = _containers[i]
@@ -547,7 +565,6 @@ func _open(i: int, player_pos: Vector3 = Vector3.INF) -> void:
 	var cls := String(c.get("cls", "crate"))
 	var zone := String(_world.zone_at(pos.x, pos.z))
 	searched.emit(cls, zone)   # 合同推进（玩家路径专属——搜刮者 npc_take 不走 _open）
-	var item := HDData.roll_container(cls, zone)
 	var drop_at: Vector3 = pos if player_pos == Vector3.INF else player_pos
 	# 额外物资（武器箱/医疗箱多出）：有空位进包，没空位落在脚下
 	var bonus := HDData.roll_bonus(String(c.get("cls", "crate")))
@@ -558,6 +575,19 @@ func _open(i: int, player_pos: Vector3 = Vector3.INF) -> void:
 		else:
 			_spawn_ground(bonus, drop_at)
 			notice.emit("%s 留在脚下（背包快满了）" % String(bonus.get("name", "")), NOTICE_COL)
+	# 变卖物：普通容器 1 件；阵亡补给盒 rolls 件连开（min_r ≥0 = 品质下限档，
+	# 2026-11-01 用户定案：小兵/首领阵亡出盒刷变卖物）
+	var rolls := int(c.get("rolls", 1))
+	var min_r := int(c.get("min_r", -1))
+	for k in rolls:
+		var item: Dictionary = HDData.roll_min(zone, min_r) if min_r >= 0 \
+				else HDData.roll_container(cls, zone)
+		_give(item, drop_at)
+
+
+## 一件战利品入包：未满直入；满包与最便宜一件比价换装（旧件落地），
+## 不值则新件落地（可再捡）
+func _give(item: Dictionary, drop_at: Vector3) -> void:
 	if backpack.size() < HDData.BACKPACK_MAX:
 		backpack.append(item)
 		picked.emit(item)
