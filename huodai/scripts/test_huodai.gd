@@ -878,12 +878,12 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：十七把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：十八把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
 			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171",
-			"tenglong"]:
+			"tenglong", "ash12"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -1111,19 +1111,19 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册十枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	# 27. 高模顶点红线：步枪册十一枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
 	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
 	#     步枪 2026-10 并册、an94 商店超点射突击步枪 2026-10 并册、
 	#     sr25 商店半自动 DMR 2026-10 并册、k437 .300 BLK 突击步枪
 	#     2026-10-29 并册、tenglong 5.8×42mm 国产腾龙突击步枪
-	#     2026-10-31 并册）
+	#     2026-10-31 并册、ash12 12.7×55mm 无托重弹突击步枪 2026-11-01 并册）
 	#     逐把枪身根总顶点 ≥ 8× 低模基线（走
 	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
-	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437/mag_tenglong
-	#     独立命名弹匣节点；POLY_MIN/POLY_BASE 见 HDGunLib——门槛与 mk4
-	#     同口径 = 盒×24 + 柱×57 的 8 倍）
+	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437/mag_tenglong/
+	#     mag_ash12 独立命名弹匣节点；POLY_MIN/POLY_BASE 见 HDGunLib——门槛
+	#     与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
 	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
-			"k437", "tenglong"]:
+			"k437", "tenglong", "ash12"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -1353,6 +1353,57 @@ func _run() -> void:
 		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("tenglong",
 				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("tenglong")),
 			str(tl_def.get("ad", "缺"))])
+
+	# 27i. ASH-12 商店枪专项（2026-11-01 并册·12.7×55mm 无托重弹突击步枪，
+	#      现实原型 ASh-12.7/ShAK-12 俄 FSB 特战 CQB 用枪）：考证断言六件
+	#      （照 27f K437/27g QCQ171/27h 腾龙段先例）——
+	#      ① 独立命名弹匣锚点 mag_ash12 在枪身根下（20 发大容量弧形略弯匣
+	#        后置无托井，换弹手沿 mag_of 锚跟随的契约件，#27 循环只查 mag_*
+	#        存在性，这里锁名；走 _ar_build 分发入口）
+	#      ② 简介射速「510发每分」与 cd 换算一致 ±1%（60/0.1176=510.2，
+	#        用户定案 510rpm——面板口径 500rpm 差 2% 按任务规则以用户定案
+	#        为准；三角洲面板数值为搜索聚合转述，未能直开原图）
+	#      ③ 全自动缺省（auto 不写 = true，面板全自动+单发；不带
+	#        cd_profile/burst/trigger_delay——纯全自动突击步枪）+ 弹匣 20
+	#        （面板 20 发与现实 10/20 发大容量弧匣吻合）
+	#      ④ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；12.7×55mm 重弹档备弹少而贵：80 发 ×₵18）
+	#      ⑤ 后坐表 RECOIL 落位（缺键吃 [0.4,0.2,0.25] 兜底后坐爆炸——
+	#        重弹大手感档 [0.42,0.08,0.15]，对照 m250/shotgun 之间）
+	#      ⑥ 枪声调音表 SHOT_TUNE 在位（四层枪声 ash12 专项档：12.7mm 重弹
+	#        低频 boom 厚/膛口爆裂响/尾音长——对照 m250 更沉）+ ad 甲伤字段
+	#        在位（2026-10-29 护甲机制全枪必带——面板甲伤 55 直读，全游戏
+	#        自动武器最高单发档）
+	var ah_root: Node3D = HDGuns._ar_build("ash12")
+	var ah_mag: Node = ah_root.find_child("mag_ash12", true, false)
+	check("ASH-12 独立命名弹匣锚点 mag_ash12 在根下", ah_mag != null,
+		"node=%s" % (str(ah_mag.name) if ah_mag != null else "无"))
+	ah_root.free()
+	var ah_def: Dictionary = Guns.gun_by_id("ash12")
+	var ah_rpm := 60.0 / float(ah_def["cd"])
+	check("ASH-12 简介射速 510发每分与 cd 换算一致（±1%）",
+		str(ah_def["desc"]).contains("510发每分")
+			and absf(ah_rpm - 510.0) / 510.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(ah_def["cd"]), ah_rpm])
+	check("ASH-12 全自动缺省 + 弹匣 20 + 无特殊机制字段",
+		bool(ah_def.get("auto", true)) and int(ah_def["mag"]) == 20
+			and not ah_def.has("cd_profile") and not ah_def.has("burst")
+			and not ah_def.has("trigger_delay"),
+		"auto=%s mag=%s cd_profile=%s" % [str(ah_def.get("auto")),
+			str(ah_def.get("mag")), str(ah_def.get("cd_profile", "无"))])
+	check("ASH-12 备弹/购弹双表在表（12.7mm 重弹档 80 发 ×₵18）",
+		(HDData.RESERVE as Dictionary).has("ash12")
+			and (HDData.AMMO_PRICE as Dictionary).has("ash12")
+			and int(HDData.AMMO_PRICE["ash12"]) == 18,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("ash12", "缺")),
+			str(HDData.AMMO_PRICE.get("ash12", "缺"))])
+	check("ASH-12 后坐表 RECOIL 落位 + 枪声调音表 SHOT_TUNE 在位 + ad 甲伤字段在位",
+		(HDGuns.RECOIL as Dictionary).has("ash12")
+			and (HDAudio.SHOT_TUNE as Dictionary).has("ash12")
+			and ah_def.has("ad") and int(ah_def["ad"]) == 55,
+		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("ash12",
+				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("ash12")),
+			str(ah_def.get("ad", "缺"))])
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -2258,6 +2309,21 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("m14 全自动长程射速达表值 730rpm（原半自动 214）",
 		absf(m14_shots - 60.8) <= 2.2, "shots=%d/300帧（5s）" % m14_shots)
+	# ASH-12 全自动 510rpm（2026-11-01 商店枪·12.7×55mm 无托重弹突击步枪，
+	# 用户定案射速——cd 0.1176 ≈ 7.06 帧/发结转冷却，5s 按压实测期望
+	# 510×5/60 = 42.5 发）
+	main._start_mission({"primary": "ash12", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var ash_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("ash12 长程射速达表值 510rpm（无托重弹慢档节拍）",
+		absf(ash_shots - 42.5) <= 2.2, "shots=%d/300帧（5s）" % ash_shots)
 	# SR25 全自动套件（2026-10-26 用户定案「很贵的全自动套件」）：未装=原厂
 	# 半自动；装上（₵6800）=按住全自动 + 扳机每起边沿补两发点射 + 弹匣 20→45
 	main.stash.m14_mods.erase("fullauto")   # 夹具：确保未购（幂等）
@@ -2909,7 +2975,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，十处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，十一处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

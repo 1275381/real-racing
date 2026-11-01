@@ -972,7 +972,7 @@ func _initialize() -> void:
 	await frames(2)
 	shot("res://out/shot_smg.png")
 
-	# ---- 附加验收 9~18：十九把在册枪逐把腰射（shot_gun_<id>.png）——
+	# ---- 附加验收 9~18：二十把在册枪逐把腰射（shot_gun_<id>.png）——
 	# 探针直拥不走现金（guns_owned.append），不污染经济断言；
 	# 设主武器再进靶场截腰射照，验收员按 features 清单逐张判造型。
 	# 2026-10 判图补图：循环从十把新枪扩到全量在册（旧五枪
@@ -983,10 +983,11 @@ func _initialize() -> void:
 	# .300 BLK 突击步枪）；2026-10-30 商店枪 QCQ171 并册追加（9×19mm 冲锋枪
 	# ·册属冲锋枪 SMG_IDS/几何体 hd_gun_ar.gd _ar_qcq171）；2026-10-31
 	# 商店枪腾龙并册追加（5.8×42mm 国产 QBZ-191 突击步枪·银灰双色调
-	# 双销机匣/多边形护木/4 档可调托）
+	# 双销机匣/多边形护木/4 档可调托）；2026-11-01 商店枪 ASH-12 并册追加
+	# （12.7×55mm 无托重弹突击步枪·无托后置弹匣/提把照门桥/双室制退器）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "knife",
+			"qcq171", "tenglong", "ash12", "knife",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
@@ -1038,14 +1039,15 @@ func _initialize() -> void:
 		Input.action_release("hd_scope")
 		await wait_until(func(): return main.player.ads <= 0.4)
 	# ---- 18a2 全枪红点开镜审计（2026-10-27 用户报告「有些枪装红点只显示
-	# 一个点、无框镜体丢失」）：23 把在册枪逐把装 reddot → 开镜到位 →
+	# 一个点、无框镜体丢失」）：24 把在册枪逐把装 reddot → 开镜到位 →
 	# shot_ads_rdd_<gid>.png——逐把目检镜体在位性（腾龙 2026-10-31 并册
-	# 追加——放倒翻折瞄具枪，改装镜走通用挂载必须在位）
+	# 追加——放倒翻折瞄具枪，改装镜走通用挂载必须在位；ASH-12 2026-11-01
+	# 并册追加——无托提把桥枪，改装镜走通用挂载必须在位）
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong",
+			"qcq171", "tenglong", "ash12",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
