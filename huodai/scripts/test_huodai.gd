@@ -627,13 +627,19 @@ func _run() -> void:
 	check("桌面平板近距判定（台边可开/馆心不可开）", main.targets.pad_near(
 			HDData.HALL_CENTER + Vector3(0.0, HDData.HALL_FLOOR_Y, HDTargets.FIRE_DZ))
 			and not main.targets.pad_near(HDData.HALL_CENTER))
+	main.paused = false
 	main.hud.open_range_pad(main.targets.range_dist, main.targets.mover_dist,
 			main.targets.swing_mode)
 	check("平板面板可开（滑条/三档/速度按钮就位）", main.hud.pad_open
 			and main.hud._pad_slider != null and main.hud._pad_mover_btns.size() == 3
 			and main.hud._pad_mode_btns.size() == 4)
+	main.paused = true   # 模拟 main._open_range_pad 的暂停
+	await frames(3)
+	check("平板打开期间保持暂停（不被 _process 自动清——实机 bug 回归锁）",
+			main.paused and main.hud.pad_open)
 	main.hud.close_range_pad()
-	check("平板面板可收", not main.hud.pad_open)
+	await frames(3)
+	check("平板收起后自动恢复对局", not main.paused and not main.hud.pad_open)
 	main.targets.set_mover_dist(200.0)
 	check("移动靶可拉远至 200m（滑条档）", absf(
 			float(main.targets._targets[1]["root"].position.z)

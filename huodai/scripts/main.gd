@@ -785,7 +785,9 @@ func _refresh_bag_hud() -> void:
 ## ---- 每帧 ----
 func _process(delta: float) -> void:
 	# HUD 的 Esc 关菜单不发信号（自处理按键）：这里同步恢复对局
-	if paused and not hud.menu_visible and not hud.result_visible:
+	# （pad_open 门：靶场平板打开时 paused 不可被这里误清——2026-11-01
+	# 实机「不能点击只能开枪」根因：面板开了但下帧被解除暂停+鼠标抢回）
+	if paused and not hud.menu_visible and not hud.result_visible and not hud.pad_open:
 		paused = false
 		if mode != Mode.LOBBY:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -796,8 +798,8 @@ func _process(delta: float) -> void:
 	world.update_rain(player.pos)   # 雨粒子跟玩家（阶段 C；不可见时零开销）
 	if hud.result_visible:
 		return   # 结算页冻结战场
-	if hud.menu_visible:
-		return   # 暂停菜单
+	if hud.menu_visible or hud.pad_open:
+		return   # 暂停菜单 / 靶场平板（paused 本身不挡步进——门在这里）
 	if mode == Mode.MISSION and hud.inv_visible:
 		_step_world_only(dt)   # 背包打开：世界照常，玩家不动
 		return
