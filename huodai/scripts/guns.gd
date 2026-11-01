@@ -220,6 +220,11 @@ const GUNS := [
 	{"id": "tenglong", "name": "腾龙突击步枪", "desc": "伤害 25 · 全自动 706发每分 · 30 发 · 5.8×42mm · 银灰双销机匣/全长轨/可调托/透明窗弹匣", "price": 2500,
 		"dmg": 25.0, "cd": 0.0850, "mag": 30, "reload": 1.8, "pellets": 1,
 		"spread": 0.014, "range": 250.0, "ad": 38},
+	# 近战槽（2026-11-01 用户定案：默认战术匕首，恒有恒带不吃库存/弹种）
+	{"id": "knife", "name": "战术匕首", "melee": true,
+		"desc": "近战 · 突刺 60 伤 · X 拔刀（穿透按六级弹，无视护甲等级）",
+		"dmg": 60, "cd": 0.45, "range": 2.2, "auto": false, "mag": 0,
+		"pellets": 1, "spread": 0.0, "price": 0, "ad": 60},
 ]
 
 ## M14 专属配件解锁态（2026-10 用户定案）：护木（GRIPS 表 GripMods 生效

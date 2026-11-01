@@ -199,7 +199,7 @@ func _register_inputs() -> void:
 	var defs := {
 		"hd_fire": [],
 		"hd_scope": [],
-		"hd_slot1": [KEY_1], "hd_slot2": [KEY_2],
+		"hd_slot1": [KEY_1], "hd_slot2": [KEY_2], "hd_melee": [KEY_X],
 		"hd_reload": [KEY_R], "hd_interact": [KEY_F],
 		"hd_lean_left": [KEY_Q], "hd_lean_right": [KEY_E],
 	}
@@ -597,6 +597,13 @@ func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: boo
 	# 弹种（2026-11-01 改 1~6 级弹）：伤害倍率 + 穿透等级随枪结算；
 	# 枪甲伤 ad 一并接进实弹路径——此前缺省 ad=0 甲永不耗尽，精英 4 甲
 	# 身体部位恒 0% 入肉只剩爆头可打的失衡就此修复
+	# 近战匕首（2026-11-01）：不吃弹种倍率/穿透——按六级弹穿透、甲伤=
+	# 伤害值（护甲直接击穿磨损后全额入肉）
+	if guns.cur_id == "knife":
+		var rk: Dictionary = soldiers.apply_hit(idx, dmg, head, dmg, 6)
+		hud.hitmark(head, bool(rk.get("killed", false)), bool(rk.get("armor", false)))
+		audio.play_hit()
+		return
 	var ammo: Dictionary = Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id))
 	var res: Dictionary = soldiers.apply_hit(idx, dmg * float(ammo.get("dmg_mul", 1.0)),
 			head, float(Guns.gun_by_id(guns.cur_id).get("ad", 0.0)),

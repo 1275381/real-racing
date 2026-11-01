@@ -73,6 +73,7 @@ const HAND_HOLD_OFF := Vector3(0.0, -0.095, 0.03)  # 托新匣掌心（匣底正
 ## m14 全自动 DMR（7.62 NATO，2026-10-19 用户定案改全自动 730rpm）：高单发
 ## 后坐最沉档、水平漂移最窄
 const RECOIL := {
+	"knife": [0.35, 0.06, 0.03],   # 近战突刺：小上挑 + 微水平
 	"pistol": [0.22, 0.14, 0.08],
 	"smg": [0.13, 0.06, 0.09],
 	"rifle": [0.17, 0.09, 0.10],
@@ -168,6 +169,8 @@ var _flash_t := 0.0
 var _im_pool: Array = []   # 命中火花对象池 {mi, t}
 var _im_i := 0
 var _slot1_prev := false   # 切枪/换弹键边沿检测（只按 is_action_pressed）
+var _melee_prev := false   # X 拔刀/收刀边沿检测（2026-11-01 近战槽）
+var _stab_t := 0.0         # 突刺前冲动画进度（1→0）
 var _slot2_prev := false
 var _reload_prev := false
 var _fire_prev := false    # 开火键边沿检测：半自动/栓动（表 auto=false）只认
@@ -262,6 +265,12 @@ func enter(loadout: Dictionary) -> void:
 			_guns.erase(slot)
 		if not _guns.has(slot):
 			_mount_slot(slot)
+	# 近战刀槽（2026-11-01 用户定案）：默认战术匕首，恒有恒带（不读 loadout、
+	# 不吃库存/弹种），X 拔刀；ammo/reserve 用 -1 哨兵（HUD 显示 ∞、开火门
+	# 走近战专用分支不查弹）
+	_slots["melee"] = {"id": "knife", "ammo": -1, "reserve": -1}
+	if not _guns.has("melee"):
+		_mount_slot("melee")
 	_equip("primary")
 	if _slots.is_empty():
 		for k in _guns:
@@ -293,6 +302,14 @@ func update(dt: float) -> void:
 	if s1_now and not _slot1_prev:
 		_equip("primary")
 	_slot1_prev = s1_now
+	# X 拔刀/收刀（近战槽）：刀 ⇄ 主武器（无主则副）
+	var xm_now := Input.is_action_pressed("hd_melee")
+	if xm_now and not _melee_prev:
+		if _cur_slot == "melee":
+			_equip("primary" if _slots.has("primary") else "secondary")
+		else:
+			_equip("melee")
+	_melee_prev = xm_now
 	var s2_now := Input.is_action_pressed("hd_slot2")
 	if s2_now and not _slot2_prev:
 		_equip("secondary")
@@ -440,7 +457,9 @@ func update(dt: float) -> void:
 			-0.012 - GUN_SCALE * float(g["top"]), GUN_ADS_Z)
 	if g.has("aim_y"):
 		ads_pos = Vector3(0.0, -GUN_SCALE * float(g["aim_y"]), GUN_ADS_Z)
-	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off
+	_stab_t = maxf(0.0, _stab_t - dt * 5.0)
+	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off \
+			+ Vector3(0.0, -0.012 * _stab_t, -0.075 * sin(_stab_t * PI))
 	holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
 	# 枪口火光衰减
 	if _flash_t > 0.0:
@@ -471,8 +490,81 @@ func _cd_after_shot() -> float:
 	return float(_g.get("cd", 0.13))
 
 
+## 近战突刺（2026-11-01 战术匕首）：2.2m 短射线，命中士兵走 hit_enemy
+## （main 按 6 级穿透、甲伤=伤害结算）、命中假人直扣（同参数）；刃风音 +
+## 突刺前冲动画 + 小后坐；无弹药无曳光无火光
+func _melee_swing() -> void:
+	fire_cd = float(_g.get("cd", 0.45))
+	_stab_t = 1.0
+	var from: Vector3 = player.cam.global_position
+	var dir: Vector3 = -player.cam.global_transform.basis.z
+	var h := raycast_all(from, dir, float(_g.get("range", 2.2)))
+	var kind := str(h.get("type", ""))
+	var dmg := float(_g.get("dmg", 60.0))
+	if kind == "soldier" or kind == "soldier_head":
+		var head := kind == "soldier_head"
+		hit_enemy.emit(kind, int(h["i"]), Vector3(h["point"]),
+				dmg * (HEADSHOT_MUL if head else 1.0), head)
+	elif kind == "target" and targets != null:
+		targets.on_hit(int(h["i"]), dmg, dmg, 6)
+	fired.emit()
+	var rc2: Array = RECOIL.get("knife", [0.35, 0.06, 0.03])
+	player.recoil_pitch += deg_to_rad(float(rc2[0])) * 0.6
+	player.recoil_yaw += deg_to_rad(randf_range(-float(rc2[2]), float(rc2[2])))
+	player.recoil_cool = 0.0
+	if audio != null:
+		audio.play_shot("knife")
+
+
+## 战术匕首建模（2026-11-01 近战槽默认刀）：全长 ~0.33m——主刃+收窄刃尖+
+## 血槽线+护手+三环防滑柄+配重柄首；grip_hold=柄顶锚（对齐契约）
+static func _knife_build() -> Node3D:
+	var root := Node3D.new()
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.72, 0.74, 0.78)
+	steel.metallic = 0.9
+	steel.roughness = 0.28
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.1, 0.11, 0.12)
+	dark.roughness = 0.7
+	dark.metallic = 0.3
+	_kpart(root, steel, Vector3(0.016, 0.03, 0.15), Vector3(0.0, 0.0, -0.135))    # 主刃
+	_kpart(root, steel, Vector3(0.012, 0.022, 0.05), Vector3(0.0, -0.004, -0.235))  # 刃尖
+	_kpart(root, dark, Vector3(0.018, 0.008, 0.11), Vector3(0.0, 0.009, -0.13))   # 血槽
+	_kpart(root, dark, Vector3(0.05, 0.014, 0.016), Vector3(0.0, 0.0, -0.05))     # 护手
+	_kpart(root, dark, Vector3(0.024, 0.03, 0.1), Vector3(0.0, 0.0, 0.008))       # 柄芯
+	for k in 3:   # 防滑环
+		_kpart(root, steel, Vector3(0.026, 0.032, 0.006),
+				Vector3(0.0, 0.0, -0.032 + 0.022 * float(k)))
+	_kpart(root, steel, Vector3(0.026, 0.034, 0.02), Vector3(0.0, 0.0, 0.07))    # 柄首配重
+	var grip := Node3D.new()
+	grip.name = "grip_hold"
+	grip.position = Vector3(0.0, 0.016, 0.01)
+	root.add_child(grip)
+	return root
+
+
+static func _kpart(root: Node3D, mat: StandardMaterial3D, size: Vector3, pos: Vector3) -> void:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	bm.material = mat
+	mi.mesh = bm
+	mi.position = pos
+	root.add_child(mi)
+
+
 func try_fire() -> void:
-	if cur_id == "" or reloading > 0.0 or fire_cd > 0.0 or ammo <= 0:
+	if cur_id == "":
+		return
+	# 近战（2026-11-01 战术匕首）：短射线高额伤、无弹药/换弹/曳光/火光，
+	# 穿透按六级弹（main 结算旁路弹种）；ammo=-1 哨兵须在弹药门之前分流
+	if bool(_g.get("melee", false)):
+		if reloading > 0.0 or fire_cd > 0.0:
+			return
+		_melee_swing()
+		return
+	if reloading > 0.0 or fire_cd > 0.0 or ammo <= 0:
 		return
 	if player == null or player.dead or player.cam == null:
 		return
@@ -608,6 +700,8 @@ func try_fire() -> void:
 func start_reload() -> void:
 	if cur_id == "" or reloading > 0.0:
 		return
+	if bool(_g.get("melee", false)):
+		return   # 匕首无换弹
 	if ammo >= _mag_cap() or reserve <= 0:
 		return
 	# M14 30 发扩容匣：长匣换弹 +0.4s（stash 解锁态经 m14_mods_provider 读）
@@ -1118,6 +1212,8 @@ func _mount_slot(slot: String) -> void:
 ## 控制动画匣、由枪身建模件表达静置外形（P90 顶匣/汤姆逊盒匣/手枪匣入握把/
 ## 霰弹管供弹无盒匣）
 func _mag_override(gid: String) -> Dictionary:
+	if gid == "knife":
+		return {"show": false}   # 匕首无弹匣
 	var d: Dictionary = {}
 	if _smg_has(gid):
 		d = _smg_mag_of(gid)
@@ -1143,7 +1239,9 @@ func _mag_override(gid: String) -> Dictionary:
 ## （瞄具挂点常量原样保留，换弹手部锚点与换弹三段时间轴零改动）
 func _build_gun_visual(gun_id: String) -> Node3D:
 	var root: Node3D
-	if _smg_has(gun_id):
+	if gun_id == "knife":
+		root = _finish_gun(_knife_build(), gun_id, Vector3(0.06, 0.02, -0.18))
+	elif _smg_has(gun_id):
 		root = _finish_gun(_smg_build(gun_id), gun_id,
 				_smg_scope_anchor(gun_id))
 	elif _ar_has(gun_id):
@@ -1209,7 +1307,7 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 	elif (gun_id == "mp7" or gun_id == "m14" or gun_id == "asval"
 			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25"
 			or gun_id == "k437" or gun_id == "qcq171"
-			or gun_id == "tenglong") \
+			or gun_id == "tenglong" or gun_id == "knife") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1761,6 +1859,7 @@ const HOLD_DELTA := {
 	# grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
 	# （AR 式握把与 k416/k437/sr25/qcq171 同锚）
 	"tenglong": Vector3(0, 0.008, -0.0768),
+	"knife": Vector3(0, -0.038, -0.0118),   # 匕首：grip_hold 锚(0,0.016,0.01)→MK4 基准(0,-0.022,-0.0018)
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
 	"rifle": Vector3(0, 0.0090, -0.0690),

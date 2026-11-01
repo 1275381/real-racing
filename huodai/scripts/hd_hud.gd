@@ -476,6 +476,9 @@ func set_ammo(cur: int, reserve: int) -> void:
 		setup()
 	# 靶场模式备弹显示 ∞：练习弹是固定大额虚拟弹药、与库存无关——
 	# 显示真实数字（如 9999）反而像库存余量，跟「免费」语义打架
+	if cur < 0:
+		_ammo_label.text = "∞"   # 近战匕首（2026-11-01）：无弹药概念
+		return
 	if _menu_kind == "range":
 		_ammo_label.text = "%d / ∞" % cur
 	else:

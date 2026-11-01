@@ -694,6 +694,55 @@ func _run() -> void:
 	main.targets.set_armor_lv(1)
 	main.targets.set_dummy_hp(100.0)
 
+	# 10d. 近战刀槽（2026-11-01 用户定案：默认战术匕首）：X 拔刀/收刀、
+	#      2.2m 内 60 伤（6 级穿透）、无弹药概念、超程不中
+	check("进场常驻近战槽（战术匕首）", main.guns._slots.has("melee")
+			and str(main.guns._slots["melee"]["id"]) == "knife")
+	Input.action_press("hd_melee")
+	main.guns.update(0.016)
+	Input.action_release("hd_melee")
+	main.guns.update(0.016)   # 松键帧：边沿检测要看到 release 才认下一次 press
+	check("X 拔刀（无弹药哨兵）", main.guns.cur_id == "knife"
+			and main.guns.ammo == -1)
+	Input.action_press("hd_melee")
+	main.guns.update(0.016)
+	Input.action_release("hd_melee")
+	check("再按 X 收刀回主武器", main.guns.cur_id == "rifle")
+	# 近战实刺：常规兵摆到面前 1.5m（胸与眼平齐→pitch 0 直刺），冻结防走位
+	main.soldiers.frozen = true
+	var kn_i := -1
+	for i_k in main.soldiers.soldiers.size():
+		var sk: Dictionary = main.soldiers.soldiers[i_k]
+		if not bool(sk["dead"]) and str(sk["tier"]) == "regular":
+			kn_i = i_k
+			break
+	if kn_i >= 0:
+		var fwd_k := Vector3(sin(main.player.yaw), 0.0, cos(main.player.yaw))
+		var at_k: Vector3 = main.player.pos + fwd_k * 1.5
+		at_k.y = main.player.pos.y + 0.62   # 士兵脚位抬高 0.62：胸口(脚+1.0)≈眼高(1.62)
+		main.soldiers.soldiers[kn_i]["pos"] = at_k
+		main.soldiers.soldiers[kn_i]["moving"] = false
+		main.soldiers._write_pose(kn_i)
+		main.player.pitch = 0.0
+		main.player.update(0.016)   # 同步相机
+		main.guns._equip("melee")
+		main.guns.try_fire()
+		var hp_k := float(main.soldiers.soldiers[kn_i]["hp"])
+		check("匕首实刺 60 伤（6 级穿透全额）", absf(100.0 - hp_k - 60.0) < 0.01,
+			"hp=%.1f" % hp_k)
+		# 超程（3.5m > 2.2m）不中：冷却清零再刺
+		main.guns.fire_cd = 0.0
+		var far_k: Vector3 = main.player.pos + fwd_k * 3.5
+		far_k.y = at_k.y
+		main.soldiers.soldiers[kn_i]["pos"] = far_k
+		main.soldiers._write_pose(kn_i)
+		main.player.update(0.016)
+		main.guns.try_fire()
+		check("匕首超程不中（2.2m 射程）",
+				absf(float(main.soldiers.soldiers[kn_i]["hp"]) - hp_k) < 0.01)
+		main.soldiers.reset_all()
+	main.guns._equip("primary")
+
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
 	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——
 	#      须在离场前断言：_back_to_lobby 会把菜单复位回实战文案
@@ -1379,7 +1428,10 @@ func _run() -> void:
 		# 48 顶点，首个版本就栽在这）
 		var pre_root: Node3D
 		var pre_anchor: Vector3
-		if HDGuns._smg_has(u_gid):
+		if u_gid == "knife":
+			pre_root = HDGuns._knife_build()
+			pre_anchor = Vector3(0.06, 0.02, -0.18)
+		elif HDGuns._smg_has(u_gid):
 			pre_root = HDGuns._smg_build(u_gid)
 			pre_anchor = HDGuns._smg_scope_anchor(u_gid)
 		elif HDGuns._ar_has(u_gid):
@@ -2068,8 +2120,9 @@ func _run() -> void:
 	main.loot._ground.clear()
 	main.loot._ground_i = -1
 	await frames(4)
-	check("单枪出发（副武器空槽只装一把）", main.guns._slots.size() == 1
-		and str(main.guns.cur_id) == "pistol")
+	check("单枪出发（副武器空槽只装一把+常驻近战槽）", main.guns._slots.size() == 2
+			and str(main.guns.cur_id) == "pistol"
+			and main.guns._slots.has("melee"))
 	for i in HDData.BACKPACK_MAX:
 		main.loot.backpack.append({"uid": "f%02d" % i, "name": "废料", "icon": "",
 			"rarity": 0, "value": 20 + i})

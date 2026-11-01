@@ -986,7 +986,7 @@ func _initialize() -> void:
 	# 双销机匣/多边形护木/4 档可调托）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong",
+			"qcq171", "tenglong", "knife",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
