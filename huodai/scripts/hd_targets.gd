@@ -15,7 +15,7 @@ extends Node3D
 signal score_changed(score: int)
 signal dummy_hit(hp_left: float, killed: bool)   # 命中反馈（main 接 hitmark/播报）
 
-const LANE_DX := [-2.0, 0.0, 2.0]       # 三条射击位横向间距
+const LANE_DX := [-6.0, 0.0, 6.0]       # 三条射击位横向间距（2026-11-01 用户定案：假人分远点、馆收窄）
 const FIRE_DZ := 11.0                   # 射击线在馆心 +Z 侧的距离
 const FIXED_DX := -0.6                  # 固定靶在道内左偏
 const SWING_DX := 0.6                   # 移动靶滑轨中心在道内右偏

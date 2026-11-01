@@ -83,10 +83,10 @@ const FALLBACK_COLOR := {
 	"warehouse": Color(0.54, 0.52, 0.47), "wreck": Color(0.42, 0.37, 0.34),
 }
 
-## 靶馆壳体（44 宽 ×5 高 ×225 深=210 靶道+15 后区；混凝土封闭；射击线在
-## 馆心 +Z 侧 +11。2026-10-31 靶场 2.0 参考图重做：馆体拉深容纳 1~200m
-## 可调靶距，玻璃/钢框隔断+射击台+横梁灯组+沙堆挡弹+涂鸦/橙光点缀）
-const HALL_HX := 22.0
+## 靶馆壳体（26 宽 ×5 高 ×225 深=210 靶道+15 后区；混凝土封闭；射击线在
+## 馆心 +Z 侧 +11。2026-11-01 收窄：44→26（用户「靶场太宽了」）配合三道
+## 拉开 ±6；玻璃/钢框隔断+射击台+横梁灯组+沙堆挡弹+涂鸦/橙光点缀）
+const HALL_HX := 13.0
 const HALL_BACK := 210.0         # -Z 靶道纵深（200m 最远靶 + 沙堆缓冲）
 const HALL_FRONT := 15.0         # +Z 射击线后区（射击线 +11、+Z 墙 +15）
 const HALL_H := 5.0
@@ -1415,9 +1415,9 @@ func _build_hall() -> void:
 		l.set_meta("keep_map", true)
 		oz -= 30.0
 
-	# ---- 玻璃/钢框隔断 ×3（射击线分道；玻璃不登记障碍=子弹可穿，
-	#      整体一道障碍挡人；2.2m 高金属框+青绿玻璃）----
-	for dx in [-3.0, -1.0, 1.0]:
+	# ---- 玻璃/钢框隔断 ×2（射击线分道；玻璃不登记障碍=子弹可穿，
+	#      整体一道障碍挡人；2.2m 高金属框+青绿玻璃；道距拉开后 ±3 分道）----
+	for dx in [-3.0, 3.0]:
 		var px: float = cx + dx
 		_hall_box(px, HALL_FLOOR_Y + 1.25, cz + HALL_FIRE_DZ, 0.05, 1.9, 5.7, mat_glass)
 		_hall_box(px, HALL_FLOOR_Y + 2.22, cz + HALL_FIRE_DZ, 0.12, 0.14, 6.0, mat_steel)
@@ -1427,8 +1427,8 @@ func _build_hall() -> void:
 		_add_obstacle(px, cz + HALL_FIRE_DZ, 0.12, 3.0, HALL_FLOOR_Y + 2.2,
 				HALL_FLOOR_Y - 0.1, true)
 
-	# ---- 射击台 ×3（青绿台面 0.95m 高，眼高弹道从上方过；台间 1.1m 可走）----
-	for lx in [-2.0, 0.0, 2.0]:
+	# ---- 射击台 ×3（青绿台面 0.95m 高，眼高弹道从上方过；随道距 ±6 摆）----
+	for lx in [-6.0, 0.0, 6.0]:
 		var bx: float = cx + lx
 		_hall_box(bx, HALL_FLOOR_Y + 0.91, cz + HALL_FIRE_DZ - 1.0, 0.9, 0.08, 0.7, mat_bench)
 		for lz2 in [-0.25, 0.25]:
@@ -1439,13 +1439,13 @@ func _build_hall() -> void:
 
 	# ---- 地面：射击线黄黑警示条 + 黄色射道纵线 ×3 + 射道编号 1/2/3 ----
 	var hy := HALL_FLOOR_Y + 0.02
-	for k in 20:
-		var sx := cx - 19.0 + float(k) * 2.0
+	for k in 13:
+		var sx := cx - 12.0 + float(k) * 2.0
 		var bm := StandardMaterial3D.new()
 		bm.albedo_color = Color(0.78, 0.6, 0.12) if k % 2 == 0 else Color(0.12, 0.12, 0.12)
 		bm.roughness = 0.85
 		_hall_box(sx, hy, cz + HALL_FIRE_DZ + 1.6, 2.0, 0.02, 0.4, bm)
-	for dx in [-3.0, -1.0, 1.0]:
+	for dx in [-3.0, 3.0]:
 		_hall_box(cx + dx, HALL_FLOOR_Y + 0.02, cz - 26.0, 0.09, 0.02, 68.0, mat_yellow)
 	for i in 3:
 		var lane_no := Label3D.new()
@@ -1455,7 +1455,7 @@ func _build_hall() -> void:
 		lane_no.modulate = Color(0.9, 0.72, 0.1)
 		lane_no.outline_size = 12
 		lane_no.rotation.x = -PI * 0.5
-		lane_no.position = Vector3(cx - 2.0 + float(i) * 2.0,
+		lane_no.position = Vector3(cx + float(i) * 6.0 - 6.0,
 				HALL_FLOOR_Y + 0.03, cz + HALL_FIRE_DZ + 3.2)
 		add_child(lane_no)
 		lane_no.set_meta("keep_map", true)
@@ -1471,7 +1471,7 @@ func _build_hall() -> void:
 		dm.modulate = Color(0.92, 0.92, 0.9)
 		dm.outline_size = 10
 		dm.rotation.x = -PI * 0.5
-		dm.position = Vector3(cx - 18.5, HALL_FLOOR_Y + 0.035, mz + 0.9)
+		dm.position = Vector3(cx - 9.5, HALL_FLOOR_Y + 0.035, mz + 0.9)
 		add_child(dm)
 		dm.set_meta("keep_map", true)
 
@@ -1525,13 +1525,13 @@ func _build_hall() -> void:
 		drum_m.material = mat_cable
 		drum.mesh = drum_m
 		drum.rotation.x = PI * 0.5
-		drum.position = Vector3(cx + 16.5, HALL_FLOOR_Y + 0.58, cz + dz2)
+		drum.position = Vector3(cx + 10.5, HALL_FLOOR_Y + 0.58, cz + dz2)
 		add_child(drum)
 		drum.set_meta("keep_map", true)
-	for bp in [Vector3(-16.0, 0.25, 5.5), Vector3(-15.0, 0.25, 5.2),
-			Vector3(-15.5, 0.75, 5.35)]:
+	for bp in [Vector3(-10.0, 0.25, 5.5), Vector3(-9.2, 0.25, 5.2),
+			Vector3(-9.6, 0.75, 5.35)]:
 		_hall_box(cx + bp.x, HALL_FLOOR_Y + bp.y, cz + bp.z, 0.85, 0.5, 0.55, mat_olive)
-	for cam_x in [-20.2, 20.2]:
+	for cam_x in [-11.8, 11.8]:
 		var cam := MeshInstance3D.new()
 		var cam_m := BoxMesh.new()
 		cam_m.size = Vector3(0.36, 0.16, 0.22)
