@@ -567,7 +567,7 @@ func try_fire() -> void:
 			hit_enemy.emit(kind, int(h["i"]), end, hd, head)
 		elif kind == "target" and targets != null:
 			# 血量+护甲制（2026-11-01）：弹种倍率/穿透与士兵结算同源
-			var ammo: Dictionary = Guns.ammo_by_id("standard")
+			var ammo: Dictionary = Guns.ammo_by_id("lv1")
 			if ammo_provider.is_valid():
 				var a2: Dictionary = ammo_provider.call(cur_id)
 				if not a2.is_empty():

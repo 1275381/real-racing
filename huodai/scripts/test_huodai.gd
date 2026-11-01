@@ -346,21 +346,25 @@ func _run() -> void:
 	# 2e. 弹种接线 + 投掷物（阶段 D）：弹种循环购买/切回/免重复扣款 → 投掷物购买
 	#     上限 → 开一局：7 键投掷消耗 → 三类起爆（破片杀兵/闪光致盲+白屏/烟球遮蔽）
 	main.stash.cash = 99999
-	check("弹种缺省标准弹", main.stash.ammo_kind_of("rifle") == "standard")
+	check("弹种缺省一级弹", main.stash.ammo_kind_of("rifle") == "lv1")
 	var ck0: int = main.stash.cash
 	var rr: Array = main.stash.cycle_ammo_kind("rifle")
-	check("首切强力弹自动购买（₵600）", bool(rr[0]) and str(rr[1]) == "power"
-		and main.stash.cash == ck0 - 600)
-	main.stash.cycle_ammo_kind("rifle")   # → 穿甲弹（购 ₵1500）
-	main.stash.cycle_ammo_kind("rifle")   # → 燃烧弹（购 ₵3000）
+	check("首切二级弹自动购买（₵300）", bool(rr[0]) and str(rr[1]) == "lv2"
+			and main.stash.cash == ck0 - 300)
+	main.stash.cycle_ammo_kind("rifle")   # → 三级弹（购 ₵700）
+	main.stash.cycle_ammo_kind("rifle")   # → 四级弹（购 ₵1200）
+	main.stash.cycle_ammo_kind("rifle")   # → 五级弹（购 ₵1800）
+	main.stash.cycle_ammo_kind("rifle")   # → 六级弹（购 ₵2600）
 	rr = main.stash.cycle_ammo_kind("rifle")
-	check("循环到头回标准弹（免费切回）", bool(rr[0]) and str(rr[1]) == "standard")
+	check("循环到头回一级弹（免费切回）", bool(rr[0]) and str(rr[1]) == "lv1")
 	var ck1: int = main.stash.cash
-	rr = main.stash.cycle_ammo_kind("rifle")   # → 强力弹（已购不再扣款）
-	check("已购弹种换装零扣款", bool(rr[0]) and str(rr[1]) == "power"
-		and main.stash.cash == ck1)
-	check("燃烧弹倍率表落位（2.2×）",
-		is_equal_approx(float(Guns.ammo_by_id("incendiary")["dmg_mul"]), 2.2))
+	rr = main.stash.cycle_ammo_kind("rifle")   # → 二级弹（已购不再扣款）
+	check("已购弹种换装零扣款", bool(rr[0]) and str(rr[1]) == "lv2"
+			and main.stash.cash == ck1)
+	check("弹种六级表落位（pen 1~6 · 六级 2.0×）", Guns.AMMO.size() == 6
+			and int(Guns.AMMO[0]["pen"]) == 1 and int(Guns.AMMO[5]["pen"]) == 6
+			and is_equal_approx(float(Guns.ammo_by_id("lv6")["dmg_mul"]), 2.0)
+			and int(Guns.ammo_by_id("lv6")["pen"]) == 6)
 	main.stash.throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	var tb_ok: bool = main.stash.buy_throwable("frag") and main.stash.buy_throwable("frag") \
 			and main.stash.buy_throwable("frag")

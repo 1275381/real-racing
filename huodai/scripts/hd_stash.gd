@@ -40,8 +40,8 @@ var tutorial_done := false            # 首局引导已完成/跳过（老档有
 ## contracts = [{id, prog, done, paid}]，def 查 HDData.CONTRACT_POOL
 var contracts_day: String = ""
 var contracts: Array = []
-## 弹种（阶段 D）：ammo_kind = gun_id → 当前装备弹种 id（缺省 standard）；
-## ammo_kinds_owned = gun_id → 已购弹种 id 数组（standard 恒有）
+## 弹种（2026-11-01 改 1~6 级弹）：ammo_kind = gun_id → 当前弹种 id（缺省 lv1）；
+## ammo_kinds_owned = gun_id → 已购弹种 id 数组（lv1 恒有；老档 standard/power/ap/incendiary id 作废归 lv1）
 var ammo_kind: Dictionary = {}
 var ammo_kinds_owned: Dictionary = {}
 ## 投掷物库存（阶段 D）：kind → 件数（买了常驻、局内消耗、阵亡不丢）
@@ -300,7 +300,7 @@ func _load() -> void:
 				"done": bool(ct.get("done", false)),
 				"paid": bool(ct.get("paid", false)),
 			})
-	# 弹种 + 投掷物（阶段 D）：老档无字段 = 缺省（standard / 三件 0）
+	# 弹种 + 投掷物：老档无字段 = 缺省（lv1 / 三件 0）；老弹种 id 不在表内自动过滤
 	var kind_ids := {}
 	for ad in Guns.AMMO:
 		kind_ids[str(ad["id"])] = true
@@ -311,14 +311,14 @@ func _load() -> void:
 			var k := str(k0)
 			if kind_ids.has(k) and not owned0.has(k):
 				owned0.append(k)
-		if not owned0.has("standard"):
-			owned0.push_front("standard")
+		if not owned0.has("lv1"):
+			owned0.push_front("lv1")
 		ammo_kinds_owned[str(gk)] = owned0
 	var raw_kind := _to_dict(d.get("ammo_kind", null))
 	for gk2 in raw_kind.keys():
 		var kk := str(raw_kind[gk2])
-		var owned_l: Array = ammo_kinds_owned.get(str(gk2), ["standard"])
-		if kk == "standard" or owned_l.has(kk):
+		var owned_l: Array = ammo_kinds_owned.get(str(gk2), ["lv1"])
+		if kk == "lv1" or owned_l.has(kk):
 			ammo_kind[str(gk2)] = kk
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
@@ -416,22 +416,22 @@ func check_in() -> int:
 
 ## 当前弹种（缺省标准弹）
 func ammo_kind_of(gid: String) -> String:
-	return str(ammo_kind.get(gid, "standard"))
+	return str(ammo_kind.get(gid, "lv1"))
 
 
 ## N 键循环弹种：下一档未购则现场购买（钱不够 false + 提示），已购则直接换装。
-## 返回 [ok, 新弹种 id]；standard 恒可切回
+## 返回 [ok, 新弹种 id]；lv1 恒可切回
 func cycle_ammo_kind(gid: String) -> Array:
 	var order: Array = []
 	for ad in Guns.AMMO:
 		order.append(str(ad["id"]))
 	var cur_i := order.find(ammo_kind_of(gid))
 	var nxt: String = order[(cur_i + 1) % order.size()]
-	if nxt == "standard":
-		ammo_kind[gid] = "standard"
+	if nxt == "lv1":
+		ammo_kind[gid] = "lv1"
 		save()
-		return [true, "standard"]
-	var owned: Array = ammo_kinds_owned.get(gid, ["standard"])
+		return [true, "lv1"]
+	var owned: Array = ammo_kinds_owned.get(gid, ["lv1"])
 	if owned.has(nxt):
 		ammo_kind[gid] = nxt
 		save()

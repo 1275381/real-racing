@@ -594,9 +594,13 @@ func _rank_of(v: float) -> String:
 	return "C"
 
 func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: bool) -> void:
-	# 弹种伤害倍率（阶段 D 接线：Guns.AMMO 表——装备弹种随枪结算）
-	var mul := float(Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id)).get("dmg_mul", 1.0))
-	var res: Dictionary = soldiers.apply_hit(idx, dmg * mul, head)
+	# 弹种（2026-11-01 改 1~6 级弹）：伤害倍率 + 穿透等级随枪结算；
+	# 枪甲伤 ad 一并接进实弹路径——此前缺省 ad=0 甲永不耗尽，精英 4 甲
+	# 身体部位恒 0% 入肉只剩爆头可打的失衡就此修复
+	var ammo: Dictionary = Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id))
+	var res: Dictionary = soldiers.apply_hit(idx, dmg * float(ammo.get("dmg_mul", 1.0)),
+			head, float(Guns.gun_by_id(guns.cur_id).get("ad", 0.0)),
+			int(ammo.get("pen", 2)))
 	hud.hitmark(head, bool(res.get("killed", false)), bool(res.get("armor", false)))
 	audio.play_hit()
 

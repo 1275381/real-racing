@@ -297,16 +297,22 @@ static func shop_gun_by_id(id: String) -> Dictionary:
 	return {}
 
 
-# 弹药类型：装备后影响所有枪械的伤害与曳光/火花颜色
+# 弹药类型（2026-11-01 用户定案改 1~6 级弹，与护甲 1~6 级对位）：等级=
+# 穿透（pen）决定入肉系数（HDData.pen_coef），伤害倍率随档抬升；
+# lv1 恒免费（缺省/循环切回）；曳光/火花颜色随档
 const AMMO := [
-	{"id": "standard", "name": "标准弹", "desc": "标准威力", "price": 0, "dmg_mul": 1.0,
-		"color": Color(1.0, 0.8, 0.35)},
-	{"id": "power", "name": "强力弹", "desc": "伤害 +35%", "price": 600, "dmg_mul": 1.35,
-		"color": Color(1.0, 0.55, 0.2)},
-	{"id": "ap", "name": "穿甲弹", "desc": "伤害 +75%", "price": 1500, "dmg_mul": 1.75,
-		"color": Color(0.75, 0.85, 1.0)},
-	{"id": "incendiary", "name": "燃烧弹", "desc": "伤害 +120% · 红色曳光", "price": 3000,
-		"dmg_mul": 2.2, "color": Color(1.0, 0.3, 0.15)},
+	{"id": "lv1", "name": "一级弹", "desc": "穿透 1 级", "price": 0, "dmg_mul": 1.0,
+		"pen": 1, "color": Color(0.82, 0.82, 0.78)},
+	{"id": "lv2", "name": "二级弹", "desc": "穿透 2 级 · 伤害 +10%", "price": 300,
+		"dmg_mul": 1.1, "pen": 2, "color": Color(1.0, 0.8, 0.35)},
+	{"id": "lv3", "name": "三级弹", "desc": "穿透 3 级 · 伤害 +25%", "price": 700,
+		"dmg_mul": 1.25, "pen": 3, "color": Color(0.55, 0.85, 0.5)},
+	{"id": "lv4", "name": "四级弹", "desc": "穿透 4 级 · 伤害 +45%", "price": 1200,
+		"dmg_mul": 1.45, "pen": 4, "color": Color(0.55, 0.7, 1.0)},
+	{"id": "lv5", "name": "五级弹", "desc": "穿透 5 级 · 伤害 +70%", "price": 1800,
+		"dmg_mul": 1.7, "pen": 5, "color": Color(0.8, 0.55, 1.0)},
+	{"id": "lv6", "name": "六级弹", "desc": "穿透 6 级 · 伤害 +100% · 红色曳光", "price": 2600,
+		"dmg_mul": 2.0, "pen": 6, "color": Color(1.0, 0.3, 0.15)},
 ]
 
 
