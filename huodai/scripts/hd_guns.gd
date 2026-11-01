@@ -646,9 +646,15 @@ func try_fire() -> void:
 	var base_dir: Vector3 = -player.cam.global_transform.basis.z
 	var wear_mul := _dur_mul()
 	var spread: float = float(_g.get("spread", 0.0)) * lerpf(1.0, ADS_SPREAD, _ads) * wear_mul
-	var pellets: int = int(_g.get("pellets", 1))
 	var max_r: float = float(_g.get("range", 250.0))
 	var dmg: float = float(_g.get("dmg", 20.0))
+	# 弹种（2026-11-01 双头弹：pellets 覆盖枪默认——双弹头走霰弹枪多射线链）
+	var ammo: Dictionary = Guns.ammo_by_id("lv1")
+	if ammo_provider.is_valid():
+		var a0: Dictionary = ammo_provider.call(cur_id)
+		if not a0.is_empty():
+			ammo = a0
+	var pellets: int = int(ammo.get("pellets", _g.get("pellets", 1)))
 	var sup := _sup_on(cur_id)
 	if sup:
 		dmg *= HDData.SUP_DMG_MUL
@@ -668,14 +674,12 @@ func try_fire() -> void:
 			var hd: float = dmg * (HEADSHOT_MUL if head else 1.0)
 			hit_enemy.emit(kind, int(h["i"]), end, hd, head)
 		elif kind == "target" and targets != null:
-			# 血量+护甲制（2026-11-01）：弹种倍率/穿透与士兵结算同源
-			var ammo: Dictionary = Guns.ammo_by_id("lv1")
-			if ammo_provider.is_valid():
-				var a2: Dictionary = ammo_provider.call(cur_id)
-				if not a2.is_empty():
-					ammo = a2
+			# 血量+护甲制（2026-11-01）：弹种倍率/穿透与士兵结算同源；
+			# 双头弹 pen≥90 = 无视护甲直伤（ad 0 不磨损假人甲）
+			var t_ad: float = 0.0 if int(ammo.get("pen", 2)) >= 90 \
+					else float(_g.get("ad", 0.0))
 			targets.on_hit(int(h["i"]), dmg * float(ammo.get("dmg_mul", 1.0)),
-					float(_g.get("ad", 0.0)), int(ammo.get("pen", 2)))
+					t_ad, int(ammo.get("pen", 2)))
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；

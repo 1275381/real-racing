@@ -361,10 +361,57 @@ func _run() -> void:
 	rr = main.stash.cycle_ammo_kind("rifle")   # → 二级弹（已购不再扣款）
 	check("已购弹种换装零扣款", bool(rr[0]) and str(rr[1]) == "lv2"
 			and main.stash.cash == ck1)
-	check("弹种六级表落位（pen 1~6 · 六级 2.0×）", Guns.AMMO.size() == 6
+	check("弹种六级表落位（pen 1~6 · 六级 2.0×）", Guns.AMMO.size() == 7
 			and int(Guns.AMMO[0]["pen"]) == 1 and int(Guns.AMMO[5]["pen"]) == 6
 			and is_equal_approx(float(Guns.ammo_by_id("lv6")["dmg_mul"]), 2.0)
 			and int(Guns.ammo_by_id("lv6")["pen"]) == 6)
+	# 2f. 双头弹（2026-11-01 用户定案：ASH-12 专属、无视护甲直伤）
+	check("双头弹表落位（ASH-12 专属 · 双弹头 · pen99）",
+			str(Guns.ammo_by_id("duplex")["only"]) == "ash12"
+			and int(Guns.ammo_by_id("duplex")["pellets"]) == 2
+			and int(Guns.ammo_by_id("duplex")["pen"]) == 99)
+	# 专属过滤：rifle 全循环不出现 duplex；ash12 循环能到 duplex
+	var saw_dup_rifle := false
+	for i_c in 8:
+		var rc_c: Array = main.stash.cycle_ammo_kind("rifle")
+		if str(rc_c[1]) == "duplex":
+			saw_dup_rifle = true
+	check("专属过滤：其他枪循环不含双头弹", not saw_dup_rifle
+			and main.stash.ammo_kind_of("rifle") != "duplex")
+	main.stash.cash = 99999
+	main.stash.ammo_kinds_owned["ash12"] = ["lv1"]
+	main.stash.ammo_kind["ash12"] = "lv1"
+	var saw_dup_ash := false
+	for i_c in 8:
+		var rc_d: Array = main.stash.cycle_ammo_kind("ash12")
+		if str(rc_d[1]) == "duplex":
+			saw_dup_ash = true
+			break
+	check("ASH-12 可循环购得双头弹", saw_dup_ash
+			and main.stash.ammo_kind_of("ash12") == "duplex")
+	# 无视护甲：4 甲精英吃双头弹全额直伤、甲耐久分文不损
+	# （结算是 main._on_hit_enemy 按当前枪弹种走——必须真装备 ash12）
+	if not main.stash.guns_owned.has("ash12"):
+		main.stash.guns_owned.append("ash12")
+	main.guns.enter({"primary": "ash12", "secondary": "pistol"})
+	var el_d := -1
+	for i_e in main.soldiers.soldiers.size():
+		if str(main.soldiers.soldiers[i_e]["tier"]) == "elite" \
+				and not bool(main.soldiers.soldiers[i_e]["dead"]):
+			el_d = i_e
+			break
+	if el_d >= 0:
+		var sd: Dictionary = main.soldiers.soldiers[el_d]
+		sd["hp"] = 100.0
+		sd["armor"] = 60.0
+		main._on_hit_enemy("soldier", el_d, Vector3.ZERO, 56.0, false)
+		check("双头弹无视 4 级甲直伤（56×0.62=34.7 · 甲不磨损）",
+				absf(float(sd["hp"]) - (100.0 - 56.0 * 0.62)) < 0.01
+				and absf(float(sd["armor"]) - 60.0) < 0.01,
+			"hp=%.1f armor=%.1f" % [float(sd["hp"]), float(sd["armor"])])
+		sd["hp"] = 100.0
+	main.stash.ammo_kind["ash12"] = "lv1"   # 复位，不污染后续弹药断言
+	main.guns.enter({"primary": "rifle", "secondary": "pistol"})   # 装备复位
 	main.stash.throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	var tb_ok: bool = main.stash.buy_throwable("frag") and main.stash.buy_throwable("frag") \
 			and main.stash.buy_throwable("frag")

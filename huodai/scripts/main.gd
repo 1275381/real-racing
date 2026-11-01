@@ -605,6 +605,13 @@ func _on_hit_enemy(kind: String, idx: int, point: Vector3, dmg: float, head: boo
 		audio.play_hit()
 		return
 	var ammo: Dictionary = Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id))
+	# 双头弹（pen≥90）：无视护甲全额直伤——甲不磨损不折减
+	if int(ammo.get("pen", 2)) >= 90:
+		var rb: Dictionary = soldiers.apply_hit(idx, dmg * float(ammo.get("dmg_mul", 1.0)),
+				head, 0.0, 99)
+		hud.hitmark(head, bool(rb.get("killed", false)), false)
+		audio.play_hit()
+		return
 	var res: Dictionary = soldiers.apply_hit(idx, dmg * float(ammo.get("dmg_mul", 1.0)),
 			head, float(Guns.gun_by_id(guns.cur_id).get("ad", 0.0)),
 			int(ammo.get("pen", 2)))
@@ -945,7 +952,8 @@ func _range_ttk_text() -> String:
 		return ""
 	var g: Dictionary = Guns.gun_by_id(guns.cur_id)
 	var ammo: Dictionary = Guns.ammo_by_id(stash.ammo_kind_of(guns.cur_id))
-	var dmg: float = float(g.get("dmg", 20.0)) * float(ammo.get("dmg_mul", 1.0))
+	var dmg: float = float(g.get("dmg", 20.0)) * float(ammo.get("dmg_mul", 1.0)) \
+			* float(ammo.get("pellets", 1.0))   # 双头弹按两弹头全中合并估 TTK
 	var cd: float = float(g.get("cd", 0.1))
 	var prof: Array = g.get("cd_profile", [])
 	if not prof.is_empty():

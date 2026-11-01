@@ -318,7 +318,8 @@ func _load() -> void:
 	for gk2 in raw_kind.keys():
 		var kk := str(raw_kind[gk2])
 		var owned_l: Array = ammo_kinds_owned.get(str(gk2), ["lv1"])
-		if kk == "lv1" or owned_l.has(kk):
+		var kk_only := str(Guns.ammo_by_id(kk).get("only", ""))
+		if kk == "lv1" or (owned_l.has(kk) and (kk_only == "" or kk_only == str(gk2))):
 			ammo_kind[str(gk2)] = kk
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
@@ -424,6 +425,10 @@ func ammo_kind_of(gid: String) -> String:
 func cycle_ammo_kind(gid: String) -> Array:
 	var order: Array = []
 	for ad in Guns.AMMO:
+		# 专属弹（only 字段）只出现在指定枪的循环里（双头弹=ASH-12）
+		var only := str(ad.get("only", ""))
+		if only != "" and only != gid:
+			continue
 		order.append(str(ad["id"]))
 	var cur_i := order.find(ammo_kind_of(gid))
 	var nxt: String = order[(cur_i + 1) % order.size()]
