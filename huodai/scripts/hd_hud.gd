@@ -64,7 +64,9 @@ var _score_label: Label
 var _pad: Control                  # 靶场控制平板面板（2026-11-01：桌面平板 UI）
 var _pad_slider: HSlider
 var _pad_dist_lab: Label
-var _pad_mover_btns: Array = []    # 三档 25/50/75 toggle 按钮
+var _pad_mover_slider: HSlider     # 移动靶距滑条（2026-11-01 二轮：靶道深 210m，移动靶也要能拉远）
+var _pad_mover_lab: Label
+var _pad_mover_btns: Array = []    # 三档 25/50/75 快捷按钮
 var _pad_mode_btns: Array = []     # 慢/中/快/随机 toggle 按钮
 var pad_open: bool = false
 var _score_seen := false
@@ -783,6 +785,7 @@ func open_range_pad(dist: float, mover: float, mode: int) -> void:
 	if _pad == null:
 		_build_range_pad()
 	_pad_slider.value = dist
+	_pad_mover_slider.value = mover
 	_refresh_pad_mover(mover)
 	_refresh_pad_mode(mode)
 	_pad.visible = true
@@ -807,9 +810,9 @@ func _build_range_pad() -> void:
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.offset_left = -230
-	panel.offset_top = -190
+	panel.offset_top = -215
 	panel.offset_right = 230
-	panel.offset_bottom = 190
+	panel.offset_bottom = 215
 	_pad.add_child(panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
@@ -843,9 +846,29 @@ func _build_range_pad() -> void:
 			_pad_dist_lab.text = "%dm" % int(v)
 			pad_dist.emit(v))
 	var lab2 := Label.new()
-	lab2.text = "移动靶距 · 三档"
+	lab2.text = "移动靶距 · 拖动滑条 1~200m（三档快捷）"
 	lab2.add_theme_font_size_override("font_size", 18)
 	box.add_child(lab2)
+	var row2s := HBoxContainer.new()
+	row2s.add_theme_constant_override("separation", 10)
+	box.add_child(row2s)
+	_pad_mover_slider = HSlider.new()
+	_pad_mover_slider.min_value = 1
+	_pad_mover_slider.max_value = 200
+	_pad_mover_slider.step = 1
+	_pad_mover_slider.custom_minimum_size = Vector2(330, 26)
+	_pad_mover_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row2s.add_child(_pad_mover_slider)
+	_pad_mover_lab = Label.new()
+	_pad_mover_lab.text = "25m"
+	_pad_mover_lab.add_theme_font_size_override("font_size", 22)
+	_pad_mover_lab.add_theme_color_override("font_color", Color(0.3, 0.9, 0.8))
+	_pad_mover_lab.custom_minimum_size = Vector2(64, 0)
+	row2s.add_child(_pad_mover_lab)
+	_pad_mover_slider.value_changed.connect(func(v: float):
+			_pad_mover_lab.text = "%dm" % int(v)
+			_refresh_pad_mover(v)
+			pad_mover.emit(v))
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 10)
 	box.add_child(row2)
@@ -856,6 +879,7 @@ func _build_range_pad() -> void:
 		b.custom_minimum_size = Vector2(110, 40)
 		var vv: float = v
 		b.pressed.connect(func():
+			_pad_mover_slider.value = vv
 			_refresh_pad_mover(vv)
 			pad_mover.emit(vv))
 		row2.add_child(b)

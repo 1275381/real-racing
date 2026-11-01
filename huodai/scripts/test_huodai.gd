@@ -634,6 +634,13 @@ func _run() -> void:
 			and main.hud._pad_mode_btns.size() == 4)
 	main.hud.close_range_pad()
 	check("平板面板可收", not main.hud.pad_open)
+	main.targets.set_mover_dist(200.0)
+	check("移动靶可拉远至 200m（滑条档）", absf(
+			float(main.targets._targets[1]["root"].position.z)
+			- (HDData.HALL_CENTER.z + HDTargets.FIRE_DZ - 200.0
+				- HDTargets.SWING_DEPTH)) < 0.01)
+	main.targets.set_mover_dist(300.0)
+	check("移动靶距上限 200m 钳制", main.targets.mover_dist == 200.0)
 	main.targets.set_mover_dist(HDTargets.MOVER_PRESETS[0])
 
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，

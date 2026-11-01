@@ -109,11 +109,13 @@ func set_range_dist(d: float) -> bool:
 	return true
 
 
-## 调移动靶距（三档 25/50/75，平板按钮）：重摆移动假人与钢轨 + 回满血
+## 调移动靶距（滑条 1~200m 任意调，25/50/75 是平板快捷档）：重摆移动
+## 假人与钢轨 + 回满血
 func set_mover_dist(d: float) -> bool:
-	if is_equal_approx(d, mover_dist):
+	var nd := clampf(d, DIST_MIN, DIST_MAX)
+	if is_equal_approx(nd, mover_dist):
 		return false
-	mover_dist = d
+	mover_dist = nd
 	var z_t := _hall_c.z + FIRE_DZ - mover_dist - SWING_DEPTH
 	for tg in _targets:
 		if bool(tg["swing"]):
