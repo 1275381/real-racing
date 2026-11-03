@@ -143,6 +143,14 @@ const RECOIL := {
 	# 慢档节拍 + 5.2-6.0kg 极厚重枪体吸能，泼水可控是三角洲 S 级评价的
 	# 手感根）
 	"ash12": [0.42, 0.08, 0.15],
+	# qjb201 5.8×42mm 班用机枪（2026-11-02 商店枪·QJB-201，785rpm 全自动）：
+	# 机枪压制档（脚架/重量压制感：上顶中低、连发累增温和——任务定案口径）：
+	# 单发推力 0.14——5.8×42 小口径弹比 m250（6.8×51 0.16）轻一档，4.4kg
+	# 空枪 + 两脚架 + 机枪级重型枪管抵肩持续压制（三角洲面板「后坐力控制
+	# 52」中位偏好）；连发累增 0.06 温和（m250 同值——785rpm 快节拍靠
+	# 重枪体+脚架压住冲量累积，泼水可控是班用机枪定位）；水平漂移 0.10
+	# 与 m250 同档（弹链供弹横向拉扯 + 高射速横漂放大，机枪标准漂移）
+	"qjb201": [0.14, 0.06, 0.10],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1322,7 +1330,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 			or gun_id == "k416" or gun_id == "an94" or gun_id == "sr25"
 			or gun_id == "k437" or gun_id == "qcq171"
 			or gun_id == "tenglong" or gun_id == "knife"
-			or gun_id == "ash12") \
+			or gun_id == "ash12"
+			or gun_id == "qjb201") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1362,6 +1371,10 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 展开准星 + 提把式照门桥内觇孔环为考证建模件（_ar_ash12 ⑤②，
 		# ref_06 提把桥），叠 iron 兜底片会悬浮轨顶与桥内觇孔叠影；改装镜
 		# 照常落 else 通用挂载，不设 pass 吞镜分支
+		# qjb201 同例（2026-11-02 商店枪·QJB-201 班用机枪·机枪册）：全长裸
+		# 顶轨上的放倒态机械瞄具前后各一为考证建模件（_lmg_qjb201 ⑬，
+		# tenglong 放倒先例），叠 iron 兜底片会悬浮轨顶与放倒瞄具叠影；
+		# 改装镜照常落 else 通用挂载，不设 pass 吞镜分支
 		pass
 	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
 	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
@@ -1371,14 +1384,20 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		var riser_on := s_kind == "reddot" or s_kind == "holo"
 		if riser_on and riser_provider != null and riser_provider.is_valid():
 			riser_on = bool(riser_provider.call(gun_id))
-		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z, riser_on)
+		# detail 仅 qjb201 传 true（R1 验收 2026-11-02：ADS 图判「红点镜
+		# 粗糙黑方块+粗黑柱连体」，细化 riser 分层与镜框——其余枪默认
+		# false 走原几何零改动）
+		_scope_visual(root, s_kind, anchor.x, anchor.y, anchor.z, riser_on,
+				gun_id == "qjb201")
 	return root
 
 
 ## 枪顶瞄具模型：按已装备瞄具风格装镜（iron=机瞄准星片）。
 ## HUD 分划由别的模块画，这里只管 3D 镜体（onfoot._scope_visual 简化移植）
+## detail = 挂载细化档（R1 验收 2026-11-02：仅 qjb201 传 true——riser 分层
+## 支架 + 玻璃窗上下框条读「带框镜体」，其余枪 false 走原几何零改动）
 func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
-		front_z: float, riser := false) -> void:
+		front_z: float, riser := false, detail := false) -> void:
 	var mk := func(c: Color, glow := 0.0) -> StandardMaterial3D:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
@@ -1430,6 +1449,19 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 		box.call(Vector3(0.012, rh, 0.028), Vector3(-0.016, top_y + 0.008 + rh * 0.5, rz), dk)
 		box.call(Vector3(0.012, rh, 0.028), Vector3(0.016, top_y + 0.008 + rh * 0.5, rz), dk)
 		box.call(Vector3(0.052, 0.008, 0.084), Vector3(0, top_y + 0.010 + rh, rz), dk)
+		if detail:
+			# qjb201 R1 验收细化（2026-11-02 判「粗黑柱连体」）：底座前后
+			# 凸唇读骑轨卡口 + 双柱间横撑 + 顶短轨上斜肩过渡块——「粗柱」
+			# 读成分层支架；高度全在既有 riser 包络内（top_y/RISER_H/aim_y
+			# 链零变化 = ADS 对位零变化）
+			box.call(Vector3(0.056, 0.005, 0.014), Vector3(0, top_y + 0.002,
+					rz - 0.049), dk)
+			box.call(Vector3(0.056, 0.005, 0.014), Vector3(0, top_y + 0.002,
+					rz + 0.049), dk)
+			box.call(Vector3(0.036, 0.006, 0.024), Vector3(0,
+					top_y + 0.008 + rh * 0.5, rz), dk)
+			box.call(Vector3(0.044, 0.006, 0.066), Vector3(0,
+					top_y + 0.013 + rh, rz), dk)
 		top_y += rh
 	# 写实化第五轮：Blender 建模瞄具（tools/blender/guns/optic_*.py，原点 = 镜座
 	# 安装面中心，尺寸按枪模同档放大）。红点镜只换镜体，玻璃片/内投影红点/
@@ -1481,6 +1513,20 @@ func _scope_visual(parent: Node3D, kind: String, top_y: float, mid_z: float,
 						win_cy - 0.001, win_z), dk)
 				box.call(Vector3(0.0025, RD_WIN_H - 0.002, 0.008), Vector3(0.0313,
 						win_cy - 0.001, win_z), dk)
+			if detail:
+				# qjb201 R1 验收镜框细化（2026-11-02 判「粗糙黑方块+粗黑柱
+				# 连体」，在 om==null 门外——写实 glb 镜壳在位时同样生效）：
+				# ① 比镜壳大一圈的导轨座板（宽 78/长 96 > glb 壳 69/74，
+				# 四缘全露）读「镜体-导轨连接结构」——glb 壳原样坐在轨上
+				# 无过渡即「黑方块连体」的主因；② 玻璃窗上/下边框条读
+				# 「带框镜体」——上框顶恰压窗顶线不越（AABB 顶=窗顶不变
+				# 量保持），下框与玻璃下沿搭接
+				box.call(Vector3(0.078, 0.008, 0.096), Vector3(0, top_y + 0.004,
+						mid_z - 0.010), dk)
+				box.call(Vector3(0.052, 0.007, 0.010), Vector3(0,
+						win_cy + RD_WIN_H * 0.5 - 0.0035, win_z), dk)
+				box.call(Vector3(0.052, 0.010, 0.012), Vector3(0,
+						top_y + 0.0205, win_z), dk)
 			# 玻璃窗：单片平玻璃 60×45×2mm，淡青透明双面——窗顶即 sight top
 			# （全镜无任何件高于玻璃）
 			box.call(Vector3(RD_WIN_W, RD_WIN_H, 0.002), Vector3(0, win_cy,
@@ -1883,6 +1929,10 @@ const HOLD_DELTA := {
 	# （无托中部握把与 k416/k437/tenglong 同锚——握把在枪身坐标系中的
 	# 合同位不随无托布局漂移，29c 持握锚 ±1.5mm 断言同链）
 	"ash12": Vector3(0, 0.008, -0.0768),
+	# qjb201 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − hd_gun_lmg _lmg_qjb201
+	# 握把顶锚 grip(pos=(0,-0.05,0.07)) = (0, -0.022+0.05, -0.0018-0.07)
+	# （机枪册后置握把与 m250 同锚同式，29c 持握锚 ±1.5mm 断言同链）
+	"qjb201": Vector3(0, 0.028, -0.0718),
 	"knife": Vector3(0, -0.038, -0.0118),   # 匕首：grip_hold 锚(0,0.016,0.01)→MK4 基准(0,-0.022,-0.0018)
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
@@ -3339,15 +3389,16 @@ static func _ar_mats() -> Dictionary:
 			"vwear": vwear, "vcover": vcover, "kmark": kmark}
 
 
-## ================= 枪匠·机枪册（m250，SIG XM250 体系） =================
-## 6.8×51mm 弹链机枪：几何体在 hd_gun_lmg.gd（LMG_LIB 路径 preload，不走裸
-## 全局名——同 hd_gunlib/hd_gun_ar 先例：新文件必须随收尾提交入库，否则门槛
-## 快照 preload 会失(FILE)）；材质走 _lmg_mats 工厂传参注入（新文件零材质
-## 创建）。弹链袋/镜座挂点契约与步枪册同口径：_lmg_mag_of 动画匣隐（弹链袋
-## mag_pouch 独立命名节点表达静置外形）、_lmg_scope_anchor 顶轨挂点。
+## ================= 枪匠·机枪册（m250 SIG XM250 / qjb201 国产 QJB-201） =================
+## 6.8×51mm 与 5.8×42mm 两把弹链机枪：几何体在 hd_gun_lmg.gd（LMG_LIB 路径
+## preload，不走裸全局名——同 hd_gunlib/hd_gun_ar 先例：新文件必须随收尾提交
+## 入库，否则门槛快照 preload 会失(FILE)）；材质走 _lmg_mats 工厂传参注入（新
+## 文件零材质创建）。弹链袋/弹箱/镜座挂点契约与步枪册同口径：_lmg_mag_of
+## 动画匣隐（m250 mag_pouch 软链袋 / qjb201 mag_qjb201 硬弹箱独立命名节点
+## 表达静置外形）、_lmg_scope_anchor 顶轨挂点。
 ## BATTLE_GUNS 的 lmg（大战场兵种配发枪）不在本册、原链路零改动。
 
-const LMG_IDS := ["m250"]
+const LMG_IDS := ["m250", "qjb201"]
 
 
 ## id 是否属于机枪册（_build_gun_visual 分发用）
@@ -3376,6 +3427,14 @@ static func _lmg_mag_of(id: String) -> Dictionary:
 		"m250":
 			return {"pos": Vector3(0.0, -0.125, -0.053),
 					"size": Vector3(0.049, 0.095, 0.066), "show": false}
+		"qjb201":
+			# 75 发硬弹箱（mag_qjb201 独立命名节点：箱顶中心枪身局部
+			# (0,-0.023,-0.11)——R5 2026-11-03 下探 14mm 让提手净空；
+			# R1 弹箱加大 0.094×0.135×0.190 后同步——size=新箱外形 ×0.63
+			# 掉匣替身缩放基准、pos 箱中下段换弹手锚按深度比例下移
+			# （随 R5 下探 -0.062→-0.076），m250 契约同式）
+			return {"pos": Vector3(0.0, -0.076, -0.062),
+					"size": Vector3(0.059, 0.085, 0.120), "show": false}
 	return {}
 
 
@@ -3387,6 +3446,10 @@ static func _lmg_scope_anchor(id: String) -> Vector3:
 			## 顶轨齿顶 0.083 / 机匣中后段（供弹盖后）/ 护木前段——裸顶轨
 			## （考证清单⑬：XM157 整体省略，镜座挂点照 mk4 写法）
 			return Vector3(0.08, -0.12, -0.5)
+		"qjb201":
+			## 顶轨齿顶 0.0745 / 机匣中后段（供弹盖后）/ 护套前段——裸顶轨
+			## （考证清单⑬：QMK-204 3x 镜整体省略，镜座挂点照 m250 写法）
+			return Vector3(0.072, -0.12, -0.5)
 	return Vector3(0.085, -0.1, -0.5)
 
 
@@ -3411,7 +3474,35 @@ static func _lmg_mats() -> Dictionary:
 	# 2026-10 判图收敛：「发光白面」主源 = fde 0.69/steel 0.788/canvas 0.761
 	# 大面在顶灯+vm_sun 直射下整片翻白——全部压档，glow 0.55→0.42；黄铜
 	# 点缀 0.69→0.58 保金色不刺眼
-	return {
+	# qjb201 专属四键（2026-11-02 并册·哑光全黑配色，m250 键零改动）：
+	# qjrec 金属机匣黑 / qjpoly 聚合物哑光黑 / qjsteel 亮钢小件 + qjmark
+	# 白刻印。R1~R4 验收修复 2026-11-02：R3 曾把 qjrec 拉到 0.185 亮金属
+	# 黑——第 4 轮相似度反降（75→68，偏离哑光全黑考证）；R4 回调收敛：
+	# qjrec 0.150 中灰金属黑（比 R2 0.158 略暗回哑光、比 R1 0.115 亮一档
+	# 读「金属」）、qjpoly 0.038 深哑黑（rough 1.0，反差 3.9 倍——「金属/
+	# 聚合物」分区靠聚合物侧加深而非金属侧提亮，对照 m250 fde 0.20 vs
+	# dark 0.105 先例）、qjsteel 0.185 亮钢（rough 0.4）；qjmark 白度
+	# 0.72→0.78（R4 判「不可见不可读」再加对比）
+	# R5 验收修复 2026-11-03（判「托/握把聚合物与金属机匣/护套明暗反差
+	# 仍小」「白刻印可读性中等」）：聚合物侧再压深 + 发光再砍（qjpoly
+	# 0.038→0.030、emission 0.052→0.036、glow 0.42→0.30——有效亮度
+	# 0.060→0.041）+ qjrec 粗糙 0.45→0.40（金属面高光更聚，不抬 albedo
+	# 守哑光考证；有效反差 3.7→5.3 倍）；qjmark 白度 0.78→0.86、发光
+	# 0.7→0.85（白/底对比再拉高）；R7 验收修复 2026-11-03（判 mark 特写
+	# 「过曝发光矩形、看不到分段结构」）：发光 0.85→0.35 + emission 色阶
+	# 压暗 0.90→0.62——白度改由 albedo 0.86 读「白漆刻印」，近距特写下
+	# 不再糊成一整块白光
+	var qjb := {
+		"qjrec": mk.call(Color(0.150, 0.155, 0.166), Color(0.165, 0.17, 0.18),
+				0.40, 0.42),
+		"qjpoly": mk.call(Color(0.030, 0.030, 0.033), Color(0.036, 0.036, 0.039),
+				1.0, 0.30),
+		"qjsteel": mk.call(Color(0.185, 0.185, 0.200), Color(0.15, 0.15, 0.165),
+				0.4, 0.42),
+		"qjmark": mk.call(Color(0.86, 0.885, 0.925),
+				Color(0.62, 0.64, 0.68), 0.55, 0.35),
+	}
+	var mats := {
 		"fde": mk.call(Color(0.20, 0.175, 0.12), Color(0.125, 0.11, 0.075), 0.7, 0.42),
 		"supp": mk.call(Color(0.19, 0.155, 0.11), Color(0.115, 0.09, 0.065), 0.6, 0.42),
 		"dark": mk.call(Color(0.105, 0.105, 0.107), Color(0.13, 0.13, 0.132), 0.55, 0.42),
@@ -3420,6 +3511,9 @@ static func _lmg_mats() -> Dictionary:
 		"webbing": mk.call(Color(0.17, 0.15, 0.115), Color(0.13, 0.115, 0.09), 0.9, 0.42),
 		"brass": mk.call(Color(0.23, 0.185, 0.085), Color(0.185, 0.15, 0.068), 0.3, 0.3),
 	}
+	for k in qjb:
+		mats[k] = qjb[k]
+	return mats
 
 
 ## ================= 枪匠·旧五枪高模重建（HDGunLib） =================

@@ -46,11 +46,13 @@
 # （馆内真入地位 + pitch -0.15，判读机匣/弹匣连接与配色）+
 # shot_gun_tenglong_right/muzzle/sn 右侧机匣/右前消焰器/左侧序列号三特写
 # （拉机柄(6)/消焰器(8)/翻折瞄具(9)/序列号(11)小件佐证）
-# （机械清点 2026-10-31：shot() 调用点 88 处（grep 'shot("res://' 计，含
-# 4 处循环体调用：逐枪美照 23 张 + 红点审计 23 张 + scope 六连拍 + 天气
-# 变体三连拍）+ 10 处 pair 各出 a/_b 双图 → 单跑实测落盘 151 张
-# （2026-10-31 全量实测；K437/QCQ171/腾龙 均并入两循环）；滚动订正以
-# grep 计数 + 单跑实测为准）
+# （机械清点 2026-11-02：shot() 调用点 97 处（grep 'shot("res://' 计，含
+# 4 处循环体调用：逐枪美照 24 张 + 红点审计 24 张 + scope 六连拍 + 天气
+# 变体三连拍）+ 10 处 pair 各出 a/_b 双图；QJB201 2026-11-02 并入两循环
+# + R2 验收补侧面三特写 right/muzzle/left（⑲ 段，照 tenglong ⑱c-e 先例）
+# + R3 验收补脚架特写 bipod + R4 验收补弹链专图 belt + R5 验收补弹匣井
+# 底部视角 well + 弹箱提手仰角 handle（2026-11-03，⑲ 段）；滚动订正以 grep
+# 计数 + 单跑实测为准）
 # 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
 #   卸/装侧视特写（rifle）+ shot_skel_stock_on/off 骨架狙击枪托装/卸侧视
@@ -984,10 +986,12 @@ func _initialize() -> void:
 	# ·册属冲锋枪 SMG_IDS/几何体 hd_gun_ar.gd _ar_qcq171）；2026-10-31
 	# 商店枪腾龙并册追加（5.8×42mm 国产 QBZ-191 突击步枪·银灰双色调
 	# 双销机匣/多边形护木/4 档可调托）；2026-11-01 商店枪 ASH-12 并册追加
-	# （12.7×55mm 无托重弹突击步枪·无托后置弹匣/提把照门桥/双室制退器）
+	# （12.7×55mm 无托重弹突击步枪·无托后置弹匣/提把照门桥/双室制退器）；
+	# 2026-11-02 商店枪 QJB201 并册追加（5.8×42mm 国产 QJB-201 班用机枪·
+	# 方正机匣/全长裸轨/下挂弹箱/金黄弹链弧形外露/骨架托）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "knife",
+			"qcq171", "tenglong", "ash12", "qjb201", "knife",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
@@ -1042,12 +1046,13 @@ func _initialize() -> void:
 	# 一个点、无框镜体丢失」）：24 把在册枪逐把装 reddot → 开镜到位 →
 	# shot_ads_rdd_<gid>.png——逐把目检镜体在位性（腾龙 2026-10-31 并册
 	# 追加——放倒翻折瞄具枪，改装镜走通用挂载必须在位；ASH-12 2026-11-01
-	# 并册追加——无托提把桥枪，改装镜走通用挂载必须在位）
+	# 并册追加——无托提把桥枪，改装镜走通用挂载必须在位；QJB201 2026-11-02
+	# 并册追加——机枪册裸轨放倒瞄具枪，改装镜走通用挂载必须在位）
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12",
+			"qcq171", "tenglong", "ash12", "qjb201",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
@@ -1753,6 +1758,103 @@ func _initialize() -> void:
 	await shot("res://out/shot_gun_tenglong_sn.png")
 	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位（防 _pose_side 残留进锁房段图）
 	main.world.set_indoor(false)   # 矩阵段收尾：恢复户外氛围
+	# ⑲ QJB201 侧面三特写（R2 验收 2026-11-02：右侧拉机柄/白刻印/弹匣井
+	#     (⑩⑫④)、右前消焰器(⑥)、左侧弹链/受弹口/散热孔(③④⑤)——腰射
+	#     主图件小难辨，照 ⑱c-e tenglong 三特写先例补图：rotation
+	#     (5,-78,0)=右侧面对镜 / (5,78,0)=左侧面对镜，机位同 ⑱b 馆内
+	#     贴墙顺光判读条件）
+	main.stash.guns_owned.append("qjb201")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "qjb201", "secondary": "pistol"}
+	main._start_mission({"primary": "qjb201", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm11: Dictionary = main.soldiers.soldiers[i]
+		sm11["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm11["engaged"] = false
+		sm11["moving"] = false
+		sm11["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 3.70,
+			HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 11.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	main.world.set_indoor(true)
+	_set_ads_mx(1.0)
+	await frames(2)
+	main.player.cam.rotation = Vector3(-0.15, PI + PI, 0)
+	await frames(2)
+	var g_qj: Dictionary = main.guns._cur_gun()
+	var h_qj: Node3D = g_qj["holder"]
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	h_qj.position = Vector3(0.0, 0.05, -0.30)
+	h_qj.rotation_degrees = Vector3(5, -78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_right.png")
+	# R4 修机位：R2 机位 (0.16,0.05,-0.24) 在弹箱前移后枪口被画面右缘
+	# 裁断——x 加大 0.23 把枪口带回画幅中央
+	h_qj.position = Vector3(0.23, 0.05, -0.22)
+	h_qj.rotation_degrees = Vector3(5, -78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_muzzle.png")
+	h_qj.position = Vector3(0.0, 0.05, -0.26)
+	h_qj.rotation_degrees = Vector3(5, 78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_left.png")
+	# R6 验收补图：side 视图（R6 判「shot_gun_qjb201_side 按命名不存在」
+	# ——与 left 同构图的左侧弹链弧视角，等价出证、按 ask 命名规范）
+	h_qj.position = Vector3(0.0, 0.05, -0.28)
+	h_qj.rotation_degrees = Vector3(5, 78, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_side.png")
+	# R6 验收补图：白刻印特写（R4/R5 两轮判「未检出白色文字刻印」——
+	# 主图机匣右面刻印段仅 ~15px 物理不可读；R6 字号加大后配右侧机匣
+	# 面正对镜近距特写：5 段主行+2 段副行白色刻印带满幅可读出证；
+	# R7 修机位：R6 实拍仍整枪远景+刻印带过曝一整块——机匣面转正
+	# -85° 近拉 19cm，刻印带（局部 z 0.005..0.14）占画宽 1/3 居中，
+	# 段间 9mm 断缝 ≈25px 可辨「5 字符块+2 小字块」）
+	h_qj.position = Vector3(0.070, -0.012, -0.19)
+	h_qj.rotation_degrees = Vector3(3, -85, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_mark.png")
+	# R3 验收补图：脚架特写（R4 修机位：R3 的 (35,-78) 俯角大、挂座
+	# 背光细节压缩——改正侧偏下少俯 (18,-95)，护套底折叠态整链受光
+	# 可辨：挂座/双腿/膝铰链/锁环/驻锄板）
+	h_qj.position = Vector3(0.16, -0.09, -0.30)
+	h_qj.rotation_degrees = Vector3(18, -95, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_bipod.png")
+	# R4 验收补图：弹链弧专图（左前近距视角——金黄弹链弧全枪最醒目
+	# 识别件，主图右侧面机位被机匣遮挡只露两端，专图完整展示
+	# 箱顶导链座 → 外抛弧顶 → 机匣受弹口整段）；R5 2026-11-03：弧再外抛
+	# （弧顶机匣面外 44mm）+ 弹箱下探 14mm 带可辨提手拱把——机位后撤
+	# 半步把弧顶与箱顶提手同框带全）
+	h_qj.position = Vector3(-0.05, 0.05, -0.17)
+	h_qj.rotation_degrees = Vector3(6, 62, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_belt.png")
+	# R5 验收补图：弹匣井口底部视角出证（R6 修根因：R5 判「未见井口边框
+	# ——疑被弹箱遮挡」实锤——旧井竖框区间 z -0.013..0.065 整段在弹箱
+	# z -0.205..0.085 内且箱底低井口 88mm，正下方视线被箱体挡死；R6 井口
+	# 整体前移 z 0.10（hd_gun_lmg ④ R6 注释）越过弹箱前缘后视线直达。
+	# 枪腹正对镜 Rx(-90)、机位随井前移对准 z 0.10：井口环+暗腔+左右竖框
+	# 亮钢沿+前锁舌围出完整井口，后方弹箱腹面同框不再遮井）
+	h_qj.position = Vector3(0.0, 0.0, -0.26)
+	h_qj.rotation_degrees = Vector3(-90, 0, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_well.png")
+	# R5 验收补图：弹箱提手仰角出证；R6→R7 修机位+修件（R6 判「提手
+	# 连成一片块状、锁扣不可辨」——提手中段埋挂轨（建模侧 R7 已后移
+	# 箱后上角成完整拱把）；机位改纯正右侧 Rx8·Ry(-90) 14cm 近距：
+	# 拱把侧影 ⊓ 形（双竖柱 15mm+横梁 22mm 深亮钢后缘）死居中，箱后
+	# 上角锁扣凸台+机匣右面白刻印带同框佐证位置）
+	h_qj.position = Vector3(-0.19, -0.026, -0.14)
+	h_qj.rotation_degrees = Vector3(8, -90, 0)
+	await frames(2)
+	await shot("res://out/shot_gun_qjb201_handle.png")
+	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位
+	main.world.set_indoor(false)   # qjb201 特写段收尾：恢复户外氛围
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
 	main.player.pos = Vector3(-40.2, 1.55, -47.0)

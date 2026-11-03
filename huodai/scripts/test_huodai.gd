@@ -4,7 +4,7 @@
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 冲锋枪册六枪（mp5/p90/uzi/vector/mp7/qcq171）+
 #         步枪册十枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437/tenglong）+
-#         旧五枪 + 机枪册 M250 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
+#         旧五枪 + 机枪册 M250/QJB201 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
@@ -35,6 +35,18 @@ func frames(n: int) -> void:
 func check(name: String, ok: bool, extra := "") -> void:
 	if not ok:
 		fails += 1
+		# 偶发失败取证（2026-11-03 R3 门禁）：该轮回归退出码 1（fails≥1，
+		# quit(1) 唯一路径）但 FAIL 行被门禁 (stdout+stderr).slice(-2500)
+		# 截断丢失、本地 12 连复跑全 ALL PASS 无从定位——FAIL 行同步追加
+		# /tmp/huodai_fail.log，门禁复跑复发时直读全量失败行+extra 数值。
+		# 纯取证：不动断言语义，写失败静默（沙箱禁写不伤测试）
+		var fl := FileAccess.open("/tmp/huodai_fail.log",
+				FileAccess.READ_WRITE if FileAccess.file_exists("/tmp/huodai_fail.log")
+				else FileAccess.WRITE)
+		if fl != null:
+			fl.seek_end(0)
+			fl.store_line("[huodai] FAIL %s%s" % [name, (" —— " + extra) if extra != "" else ""])
+			fl.close()
 	print("[huodai] %s %s%s" % ["PASS" if ok else "FAIL", name, (" —— " + extra) if extra != "" else ""])
 
 ## 递归收集节点树下全部 Label 文本（暂停菜单文案断言用——菜单标签不设公开 API，遍历只读）
@@ -62,6 +74,10 @@ func _mesh_verts(root: Node3D) -> int:
 
 
 func _initialize() -> void:
+	# 偶发失败取证（2026-11-03 R3 门禁）：清上一轮 FAIL 记录——本文件
+	# 有内容 ⇔ 最近一次回归确有 FAIL（check() 失败追加写，见其注释）
+	if FileAccess.file_exists("/tmp/huodai_fail.log"):
+		DirAccess.remove_absolute("/tmp/huodai_fail.log")
 	# 存档隔离 v2（2026-10-27）：整套测试重定向到独立测试档——真实档零接触
 	# （旧版删真实档+收尾写回测试态，每跑一次回归毁一次实机进度，用户实锤）
 	HDData.SAVE_PATH = "user://huodai_save_test.json"
@@ -925,12 +941,12 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：十八把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：十九把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
 			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171",
-			"tenglong", "ash12"]:
+			"tenglong", "ash12", "qjb201"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -1452,6 +1468,95 @@ func _run() -> void:
 				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("ash12")),
 			str(ah_def.get("ad", "缺"))])
 
+	# 27j. QJB201 商店枪专项（2026-11-02 并册·国产 QJB-201 班用机枪，5.8×42mm
+	#      DBP-191——取代 QJB-95/QJY-88；册属机枪 LMG_IDS，几何体在
+	#      hd_gun_lmg.gd _lmg_qjb201，照 M250 先例接入。R1 验收修复
+	#      2026-11-02（第 1 轮验收 6.5/11 未过九条意见）：弹链贝塞尔外抛弧
+	#      9+2 节/骨架托细杆大镂空+调长齿条/脚架全线加大贴护套/圆形亮钢
+	#      散热孔衬 ×10/消焰器加长泄压槽 6 道亮钢/白刻印加大/弹箱加大
+	#      0.094×0.135×0.190+供弹口与弹匣井可辨造型/拉机柄加大+端帽/
+	#      ADS 红点镜 qjb201 专属挂载细化（hd_guns._scope_visual detail
+	#      参数）——POLY_BASE/POLY_MIN 同步 3015→3825/24120→30600；
+	#      R2 验收修复 2026-11-02（第 2 轮验收 8.5/11 未过七条意见）：
+	#      托减重孔遍布（铰接座/上下杆/立板 11 组暗板负形）、散热孔衬
+	#      17mm×12 柱 seg20、拉机柄 75mm 杆+圆柱柄头+弯钩、白刻印字符化
+	#      3+2 段、弹匣井座加高 16mm+锁舌、消焰器 0.037/64mm/槽 8 道、
+	#      材质三层反差（qjpoly 0.052 深哑/qjrec 0.158 亮金属/qjsteel
+	#      0.190 亮钢）、probe_shot ⑲ 段补 right/muzzle/left 三特写
+	#      ——POLY_BASE/POLY_MIN 再同步 3825→4797/30600→38376；R3 验收
+	#      修复 2026-11-02（第 3 轮 9/11 七条意见）：散热孔衬柱→近圆
+	#      倒角盒双排 22 站（±65°/±90°）、白刻印 4 段 14mm+白度拉高、
+	#      弹匣井口外框环、脚架全线再加大+补 bipod 特写图、弹链终点
+	#      外移消穿模、拉机柄杆 85/柄头 d26、材质三层反差再拉大
+	#      （qjpoly 0.040/qjrec 0.185/qjsteel 0.230）——POLY 两表再同步
+	#      4797→4689/38376→37512（孔衬柱→盒基线反降）；R4 验收修复
+	#      2026-11-02（第 4 轮 8.5/11 八条意见·相似度 68% 反降——R3 机匣
+	#      0.185 亮金属黑偏离哑光全黑考证回调 0.150）：散热孔反转 dk 深黑
+	#      大孔 26 站读「真开孔」、白刻印 18mm 4+2 段白度 0.78、井口竖框
+	#      加高 20mm、脚架挂座 52/腿 13、拉机柄杆 95/柄头 d30、弹箱前移
+	#      10mm+提手+角锁扣+排泥缝、弹链弧随箱前移外抛加强、补弹链专图
+	#      shot_gun_qjb201_belt + 特写实测修正（刻印移受光中带 5+2 段/
+	#      井口前舌亮钢提亮/弯钩加大/铆钉 6→4 移顶带/muzzle+bipod 机位
+	#      修复）——POLY 两表再同步 4689→4905/37512→39240；R5 验收修复
+	#      2026-11-03（第 5 轮 9/11、相似度 78% 未过六条）：弹链弧外抛加大
+	#      成「箱口→机匣完整饱满大弧」（9+2→11+2 节、控制点 x -0.085、
+	#      链节 18×16×32、弹箱下探 14mm 加长外露段）、聚合物/金属反差
+	#      再拉大（qjpoly 0.030+glow 0.30/qjrec rough 0.40）、白刻印加大
+	#      （主行 24mm 高 26mm 宽 + 白度 0.86/发光 0.85）、井口环全线加大
+	#      + probe 补底部视角 well 图、拉机柄再加大（杆 115/柄头 d38 l52）、
+	#      弹箱提手加大成可辨拱把（下探让净空 + belt 机位带出）——POLY
+	#      两表再同步 4905→4953/39240→39624）
+	#      考证断言六件（照 27i ASH-12/27h 腾龙段先例）——
+	#      ① 独立命名弹箱锚点 mag_qjb201 在枪身根下（75 发硬弹箱下挂机匣
+	#        正下方，换弹手沿 mag_of 锚跟随的契约件，#29b2 循环只查 mag_*
+	#        存在性，这里锁名；走 _lmg_build 分发入口）
+	#      ② 简介射速「785发每分」与 cd 换算一致 ±1%（60/0.0764=785.3，
+	#        三角洲面板直读 785rpm；现实 700-800rpm≈750 在档内偏快）
+	#      ③ 全自动缺省（auto 不写 = true，面板全自动；不带 cd_profile/burst）
+	#        + 弹匣 75（默认 75 发弹箱——面板 125 为预改装大弹鼓态不入册）
+	#        + trigger_delay 0.25（用户定案硬指标：M250 0.5 这把快一倍，
+	#        按压边沿起蓄、蓄满才出弹、松开/切枪/进场复位——边界三连测
+	#        见 §射速回归段）
+	#      ④ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；5.8mm 弹族对照步枪族但备弹量机枪档：
+	#        225 发 ×₵6）
+	#      ⑤ 后坐表 RECOIL 落位（缺键吃 [0.4,0.2,0.25] 兜底后坐爆炸——
+	#        机枪压制档 [0.14,0.06,0.10]，上顶中低、连发累增温和）
+	#      ⑥ 枪声调音表 SHOT_TUNE 在位（四层枪声 qjb201 专项档：5.8mm
+	#        机枪节奏密但比 M250 轻快）+ ad 甲伤字段在位（2026-10-29 护甲
+	#        机制全枪必带——面板甲伤 38 直读，对照 M250 53 下调到 5.8mm 档）
+	var qj_root: Node3D = HDGuns._lmg_build("qjb201")
+	var qj_mag: Node = qj_root.find_child("mag_qjb201", true, false)
+	check("QJB201 独立命名弹箱锚点 mag_qjb201 在根下", qj_mag != null,
+		"node=%s" % (str(qj_mag.name) if qj_mag != null else "无"))
+	qj_root.free()
+	var qj_def: Dictionary = Guns.gun_by_id("qjb201")
+	var qj_rpm := 60.0 / float(qj_def["cd"])
+	check("QJB201 简介射速 785发每分与 cd 换算一致（±1%）",
+		str(qj_def["desc"]).contains("785发每分")
+			and absf(qj_rpm - 785.0) / 785.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(qj_def["cd"]), qj_rpm])
+	check("QJB201 全自动缺省 + 弹匣 75 + 扳机延迟 0.25 秒",
+		bool(qj_def.get("auto", true)) and int(qj_def["mag"]) == 75
+			and not qj_def.has("cd_profile") and not qj_def.has("burst")
+			and absf(float(qj_def.get("trigger_delay", 0.0)) - 0.25) < 0.0001,
+		"auto=%s mag=%s trigger_delay=%s" % [str(qj_def.get("auto")),
+			str(qj_def.get("mag")), str(qj_def.get("trigger_delay", "无"))])
+	check("QJB201 备弹/购弹双表在表（5.8mm 机枪档 225 发 ×₵6）",
+		(HDData.RESERVE as Dictionary).has("qjb201")
+			and (HDData.AMMO_PRICE as Dictionary).has("qjb201")
+			and int(HDData.RESERVE["qjb201"]) == 225
+			and int(HDData.AMMO_PRICE["qjb201"]) == 6,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("qjb201", "缺")),
+			str(HDData.AMMO_PRICE.get("qjb201", "缺"))])
+	check("QJB201 后坐表 RECOIL 落位 + 枪声调音表 SHOT_TUNE 在位 + ad 甲伤字段在位",
+		(HDGuns.RECOIL as Dictionary).has("qjb201")
+			and (HDAudio.SHOT_TUNE as Dictionary).has("qjb201")
+			and qj_def.has("ad") and int(qj_def["ad"]) == 38,
+		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("qjb201",
+				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("qjb201")),
+			str(qj_def.get("ad", "缺"))])
+
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
 	#     ≥ 8× 低模基线（走 _old5_build 分发入口，只数枪身、不含
@@ -1507,6 +1612,25 @@ func _run() -> void:
 	check("M250 动画匣隐（弹链袋由枪身件表达）",
 		not bool(HDGuns._lmg_mag_of("m250")["show"]))
 	lmg_root.free()
+
+	# 29b2. 高模顶点红线：机枪册 QJB201（qjb201，hd_gun_lmg.gd _lmg_qjb201，
+	#       2026-11-02 并册——照 29b M250 先例）枪身根总顶点 ≥ 8× 低模基线
+	#       （走 _lmg_build 分发入口，口径同 #26/#27/#29；75 发硬弹箱是独立
+	#       命名弹匣节点 mag_qjb201、动画匣隐 show=false，契约同 M250
+	#       mag_pouch「匣形由枪身件表达」先例）
+	var qjb_root: Node3D = HDGuns._lmg_build("qjb201")
+	var qjb_verts: int = GUN_LIB.count_vertices(qjb_root)
+	check("QJB201 高模顶点 ≥ POLY_MIN（8× 基线）",
+		qjb_verts >= int(GUN_LIB.POLY_MIN["qjb201"]),
+		"verts=%d min=%d base=%d" % [qjb_verts,
+			int(GUN_LIB.POLY_MIN["qjb201"]), int(GUN_LIB.POLY_BASE["qjb201"])])
+	var qjb_mag_node: Node = qjb_root.find_child("mag_*", true, false)
+	check("QJB201 独立命名弹箱节点在根下", qjb_mag_node != null
+		and str(qjb_mag_node.name) == "mag_qjb201",
+		"node=%s" % (str(qjb_mag_node.name) if qjb_mag_node != null else "无"))
+	check("QJB201 动画匣隐（弹箱由枪身件表达）",
+		not bool(HDGuns._lmg_mag_of("qjb201")["show"]))
+	qjb_root.free()
 
 	# 29c. 一体成型 unibody 断言（2026-10 合并回归锁）：全枪册逐把枪
 	#      _build_gun_visual 出厂链（含镜体合并与 Δ 平移）后——
@@ -2515,6 +2639,47 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("m250 松开再按重新蓄力（再按前 29 帧零出弹）", m250_re == 0,
 		"shots=%d" % m250_re)
+	# qjb201 785rpm（2026-11-02 并册·三角洲面板直读）+ 扳机延迟 0.25s
+	# （用户定案硬指标：M250 0.5 这把快一倍）：首发出弹在 0.25s 蓄力后，
+	# 5s 按压实测 = 1 + floor(4.75/0.0764) ≈ 63 发；松开再按重新蓄满
+	main._start_mission({"primary": "qjb201", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var qjb_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("qjb201 长程射速 785rpm 且计 0.25s 扳机延迟（≈63 发/5s）",
+		absf(qjb_shots - 63.2) <= 2.2, "shots=%d/300帧（5s）" % qjb_shots)
+	# 延迟边界：按住 14 帧（<0.25s）零出弹；第 15 帧蓄满当帧放行出弹
+	# （完成判据带 FIRE_GATE 容差——蓄满帧即首发，无额外一帧）
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 14:
+		main.guns.update(1.0 / 60.0)
+	var qjb_early: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)   # 第 15 帧：0.25s 蓄满当帧首发
+	var qjb_first: int = 999 - main.guns.ammo
+	Input.action_release("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	check("qjb201 扳机延迟边界（14 帧零出弹 · 第 15 帧首发）",
+		qjb_early == 0 and qjb_first >= 1,
+		"early=%d first=%d" % [qjb_early, qjb_first])
+	# 松开复位：再按又是全新 0.25s 蓄力（前 14 帧零出弹）
+	main.guns.update(1.0 / 60.0)
+	main.guns.ammo = 999
+	Input.action_press("hd_fire")
+	for i in 14:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var qjb_re: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("qjb201 松开再按重新蓄力（再按前 14 帧零出弹）", qjb_re == 0,
+		"shots=%d" % qjb_re)
 	# 其余枪零延迟抽查：rifle 按下当帧即出弹（trigger_delay 缺省 0）
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(8)
@@ -3022,7 +3187,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，十一处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，十二处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12/qjb201）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})
