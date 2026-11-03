@@ -381,6 +381,27 @@ func _run() -> void:
 			and int(Guns.AMMO[0]["pen"]) == 1 and int(Guns.AMMO[5]["pen"]) == 6
 			and is_equal_approx(float(Guns.ammo_by_id("lv6")["dmg_mul"]), 2.0)
 			and int(Guns.ammo_by_id("lv6")["pen"]) == 6)
+	# 2e-b. 交易行①区滚轮（2026-11-03 用户报告「滚轮滑不下去买不到下面的
+	# 枪」）：枪册 26+ 把溢出面板底——包 ScrollContainer 后内容高>视口高
+	main.lobby.show_lobby()
+	main.lobby.set_tab(2)
+	await frames(4)
+	var scs: Array = main.lobby._pages[2].find_children("*", "ScrollContainer", true, false)
+	check("交易行①区枪列表有滚动容器", scs.size() >= 1)
+	if scs.size() > 0:
+		var sc0: ScrollContainer = scs[0]
+		var vb0: VScrollBar = sc0.get_v_scroll_bar()
+		check("枪列表内容超出视口（确实需要滚）", vb0.max_value > vb0.page,
+			"max=%d page=%d" % [vb0.max_value, vb0.page])
+		sc0.scroll_vertical = float(1 << 30)
+		await frames(2)
+		check("滚到底偏移收敛（后段枪可达）",
+				sc0.scroll_vertical > 0.0
+				and absf(sc0.scroll_vertical - float(vb0.max_value - vb0.page)) <= 2.0,
+			"at=%.0f" % sc0.scroll_vertical)
+	main.lobby.set_tab(0)   # 页签复位（下游「出发页=场景激活」断言依赖）
+	main.lobby.hide_lobby()
+
 	# 2f. 双头弹（2026-11-01 用户定案：ASH-12 专属、无视护甲直伤）
 	check("双头弹表落位（ASH-12 专属 · 双弹头 · pen99）",
 			str(Guns.ammo_by_id("duplex")["only"]) == "ash12"

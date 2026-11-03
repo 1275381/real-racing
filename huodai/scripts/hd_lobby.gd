@@ -1920,7 +1920,14 @@ func _render_market(pg: VBoxContainer) -> void:
 	grid.columns = 4
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
-	left.add_child(grid)
+	# ①区滚动（2026-11-03 用户报告「滚轮滑不下去买不到下面的枪」）：枪册
+	# 26+ 把 4 列 7 行溢出面板底边——包 ScrollContainer（滚轮原生支持，
+	# 卡片点击/键盘导航零改动；横向锁定不滚）
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.add_child(grid)
+	left.add_child(scroll)
 	for i in guns.size():
 		var mg: Dictionary = guns[i]
 		var mid := str(mg["id"])

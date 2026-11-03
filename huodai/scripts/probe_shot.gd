@@ -1172,6 +1172,15 @@ func _initialize() -> void:
 	main.lobby.set_tab(2)   # 同页签重刷（set_tab 是唯一重渲染入口）
 	await frames(8)
 	shot("res://out/shot_rear_grip_market.png")
+	# ---- ①区滚轮图证（2026-11-03 用户报告「买不到下面的枪」）：滚到底拍
+	#      后段枪（ASH-12/QJB201 等可达）——拍完复位
+	var scs2: Array = main.lobby._pages[2].find_children("*", "ScrollContainer", true, false)
+	if scs2.size() > 0:
+		(scs2[0] as ScrollContainer).scroll_vertical = float(1 << 30)
+		await frames(4)
+		shot("res://out/shot_market_scroll.png")
+		(scs2[0] as ScrollContainer).scroll_vertical = 0.0
+		await frames(2)
 	main.lobby.hide_lobby()
 	# ---- 18a4 高倍镜镜框图证（2026-10-30 用户报告「高倍镜没有镜框」）：
 	#      optic/sniper ADS 各一张——镜筒黑环+环外压暗应在位
