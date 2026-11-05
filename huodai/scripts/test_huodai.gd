@@ -3,8 +3,9 @@
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 冲锋枪册六枪（mp5/p90/uzi/vector/mp7/qcq171）+
-#         步枪册十枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437/tenglong）+
-#         旧五枪 + 机枪册 M250/QJB201 总顶点 ≥ 8× 低模基线（HDGunLib.POLY_MIN 表）
+#         步枪册十二枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437/tenglong/
+#         ash12/mcxlt）+ 旧五枪 + 机枪册 M250/QJB201 总顶点 ≥ 8× 低模基线
+#         （HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
@@ -962,12 +963,12 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：十九把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：二十把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
 			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171",
-			"tenglong", "ash12", "qjb201"]:
+			"tenglong", "ash12", "qjb201", "mcxlt"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -1195,19 +1196,20 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册十一枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	# 27. 高模顶点红线：步枪册十二枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
 	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
 	#     步枪 2026-10 并册、an94 商店超点射突击步枪 2026-10 并册、
 	#     sr25 商店半自动 DMR 2026-10 并册、k437 .300 BLK 突击步枪
 	#     2026-10-29 并册、tenglong 5.8×42mm 国产腾龙突击步枪
-	#     2026-10-31 并册、ash12 12.7×55mm 无托重弹突击步枪 2026-11-01 并册）
+	#     2026-10-31 并册、ash12 12.7×55mm 无托重弹突击步枪 2026-11-01 并册、
+	#     mcxlt .300 BLK SIG MCX Spear LT SBR 突击步枪 2026-11-05 并册）
 	#     逐把枪身根总顶点 ≥ 8× 低模基线（走
 	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
 	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437/mag_tenglong/
-	#     mag_ash12 独立命名弹匣节点；POLY_MIN/POLY_BASE 见 HDGunLib——门槛
-	#     与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
+	#     mag_ash12/mag_mcxlt 独立命名弹匣节点；POLY_MIN/POLY_BASE 见
+	#     HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
 	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
-			"k437", "tenglong", "ash12"]:
+			"k437", "tenglong", "ash12", "mcxlt"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -1577,6 +1579,59 @@ func _run() -> void:
 		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("qjb201",
 				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("qjb201")),
 			str(qj_def.get("ad", "缺"))])
+
+	# 27k. MCX-LT 商店枪专项（2026-11-05 并册·三角洲 MCX-LT，现实原型 SIG MCX
+	#      Spear LT 第三代「Light」轻量化 .300 BLK 9 寸 SBR——短行程气体活塞/
+	#      可快换枪管/两道火比赛级扳机）：考证断言六件（照 27i ASH-12/27j
+	#      QJB201 段先例）——
+	#      ① 独立命名弹匣锚点 mag_mcxlt 在枪身根下（30 发 .300 BLK 弧形黑
+	#        聚合物匣「近似 STANAG 但弧度略大」——四段 7° 弧在 k416 STANAG
+	#        5° 与 k437 .300 8° 之间，换弹手沿 mag_of 锚跟随的契约件，#27
+	#        循环只查 mag_* 存在性，这里锁名；走 _ar_build 分发入口）
+	#      ② 简介射速「840发每分」与 cd 换算一致 ±1%（60/0.0714=840.3——
+	#        S8 季中调整后 840rpm〔K4电竞/什么值得买多源「射速暴涨至840」〕；
+	#        orzice 面板缓存 730 为调整前读数〔游侠网确认〕，按当前版本落）
+	#      ③ 全自动缺省（auto 不写 = true，面板全自动+单发；三角洲无特殊
+	#        机制，不带 cd_profile/burst/trigger_delay——纯全自动突击步枪）
+	#        + 弹匣 30（45/60 扩容匣为改装件不入册）
+	#      ④ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；.300 BLK 与 k437 同弹族档 150 发 ×₵6）
+	#      ⑤ 后坐表 RECOIL 落位（缺键吃 [0.4,0.2,0.25] 兜底后坐爆炸——
+	#        .300 BLK SBR 档 [0.19,0.07,0.09]）
+	#      ⑥ 枪声调音表 SHOT_TUNE 在位（四层枪声 mcxlt 专项档：.300 BLK
+	#        短管近战快节奏——k437 弹族骨架 9 寸短管化）+ ad 甲伤字段在位
+	#        （2026-10-29 护甲机制全枪必带——面板甲伤 29 直读）
+	var mx_root: Node3D = HDGuns._ar_build("mcxlt")
+	var mx_mag: Node = mx_root.find_child("mag_mcxlt", true, false)
+	check("MCX-LT 独立命名弹匣锚点 mag_mcxlt 在根下", mx_mag != null,
+		"node=%s" % (str(mx_mag.name) if mx_mag != null else "无"))
+	mx_root.free()
+	var mx_def: Dictionary = Guns.gun_by_id("mcxlt")
+	var mx_rpm := 60.0 / float(mx_def["cd"])
+	check("MCX-LT 简介射速 840发每分与 cd 换算一致（±1%）",
+		str(mx_def["desc"]).contains("840发每分")
+			and absf(mx_rpm - 840.0) / 840.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(mx_def["cd"]), mx_rpm])
+	check("MCX-LT 全自动缺省 + 弹匣 30 + 无特殊机制字段",
+		bool(mx_def.get("auto", true)) and int(mx_def["mag"]) == 30
+			and not mx_def.has("cd_profile") and not mx_def.has("burst")
+			and not mx_def.has("trigger_delay"),
+		"auto=%s mag=%s cd_profile=%s" % [str(mx_def.get("auto")),
+			str(mx_def.get("mag")), str(mx_def.get("cd_profile", "无"))])
+	check("MCX-LT 备弹/购弹双表在表（.300 BLK 弹族 150 发 ×₵6）",
+		(HDData.RESERVE as Dictionary).has("mcxlt")
+			and (HDData.AMMO_PRICE as Dictionary).has("mcxlt")
+			and int(HDData.RESERVE["mcxlt"]) == 150
+			and int(HDData.AMMO_PRICE["mcxlt"]) == 6,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("mcxlt", "缺")),
+			str(HDData.AMMO_PRICE.get("mcxlt", "缺"))])
+	check("MCX-LT 后坐表 RECOIL 落位 + 枪声调音表 SHOT_TUNE 在位 + ad 甲伤字段在位",
+		(HDGuns.RECOIL as Dictionary).has("mcxlt")
+			and (HDAudio.SHOT_TUNE as Dictionary).has("mcxlt")
+			and mx_def.has("ad") and int(mx_def["ad"]) == 29,
+		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("mcxlt",
+				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("mcxlt")),
+			str(mx_def.get("ad", "缺"))])
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -2701,6 +2756,20 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("qjb201 松开再按重新蓄力（再按前 14 帧零出弹）", qjb_re == 0,
 		"shots=%d" % qjb_re)
+	# mcxlt 840rpm（2026-11-05 并册·S8 季中调整后档，cd 0.0714 ≈ 4.28 帧/发
+	# 结转冷却）：无扳机延迟纯全自动，5s 按压实测期望 840×5/60 = 70 发
+	main._start_mission({"primary": "mcxlt", "secondary": "pistol"})
+	await frames(8)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var mx_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("mcxlt 长程射速达表值 840rpm（S8 季中调整后档）",
+		absf(mx_shots - 70.0) <= 2.2, "shots=%d/300帧（5s）" % mx_shots)
 	# 其余枪零延迟抽查：rifle 按下当帧即出弹（trigger_delay 缺省 0）
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(8)
@@ -3196,7 +3265,8 @@ func _run() -> void:
 	# desc「N发每分」机读：cd 换算 RPM 与文案一致（±1%）——m250 0.1091→549.9
 	# vs「550」、mp7 0.063→952.4 vs「950」、m14 0.0822→729.9 vs「730」、
 	# k416 0.0682→879.8 vs「880」、an94 0.1→600.0 vs「600」（超点射首对 1800
-	# 在 desc 里不邻「发每分」不参与机读，档案位校验见 27c）
+	# 在 desc 里不邻「发每分」不参与机读，档案位校验见 27c）、mcxlt
+	# 0.0714→840.3 vs「840」（S8 季中调整后档）
 	var rpm_re := RegEx.new()
 	rpm_re.compile("(\\d+)发每分")
 	var rpm_bad: Array = []
@@ -3208,7 +3278,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，十二处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12/qjb201）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，十三处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12/qjb201/mcxlt）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

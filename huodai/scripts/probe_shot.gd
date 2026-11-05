@@ -51,7 +51,14 @@
 # 变体三连拍）+ 10 处 pair 各出 a/_b 双图；QJB201 2026-11-02 并入两循环
 # + R2 验收补侧面三特写 right/muzzle/left（⑲ 段，照 tenglong ⑱c-e 先例）
 # + R3 验收补脚架特写 bipod + R4 验收补弹链专图 belt + R5 验收补弹匣井
-# 底部视角 well + 弹箱提手仰角 handle（2026-11-03，⑲ 段）；滚动订正以 grep
+# 底部视角 well + 弹箱提手仰角 handle（2026-11-03，⑲ 段）；
+# MCX-LT 2026-11-05 并入两循环（逐枪美照 + 红点审计）+ ⑲b 前三大识别特征
+# 特写 rail/handguard/stock（全长一体顶轨/八边 M-LOK 圆孔护木/侧折伸缩
+# 双功能托，照 ⑲ qjb201 belt/bipod/handle 先例）+ R1 验收补图四张
+# （2026-11-05：⑲a 判裂 pair cover——splitFree 无裂缝渲染证据，照 ⑱
+# tenglong cover b_gun 先例；⑲c 全枪 right/left 侧视——拉机柄(⑤)/弧匣
+# (⑦)/true scale 判读 + 左侧 M-LOK/刻印语境，与 left 面刻印近距特写
+# mark——SIG 白刻印带可读出证，照 ⑱c/⑲ mark 先例）；滚动订正以 grep
 # 计数 + 单跑实测为准）
 # 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
@@ -988,10 +995,12 @@ func _initialize() -> void:
 	# 双销机匣/多边形护木/4 档可调托）；2026-11-01 商店枪 ASH-12 并册追加
 	# （12.7×55mm 无托重弹突击步枪·无托后置弹匣/提把照门桥/双室制退器）；
 	# 2026-11-02 商店枪 QJB201 并册追加（5.8×42mm 国产 QJB-201 班用机枪·
-	# 方正机匣/全长裸轨/下挂弹箱/金黄弹链弧形外露/骨架托）
+	# 方正机匣/全长裸轨/下挂弹箱/金黄弹链弧形外露/骨架托）；2026-11-05
+	# 商店枪 MCX-LT 并册追加（.300 BLK SIG MCX Spear LT 9 寸 SBR·全长一体
+	# 顶轨/八边 M-LOK 圆孔护木/侧折伸缩双功能托/默认大消音器「短管长消音管」）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "qjb201", "knife",
+			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "knife",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
@@ -1047,12 +1056,13 @@ func _initialize() -> void:
 	# shot_ads_rdd_<gid>.png——逐把目检镜体在位性（腾龙 2026-10-31 并册
 	# 追加——放倒翻折瞄具枪，改装镜走通用挂载必须在位；ASH-12 2026-11-01
 	# 并册追加——无托提把桥枪，改装镜走通用挂载必须在位；QJB201 2026-11-02
-	# 并册追加——机枪册裸轨放倒瞄具枪，改装镜走通用挂载必须在位）
+	# 并册追加——机枪册裸轨放倒瞄具枪，改装镜走通用挂载必须在位；MCX-LT
+	# 2026-11-05 并册追加——全长一体轨放倒瞄具枪，改装镜走通用挂载必须在位）
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "qjb201",
+			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
@@ -1862,8 +1872,81 @@ func _initialize() -> void:
 	h_qj.rotation_degrees = Vector3(8, -90, 0)
 	await frames(2)
 	await shot("res://out/shot_gun_qjb201_handle.png")
+	# ⑲b MCX-LT 前三大识别特征特写（2026-11-05 商店枪并册，照 ⑲ qjb201
+	#     belt/bipod/handle 先例）：① 全长一体顶轨（俯视斜角——机匣尾直通
+	#     护木前的连续齿列直线）shot_gun_mcxlt_rail / ② 八边护木 M-LOK 长槽
+	#     + 圆形散热孔（右前近距）shot_gun_mcxlt_handguard / ③ 侧折+伸缩
+	#     双功能托 + 机匣尾大颗折叠铰接钮（右后近距）shot_gun_mcxlt_stock
+	main.stash.guns_owned.append("mcxlt")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "mcxlt", "secondary": "pistol"}
+	main._start_mission({"primary": "mcxlt", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm12: Dictionary = main.soldiers.soldiers[i]
+		sm12["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm12["engaged"] = false
+		sm12["moving"] = false
+		sm12["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 3.70,
+			HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 11.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	main.world.set_indoor(true)
+	_set_ads_mx(1.0)
+	await frames(2)
+	# ⑲a MCX-LT 判裂 pair（R1 验收 2026-11-05「splitFree 无渲染证据——全件
+	#     同根节点合并 unibody，需 pair 出证」补图，照 ⑱ tenglong cover 先例：
+	#     b_gun=true _b.png 落盘同角度带枪帧，判裂协议照旧隐枪差分，大域 ≥2
+	#     = 稳定裂 FAIL、稳定完整（大域 1）= 无裂缝渲染证据）
+	await shot("res://out/shot_gun_mcxlt_cover.png", false, true, true)
+	main.player.cam.rotation = Vector3(-0.15, PI + PI, 0)
+	await frames(2)
+	var g_mx: Dictionary = main.guns._cur_gun()
+	var h_mx: Node3D = g_mx["holder"]
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	# 特写①：俯视斜角（Rx 58 顶面受光、Ry -90 枪身横陈画幅）——轨齿列从
+	# 机匣尾直通护木前的连续直线完整入画（放倒瞄具贴轨不遮齿列）
+	h_mx.position = Vector3(0.0, 0.05, -0.28)
+	h_mx.rotation_degrees = Vector3(58, -90, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_mcxlt_rail.png")
+	# 特写②：右前近距（Rx 12 微俯、Ry -74 右前斜角）——护木段满幅：侧面
+	# M-LOK 长槽×3 + 上棱带圆散热孔×4 + 底面 M-LOK 槽 + 消音器口部同框
+	h_mx.position = Vector3(0.15, 0.02, -0.28)
+	h_mx.rotation_degrees = Vector3(12, -74, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_mcxlt_handguard.png")
+	# 特写③：左后近距（Rx 12 顶面受光、Ry +95 左后斜角——大颗折叠铰接钮的
+	# 钮头在机匣尾左端，左后视角正对钮头/铰链销/伸缩短管；托段满幅：大三角
+	# 镂空托体 + 托底网格孔/抵肩垫——R1 修机位：右后视角钮头背光全黑不可辨，
+	# 换左侧钮头正对镜）
+	h_mx.position = Vector3(0.05, 0.00, -0.27)
+	h_mx.rotation_degrees = Vector3(12, 95, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_mcxlt_stock.png")
+	# ⑲c R1 验收「feature readability / true scale 视觉确认未做——缺全枪
+	#     正侧视图与刻印可读证据」补图（照 ⑱c tenglong right/sn + ⑲ qjb201_
+	#     mark 先例）：右侧全枪侧视（前倾拉机柄(⑤)+抛壳口+弧匣(⑦)+消音器
+	#     与护木/机匣全长比例——true scale 判读图）/ 左侧全枪侧视（左侧
+	#     M-LOK 槽(②)+白刻印(⑪)位置语境）/ 左机匣面刻印近距特写（SIG 风格
+	#     白刻印带可读出证；qjb201_mark 左右镜像：x 反号 + Ry +85）
+	h_mx.position = Vector3(0.0, 0.05, -0.30)
+	h_mx.rotation_degrees = Vector3(5, -78, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_mcxlt_right.png")
+	h_mx.position = Vector3(0.0, 0.05, -0.26)
+	h_mx.rotation_degrees = Vector3(5, 78, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_mcxlt_left.png")
+	h_mx.position = Vector3(-0.070, -0.012, -0.19)
+	h_mx.rotation_degrees = Vector3(3, 85, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_mcxlt_mark.png")
 	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位
-	main.world.set_indoor(false)   # qjb201 特写段收尾：恢复户外氛围
+	main.world.set_indoor(false)   # qjb201/mcxlt 特写段收尾：恢复户外氛围
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
 	main.player.pos = Vector3(-40.2, 1.55, -47.0)

@@ -151,6 +151,15 @@ const RECOIL := {
 	# 重枪体+脚架压住冲量累积，泼水可控是班用机枪定位）；水平漂移 0.10
 	# 与 m250 同档（弹链供弹横向拉扯 + 高射速横漂放大，机枪标准漂移）
 	"qjb201": [0.14, 0.06, 0.10],
+	# mcxlt .300 BLK SBR（2026-11-05 商店枪·SIG MCX Spear LT，840rpm
+	# 全自动 S8 季中调整后档）：单发推力 0.19——.300 BLK 重弹头比 k416
+	# （5.56 0.17）沉一档、与 k437（.300 0.20）基本同档略柔（三角洲面板
+	# 「后坐力控制 44」中位偏好 + 两道火比赛级扳机 + 短行程活塞稳推——
+	# 后坐控制 44 比 k437 考证 35 高一档读「更压得住」）；连发累增 0.07
+	# 温和（840rpm 快节拍冲量累积被 LT 轻量化枪体的复进簧组吃住——
+	# 后坐控制中位档的压制感）；水平漂移 0.09 窄档（腰射精度 57 中位
+	# 偏好 + 直托抵肩线，横漂放大就压不住）
+	"mcxlt": [0.19, 0.07, 0.09],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1331,7 +1340,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 			or gun_id == "k437" or gun_id == "qcq171"
 			or gun_id == "tenglong" or gun_id == "knife"
 			or gun_id == "ash12"
-			or gun_id == "qjb201") \
+			or gun_id == "qjb201"
+			or gun_id == "mcxlt") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1933,6 +1943,11 @@ const HOLD_DELTA := {
 	# 握把顶锚 grip(pos=(0,-0.05,0.07)) = (0, -0.022+0.05, -0.0018-0.07)
 	# （机枪册后置握把与 m250 同锚同式，29c 持握锚 ±1.5mm 断言同链）
 	"qjb201": Vector3(0, 0.028, -0.0718),
+	# mcxlt 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − hd_gun_ar _ar_mcxlt 握把
+	# 顶锚 grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	# （AR 式握把与 k416/k437/tenglong/ash12 同锚，29c 持握锚 ±1.5mm 断言
+	# 同链）
+	"mcxlt": Vector3(0, 0.008, -0.0768),
 	"knife": Vector3(0, -0.038, -0.0118),   # 匕首：grip_hold 锚(0,0.016,0.01)→MK4 基准(0,-0.022,-0.0018)
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
@@ -3001,7 +3016,7 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	return mi
 
 const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
-		"k437", "tenglong", "ash12"]
+	"k437", "tenglong", "ash12", "mcxlt"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
@@ -3031,6 +3046,12 @@ const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
 # 多边形护木四面轨垂直前握把 + 大型双室制退器侧端面开孔 + 20 发后置
 # 大弧匣；现实原型 ASh-12.7/ShAK-12，俄 FSB 特战 CQB 用枪——任务预设
 # 「常规布局」不成立，三方一致图证据无托落件）
+# mcxlt（2026-11-05 商店枪 MCX-LT 突击步枪）：三角洲 MCX-LT（现实原型 SIG
+# MCX Spear LT 第三代「Light」轻量化 .300 BLK 9 寸 SBR）并入步枪册——
+# 几何体在 hd_gun_ar.gd _ar_mcxlt（HDGunLib 高模件，全长一体顶轨 + 细长
+# 八边形 M-LOK/圆孔护木 + 侧折伸缩双功能三角镂空托 + 默认大消音器「短管
+# 长消音管」剪影；纯全自动不带 cd_profile/burst/trigger_delay——三角洲
+# 无特殊机制；消音器为外观考证件，消音机制只认改枪台 sup_provider）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -3161,6 +3182,18 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.079, 0.073),
 					"size": Vector3(0.054, 0.155, 0.102), "show": false}
+		"mcxlt":
+			# 特征⑦ 30 发 .300 BLK 弧形黑聚合物匣（近似 STANAG 但弧度略大、
+			# 两面横肋×3）：真匣是枪身建模件（mag_mcxlt 独立命名节点 +
+			# curved_mag 四段 8.5° 弧——R2 验收「读作比 STANAG 略直」从 7°
+			# 提到 8.5°，落验收指定 8-9° 档），动画匣隐（照 k437「匣形由
+			# 枪身件表达」先例）；pos=换弹手锚（枪身局部匣中段 (0,-0.148,
+			# -0.166)——匣顶 -0.058 下行 2 段弧步、z 含弧向前偏（8.5° 与
+			# 7° 差 ≈2mm 在手锚容差内，原值沿用），+Δ(0,0.008,-0.0768) 后
+			# ×0.62 ≈ (0,-0.087,-0.151)）、size=匣外形（掉匣替身缩放基准，
+			# 同 k437 口径用枪身局部原值）
+			return {"pos": Vector3(0.0, -0.087, -0.151),
+					"size": Vector3(0.050, 0.180, 0.088), "show": false}
 	return {}
 
 
@@ -3228,6 +3261,16 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# 走通用 else 挂载（红点/全息 + 增高架生态自动可装——严禁 sr25
 			# 式 pass 分支吞镜）
 			return Vector3(0.099, -0.08, -0.36)
+		"mcxlt":
+			# (my, mz, fz) = 镜座安装面高 0.083（全长一体顶轨楔齿尖，k416/
+			# k437/sr25/tenglong 同值——「贯穿枪身上缘的连续直线」轨齿顶
+			# 齐平）/ 镜体中心 z -0.06（机匣中段——游戏 ref_03「顶部导轨
+			# 中前段常装紧凑红点/全息」）/ 前准星 z -0.29（护木前端轨上放倒
+			# 翻折准星）——前后放倒翻折机械瞄具均为建模件（tenglong 放倒
+			# 先例），iron 不叠兜底机瞄片，见 _finish_gun；改装镜走通用
+			# else 挂载（红点/全息 + 增高架生态自动可装——严禁 sr25 式
+			# pass 分支吞镜）
+			return Vector3(0.083, -0.06, -0.29)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 
