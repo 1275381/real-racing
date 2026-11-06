@@ -2426,9 +2426,12 @@ static func _ar_mcxlt(mats: Dictionary, root: Node3D) -> void:
 	GUN_LIB.chamfer_box(root, ply, Vector3(0.050, 0.052, 0.19),
 			Vector3(0, -0.018, 0.01), Vector3.ZERO, 0.0025, 16)
 	# ⑦ 弹匣井（下机匣前下、井底 y -0.0945 对 mag_mcxlt 匣顶 -0.058 嵌入
-	#    防接缝，k437 同井位）
+	#    防接缝；2026-11-05 用户报告「弹匣弹匣井没对齐」——机匣做短后井仍
+	#    留在 k437 原位，井后壁 z-0.11 与下机匣前缘 z-0.085 间悬 25mm 空气
+	#    层（读作匣浮在井外）；井+匣整体后移 35mm，尾段 10mm 插进下机匣
+	#    实体，接缝消除）
 	GUN_LIB.chamfer_box(root, ply, Vector3(0.054, 0.085, 0.09),
-			Vector3(0, -0.052, -0.155), Vector3.ZERO, 0.002, 8)
+			Vector3(0, -0.052, -0.12), Vector3.ZERO, 0.002, 8)
 	# ① 全长一体皮卡汀尼顶轨（第一识别件）：单根轨基自机匣尾 z +0.11 直通
 	#    护木前 z -0.345（连成一线无分段感——「贯穿枪身上缘的连续直线」）+
 	#    连续楔齿×7（机匣段/护木段齿列连续无分段感）
@@ -2599,7 +2602,7 @@ static func _ar_mcxlt(mats: Dictionary, root: Node3D) -> void:
 	#    show:false 照 k437「匣形由枪身件表达」先例，见 _ar_mag_of
 	var mag := Node3D.new()
 	mag.name = "mag_mcxlt"
-	mag.position = Vector3(0, -0.058, -0.155)
+	mag.position = Vector3(0, -0.058, -0.12)   # 随井后移（井匣同 z，见⑦注）
 	root.add_child(mag)
 	GUN_LIB.curved_mag(mag, ply, Vector3(0.050, 0.180, 0.088), 8.5, 4, 3)
 	# ⑦ 两面横向肋条×3（随匣弧逐段转角 0/8.5/17°——肋条比匣身宽 4mm 两面
