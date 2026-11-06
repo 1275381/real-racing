@@ -1,9 +1,11 @@
 class_name HDGunLMG
 extends RefCounted
 ## 机枪册（m250：SIG XM250 体系，6.8×51mm 弹链机枪；qjb201：国产 QJB-201
-## 班用机枪，5.8×42mm）高模几何体：用 HDGunLib 工具件（倒角盒/八角棱柱护木/
-## 螺纹枪管/消音筒/环件/握把）拼装，M250 FDE 沙黄涂装、QJB201 哑光全黑，
-## 体量比 SCAR-H 大一号、枪管更长（考证特征逐条落件，见各枪头注释）。
+## 班用机枪，5.8×42mm；m3：三角洲 S12「微光」赛季 M3 通用机枪——原型德国
+## MG3，MG42 改 7.62×51 NATO）高模几何体：用 HDGunLib 工具件（倒角盒/八角
+## 棱柱护木/螺纹枪管/消音筒/环件/握把）拼装，M250 FDE 沙黄涂装、QJB201 哑光
+## 全黑、M3 深灰枪铁 + 黑色聚合物，体量比 SCAR-H 大一号、枪管更长（考证
+## 特征逐条落件，见各枪头注释）。
 ##
 ## 契约（与 HDGunAR 同约，保持不动）：
 ## - 入口：hd_guns.gd `_lmg_build(id)` 分发到本文件 build(id, mats)，语义不变
@@ -27,6 +29,9 @@ extends RefCounted
 ##          注——R1~R4 验收修复 2026-11-02 机械重清点；R5 2026-11-03 弹链弧
 ##          9+2→11+2 节 +2 盒）→ 门槛 = 8× 基线 = 39624，见
 ##          HDGunLib.POLY_MIN["qjb201"]（R4 实测 51007，R5 实测 51321）。
+##   m3     基线 3129（90 盒×24 + 17 柱×57，逐行清点见 HDGunLib.POLY_BASE
+##          注——2026-11-06 并册机械清点）→ 门槛 = 8× 基线 = 25032，见
+##          HDGunLib.POLY_MIN["m3"]（test_huodai.gd 实测断言）。
 
 const GUN_LIB := preload("res://scripts/hd_gunlib.gd")
 
@@ -39,6 +44,8 @@ static func build(id: String, mats: Dictionary) -> Node3D:
 			_m250(mats, root)
 		"qjb201":
 			_lmg_qjb201(mats, root)
+		"m3":
+			_lmg_m3(mats, root)
 		_:
 			pass   # 未知 id：不落任何部件，返回空枪身根
 	return root
@@ -702,4 +709,263 @@ static func _lmg_qjb201(mats: Dictionary, root: Node3D) -> void:
 	for pz in [0.02, 0.132]:
 		GUN_LIB.chamfer_box(root, stl, Vector3(0.003, 0.008, 0.008),
 				Vector3(-0.0295, 0.014, float(pz)), Vector3.ZERO,
+				0.0006, 2)
+
+
+## M3 通用机枪（三角洲 S12「微光」赛季新机枪，2026-11-06 并册；现实原型
+## 德国莱茵金属 MG3 通用机枪——MG42 直系改膛 7.62×51 NATO「撕布机」，全枪
+## 长 1225mm、空枪约 10.5kg、左侧弹链供弹 DM1/M13/DM6 链节、可快换枪管，
+## 维基/军武资料锚点 + ref_08 乌军 MG3 实拍对照）考证特征逐条落件
+## （几何体走本册 build 分发，哑光深灰枪铁 + 黑色聚合物，参考
+## huodai/out/ref_m3/ref_01~12）：
+## 【识别特征1】MG42 系长条椭圆散热孔枪管护筒：护筒占枪管前段全长
+##   （z -0.57..-0.13 一根贯通圆筒）、每侧 4 条纵向长椭圆散热槽共 8 条
+##   （dk 深黑真开孔读法，qjb201 R4 同法——灰筒黑孔对比 3.7 倍），全枪
+##   最醒目剪影元素（ref_01/03/07/10 直读）
+## 【识别特征2】左侧弹链供弹、弹箱挂机匣左下：7.62×51 全尺寸黄铜弹链
+##   （链节 16×13×34，比 5.8mm 档 qjb201 12×11×24 大一圈）从机匣左侧受弹
+##   口外抛弧形喂入，供弹具垂挂机匣左下（ref_01/02/05/10/12 直读）
+## 【识别特征3】MG42 式鱼尾形枪托 + 独立手枪握把：托体向后再下扩的鱼尾
+##   板式（上脊 + 主托板 -8° 后仰 + 后跟抵肩垫 + 下缘收窄条），握把带握纹
+##   与扳机护圈分离（ref_01/05/10 直读）
+## ④顶部全长皮卡汀尼导轨（现代改装化设计，架于机匣盖上方）：单根轨基
+##   直通机匣尾 + 前后楔齿 6+3，机匣盖嵌于轨缘之间低于齿顶一档
+##   （ref_02/05/10/12 直读）
+## ⑤供弹具默认 60 发「M3通用机枪平衡弹箱」= 独立命名节点 mag_m3（软式
+##   迷彩布 MOLLE 袋型：大倒角鼓胀主体 + 顶翻盖 + 黑色硬质供弹口盖 +
+##   横竖 MOLLE 织带 + 插扣 + 底排泥缝，ref_12 UI 直读袋型；90 发硬质
+##   弹箱为改装件不入册）；原点=箱顶中心、向下生长，M250 mag_pouch/
+##   QJB201 mag_qjb201 契约；箱顶嵌入机匣底挂框内 2mm（井/匣/手锚同源
+##   对齐——MCX-LT 教训）
+## ⑥枪口阶梯锥形助退/消焰器（MG42 助退器造型）：锁紧环 + 大径筒
+##   d40 → 中径筒 d32 → 枪口小径管 d20 两段锥收小 + 膛口暗环 + 侧面
+##   泄压孔 ×2（ref_01/07/10 直读）
+## ⑦两脚架折叠收拢枪管前段两侧：骨架式三角截面支腿银灰色（m3steel
+##   亮钢腿与深色枪身对比明显）向后收拢贴护筒侧下 + 挂座/铰链销/膝铰链
+##   块/伸缩锁环/驻锄板（ref_05 改枪界面默认枪态直读）
+## ⑧机械瞄具：护筒前段柱形准星（基座 + 准星柱 + 护耳双耳，直立态）+
+##   机匣前部觇孔表尺（放倒态低廓贴轨，腾龙/qjb201 放倒先例——给顶轨
+##   中段让出瞄具挂位，导轨上另可装翻转照门）；_finish_gun iron 不叠
+##   兜底片，改装镜走通用挂载（严禁 sr25 式 pass 分支吞镜）
+## ⑨配色深灰枪铁色金属 + 黑色聚合物握把/枪托，默认无花哨涂装、金属
+##   微反光（m3rec rough 0.42 vs m3poly rough 1.0，ref_01/10 直读）
+## ⑩弹链 7.62×51 无底缘全尺寸弹（黄铜弹壳 + 裸弹头外露成排——链节
+##   黄铜件，brass 复用 m250 键，ref_01/02/12 直读）
+## ⑪拉机柄左置（MG42 系左置传统）+ 右侧抛壳窗防尘盖 + 快慢机 + 机匣
+##   右侧铆钉 ×4 + 机匣销 ×2 + QD 背带环 ×2
+static func _lmg_m3(mats: Dictionary, root: Node3D) -> void:
+	var rec: StandardMaterial3D = mats["m3rec"]     # ⑨ 深灰枪铁金属（机匣/轨/护筒）
+	var poly: StandardMaterial3D = mats["m3poly"]   # ⑨ 黑色聚合物（托/握把）
+	var stl: StandardMaterial3D = mats["m3steel"]   # ⑦ 亮钢小件（脚架腿/箍环/销）
+	var dk: StandardMaterial3D = mats["m3dk"]       # 负形近黑（散热槽/抛壳窗/膛口环）
+	var cam: StandardMaterial3D = mats["m3camo"]    # ⑤ 迷彩弹箱布面
+	var web: StandardMaterial3D = mats["m3web"]     # ⑤ MOLLE 织带深棕
+	var brs: StandardMaterial3D = mats["brass"]     # ⑩ 黄铜弹链（唯一暖金）
+	# ⑨ 机匣主体（s28 高分段大平面，z -0.13..0.17）+ 下机匣扳机座 +
+	#    尾接托块——MG3 方正机匣读法
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.058, 0.064, 0.30),
+			Vector3(0, 0.030, 0.02), Vector3.ZERO, 0.0035, 28)
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.050, 0.046, 0.15),
+			Vector3(0, -0.026, 0.055), Vector3.ZERO, 0.0025, 14)
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.048, 0.054, 0.05),
+			Vector3(0, 0.026, 0.185), Vector3.ZERO, 0.0025, 8)
+	# ④ 顶部全长导轨：轨基（架于机匣盖上缘，y 0.062..0.074 z -0.1475..0.1675
+	#    直通机匣尾）+ 前段楔齿 ×6 + 后段楔齿 ×3（齿位避开前后件留缝）
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.026, 0.012, 0.315),
+			Vector3(0, 0.068, 0.01), Vector3.ZERO, 0.0015, 16)
+	for i in 6:
+		GUN_LIB.chamfer_box(root, rec, Vector3(0.030, 0.006, 0.016),
+				Vector3(0, 0.077, -0.115 + 0.032 * float(i)), Vector3.ZERO,
+				0.0012, 5)
+	for i in 3:
+		GUN_LIB.chamfer_box(root, rec, Vector3(0.030, 0.006, 0.016),
+				Vector3(0, 0.077, 0.075 + 0.032 * float(i)), Vector3.ZERO,
+				0.0012, 5)
+	# ④ 机匣盖（供弹盖板嵌于轨缘之间，低于齿顶一档）+ 盖面防滑纹 ×4
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.040, 0.008, 0.19),
+			Vector3(0, 0.058, -0.02), Vector3.ZERO, 0.0015, 10)
+	for i in 4:
+		GUN_LIB.chamfer_box(root, stl, Vector3(0.026, 0.002, 0.010),
+				Vector3(0, 0.0625, -0.085 + 0.04 * float(i)), Vector3.ZERO,
+				0.0008, 2)
+	# 【识别特征1】MG42 系长条椭圆散热孔护筒：贯通圆筒（seg48 z -0.57..-0.13）
+	#    + 前后收口箍（亮钢环读「套筒接缝/快换枪管接口」）+ 每侧 4 条纵向
+	#    长椭圆散热槽（±90° 正侧；dk 深黑真开孔凸 4mm——qjb201 R4 反转读法：
+	#    深灰筒黑槽对比 3.7 倍读「通槽」，槽端大倒角 0.006 出长椭圆轮廓）
+	GUN_LIB.tube(root, rec, 0.44, 0.054, Vector3(0, 0.026, -0.35),
+			Vector3(90, 0, 0), 0.004, 0, null, 3, 48)
+	GUN_LIB.torus_ring(root, stl, 0.024, 0.031, Vector3(0, 0.026, -0.135),
+			Vector3(90, 0, 0))
+	GUN_LIB.torus_ring(root, stl, 0.024, 0.030, Vector3(0, 0.026, -0.565),
+			Vector3(90, 0, 0))
+	for deg in [90.0, -90.0]:
+		var th0 := deg_to_rad(float(deg))
+		for i in 4:
+			GUN_LIB.chamfer_box(root, dk, Vector3(0.008, 0.026, 0.082),
+					Vector3(0.027 * sin(th0), 0.026 + 0.027 * cos(th0),
+							-0.505 + 0.10 * float(i)),
+					Vector3(0, 0, 90.0 - float(deg)), 0.006, 6)
+	# ⑥ 裸枪管露段（护筒前短露）+ 阶梯锥形助退/消焰器（MG42 助退器造型：
+	#    锁紧环 + 大径筒 d40 + 中径筒 d32 + 枪口小径管 d20 两段锥收小 +
+	#    膛口暗环 + 侧面泄压孔 ×2）
+	GUN_LIB.barrel(root, dk, 0.035, 0.028, Vector3(0, 0.026, -0.5875),
+			Vector3(90, 0, 0), 0, 36)
+	GUN_LIB.torus_ring(root, stl, 0.017, 0.023, Vector3(0, 0.026, -0.605),
+			Vector3(90, 0, 0))
+	GUN_LIB.tube(root, rec, 0.05, 0.040, Vector3(0, 0.026, -0.6325),
+			Vector3(90, 0, 0), 0.004, 0, null, 3, 32)
+	GUN_LIB.tube(root, rec, 0.03, 0.032, Vector3(0, 0.026, -0.6725),
+			Vector3(90, 0, 0), 0.003, 0, null, 3, 24)
+	GUN_LIB.barrel(root, dk, 0.016, 0.020, Vector3(0, 0.026, -0.6955),
+			Vector3(90, 0, 0), 0, 24)
+	GUN_LIB.tube(root, dk, 0.006, 0.013, Vector3(0, 0.026, -0.7065),
+			Vector3(90, 0, 0), 0.0005, 0, null, 2, 16)
+	for sx in [-1.0, 1.0]:
+		GUN_LIB.chamfer_box(root, dk, Vector3(0.006, 0.010, 0.014),
+				Vector3(0.0175 * float(sx), 0.032, -0.6325), Vector3.ZERO,
+				0.0006, 3)
+	# 【识别特征2】左侧弹链供弹：受弹口框（外凸座 + 黑色受弹嘴 + 亮钢口沿
+	#    销，qjb201 ④同法）——⑩ 7.62 全尺寸黄铜弹链外抛弧喂入（链节
+	#    16×13×34 比qjb201 5.8 档大一圈，弧顶机匣面外 ~50mm：箱口→受弹口
+	#    完整饱满弧 + 尾段 2 节垂入箱口）
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.008, 0.036, 0.09),
+			Vector3(-0.031, 0.024, -0.055), Vector3.ZERO, 0.0015, 8)
+	GUN_LIB.chamfer_box(root, dk, Vector3(0.004, 0.028, 0.07),
+			Vector3(-0.0335, 0.023, -0.055), Vector3.ZERO, 0.0008, 4)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.003, 0.004, 0.08),
+			Vector3(-0.0355, 0.038, -0.055), Vector3.ZERO, 0.0006, 2)
+	var belt_a := Vector3(-0.052, -0.008, -0.100)
+	var belt_c := Vector3(-0.086, 0.024, -0.082)
+	var belt_b := Vector3(-0.042, 0.020, -0.058)
+	for i in 9:
+		var t := float(i) / 8.0
+		var p := belt_a.lerp(belt_c, t).lerp(belt_c.lerp(belt_b, t), t)
+		GUN_LIB.chamfer_box(root, brs, Vector3(0.016, 0.013, 0.034),
+				p, Vector3(70.0 - 10.0 * float(i), 0, -30.0 + 4.5 * float(i)),
+				0.0008, 4)
+	GUN_LIB.chamfer_box(root, brs, Vector3(0.016, 0.013, 0.034),
+			Vector3(-0.055, -0.016, -0.103), Vector3(58, 0, -24), 0.0008, 4)
+	GUN_LIB.chamfer_box(root, brs, Vector3(0.016, 0.013, 0.034),
+			Vector3(-0.058, -0.024, -0.106), Vector3(52, 0, -22), 0.0008, 4)
+	# ⑤ 机匣底弹箱挂框（下挂供弹具挂接轨，箱顶嵌入框内——MCX-LT 对齐教训：
+	#    挂框 y -0.018..-0.002 上贴机匣底、箱顶 -0.016 嵌入框下沿 2mm）
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.052, 0.016, 0.16),
+			Vector3(0, -0.010, -0.06), Vector3.ZERO, 0.002, 10)
+	# ⑤ 60 发平衡弹箱 = 独立命名节点 mag_m3（原点=箱顶中心、向下生长；
+	#    软式迷彩布 MOLLE 袋型 ref_12 UI 直读：大倒角鼓胀主体读「软袋」+
+	#    顶翻盖 + 黑色硬质供弹口盖 + 横竖 MOLLE 织带 ×4 + 插扣 + 底排泥缝；
+	#    挂机匣左下 x -0.014 随弹链左偏——ref_01/12 弹箱垂挂左下位）
+	var pouch := Node3D.new()
+	pouch.name = "mag_m3"
+	pouch.position = Vector3(-0.014, -0.016, -0.075)
+	root.add_child(pouch)
+	GUN_LIB.chamfer_box(pouch, cam, Vector3(0.088, 0.155, 0.120),
+			Vector3(0, -0.0775, 0), Vector3.ZERO, 0.006, 16)
+	GUN_LIB.chamfer_box(pouch, cam, Vector3(0.092, 0.030, 0.124),
+			Vector3(0, -0.013, 0.003), Vector3.ZERO, 0.004, 8)
+	GUN_LIB.chamfer_box(pouch, dk, Vector3(0.056, 0.012, 0.086),
+			Vector3(0, 0.002, -0.008), Vector3.ZERO, 0.002, 6)
+	for i in 2:
+		GUN_LIB.chamfer_box(pouch, web, Vector3(0.090, 0.157, 0.014),
+				Vector3(0, -0.0775, -0.046 + 0.092 * float(i)),
+				Vector3.ZERO, 0.0015, 8)
+	for i in 2:
+		GUN_LIB.chamfer_box(pouch, web, Vector3(0.010, 0.155, 0.026),
+				Vector3(-0.043 + 0.086 * float(i), -0.0775, 0),
+				Vector3.ZERO, 0.0015, 8)
+	GUN_LIB.chamfer_box(pouch, web, Vector3(0.018, 0.024, 0.010),
+			Vector3(0, -0.038, -0.0625), Vector3.ZERO, 0.001, 3)
+	GUN_LIB.chamfer_box(pouch, dk, Vector3(0.090, 0.004, 0.09),
+			Vector3(0, -0.152, 0.006), Vector3.ZERO, 0.0006, 3)
+	# 【识别特征3】⑨ 独立手枪握把（黑色聚合物带握纹，grip 顶锚 = 旋转支点
+	#    与 m250/qjb201 同锚同式——HOLD_DELTA 机枪档 (0,0.028,-0.0718)）
+	GUN_LIB.grip(root, poly, 0.096, Vector3(0, -0.05, 0.07), 20.0,
+			0.038, 0.052, stl, 3)
+	# 扳机护圈（底梁 + 前后柱）+ 扳机——握把带护纹、护圈分离读法
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.012, 0.006, 0.075),
+			Vector3(0, -0.063, 0.055), Vector3.ZERO, 0.0008, 3)
+	for sz in [-1.0, 1.0]:
+		GUN_LIB.chamfer_box(root, rec, Vector3(0.012, 0.030, 0.008),
+				Vector3(0, -0.048, 0.055 + 0.036 * float(sz)), Vector3.ZERO,
+				0.0008, 3)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.008, 0.024, 0.008),
+			Vector3(0, -0.042, 0.052), Vector3(10, 0, 0), 0.0006, 2)
+	# 【识别特征3】MG42 式鱼尾形枪托（黑色聚合物）：托颈 + 托体上脊 +
+	#    主托板（-8° 向后下扩的鱼尾板式）+ 后跟抵肩垫（近黑橡胶）+
+	#    下缘收窄条 + 托侧贴腮凸台 + 托底调节卡钮 ×2
+	GUN_LIB.chamfer_box(root, poly, Vector3(0.042, 0.050, 0.04),
+			Vector3(0, 0.028, 0.222), Vector3.ZERO, 0.002, 10)
+	GUN_LIB.chamfer_box(root, poly, Vector3(0.046, 0.052, 0.14),
+			Vector3(0, 0.020, 0.295), Vector3.ZERO, 0.003, 12)
+	GUN_LIB.chamfer_box(root, poly, Vector3(0.050, 0.086, 0.13),
+			Vector3(0, -0.008, 0.32), Vector3(-8, 0, 0), 0.003, 14)
+	GUN_LIB.chamfer_box(root, dk, Vector3(0.054, 0.100, 0.016),
+			Vector3(0, -0.022, 0.392), Vector3.ZERO, 0.002, 6)
+	GUN_LIB.chamfer_box(root, poly, Vector3(0.030, 0.014, 0.12),
+			Vector3(0, -0.048, 0.30), Vector3(-8, 0, 0), 0.0015, 5)
+	GUN_LIB.chamfer_box(root, poly, Vector3(0.052, 0.020, 0.09),
+			Vector3(0, 0.058, 0.30), Vector3(-7, 0, 0), 0.002, 8)
+	for i in 2:
+		GUN_LIB.chamfer_box(root, stl, Vector3(0.030, 0.008, 0.012),
+				Vector3(0, -0.036, 0.255 + 0.075 * float(i)), Vector3.ZERO,
+				0.0008, 4)
+	# ⑦ 两脚架（行军态折叠收拢枪管前段两侧：骨架式三角截面支腿银灰色
+	#    m3steel 与深色枪身对比明显——ref_05 默认枪态；挂座 + 铰链销 +
+	#    双腿向后收拢贴护筒侧下 + 膝铰链块 + 伸缩锁环 + 脚尖驻锄板）
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.036, 0.022, 0.055),
+			Vector3(0, -0.012, -0.50), Vector3.ZERO, 0.0015, 8)
+	GUN_LIB.torus_ring(root, stl, 0.005, 0.012, Vector3(0, -0.020, -0.524),
+			Vector3(0, 0, 90), 24, 12)
+	for sx in [-1.0, 1.0]:
+		var lx := float(sx)
+		GUN_LIB.barrel(root, stl, 0.26, 0.012,
+				Vector3(0.024 * lx, -0.020, -0.395),
+				Vector3(90, -3.0 * lx, 0), 0, 24)
+		GUN_LIB.chamfer_box(root, rec, Vector3(0.016, 0.016, 0.024),
+				Vector3(0.024 * lx, -0.020, -0.486), Vector3.ZERO,
+				0.0008, 5)
+		GUN_LIB.torus_ring(root, dk, 0.007, 0.0145,
+				Vector3(0.024 * lx, -0.020, -0.462), Vector3(90, 0, 0))
+		GUN_LIB.chamfer_box(root, dk, Vector3(0.024, 0.009, 0.018),
+				Vector3(0.024 * lx, -0.026, -0.262), Vector3.ZERO,
+				0.0008, 5)
+	# ⑧ 机械瞄具：护筒前段柱形准星（基座 + 准星柱 + 护耳双耳，直立态
+	#    ref_01/10 直读）+ 机匣前部觇孔表尺（放倒态低廓贴轨 z -0.103 齿缝
+	#    位——给顶轨中段改装镜让位（镜座 mz 0.01 前 18mm 净空），腾龙/
+	#    qjb201 放倒先例）
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.020, 0.012, 0.030),
+			Vector3(0, 0.058, -0.515), Vector3.ZERO, 0.001, 6)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.005, 0.016, 0.006),
+			Vector3(0, 0.070, -0.515), Vector3.ZERO, 0.0006, 2)
+	for sx in [-1.0, 1.0]:
+		GUN_LIB.chamfer_box(root, rec, Vector3(0.004, 0.014, 0.010),
+				Vector3(0.008 * float(sx), 0.066, -0.515), Vector3.ZERO,
+				0.0006, 2)
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.024, 0.007, 0.020),
+			Vector3(0, 0.0765, -0.103), Vector3.ZERO, 0.0008, 5)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.020, 0.005, 0.032),
+			Vector3(0, 0.0795, -0.103), Vector3.ZERO, 0.0006, 4)
+	# ⑪ 右侧抛壳窗（凹嵌 + 防尘盖）+ 快慢机 + 机匣右侧亮钢铆钉 ×4 + 拉机柄
+	#    左置（MG42 系左置传统：杆 + 圆柱柄头）
+	GUN_LIB.chamfer_box(root, dk, Vector3(0.004, 0.026, 0.075),
+			Vector3(0.0295, 0.032, -0.02), Vector3.ZERO, 0.0008, 6)
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.005, 0.028, 0.08),
+			Vector3(0.032, 0.032, -0.02), Vector3.ZERO, 0.001, 6)
+	GUN_LIB.chamfer_box(root, stl, Vector3(0.004, 0.012, 0.026),
+			Vector3(0.030, -0.012, 0.055), Vector3.ZERO, 0.0006, 2)
+	for rz in [0.0, 0.05, 0.10, 0.15]:
+		GUN_LIB.chamfer_box(root, stl, Vector3(0.003, 0.004, 0.004),
+				Vector3(0.0298, 0.052, float(rz)), Vector3.ZERO, 0.0005, 2)
+	GUN_LIB.chamfer_box(root, rec, Vector3(0.020, 0.016, 0.09),
+			Vector3(-0.034, 0.046, 0.0), Vector3.ZERO, 0.0008, 4)
+	GUN_LIB.barrel(root, stl, 0.034, 0.026, Vector3(-0.050, 0.046, 0.002),
+			Vector3(0, 0, 90), 0, 20)
+	# ⑪ QD 背带环 ×2（护筒尾下 / 托颈左，穿孔轴沿 X = 侧挂环）+ 机匣销 ×2（左）
+	GUN_LIB.torus_ring(root, stl, 0.004, 0.010, Vector3(0, -0.008, -0.545),
+			Vector3(0, 0, 90))
+	GUN_LIB.torus_ring(root, stl, 0.004, 0.010, Vector3(-0.020, 0.030, 0.215),
+			Vector3(0, 0, 90))
+	for pz in [0.03, 0.12]:
+		GUN_LIB.chamfer_box(root, stl, Vector3(0.003, 0.008, 0.008),
+				Vector3(-0.0295, 0.016, float(pz)), Vector3.ZERO,
 				0.0006, 2)

@@ -58,7 +58,10 @@
 # （2026-11-05：⑲a 判裂 pair cover——splitFree 无裂缝渲染证据，照 ⑱
 # tenglong cover b_gun 先例；⑲c 全枪 right/left 侧视——拉机柄(⑤)/弧匣
 # (⑦)/true scale 判读 + 左侧 M-LOK/刻印语境，与 left 面刻印近距特写
-# mark——SIG 白刻印带可读出证，照 ⑱c/⑲ mark 先例）；滚动订正以 grep
+# mark——SIG 白刻印带可读出证，照 ⑱c/⑲ mark 先例）；M3 2026-11-06 并入
+# 两循环（逐枪美照 + 红点审计）+ ⑳ 前三大识别特征特写 shroud/belt/stock
+# （MG42 系长条椭圆散热孔护筒/左侧弹链+迷彩平衡弹箱/鱼尾托+独立握把，照
+# ⑲ qjb201 belt/bipod/handle 先例）；滚动订正以 grep
 # 计数 + 单跑实测为准）
 # 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
@@ -997,10 +1000,12 @@ func _initialize() -> void:
 	# 2026-11-02 商店枪 QJB201 并册追加（5.8×42mm 国产 QJB-201 班用机枪·
 	# 方正机匣/全长裸轨/下挂弹箱/金黄弹链弧形外露/骨架托）；2026-11-05
 	# 商店枪 MCX-LT 并册追加（.300 BLK SIG MCX Spear LT 9 寸 SBR·全长一体
-	# 顶轨/八边 M-LOK 圆孔护木/侧折伸缩双功能托/默认大消音器「短管长消音管」）
+	# 顶轨/八边 M-LOK 圆孔护木/侧折伸缩双功能托/默认大消音器「短管长消音管」）；
+	# 2026-11-06 商店枪 M3 并册追加（7.62×51mm 三角洲 S12「微光」赛季 M3
+	# 通用机枪·原型 MG3·MG42 系散热孔护筒/左侧弹链+迷彩弹箱/鱼尾托）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "knife",
+			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "m3", "knife",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
@@ -1057,12 +1062,14 @@ func _initialize() -> void:
 	# 追加——放倒翻折瞄具枪，改装镜走通用挂载必须在位；ASH-12 2026-11-01
 	# 并册追加——无托提把桥枪，改装镜走通用挂载必须在位；QJB201 2026-11-02
 	# 并册追加——机枪册裸轨放倒瞄具枪，改装镜走通用挂载必须在位；MCX-LT
-	# 2026-11-05 并册追加——全长一体轨放倒瞄具枪，改装镜走通用挂载必须在位）
+	# 2026-11-05 并册追加——全长一体轨放倒瞄具枪，改装镜走通用挂载必须在位；
+	# M3 2026-11-06 并册追加——机枪册裸轨放倒表尺枪，改装镜走通用挂载
+	# 必须在位）
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt",
+			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "m3",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
@@ -1947,6 +1954,62 @@ func _initialize() -> void:
 	await shot("res://out/shot_gun_mcxlt_mark.png")
 	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位
 	main.world.set_indoor(false)   # qjb201/mcxlt 特写段收尾：恢复户外氛围
+	# ⑳ M3 前三大识别特征特写（2026-11-06 商店枪并册，照 ⑲ qjb201
+	#     belt/bipod/handle 先例）：① MG42 系长条椭圆散热孔枪管护筒（右前
+	#     近距——贯通护筒 8 条纵槽 + 阶梯锥形助退器 + 前准星同框）
+	#     shot_gun_m3_shroud / ② 左侧弹链 + 迷彩平衡弹箱（左前近距——黄铜
+	#     弹链外抛弧从箱口喂入左受弹口整段 + 软袋 MOLLE 织带）
+	#     shot_gun_m3_belt / ③ MG42 式鱼尾形枪托 + 独立手枪握把（右后近距
+	#     ——鱼尾主托板/后跟抵肩垫/贴腮凸台 + 握把/护圈/扳机分离件）
+	#     shot_gun_m3_stock
+	main.stash.guns_owned.append("m3")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "m3", "secondary": "pistol"}
+	main._start_mission({"primary": "m3", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm13: Dictionary = main.soldiers.soldiers[i]
+		sm13["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm13["engaged"] = false
+		sm13["moving"] = false
+		sm13["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 3.70,
+			HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 11.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	main.world.set_indoor(true)
+	_set_ads_mx(1.0)
+	await frames(2)
+	main.player.cam.rotation = Vector3(-0.15, PI + PI, 0)
+	await frames(2)
+	var g_m3: Dictionary = main.guns._cur_gun()
+	var h_m3: Node3D = g_m3["holder"]
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	# 特写①：右前近距（Rx 6 微俯、Ry -74 右前斜角）——护筒段满幅：右侧
+	# 纵向长椭圆散热槽 ×4 贯通读「MG42 系护筒」+ 阶梯锥形助退器两段锥 +
+	# 护筒前准星 + 收口箍同框
+	h_m3.position = Vector3(0.17, 0.04, -0.24)
+	h_m3.rotation_degrees = Vector3(6, -74, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_m3_shroud.png")
+	# 特写②：左前近距（Rx 7 顶面受光、Ry +66 左前斜角）——弹链弧整段满幅：
+	# 箱口黄铜链节 → 外抛弧顶 → 左侧受弹口完整可见（不被机匣遮死）+ 迷彩
+	# 软弹箱顶翻盖/MOLLE 织带同框
+	h_m3.position = Vector3(-0.04, 0.03, -0.17)
+	h_m3.rotation_degrees = Vector3(7, 66, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_m3_belt.png")
+	# 特写③：右后近距（Rx 10 顶面受光、Ry -105 右后斜角）——枪尾段满幅：
+	# MG42 式鱼尾主托板后仰轮廓 + 后跟抵肩垫 + 托侧贴腮凸台 + 独立手枪
+	# 握把握纹 + 扳机护圈分离件同框
+	h_m3.position = Vector3(0.06, 0.00, -0.26)
+	h_m3.rotation_degrees = Vector3(10, -105, 0)
+	await frames(4)
+	await shot("res://out/shot_gun_m3_stock.png")
+	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位
+	main.world.set_indoor(false)   # m3 特写段收尾：恢复户外氛围
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
 	main.player.pos = Vector3(-40.2, 1.55, -47.0)

@@ -160,6 +160,16 @@ const RECOIL := {
 	# 后坐控制中位档的压制感）；水平漂移 0.09 窄档（腰射精度 57 中位
 	# 偏好 + 直托抵肩线，横漂放大就压不住）
 	"mcxlt": [0.19, 0.07, 0.09],
+	# m3 7.62×51mm 弹链机枪（2026-11-06 商店枪·三角洲 S12「微光」赛季 M3，
+	# 970rpm 全自动高射速）：机枪高射速压制档（用户定案口径——单发上顶中低、
+	# 连发累增明显压制感）：单发推力 0.17——7.62 NATO 弹比 m250（6.8×51
+	# 0.16）沉一档、比 scarh 步枪（7.62 0.26）轻半档（10.5kg 全枪重 + 两脚
+	# 架 + 弹链机枪的持续压制构型吃掉大半冲量，三角洲面板「后坐力控制 67」
+	# 机枪档偏好）；连发累增 0.07（970rpm 全枪册机枪最快节拍——比 m250/qjb201
+	# 0.06 抬一档，连发累增明显才有「撕布机」压制感，靠枪重+脚架压住）；
+	# 水平漂移 0.11 与 m250 0.10 同档略抬（弹链供弹横向拉扯 + 970rpm 快节拍
+	# 横漂放大，机枪标准漂移）
+	"m3": [0.17, 0.07, 0.11],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -1341,7 +1351,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 			or gun_id == "tenglong" or gun_id == "knife"
 			or gun_id == "ash12"
 			or gun_id == "qjb201"
-			or gun_id == "mcxlt") \
+			or gun_id == "mcxlt"
+			or gun_id == "m3") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -1385,6 +1396,10 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 顶轨上的放倒态机械瞄具前后各一为考证建模件（_lmg_qjb201 ⑬，
 		# tenglong 放倒先例），叠 iron 兜底片会悬浮轨顶与放倒瞄具叠影；
 		# 改装镜照常落 else 通用挂载，不设 pass 吞镜分支
+		# m3 同例（2026-11-06 商店枪·M3 通用机枪·机枪册）：护筒前段柱形
+		# 准星（直立）+ 机匣前部觇孔表尺（放倒态贴轨）为考证建模件
+		# （_lmg_m3 ⑧，ref_01/10 直读），叠 iron 兜底片会悬浮轨顶与真实
+		# 瞄具叠影；改装镜照常落 else 通用挂载，不设 pass 吞镜分支
 		pass
 	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
 	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
@@ -1948,6 +1963,10 @@ const HOLD_DELTA := {
 	# （AR 式握把与 k416/k437/tenglong/ash12 同锚，29c 持握锚 ±1.5mm 断言
 	# 同链）
 	"mcxlt": Vector3(0, 0.008, -0.0768),
+	# m3 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − hd_gun_lmg _lmg_m3 握把顶锚
+	# grip(pos=(0,-0.05,0.07)) = (0, -0.022+0.05, -0.0018-0.07)
+	# （机枪册后置握把与 m250/qjb201 同锚同式，29c 持握锚 ±1.5mm 断言同链）
+	"m3": Vector3(0, 0.028, -0.0718),
 	"knife": Vector3(0, -0.038, -0.0118),   # 匕首：grip_hold 锚(0,0.016,0.01)→MK4 基准(0,-0.022,-0.0018)
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
@@ -3432,16 +3451,18 @@ static func _ar_mats() -> Dictionary:
 			"vwear": vwear, "vcover": vcover, "kmark": kmark}
 
 
-## ================= 枪匠·机枪册（m250 SIG XM250 / qjb201 国产 QJB-201） =================
-## 6.8×51mm 与 5.8×42mm 两把弹链机枪：几何体在 hd_gun_lmg.gd（LMG_LIB 路径
-## preload，不走裸全局名——同 hd_gunlib/hd_gun_ar 先例：新文件必须随收尾提交
-## 入库，否则门槛快照 preload 会失(FILE)）；材质走 _lmg_mats 工厂传参注入（新
-## 文件零材质创建）。弹链袋/弹箱/镜座挂点契约与步枪册同口径：_lmg_mag_of
-## 动画匣隐（m250 mag_pouch 软链袋 / qjb201 mag_qjb201 硬弹箱独立命名节点
-## 表达静置外形）、_lmg_scope_anchor 顶轨挂点。
+## ================= 枪匠·机枪册（m250 SIG XM250 / qjb201 国产 QJB-201 /
+## m3 三角洲 S12「微光」赛季 M3 通用机枪·原型 MG3） =================
+## 6.8×51mm / 5.8×42mm / 7.62×51mm 三把弹链机枪：几何体在 hd_gun_lmg.gd
+## （LMG_LIB 路径 preload，不走裸全局名——同 hd_gunlib/hd_gun_ar 先例：新
+## 文件必须随收尾提交入库，否则门槛快照 preload 会失(FILE)）；材质走
+## _lmg_mats 工厂传参注入（新文件零材质创建）。弹链袋/弹箱/镜座挂点契约与
+## 步枪册同口径：_lmg_mag_of 动画匣隐（m250 mag_pouch 软链袋 / qjb201
+## mag_qjb201 硬弹箱 / m3 mag_m3 迷彩软弹箱独立命名节点表达静置外形）、
+## _lmg_scope_anchor 顶轨挂点。
 ## BATTLE_GUNS 的 lmg（大战场兵种配发枪）不在本册、原链路零改动。
 
-const LMG_IDS := ["m250", "qjb201"]
+const LMG_IDS := ["m250", "qjb201", "m3"]
 
 
 ## id 是否属于机枪册（_build_gun_visual 分发用）
@@ -3478,6 +3499,14 @@ static func _lmg_mag_of(id: String) -> Dictionary:
 			# （随 R5 下探 -0.062→-0.076），m250 契约同式）
 			return {"pos": Vector3(0.0, -0.076, -0.062),
 					"size": Vector3(0.059, 0.085, 0.120), "show": false}
+		"m3":
+			# 60 发迷彩软式平衡弹箱（mag_m3 独立命名节点：箱顶中心枪身局部
+			# (-0.014,-0.016,-0.075)——箱顶嵌入机匣底挂框内 2mm（MCX-LT
+			# 对齐教训：井/匣/手锚三处同源，箱轨始终相连不悬空）；
+			# size=袋外形 0.088×0.155×0.120 ×0.62 掉匣替身缩放基准、
+			# pos 袋中下段换弹手锚按深度比例下移，m250/qjb201 契约同式）
+			return {"pos": Vector3(-0.009, -0.100, -0.047),
+					"size": Vector3(0.055, 0.096, 0.074), "show": false}
 	return {}
 
 
@@ -3493,6 +3522,11 @@ static func _lmg_scope_anchor(id: String) -> Vector3:
 			## 顶轨齿顶 0.0745 / 机匣中后段（供弹盖后）/ 护套前段——裸顶轨
 			## （考证清单⑬：QMK-204 3x 镜整体省略，镜座挂点照 m250 写法）
 			return Vector3(0.072, -0.12, -0.5)
+		"m3":
+			## 顶轨齿顶 0.080 / 机匣中后段（放倒表尺后 z 0.01——给机匣前部
+			## 放倒觇孔表尺 z -0.103 让位，改装镜不与瞄具件穿插）/ 护筒前段
+			## ——裸顶轨（考证清单⑧⑬：镜座挂点照 m250/qjb201 写法）
+			return Vector3(0.077, 0.01, -0.5)
 	return Vector3(0.085, -0.1, -0.5)
 
 
@@ -3545,6 +3579,30 @@ static func _lmg_mats() -> Dictionary:
 		"qjmark": mk.call(Color(0.86, 0.885, 0.925),
 				Color(0.62, 0.64, 0.68), 0.55, 0.35),
 	}
+	# m3 专属六键（2026-11-06 并册·深灰枪铁 + 黑色聚合物 + 迷彩弹箱，m250/
+	# qjb201 键零改动）：⑨ 金属微反光读法靠 rough 拉开——m3rec 0.118 中深
+	# 灰金属 rough 0.42（微反光，比 qjrec 0.150 深一档读「深灰枪铁」，
+	# ref_01/10 直读非哑光全黑）、m3poly 0.032 深哑黑聚合物 rough 1.0
+	# （反差 3.7 倍，qjb201「聚合物侧加深」同法）、m3steel 0.185 亮钢
+	# rough 0.4（骨架脚架银灰支腿与深色枪身对比明显，ref_05 直读）、
+	# m3dk 0.032 近黑负形（散热槽真开孔读法对比 m3rec 3.7 倍，qjb201
+	# R4 同法）、m3camo 0.11/0.13/0.072 迷彩橄榄布面 rough 0.9（60 发
+	# 平衡弹箱软袋，ref_12 UI 直读）、m3web 0.14/0.125/0.095 织带深棕
+	# （MOLLE 条/插扣）——brass/dark 复用 m250 既有键零新键
+	var m3 := {
+		"m3rec": mk.call(Color(0.118, 0.122, 0.132), Color(0.13, 0.135, 0.148),
+				0.42, 0.42),
+		"m3poly": mk.call(Color(0.032, 0.032, 0.035), Color(0.038, 0.038, 0.041),
+				1.0, 0.30),
+		"m3steel": mk.call(Color(0.185, 0.185, 0.200), Color(0.15, 0.15, 0.165),
+				0.4, 0.42),
+		"m3dk": mk.call(Color(0.032, 0.032, 0.035), Color(0.036, 0.036, 0.039),
+				0.6, 0.30),
+		"m3camo": mk.call(Color(0.105, 0.125, 0.072), Color(0.115, 0.135, 0.08),
+				0.9, 0.30),
+		"m3web": mk.call(Color(0.14, 0.125, 0.095), Color(0.13, 0.115, 0.085),
+				0.9, 0.30),
+	}
 	var mats := {
 		"fde": mk.call(Color(0.20, 0.175, 0.12), Color(0.125, 0.11, 0.075), 0.7, 0.42),
 		"supp": mk.call(Color(0.19, 0.155, 0.11), Color(0.115, 0.09, 0.065), 0.6, 0.42),
@@ -3556,6 +3614,8 @@ static func _lmg_mats() -> Dictionary:
 	}
 	for k in qjb:
 		mats[k] = qjb[k]
+	for k in m3:
+		mats[k] = m3[k]
 	return mats
 
 
