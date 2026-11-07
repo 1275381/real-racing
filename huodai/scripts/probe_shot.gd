@@ -904,6 +904,30 @@ func _initialize() -> void:
 	main.targets.set_mover_dist(HDTargets.MOVER_PRESETS[0])
 	await frames(2)
 
+	# ---- 视效动画图证（2026-11-03 用户「机枪弹链滑动 / 狙击枪抛壳」）：
+	#      qjb201 连开两发抓棘轮中间帧（链节沿弧向前进）；sniper 开火 0.3s
+	#      后抓空中弹壳——拍完复位 rifle
+	main.stash.guns_owned.append("qjb201")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "qjb201", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.guns.try_fire()
+	await frames(1)   # 棘轮中间帧（BELT_FEED_SPEED 0.55 → 链距 24mm 走 ~44ms）
+	main.guns.fire_cd = 0.0
+	main.guns.try_fire()
+	await frames(1)
+	shot("res://out/shot_belt_feed.png")
+	main.stash.loadout = {"primary": "sniper", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.player.pitch = 0.0
+	main.guns.try_fire()
+	await frames(18)   # 栓机循环 0.28s 后弹壳在空中
+	shot("res://out/shot_sniper_eject.png")
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main._enter_range()
+	await frames(10)
+
 	# ---- 靶场暂停菜单（模式分化图证）：进靶场按 Esc 开菜单截整屏——
 	#      「靶场暂停」标题 +「1 重开靶场 / 2 离开靶场（回大厅）」两项，
 	#      无「行动/战斗/放弃」字样；keep_menu 直拍（不收菜单护栏）

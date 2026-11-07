@@ -828,6 +828,40 @@ func _run() -> void:
 		main.soldiers.reset_all()
 	main.guns._equip("primary")
 
+	# 10e. 视效动画（2026-11-03 用户「机枪弹链真实滑动 / 狙击枪抛壳」）
+	#      a) 弹链棘轮：m3 开火 → 滑动条存在、目标偏移 +1 链距、走满回跳有界
+	if not main.stash.guns_owned.has("m3"):
+		main.stash.guns_owned.append("m3")
+	main.guns.enter({"primary": "m3", "secondary": "pistol"})
+	var bl: Node = main.guns._guns["primary"]["holder"].find_child("belt_slide", true, false)
+	check("机枪弹链滑动条在位（合体后独立节点）", bl != null
+			and (bl as Node3D).get_child_count() >= 4)
+	main.guns.try_fire()
+	var bt0: float = main.guns._belt_target
+	check("开火推动弹链棘轮 +1 链距", is_equal_approx(bt0, 0.034),
+		"target=%.4f" % bt0)
+	for i_b in 3:
+		main.guns.fire_cd = 0.0
+		main.guns.update(0.05)   # 走动画：棘轮回跳有界
+	main.guns.try_fire()
+	main.guns.update(0.05)
+	check("棘轮回跳有界（目标不无限累积）", main.guns._belt_target < 0.068,
+		"target=%.4f" % main.guns._belt_target)
+	#      b) 狙击抛壳：栓机循环 0.28s 后弹壳入池可见
+	main.guns.enter({"primary": "sniper", "secondary": "pistol"})
+	main.player.pitch = 0.0
+	main.guns.try_fire()
+	check("狙击开火蓄抛壳（栓机循环 0.28s）", main.guns._eject_t > 0.0)
+	for i_e in 20:
+		main.guns.update(0.016)
+	var casings := 0
+	for e_c in main.guns._eject_pool:
+		if (e_c["mi"] as MeshInstance3D).visible:
+			casings += 1
+	check("弹壳已抛出（池内可见）", casings >= 1, "n=%d" % casings)
+	main.stash.guns_owned.erase("m3")   # 夹具复位（下游「默认恰旧五枪」断言依赖）
+	main.guns.enter({"primary": "rifle", "secondary": "pistol"})
+
 	# 10b. 靶场暂停菜单文案（模式分化）：标题「靶场暂停」+「离开靶场」就位，
 	#      不出现「行动/战斗/放弃」（用户反馈：靶场哪来的「放弃战斗」）——
 	#      须在离场前断言：_back_to_lobby 会把菜单复位回实战文案

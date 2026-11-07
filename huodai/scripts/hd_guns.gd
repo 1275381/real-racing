@@ -33,6 +33,28 @@ const HEADSHOT_MUL := 2.0                          # 爆头伤害倍率
 const ADS_SPREAD := 0.1                            # 开镜散布倍率（onfoot 惯例）
 const ADS_SPEED := 5.0
 const MAG_REST_T := 4.0                            # 落地弹匣停留秒数（之后渐隐回收）
+## 弹链供弹滑动条（2026-11-03 用户「机枪弹链要有真实滑动效果」）：机枪开火
+## 时弹链逐节喂入——unibody 合并把静态弹链烘死，滑动条=合体后追加的独立
+## 链节组（同色黄铜、同弧向），每发沿 dir 前进一个链距、走满一距棘轮回跳
+## （链节 identical+等距 → 回跳不可见 = 连续供弹错觉）。坐标=枪身局部
+## （_mount_slot 追加时补 HOLD_DELTA）。
+const BELT_FEED := {
+	"m250": {"origin": Vector3(-0.037, 0.026, -0.135), "dir": Vector3(0, 0, 1),
+		"pitch": 0.022, "links": 4, "size": Vector3(0.012, 0.013, 0.02)},
+	"qjb201": {"origin": Vector3(-0.066, 0.004, -0.112),
+		"dir": Vector3(0.7956, 0.4284, 0.4284),   # (0.026,0.014,0.014) 归一化常量
+		"pitch": 0.024, "links": 4, "size": Vector3(0.012, 0.011, 0.024)},
+	"m3": {"origin": Vector3(-0.086, 0.024, -0.082),
+		"dir": Vector3(0.8751, -0.0796, 0.4774),  # (0.044,-0.004,0.024) 归一化常量
+		"pitch": 0.034, "links": 4, "size": Vector3(0.016, 0.013, 0.034)},
+}
+const BELT_FEED_SPEED := 0.55                      # 链条棘轮前进速度（m/s——
+                                                   # 一个链距 ~50ms 内走完）
+## 抛壳口（2026-11-03 用户「狙击枪要有抛壳」）：枪身局部坐标（_mount_slot
+## 补 HOLD_DELTA）；开火后 EJECT_DELAY 模拟栓机循环再抛
+const EJECT_PORTS := {"sniper": Vector3(0.032, 0.055, 0.02)}
+const EJECT_DELAY := 0.28
+const EJECT_LIFE := 1.1                            # 弹壳存活秒数（末 0.3s 缩隐）
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
 const RD_WIN_W := 0.06     # 红点镜玻璃窗宽（枪身局部 m）——无框反射式大窗
 const RISER_H := 0.024            # 镜体增高架抬高量（2026-10-28；rd_aim_y/AABB 顶自动跟随）
@@ -196,6 +218,14 @@ var _ads := 0.0
 var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
 var _reload_rot := Vector3.ZERO
 var _falling_mag: MeshInstance3D    # 掉落弹匣替身（主世界空间——落地后要与地面交互，留在主世界；queue_free 惰性重建）
+var _belt_slide: Node3D             # 弹链滑动条（合体后追加的独立链节组，随 holder 重建）
+var _belt_dir := Vector3.ZERO       # 供弹方向（枪身局部）
+var _belt_pitch := 0.0              # 链距（棘轮回跳步长）
+var _belt_off := 0.0                # 当前偏移
+var _belt_target := 0.0             # 目标偏移（每发 +pitch，走满一距回跳）
+var _eject_pool: Array = []         # 抛壳池 {mi,vel,spin,t}（vm 世界空间）
+var _eject_i := 0
+var _eject_t := -1.0                # 栓机循环倒计时（>0 蓄抛）
 var _hand: Node3D                   # 换弹手部替身（vm 相机子节点，与枪架同级同世界，仅换弹可见）
 var _falling_vel := Vector3.ZERO
 var _mag_scale := Vector3.ONE   # 掉落匣替身按枪种弹匣尺寸的缩放（渐隐时保持比例）
@@ -263,6 +293,10 @@ func enter(loadout: Dictionary) -> void:
 	_reload_rot = Vector3.ZERO
 	_falling = false
 	_mag_landed = false
+	_belt_slide = null
+	_belt_off = 0.0
+	_belt_target = 0.0
+	_eject_t = -1.0
 	_hide_hand()
 	if tracers != null:
 		tracers.hide_all()
@@ -591,6 +625,92 @@ static func _kpart(root: Node3D, mat: StandardMaterial3D, size: Vector3, pos: Ve
 	root.add_child(mi)
 
 
+## 弹链滑动条挂载（合体后追加——unibody 已成型，新子节点保持独立可动画）：
+## 链节黄铜同色、沿供弹方向排布，坐标= builders 局部 + HOLD_DELTA 烘焙对齐
+func _mount_belt_slide(gun: Node3D, gid: String) -> void:
+	_belt_slide = null
+	_belt_off = 0.0
+	_belt_target = 0.0
+	if not BELT_FEED.has(gid):
+		return
+	var bf: Dictionary = BELT_FEED[gid]
+	var brs := StandardMaterial3D.new()
+	brs.albedo_color = Color(0.72, 0.58, 0.2)
+	brs.metallic = 0.85
+	brs.roughness = 0.35
+	var slide := Node3D.new()
+	slide.name = "belt_slide"
+	var dir: Vector3 = bf["dir"]
+	var pitch: float = float(bf["pitch"])
+	var yaw := atan2(dir.x, dir.z)
+	for k in int(bf["links"]):
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(float(bf["size"].x), float(bf["size"].y),
+				pitch * 0.9)   # 链节沿供弹向取 ~0.9 链距：滑动中留出节间缝
+		bm.material = brs
+		mi.mesh = bm
+		mi.position = Vector3(bf["origin"]) + Vector3(_hold_delta(gid)) \
+				+ dir * (pitch * float(k))
+		mi.rotation.y = yaw
+		slide.add_child(mi)
+	gun.add_child(slide)
+	_belt_slide = slide
+	_belt_dir = dir
+	_belt_pitch = pitch
+
+
+## 每发视效钩（try_fire 常规路径尾调用）：弹链棘轮目标 +1 链距（_tick_fx
+## 匀速走、走满一距回跳）+ 狙击枪蓄抛壳（栓机循环延迟）
+func _on_shot_fx() -> void:
+	if _belt_slide != null:
+		_belt_target += _belt_pitch
+	var g: Dictionary = _cur_gun()
+	if g != null and not g.is_empty() and EJECT_PORTS.has(cur_id) \
+			and (g["holder"] as Node3D).visible:
+		_eject_t = EJECT_DELAY
+
+
+## 抛壳（vm 世界空间）：弹壳从抛壳口弹出（右+上+后 + 随机抖动），
+## 自旋 + 伪重力下坠，EJECT_LIFE 后缩隐回收（对象池轮转）
+func _spawn_casing() -> void:
+	var g: Dictionary = _cur_gun()
+	if g == null or g.is_empty():
+		return
+	var holder: Node3D = g["holder"]
+	if _eject_pool.is_empty():
+		var brs := StandardMaterial3D.new()
+		brs.albedo_color = Color(0.78, 0.62, 0.24)
+		brs.metallic = 0.9
+		brs.roughness = 0.3
+		for k in 6:
+			var mi := MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.006
+			cm.bottom_radius = 0.006
+			cm.height = 0.03
+			cm.material = brs
+			mi.mesh = cm
+			mi.visible = false
+			(holder.get_viewport() as Node).add_child(mi)
+			_eject_pool.append({"mi": mi, "vel": Vector3.ZERO,
+					"spin": Vector3.ZERO, "t": 0.0})
+	var slot: Dictionary = _eject_pool[_eject_i]
+	_eject_i = (_eject_i + 1) % _eject_pool.size()
+	var port: Vector3 = Vector3(EJECT_PORTS[cur_id]) + _hold_delta(cur_id)
+	(slot["mi"] as MeshInstance3D).global_position = holder.to_global(port)
+	var right: Vector3 = holder.global_transform.basis.x
+	var up: Vector3 = holder.global_transform.basis.y
+	var back: Vector3 = holder.global_transform.basis.z
+	slot["vel"] = (right * (0.9 + randf() * 0.4)
+			+ up * (0.7 + randf() * 0.3) + back * 0.35)
+	slot["spin"] = Vector3(randf_range(-720, 720),
+			randf_range(-360, 360), randf_range(-720, 720))
+	slot["t"] = EJECT_LIFE
+	(slot["mi"] as MeshInstance3D).scale = Vector3.ONE
+	(slot["mi"] as MeshInstance3D).visible = true
+
+
 func try_fire() -> void:
 	if cur_id == "":
 		return
@@ -709,6 +829,7 @@ func try_fire() -> void:
 					t_ad, int(ammo.get("pen", 2)))
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
+	_on_shot_fx()
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；
 	# 整体 ×配件 recoil_mul（M14 战术护木 -45%——_mod_muls）。
 	# 超点射真实弹道特征（2026-10 AN-94 引入）：带射速档案（cd_profile）的枪
@@ -1109,6 +1230,7 @@ func _mount_slot(slot: String) -> void:
 	player.vm_cam.add_child(holder)
 	gun.scale = Vector3.ONE * GUN_SCALE
 	holder.add_child(gun)
+	_mount_belt_slide(gun, gid)
 	# 量枪模包围盒：开镜时把枪顶（机瞄/瞄具）正好放到准星正下方
 	var bb := _local_aabb(gun)
 	var top := 0.085
@@ -1850,6 +1972,35 @@ func _tick_fx(dt: float) -> void:
 			s["t"] = float(s["t"]) - dt
 			if float(s["t"]) <= 0.0:
 				s["mi"].visible = false
+	# 弹链棘轮（2026-11-03 弹链滑动）：匀速逼近目标偏移，走满一链距双双
+	# 回跳一距——链节 identical+等距 → 回跳不可见 = 连续供弹错觉
+	if _belt_slide != null and _belt_target > 0.0:
+		_belt_off = move_toward(_belt_off, _belt_target,
+				BELT_FEED_SPEED * dt)
+		if _belt_target - _belt_off < 0.0005:
+			_belt_off -= _belt_pitch
+			_belt_target -= _belt_pitch
+		_belt_slide.position = _belt_dir * _belt_off
+	# 抛壳（狙击）：栓机循环倒计时走完 → 出壳；壳体伪重力+自旋+缩隐回收
+	if _eject_t > 0.0:
+		_eject_t -= dt
+		if _eject_t <= 0.0:
+			_eject_t = -1.0
+			_spawn_casing()
+	for e in _eject_pool:
+		if float(e["t"]) > 0.0:
+			e["t"] = float(e["t"]) - dt
+			var mi_e: MeshInstance3D = e["mi"]
+			if float(e["t"]) <= 0.0:
+				mi_e.visible = false
+				continue
+			var vel: Vector3 = e["vel"]
+			vel.y -= 5.5 * dt
+			e["vel"] = vel
+			mi_e.global_position += vel * dt
+			mi_e.rotation_degrees += (e["spin"] as Vector3) * dt
+			if float(e["t"]) < 0.3:
+				mi_e.scale = Vector3.ONE * maxf(float(e["t"]) / 0.3, 0.01)
 	# 掉落弹匣：重力下坠 + 前抛 + 旋转，落地贴地停住，4s 后缩隐并回收
 	if _falling_mag != null and _falling_mag.visible:
 		if not _mag_landed:
