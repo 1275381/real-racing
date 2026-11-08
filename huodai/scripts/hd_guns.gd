@@ -293,10 +293,12 @@ func enter(loadout: Dictionary) -> void:
 	_reload_rot = Vector3.ZERO
 	_falling = false
 	_mag_landed = false
-	_belt_slide = null
 	_belt_off = 0.0
 	_belt_target = 0.0
 	_eject_t = -1.0
+	# 注意：不清 _belt_slide——同枪复用 holder 时不重挂滑条，成员引用由
+	# _equip 末尾从 _guns[slot]["belt"] 刷新（清空=复用路径引用永久丢失，
+	# 2026-11-03 用户「没看见弹链滑动」的真根因）
 	_hide_hand()
 	if tracers != null:
 		tracers.hide_all()
@@ -627,7 +629,7 @@ static func _kpart(root: Node3D, mat: StandardMaterial3D, size: Vector3, pos: Ve
 
 ## 弹链滑动条挂载（合体后追加——unibody 已成型，新子节点保持独立可动画）：
 ## 链节黄铜同色、沿供弹方向排布，坐标= builders 局部 + HOLD_DELTA 烘焙对齐
-func _mount_belt_slide(gun: Node3D, gid: String) -> void:
+func _mount_belt_slide(gun: Node3D, gid: String) -> Node3D:
 	_belt_slide = null
 	_belt_off = 0.0
 	_belt_target = 0.0
@@ -655,9 +657,10 @@ func _mount_belt_slide(gun: Node3D, gid: String) -> void:
 		mi.rotation.y = yaw
 		slide.add_child(mi)
 	gun.add_child(slide)
-	_belt_slide = slide
 	_belt_dir = dir
 	_belt_pitch = pitch
+	return slide   # 调用方存 _guns[slot]["belt"]（按槽持有——同枪复用 holder
+	               # 时不重挂，引用必须活着；MCX-LT 匣井同款「引用随枪走」）
 
 
 ## 每发视效钩（try_fire 常规路径尾调用）：弹链棘轮目标 +1 链距（_tick_fx
@@ -1194,6 +1197,11 @@ func _equip(slot: String) -> void:
 	_hide_hand()
 	if _falling_mag != null:
 		_falling_mag.visible = false
+	# 弹链滑动引用随槽刷新（2026-11-03：enter 复位不清、复用不重挂，
+	# 唯一刷新点在这里——cur 槽有滑条就接上，没有置 null）
+	_belt_slide = null
+	if _guns.has(slot) and _guns[slot].has("belt"):
+		_belt_slide = _guns[slot]["belt"]
 	# 只显示当前槽位枪模
 	for k in _guns:
 		var gi: Dictionary = _guns[k]
@@ -1230,7 +1238,7 @@ func _mount_slot(slot: String) -> void:
 	player.vm_cam.add_child(holder)
 	gun.scale = Vector3.ONE * GUN_SCALE
 	holder.add_child(gun)
-	_mount_belt_slide(gun, gid)
+	var belt_slide := _mount_belt_slide(gun, gid)
 	# 量枪模包围盒：开镜时把枪顶（机瞄/瞄具）正好放到准星正下方
 	var bb := _local_aabb(gun)
 	var top := 0.085
@@ -1366,6 +1374,8 @@ func _mount_slot(slot: String) -> void:
 		# +Δy：meta 是平移前的枪身局部 y（_scope_visual 在平移前写），
 		# 补上 HOLD_DELTA 的 y 分量才是平移后窗中心的真实 local y
 		g_pack["aim_y"] = float(gun.get_meta("rd_aim_y")) + _hold_delta(gid).y
+	if belt_slide != null:
+		g_pack["belt"] = belt_slide   # 按槽持有：_equip 刷新成员引用（复用不丢）
 	_guns[slot] = g_pack
 
 
@@ -1972,14 +1982,15 @@ func _tick_fx(dt: float) -> void:
 			s["t"] = float(s["t"]) - dt
 			if float(s["t"]) <= 0.0:
 				s["mi"].visible = false
-	# 弹链棘轮（2026-11-03 弹链滑动）：匀速逼近目标偏移，走满一链距双双
-	# 回跳一距——链节 identical+等距 → 回跳不可见 = 连续供弹错觉
-	if _belt_slide != null and _belt_target > 0.0:
+	# 弹链棘轮（2026-11-03 弹链滑动）：匀速逼近目标偏移；off 每走满一个
+	# 链距立即双双回跳一距（off 恒在 [0,链距) 内循环、target 不累积负值）
+	# ——链节 identical+等距 → 回跳不可见 = 连续供弹错觉
+	if _belt_slide != null and _belt_target > _belt_off + 0.0005:
 		_belt_off = move_toward(_belt_off, _belt_target,
 				BELT_FEED_SPEED * dt)
-		if _belt_target - _belt_off < 0.0005:
-			_belt_off -= _belt_pitch
-			_belt_target -= _belt_pitch
+		if _belt_off >= _belt_pitch - 0.0005:
+			_belt_off = maxf(_belt_off - _belt_pitch, 0.0)
+			_belt_target = maxf(_belt_target - _belt_pitch, 0.0)
 		_belt_slide.position = _belt_dir * _belt_off
 	# 抛壳（狙击）：栓机循环倒计时走完 → 出壳；壳体伪重力+自旋+缩隐回收
 	if _eject_t > 0.0:
