@@ -39,14 +39,15 @@ const MAG_REST_T := 4.0                            # 落地弹匣停留秒数（
 ## （链节 identical+等距 → 回跳不可见 = 连续供弹错觉）。坐标=枪身局部
 ## （_mount_slot 追加时补 HOLD_DELTA）。
 const BELT_FEED := {
-	"m250": {"origin": Vector3(-0.037, 0.026, -0.135), "dir": Vector3(0, 0, 1),
-		"pitch": 0.022, "links": 4, "size": Vector3(0.012, 0.013, 0.02)},
-	"qjb201": {"origin": Vector3(-0.066, 0.004, -0.112),
-		"dir": Vector3(0.7956, 0.4284, 0.4284),   # (0.026,0.014,0.014) 归一化常量
-		"pitch": 0.024, "links": 4, "size": Vector3(0.012, 0.011, 0.024)},
-	"m3": {"origin": Vector3(-0.086, 0.024, -0.082),
-		"dir": Vector3(0.8751, -0.0796, 0.4774),  # (0.044,-0.004,0.024) 归一化常量
-		"pitch": 0.034, "links": 4, "size": Vector3(0.016, 0.013, 0.034)},
+	"m250": {"a": Vector3(-0.037, 0.026, -0.146), "c": Vector3(-0.037, 0.026, -0.118),
+		"b": Vector3(-0.037, 0.026, -0.091), "links": 4,
+		"size": Vector3(0.012, 0.013, 0.02)},
+	"qjb201": {"a": Vector3(-0.046, -0.018, -0.124), "c": Vector3(-0.066, 0.004, -0.112),
+		"b": Vector3(-0.040, 0.018, -0.098), "links": 10,
+		"size": Vector3(0.012, 0.011, 0.024)},
+	"m3": {"a": Vector3(-0.052, -0.008, -0.100), "c": Vector3(-0.086, 0.024, -0.082),
+		"b": Vector3(-0.042, 0.020, -0.058), "links": 11,
+		"size": Vector3(0.016, 0.013, 0.034)},
 }
 const BELT_FEED_SPEED := 0.55                      # 链条棘轮前进速度（m/s——
                                                    # 一个链距 ~50ms 内走完）
@@ -219,10 +220,11 @@ var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
 var _reload_rot := Vector3.ZERO
 var _falling_mag: MeshInstance3D    # 掉落弹匣替身（主世界空间——落地后要与地面交互，留在主世界；queue_free 惰性重建）
 var _belt_slide: Node3D             # 弹链滑动条（合体后追加的独立链节组，随 holder 重建）
-var _belt_dir := Vector3.ZERO       # 供弹方向（枪身局部）
-var _belt_pitch := 0.0              # 链距（棘轮回跳步长）
-var _belt_off := 0.0                # 当前偏移
-var _belt_target := 0.0             # 目标偏移（每发 +pitch，走满一距回跳）
+var _belt_path := PackedVector3Array()  # 供弹弧折线点阵（贝塞尔细采样+HOLD_DELTA 烘焙）
+var _belt_len := 0.0                # 供弹弧总长（滑动循环周期）
+var _belt_pitch := 0.0              # 链距（每发推进步长=弧长/节数）
+var _belt_off := 0.0                # 当前弧长偏移
+var _belt_target := 0.0             # 目标弧长偏移（每发 +链距）
 var _eject_pool: Array = []         # 抛壳池 {mi,vel,spin,t}（vm 世界空间）
 var _eject_i := 0
 var _eject_t := -1.0                # 栓机循环倒计时（>0 蓄抛）
@@ -628,39 +630,72 @@ static func _kpart(root: Node3D, mat: StandardMaterial3D, size: Vector3, pos: Ve
 
 
 ## 弹链滑动条挂载（合体后追加——unibody 已成型，新子节点保持独立可动画）：
-## 链节黄铜同色、沿供弹方向排布，坐标= builders 局部 + HOLD_DELTA 烘焙对齐
+## 沿 BELT_FEED 贝塞尔弧等弧长铺满 links 节（弧参数=原静态链三点原值），
+## 每发整组沿弧推进一个链距、走满整弧回绕——链节 identical+等距铺满 →
+## 回绕不可见 = 连续供弹。坐标= builders 局部 + HOLD_DELTA 烘焙对齐
 func _mount_belt_slide(gun: Node3D, gid: String) -> Node3D:
 	_belt_slide = null
 	_belt_off = 0.0
 	_belt_target = 0.0
+	_belt_path = PackedVector3Array()
+	_belt_len = 0.0
 	if not BELT_FEED.has(gid):
-		return
+		return null
 	var bf: Dictionary = BELT_FEED[gid]
 	var brs := StandardMaterial3D.new()
 	brs.albedo_color = Color(0.72, 0.58, 0.2)
 	brs.metallic = 0.85
 	brs.roughness = 0.35
+	var a: Vector3 = bf["a"]
+	var c: Vector3 = bf["c"]
+	var b: Vector3 = bf["b"]
+	var d := _hold_delta(gid)
+	# 贝塞尔细采样（66 点）+ HOLD_DELTA 烘焙 → 折线点阵与累积弧长
+	var raw := PackedVector3Array()
+	for i in 66:
+		var t := float(i) / 64.0
+		raw.append(a.lerp(c, t).lerp(c.lerp(b, t), t) + d)
+	var cum: Array = [0.0]
+	for i in range(1, raw.size()):
+		cum.append(float(cum[i - 1]) + raw[i - 1].distance_to(raw[i]))
+	_belt_len = float(cum[cum.size() - 1])
+	_belt_path = raw
+	var links := int(bf["links"])
+	var pitch := _belt_len / float(links)
+	var size: Vector3 = bf["size"]
 	var slide := Node3D.new()
 	slide.name = "belt_slide"
-	var dir: Vector3 = bf["dir"]
-	var pitch: float = float(bf["pitch"])
-	var yaw := atan2(dir.x, dir.z)
-	for k in int(bf["links"]):
+	var depth: float = minf(pitch * 0.85, float(size.z) * 0.9)
+	for j in links:
+		var lc := (float(j) + 0.5) * pitch
+		var p := _belt_point_at(lc)
+		var p2 := _belt_point_at(minf(lc + 0.006, _belt_len))
 		var mi := MeshInstance3D.new()
 		var bm := BoxMesh.new()
-		bm.size = Vector3(float(bf["size"].x), float(bf["size"].y),
-				pitch * 0.9)   # 链节沿供弹向取 ~0.9 链距：滑动中留出节间缝
+		bm.size = Vector3(float(size.x), float(size.y), depth)
 		bm.material = brs
 		mi.mesh = bm
-		mi.position = Vector3(bf["origin"]) + Vector3(_hold_delta(gid)) \
-				+ dir * (pitch * float(k))
-		mi.rotation.y = yaw
+		mi.position = p
+		mi.rotation.y = atan2(p2.x - p.x, p2.z - p.z)
 		slide.add_child(mi)
 	gun.add_child(slide)
-	_belt_dir = dir
+	_belt_slide = slide
 	_belt_pitch = pitch
-	return slide   # 调用方存 _guns[slot]["belt"]（按槽持有——同枪复用 holder
-	               # 时不重挂，引用必须活着；MCX-LT 匣井同款「引用随枪走」）
+	return slide
+
+
+## 弧长参数 → 折线插值点（len 钳 [0, 总长]）
+func _belt_point_at(ln: float) -> Vector3:
+	var ln_c := clampf(ln, 0.0, _belt_len)
+	for i in range(1, _belt_path.size()):
+		var seg_len: float = _belt_path[i - 1].distance_to(_belt_path[i])
+		var acc: float = 0.0
+		for k in i:
+			acc += _belt_path[k].distance_to(_belt_path[k + 1])
+		if ln_c <= acc + seg_len + 0.0001:
+			var f := (ln_c - acc) / maxf(seg_len, 0.00001)
+			return _belt_path[i - 1].lerp(_belt_path[i], clampf(f, 0.0, 1.0))
+	return _belt_path[_belt_path.size() - 1]
 
 
 ## 每发视效钩（try_fire 常规路径尾调用）：弹链棘轮目标 +1 链距（_tick_fx
@@ -1982,16 +2017,22 @@ func _tick_fx(dt: float) -> void:
 			s["t"] = float(s["t"]) - dt
 			if float(s["t"]) <= 0.0:
 				s["mi"].visible = false
-	# 弹链棘轮（2026-11-03 弹链滑动）：匀速逼近目标偏移；off 每走满一个
-	# 链距立即双双回跳一距（off 恒在 [0,链距) 内循环、target 不累积负值）
-	# ——链节 identical+等距 → 回跳不可见 = 连续供弹错觉
-	if _belt_slide != null and _belt_target > _belt_off + 0.0005:
+	# 弹链供弹（2026-11-03 弹链滑动 / 2026-11-08 弧形铺满重做）：每发
+	# 目标 +1 链距，off 匀速沿弧推进；走满整弧时铺满等距链节位置恒等 →
+	# 双双回绕不可见 = 连续供弹
+	if _belt_slide != null and _belt_target > _belt_off + 0.0005 \
+			and _belt_len > 0.0:
 		_belt_off = move_toward(_belt_off, _belt_target,
 				BELT_FEED_SPEED * dt)
-		if _belt_off >= _belt_pitch - 0.0005:
-			_belt_off = maxf(_belt_off - _belt_pitch, 0.0)
-			_belt_target = maxf(_belt_target - _belt_pitch, 0.0)
-		_belt_slide.position = _belt_dir * _belt_off
+		if _belt_off >= _belt_len - 0.0005 and _belt_target >= _belt_len - 0.0005:
+			_belt_off -= _belt_len
+			_belt_target -= _belt_len
+		var cnt := _belt_slide.get_child_count()
+		var span := _belt_len / maxf(float(cnt), 1.0)
+		for j in cnt:
+			var mi_b: MeshInstance3D = _belt_slide.get_child(j)
+			mi_b.position = _belt_point_at(fposmod(
+					_belt_off + (float(j) + 0.5) * span, _belt_len))
 	# 抛壳（狙击）：栓机循环倒计时走完 → 出壳；壳体伪重力+自旋+缩隐回收
 	if _eject_t > 0.0:
 		_eject_t -= dt

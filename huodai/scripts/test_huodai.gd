@@ -838,15 +838,18 @@ func _run() -> void:
 			and (bl as Node3D).get_child_count() >= 4)
 	main.guns.try_fire()
 	var bt0: float = main.guns._belt_target
-	check("开火推动弹链棘轮 +1 链距", is_equal_approx(bt0, 0.034),
-		"target=%.4f" % bt0)
+	check("开火推动弹链棘轮 +1 链距（弧形铺满版=弧长/节数）",
+			is_equal_approx(bt0, main.guns._belt_pitch)
+			and main.guns._belt_pitch > 0.0,
+		"target=%.4f pitch=%.4f" % [bt0, main.guns._belt_pitch])
 	for i_b in 3:
 		main.guns.fire_cd = 0.0
-		main.guns.update(0.05)   # 走动画：棘轮回跳有界
+		main.guns.update(0.05)   # 走动画：整弧回绕有界
 	main.guns.try_fire()
 	main.guns.update(0.05)
-	check("棘轮回跳有界（目标不无限累积）", main.guns._belt_target < 0.068,
-		"target=%.4f" % main.guns._belt_target)
+	check("棘轮有界（目标不无限累积）",
+			main.guns._belt_target < main.guns._belt_len * 2.0,
+		"target=%.4f len=%.4f" % [main.guns._belt_target, main.guns._belt_len])
 	#      b) 狙击抛壳：栓机循环 0.28s 后弹壳入池可见
 	main.guns.enter({"primary": "sniper", "secondary": "pistol"})
 	main.player.pitch = 0.0

@@ -204,16 +204,10 @@ static func _m250(mats: Dictionary, root: Node3D) -> void:
 			Vector3(0.03, 0.04, -0.048), Vector3.ZERO, 0.0008, 6)
 	GUN_LIB.chamfer_box(root, stl, Vector3(0.004, 0.012, 0.026),
 			Vector3(0.029, -0.018, 0.045), Vector3.ZERO, 0.0006, 2)
-	# ② 供弹侧：左侧受弹口框 + 黄铜弹链横向喂入（链节 ×3 探出 + 斜置
-	#    弹链带，全枪唯一暖金点缀）
+	# ② 供弹侧：左侧受弹口框（黄铜弹链已改独立滑动条——2026-11-08 用户
+	#    「静态乱链不动，删掉；前面才是真正会动的弹链」，见 hd_guns BELT_FEED）
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.004, 0.026, 0.075),
 			Vector3(-0.0295, 0.026, -0.115), Vector3.ZERO, 0.001, 6)
-	for i in 3:
-		GUN_LIB.chamfer_box(root, brs, Vector3(0.012, 0.013, 0.02),
-				Vector3(-0.037, 0.026, -0.135 + 0.022 * float(i)),
-				Vector3.ZERO, 0.0008, 4)
-	GUN_LIB.chamfer_box(root, brs, Vector3(0.01, 0.03, 0.05),
-			Vector3(-0.044, 0.008, -0.128), Vector3(0, 0, 22), 0.001, 3)
 	# ② 机匣底受弹口座（弹链袋挂接框，袋顶黑色硬质供弹口盖扣在此）
 	GUN_LIB.chamfer_box(root, dark, Vector3(0.07, 0.014, 0.115),
 			Vector3(0, -0.06, -0.085), Vector3.ZERO, 0.002, 12)
@@ -518,25 +512,9 @@ static func _lmg_qjb201(mats: Dictionary, root: Node3D) -> void:
 			Vector3(-0.024, 0.013, -0.010), Vector3(-6, 0, 0), 0.001, 4)
 	GUN_LIB.chamfer_box(box, brs, Vector3(0.014, 0.012, 0.028),
 			Vector3(-0.040, 0.002, -0.008), Vector3(50, 0, 0), 0.0008, 3)
-	# ③ 金黄弹链弧形外露（全枪最醒目识别件——R1~R5 迭代史见 git 历史）；
-	#    R6 2026-11-04 用户定案「弹链宽度和长度都不太真实」：R5 为可辨性
-	#    放大的体量收回真实 5.8mm 档——链节 18×16×32→12×11×24（5.8×42
-	#    弹链节距/截面实测档）、节数 11+2→8+2、控制点 x -0.085→-0.066
-	#    （弧顶外缘=机匣面外 ~25mm）、B 端外露垂距 48→36mm：仍是「箱口→
-	#    受弹口」完整饱满弧，但读作短促贴身的真弹链而非大吊索
-	var belt_a := Vector3(-0.046, -0.018, -0.124)
-	var belt_c := Vector3(-0.066, 0.004, -0.112)
-	var belt_b := Vector3(-0.040, 0.018, -0.098)
-	for i in 9:
-		var t := float(i) / 8.0
-		var p := belt_a.lerp(belt_c, t).lerp(belt_c.lerp(belt_b, t), t)
-		GUN_LIB.chamfer_box(root, brs, Vector3(0.012, 0.011, 0.024),
-				p, Vector3(70.0 - 11.5 * float(i), 0, -28.0 + 5.2 * float(i)),
-				0.0008, 5)
-	GUN_LIB.chamfer_box(root, brs, Vector3(0.012, 0.011, 0.024),
-			Vector3(-0.049, -0.028, -0.127), Vector3(48, 0, -6), 0.0008, 5)
-	GUN_LIB.chamfer_box(root, brs, Vector3(0.012, 0.011, 0.024),
-			Vector3(-0.051, -0.038, -0.130), Vector3(42, 0, -3), 0.0008, 5)
+	# ③ 金黄弹链（2026-11-08 用户「静态乱链不动，删掉」：弧形链节整段删除，
+	#    唯一弹链=hd_guns BELT_FEED 沿同弧（A/C/B 三点同参）滑动供弹的
+	#    独立链节组，每发推进一节循环）
 	# ④ 双路供弹之一：左侧弹链受弹口（R1 验收修复：原框 5mm 薄片判不可
 	#    辨——外凸受弹座 + 黑色受弹嘴 + 亮钢口沿销，③链节终点正对口）
 	GUN_LIB.chamfer_box(root, rec, Vector3(0.008, 0.036, 0.088),
@@ -834,19 +812,8 @@ static func _lmg_m3(mats: Dictionary, root: Node3D) -> void:
 			Vector3(-0.0335, 0.023, -0.055), Vector3.ZERO, 0.0008, 4)
 	GUN_LIB.chamfer_box(root, stl, Vector3(0.003, 0.004, 0.08),
 			Vector3(-0.0355, 0.038, -0.055), Vector3.ZERO, 0.0006, 2)
-	var belt_a := Vector3(-0.052, -0.008, -0.100)
-	var belt_c := Vector3(-0.086, 0.024, -0.082)
-	var belt_b := Vector3(-0.042, 0.020, -0.058)
-	for i in 9:
-		var t := float(i) / 8.0
-		var p := belt_a.lerp(belt_c, t).lerp(belt_c.lerp(belt_b, t), t)
-		GUN_LIB.chamfer_box(root, brs, Vector3(0.016, 0.013, 0.034),
-				p, Vector3(70.0 - 10.0 * float(i), 0, -30.0 + 4.5 * float(i)),
-				0.0008, 4)
-	GUN_LIB.chamfer_box(root, brs, Vector3(0.016, 0.013, 0.034),
-			Vector3(-0.055, -0.016, -0.103), Vector3(58, 0, -24), 0.0008, 4)
-	GUN_LIB.chamfer_box(root, brs, Vector3(0.016, 0.013, 0.034),
-			Vector3(-0.058, -0.024, -0.106), Vector3(52, 0, -22), 0.0008, 4)
+	# 金黄弹链（2026-11-08 同 qjb201：静态链节整段删除，唯一弹链=hd_guns
+	# BELT_FEED 同弧滑动条）
 	# ⑤ 机匣底弹箱挂框（下挂供弹具挂接轨，箱顶嵌入框内——MCX-LT 对齐教训：
 	#    挂框 y -0.018..-0.002 上贴机匣底、箱顶 -0.016 嵌入框下沿 2mm）
 	GUN_LIB.chamfer_box(root, rec, Vector3(0.052, 0.016, 0.16),
