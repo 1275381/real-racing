@@ -956,6 +956,9 @@ var sup_provider: Callable = Callable()
 ## 弹种信息（func(gun_id)->ammo dict，main 注入 stash 链；未注入=标准弹）：
 ## 靶场假人（2026-11-01 甲制）要弹种的 dmg_mul/pen，与士兵结算同源
 var ammo_provider: Callable = Callable()
+## 枪械皮肤重涂表（func(gun_id)->paint 数组，main 注入 stash 链；未注入=
+## 原色）：2026-11-08 皮肤系统——_build_gun_visual 合体后按原色匹配重涂
+var skin_paint_provider: Callable = Callable()
 const SUP_LEN := 0.17      # 消音器长（枪架局部 m）：枪口点前移这么多
 const SUP_R := 0.021
 
@@ -1492,7 +1495,41 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	# 三疑点排查用；缺省照常合并）
 	if OS.get_environment("HD_NO_MERGE") == "":
 		GUN_LIB.merge_unibody(root)
+	# 皮肤重涂在 merge 之后：段材质已克隆落盘，按原色匹配改克隆实例
+	_apply_skin_paint(root, gun_id)
 	return root
+
+
+## 皮肤重涂（2026-11-08 皮肤系统首枪 MK4「疾光魅影」）：本工程枪械观感
+## 由 emission 驱动（albedo 白 + emission 深色 + vm 弱光 = 暗色）——整枪
+## 统一重涂 albedo/emission/glow/metallic/rough（透明镜玻璃跳过，防涂死
+## 瞄具视场）；provider 未注入或无皮肤 = 原色零改动
+func _apply_skin_paint(root: Node3D, gid: String) -> void:
+	if not skin_paint_provider.is_valid():
+		return
+	var paint: Dictionary = skin_paint_provider.call(gid)
+	if paint.is_empty():
+		return
+	var mis: Array = root.find_children("*", "MeshInstance3D", true, false)
+	for mi in mis:
+		var m3d: MeshInstance3D = mi
+		for si in m3d.mesh.get_surface_count():
+			# 材质双通道：unibody ArrayMesh 挂 surface 材质；HD_NO_MERGE 下
+			# PrimitiveMesh 材质走 .material 属性（surface_get_material 对
+			# PrimitiveMesh 恒 null）
+			var mat: StandardMaterial3D = m3d.mesh.surface_get_material(si) \
+					as StandardMaterial3D
+			if mat == null and m3d.mesh is PrimitiveMesh:
+				mat = (m3d.mesh as PrimitiveMesh).material as StandardMaterial3D
+			if mat == null:
+				continue
+			if mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				continue   # 透明件（镜玻璃/透镜）不涂——挡视场
+			mat.albedo_color = paint["albedo"]
+			mat.emission = paint["em"]
+			mat.emission_energy_multiplier = float(paint["glow"])
+			mat.metallic = float(paint.get("metallic", 0.0))
+			mat.roughness = float(paint.get("rough", 0.5))
 
 
 ## 枪顶瞄具模型统一收尾：装上的瞄具优先（iron=机瞄片）；狙击自带密位镜，

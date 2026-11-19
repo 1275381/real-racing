@@ -27,6 +27,8 @@ var grips_owned: Array = []           # 已购握把/护木 id 列表（GRIPS �
 var grip_fit: Dictionary = {}         # gun_id -> grip_id 或 "none"
 var rear_grips_owned: Array = []      # 已购后握把 id 列表（REAR_GRIPS 表，2026-10-29 幻影后握把）
 var rear_grip_fit: Dictionary = {}    # gun_id -> rear_grip_id 或 "none"（per-gun，照 grip_fit 先例）
+var skins_owned: Array = []           # 已购皮肤 id 列表（GUN_SKINS 表，2026-11-08 MK4 疾光魅影首接入）
+var skin_fit: Dictionary = {}         # gun_id -> skin_id 或 "none"（per-gun，照 rear_grip_fit 先例）
 var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0, "contracts": 0}
@@ -83,6 +85,8 @@ func _serialize() -> Dictionary:
 		"grip_fit": grip_fit,
 		"rear_grips_owned": rear_grips_owned,
 		"rear_grip_fit": rear_grip_fit,
+		"skins_owned": skins_owned,
+		"skin_fit": skin_fit,
 		"m14_mods": m14_mods,
 		"ammo_inv": ammo_inv,
 		"loadout": loadout,
@@ -321,6 +325,28 @@ func _load() -> void:
 		var kk_only := str(Guns.ammo_by_id(kk).get("only", ""))
 		if kk == "lv1" or (owned_l.has(kk) and (kk_only == "" or kk_only == str(gk2))):
 			ammo_kind[str(gk2)] = kk
+	# 皮肤（2026-11-08）：老档无字段 = 缺省（空）；id 校验在表 + 绑枪匹配
+	var valid_skins := {}
+	for sk in Guns.GUN_SKINS:
+		valid_skins[str(sk["id"])] = str(sk["gun"])
+	var raw_skin_o: Variant = d.get("skins_owned", null)
+	if typeof(raw_skin_o) == TYPE_ARRAY:
+		for s0 in raw_skin_o:
+			var sid := str(s0)
+			if valid_skins.has(sid) and not skins_owned.has(sid):
+				skins_owned.append(sid)
+	skin_fit = {}
+	var raw_skin_f: Variant = d.get("skin_fit", null)
+	if typeof(raw_skin_f) == TYPE_DICTIONARY:
+		for fk in raw_skin_f.keys():
+			var fv := str(raw_skin_f[fk])
+			if not valid_guns.has(fk):
+				continue
+			if fv == "" or fv == "none":
+				skin_fit[fk] = "none"
+			elif valid_skins.has(fv) and valid_skins[fv] == fk \
+					and skins_owned.has(fv):
+				skin_fit[fk] = fv
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
 	riser_fit = {}
@@ -783,6 +809,54 @@ func equip_grip(gun_id: String, grip_id: String) -> void:
 	grip_fit[gun_id] = gid
 	save()
 	changed.emit()
+
+
+func owns_skin(id: String) -> bool:
+	return skins_owned.has(id)
+
+
+## 购皮肤（GUN_SKINS 表价；已购恒 true 不扣款）
+func buy_skin(id: String) -> bool:
+	var sk := Guns.skin_by_id(id)
+	if sk.is_empty():
+		return false
+	if owns_skin(id):
+		return true
+	var price := maxi(0, _to_i(sk.get("price", 0)))
+	if cash < price:
+		return false
+	cash -= price
+	skins_owned.append(id)
+	save()
+	changed.emit()
+	return true
+
+
+## 装配皮肤（per-gun；none 卸下；未拥有/绑枪不匹配拒绝）
+func equip_skin(gun_id: String, skin_id: String) -> void:
+	var sid := "none"
+	if skin_id != "" and skin_id != "none" and owns_skin(skin_id):
+		var sk := Guns.skin_by_id(skin_id)
+		if not sk.is_empty() and str(sk.get("gun", "")) == gun_id:
+			sid = skin_id
+	skin_fit[gun_id] = sid
+	save()
+	changed.emit()
+
+
+func skin_fit_of(gun_id: String) -> String:
+	return str(skin_fit.get(gun_id, "none"))
+
+
+## 该枪当前装配皮肤的 paint 重涂表（未装/未拥有/无皮肤 = 空数组）
+func skin_paint_of(gun_id: String) -> Dictionary:
+	var sid := skin_fit_of(gun_id)
+	if sid == "none" or not owns_skin(sid):
+		return {}
+	var sk := Guns.skin_by_id(sid)
+	if sk.is_empty() or str(sk.get("gun", "")) != gun_id:
+		return {}
+	return sk.get("paint", {})
 
 
 ## 当前枪握把的垂直后坐乘数（共振前握把 vy_mul 专属；无该字段 = recoil_mul，

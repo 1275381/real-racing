@@ -163,6 +163,9 @@ func _ready() -> void:
 	# 弹种信息（靶场假人甲结算与士兵同源：dmg_mul/pen）
 	guns.ammo_provider = func(gid: String) -> Dictionary:
 		return Guns.ammo_by_id(stash.ammo_kind_of(gid))
+	# 枪械皮肤重涂表（2026-11-08 疾光魅影首枪；合体后按原色匹配）
+	guns.skin_paint_provider = func(gid: String) -> Dictionary:
+		return stash.skin_paint_of(gid)
 
 	stash = HDStash.new()
 	# 投掷物（阶段 D）：雷/烟/闪 弹道与起爆；7/8/9 键投掷（_route_key）——

@@ -401,7 +401,57 @@ func _run() -> void:
 				and absf(sc0.scroll_vertical - float(vb0.max_value - vb0.page)) <= 2.0,
 			"at=%.0f" % sc0.scroll_vertical)
 	main.lobby.set_tab(0)   # 页签复位（下游「出发页=场景激活」断言依赖）
+	main.lobby.set_tab(0)   # 页签复位（下游「出发页=场景激活」断言依赖）
 	main.lobby.hide_lobby()
+
+	# 2e-c. 皮肤系统（2026-11-08 MK4「疾光魅影」首接入）：表落位/购装/重涂
+	main.lobby.show_lobby()
+	main.lobby.set_tab(2)
+	main.lobby._market_ammo_gun = 12   # mk4（GUNS 表序 13，下标 12）
+	main.lobby.set_tab(2)
+	await frames(4)
+	var skrow: Array = main.lobby._pages[2].find_children("*", "Label", true, false)
+	var sk_lbl := false
+	for lb in skrow:
+		if str((lb as Label).text).begins_with("皮肤："):
+			sk_lbl = true
+	check("交易行 mk4 皮肤行就位（有皮肤定义才显示）", sk_lbl)
+	main.lobby.set_tab(0)
+	main.lobby.hide_lobby()
+	check("皮肤表落位（mk4_speed 绑 mk4 · 整枪重涂参数在位）",
+			String(Guns.skin_by_id("mk4_speed").get("gun", "")) == "mk4"
+			and (Guns.skin_by_id("mk4_speed").get("paint", {}) as Dictionary).has("albedo")
+			and Guns.skin_by_gun("mk4") != {})
+	check("无皮肤枪查询为空（过滤契约）", Guns.skin_by_gun("rifle").is_empty()
+			and Guns.skin_by_gun("knife").is_empty())
+	main.stash.cash = 99999
+	check("购皮肤扣款 ₵2800", main.stash.buy_skin("mk4_speed")
+			and main.stash.owns_skin("mk4_speed")
+			and main.stash.cash == 99999 - 2800)
+	check("重复购不扣款", main.stash.buy_skin("mk4_speed")
+			and main.stash.cash == 99999 - 2800)
+	main.stash.equip_skin("mk4", "mk4_speed")
+	check("装配 mk4 皮肤（fit 往返）", main.stash.skin_fit_of("mk4") == "mk4_speed")
+	check("绑枪守卫：mk4 皮装不上别的枪",
+			(main.stash.skin_paint_of("rifle") as Dictionary).is_empty())
+	check("重涂表下发（paint 经 provider 通路）",
+			not (main.stash.skin_paint_of("mk4") as Dictionary).is_empty())
+	# 换色实效：装配后 build 出的枪模材质含新 albedo 色（provider 已在 main 注入）
+	var sk_root: Node3D = main.guns._build_gun_visual("mk4")
+	var found_new := false
+	for mi_s in sk_root.find_children("*", "MeshInstance3D", true, false):
+		var mm: MeshInstance3D = mi_s
+		for si_s in mm.mesh.get_surface_count():
+			var sm := mm.mesh.surface_get_material(si_s) as StandardMaterial3D
+			if sm != null and sm.albedo_color.is_equal_approx(
+					Color(0.52, 0.60, 0.75)):
+				found_new = true
+	check("枪模重涂实色落位（银蓝主色 0.52/0.60/0.75）", found_new)
+	sk_root.free()
+	# 卸下恢复原色
+	main.stash.equip_skin("mk4", "none")
+	check("卸下皮肤回原色（paint 空）",
+			(main.stash.skin_paint_of("mk4") as Dictionary).is_empty())
 
 	# 2f. 双头弹（2026-11-01 用户定案：ASH-12 专属、无视护甲直伤）
 	check("双头弹表落位（ASH-12 专属 · 双弹头 · pen99）",

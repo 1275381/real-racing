@@ -539,6 +539,34 @@ static func rear_grip_by_id(id: String) -> Dictionary:
 	return REAR_GRIPS[0]
 
 
+## 枪械皮肤（2026-11-08 用户「MK4 专皮，去三角洲查」）：三角洲 S11 MK4
+## 典藏皮「疾光魅影」银蓝超跑涂装复刻——paint = 整枪统一重涂（本工程
+## 枪械观感由 emission 驱动：albedo 白+emission 深色+vm 弱光=暗色观感，
+## 按 albedo 匹配的路线永不命中）；only 绑枪（skin_fit per-gun）
+const GUN_SKINS := [
+	{"id": "mk4_speed", "gun": "mk4", "name": "疾光魅影",
+		"desc": "银蓝超跑涂装 · 流光纹路 · S11 典藏复刻", "price": 2800,
+		"paint": {"albedo": Color(0.52, 0.60, 0.75),
+			"em": Color(0.22, 0.38, 0.80), "glow": 0.62, "metallic": 0.6,
+			"rough": 0.3}},
+]
+
+
+static func skin_by_id(id: String) -> Dictionary:
+	for sk in GUN_SKINS:
+		if sk["id"] == id:
+			return sk
+	return {}
+
+
+## 该枪的皮肤定义（无皮肤枪返回空——交易行皮肤行按此显隐）
+static func skin_by_gun(gid: String) -> Dictionary:
+	for sk in GUN_SKINS:
+		if sk["gun"] == gid:
+			return sk
+	return {}
+
+
 ## 瞄具的倍率档（固定倍率的瞄具只有一档）
 static func scope_zooms(sc: Dictionary) -> Array:
 	if sc.is_empty():
