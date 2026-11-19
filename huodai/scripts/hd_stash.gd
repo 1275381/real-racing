@@ -27,8 +27,10 @@ var grips_owned: Array = []           # 已购握把/护木 id 列表（GRIPS �
 var grip_fit: Dictionary = {}         # gun_id -> grip_id 或 "none"
 var rear_grips_owned: Array = []      # 已购后握把 id 列表（REAR_GRIPS 表，2026-10-29 幻影后握把）
 var rear_grip_fit: Dictionary = {}    # gun_id -> rear_grip_id 或 "none"（per-gun，照 grip_fit 先例）
-var skins_owned: Array = []           # 已购皮肤 id 列表（GUN_SKINS 表，2026-11-08 MK4 疾光魅影首接入）
-var skin_fit: Dictionary = {}         # gun_id -> skin_id 或 "none"（per-gun，照 rear_grip_fit 先例）
+var skins_owned: Array = []           # 已拥有皮肤 id/变体 id 列表（2026-11-08 MK4 极光魅影首接入）
+var skin_fit: Dictionary = {}         # gun_id -> 皮肤系列 id / 变体 id / "none"
+var skin_var: Dictionary = {}         # 变体 id -> {name, base, paint(html 字符串)}——抽奖随机配色，每抽唯一
+var _skin_seq: int = 0                # 变体序号（名称「极光魅影 · 07」+ id 防撞，存档持久化）
 var ammo_inv: Dictionary = {}         # gun_id -> 极致备弹剩余发数（缺键 = 未进弹药经济，首读送礼）
 var loadout: Dictionary = {"primary": "rifle", "secondary": "pistol"}
 var stats: Dictionary = {"raids": 0, "extracts": 0, "deaths": 0, "kills": 0, "time_total": 0, "contracts": 0}
@@ -87,6 +89,8 @@ func _serialize() -> Dictionary:
 		"rear_grip_fit": rear_grip_fit,
 		"skins_owned": skins_owned,
 		"skin_fit": skin_fit,
+		"skin_var": skin_var,
+		"skin_seq": _skin_seq,
 		"m14_mods": m14_mods,
 		"ammo_inv": ammo_inv,
 		"loadout": loadout,
@@ -336,6 +340,16 @@ func _load() -> void:
 			if valid_skins.has(sid) and not skins_owned.has(sid):
 				skins_owned.append(sid)
 	skin_fit = {}
+	# 抽奖变体库（2026-11-19 极光魅影随机流光配色）+ 变体序号——先于 skin_fit
+	# 读取（fit 的变体 id 校验依赖 skin_var）
+	var raw_svar: Variant = d.get("skin_var", null)
+	if typeof(raw_svar) == TYPE_DICTIONARY:
+		for vk in raw_svar.keys():
+			var vid := str(vk)
+			var vd: Variant = raw_svar[vid]
+			if typeof(vd) == TYPE_DICTIONARY and skin_var_key_ok(vid, vd):
+				skin_var[vid] = vd
+	_skin_seq = maxi(_to_i(d.get("skin_seq", 0)), skin_var.size())
 	var raw_skin_f: Variant = d.get("skin_fit", null)
 	if typeof(raw_skin_f) == TYPE_DICTIONARY:
 		for fk in raw_skin_f.keys():
@@ -347,6 +361,12 @@ func _load() -> void:
 			elif valid_skins.has(fv) and valid_skins[fv] == fk \
 					and skins_owned.has(fv):
 				skin_fit[fk] = fv
+			elif skin_var.has(fv):
+				# 抽奖变体：base=系列 id，查系列的 gun 归属（base≠枪 id——
+				# 2026-11-19 存档往返 fit=none 的根因）
+				var sks := Guns.skin_by_id(str(skin_var[fv].get("base", "")))
+				if not sks.is_empty() and str(sks.get("gun", "")) == fk:
+					skin_fit[fk] = fv
 	throwables = {"frag": 0, "smoke": 0, "flash": 0}
 	keycards = {}
 	riser_fit = {}
@@ -815,10 +835,13 @@ func owns_skin(id: String) -> bool:
 	return skins_owned.has(id)
 
 
-## 购皮肤（GUN_SKINS 表价；已购恒 true 不扣款）
+## 购皮肤（GUN_SKINS 表价；已购恒 true 不扣款）；带 gacha_price 的皮肤
+## 不可直购——必须走抽奖（roll_skin），返回 false
 func buy_skin(id: String) -> bool:
 	var sk := Guns.skin_by_id(id)
 	if sk.is_empty():
+		return false
+	if sk.has("gacha_price"):
 		return false
 	if owns_skin(id):
 		return true
@@ -848,12 +871,95 @@ func skin_fit_of(gun_id: String) -> String:
 	return str(skin_fit.get(gun_id, "none"))
 
 
-## 该枪当前装配皮肤的 paint 重涂表（未装/未拥有/无皮肤 = 空数组）
-func skin_paint_of(gun_id: String) -> Dictionary:
-	var sid := skin_fit_of(gun_id)
-	if sid == "none" or not owns_skin(sid):
+## 变体库条目校验（存档读回：结构齐 + paint 字段齐）
+func skin_var_key_ok(vid: String, vd: Dictionary) -> bool:
+	if not (vd.has("name") and vd.has("base") and vd.has("paint")):
+		return false
+	var pt: Variant = vd["paint"]
+	return typeof(pt) == TYPE_DICTIONARY and pt.has("albedo") and pt.has("em")
+
+
+## 抽奖（2026-11-19 用户「抽奖获得，每次成品颜色随机」）：扣 gacha_price →
+## 生成随机流光配色变体（银蓝超跑主题内随机色相/亮度/流光）→ 入库自动
+## 装配。paint 颜色以 html 字符串存档（JSON 稳）；Color 在 skin_paint_of
+## 解析返回
+func roll_skin(base_id: String) -> Dictionary:
+	var sk := Guns.skin_by_id(base_id)
+	if sk.is_empty() or not sk.has("gacha_price"):
 		return {}
-	var sk := Guns.skin_by_id(sid)
+	var price := maxi(0, _to_i(sk.get("gacha_price", 0)))
+	if cash < price:
+		return {"ok": false}
+	cash -= price
+	_skin_seq += 1
+	var vid := base_id + "_v" + str(_skin_seq)
+	var hue := randf() * 360.0
+	var h1 := hue / 360.0
+	var h2 := fposmod(hue + randf_range(-24.0, 24.0), 360.0) / 360.0
+	var main := Color.from_hsv(h1, randf_range(0.28, 0.45),
+			randf_range(0.58, 0.78))
+	var em := Color.from_hsv(h1, 0.72, 0.95)
+	var deep := Color.from_hsv(h2, randf_range(0.35, 0.5),
+			randf_range(0.16, 0.28))
+	var vname := "%s · %02d" % [str(sk.get("name", base_id)), _skin_seq]
+	var paint := {
+		"albedo": main.to_html(true), "em": em.to_html(true),
+		"deep": deep.to_html(true), "glow": randf_range(0.55, 0.75),
+		"metallic": randf_range(0.4, 0.7), "rough": randf_range(0.25, 0.4),
+	}
+	skin_var[vid] = {"name": vname, "base": base_id, "paint": paint}
+	skins_owned.append(vid)
+	skin_fit[str(sk.get("gun", ""))] = vid   # 抽到即装上（体验直给）
+	save()
+	changed.emit()
+	return {"ok": true, "vid": vid, "name": vname}
+
+
+## 该系列已拥有变体 id 列表（循环换装用，skin_fit 当前变体排首）
+func skin_variants_of(gun_id: String, base_id: String) -> Array:
+	var out: Array = []
+	var cur := skin_fit_of(gun_id)
+	if skin_var.has(cur) and str(skin_var[cur].get("base", "")) == base_id:
+		out.append(cur)
+	for vid in skins_owned:
+		var v := str(vid)
+		if v != cur and skin_var.has(v) \
+				and str(skin_var[v].get("base", "")) == base_id:
+			out.append(v)
+	return out
+
+
+## 变体显示名（fit=系列 id 时显示系列名——原型涂装兜底）
+func skin_label_of(gun_id: String) -> String:
+	var fit := skin_fit_of(gun_id)
+	if fit == "none":
+		return "原厂涂装"
+	if skin_var.has(fit):
+		return str(skin_var[fit].get("name", fit))
+	var sk := Guns.skin_by_id(fit)
+	return String(sk.get("name", fit)) if not sk.is_empty() else fit
+
+
+## paint 组装：装配变体 → skin_var html 解析回 Color；fit=系列 id（旧档
+## 原型涂装兜底）→ 表内固定 paint；未装 → 空
+func skin_paint_of(gun_id: String) -> Dictionary:
+	var fit := skin_fit_of(gun_id)
+	if fit == "none" or not owns_skin(fit):
+		return {}
+	if skin_var.has(fit):
+		var vd: Dictionary = skin_var[fit]
+		var pt: Dictionary = vd.get("paint", {})
+		if pt.is_empty():
+			return {}
+		return {
+			"albedo": Color.html(str(pt["albedo"])),
+			"em": Color.html(str(pt["em"])),
+			"glow": float(pt.get("glow", 0.6)),
+			"metallic": float(pt.get("metallic", 0.5)),
+			"rough": float(pt.get("rough", 0.3)),
+			"deep": Color.html(str(pt.get("deep", pt["albedo"]))),
+		}
+	var sk := Guns.skin_by_id(fit)
 	if sk.is_empty() or str(sk.get("gun", "")) != gun_id:
 		return {}
 	return sk.get("paint", {})

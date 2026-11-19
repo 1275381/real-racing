@@ -2111,9 +2111,7 @@ func _render_market(pg: VBoxContainer) -> void:
 	var skin_def: Dictionary = Guns.skin_by_gun(ammo_id)
 	if not skin_def.is_empty():
 		var skfit := _stash.skin_fit_of(ammo_id)
-		var skname := "原厂涂装"
-		if skfit != "none":
-			skname = String(Guns.skin_by_id(skfit).get("name", skfit))
+		var skname := _stash.skin_label_of(ammo_id)
 		var skrow := HBoxContainer.new()
 		skrow.add_theme_constant_override("separation", 8)
 		skrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2122,11 +2120,19 @@ func _render_market(pg: VBoxContainer) -> void:
 				COL_ACCENT if skfit != "none" else COL_TEXT)
 		sklbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		skrow.add_child(sklbl)
-		var skbtn := _mk_btn("N 换/购皮肤 ▸", 13)
+		var skbtn := _mk_btn("N 换装 ▸", 13)
 		_style_btn(skbtn, false, COL_ACCENT, 10)
 		skbtn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		skbtn.pressed.connect(_cycle_skin_for.bind(ammo_id))
 		skrow.add_child(skbtn)
+		# 抽奖钮（2026-11-19 用户「抽奖获得，每次成品颜色随机」）：每抽
+		# 生成随机流光配色变体、抽到即装上
+		var gprice := _to_int(skin_def.get("gacha_price", 0))
+		var gbtn2 := _mk_btn("抽新配色 ₵%s ▸" % _fmt(gprice), 13)
+		_style_btn(gbtn2, true, Color(0.55, 0.75, 1.0), 10)
+		gbtn2.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		gbtn2.pressed.connect(_roll_skin_for.bind(ammo_id))
+		skrow.add_child(gbtn2)
 	# 增高架行（2026-10-28）：红点/全息装其上抬高——首购 ₵1200 买断通用，
 	# 之后每枪开关装卸；只对装红点/全息的枪有意义（其他镜提示）
 	var r_on := _stash.riser_on(ammo_id)
@@ -2461,24 +2467,20 @@ func _cycle_skin_for(gid: String) -> void:
 	var sk := Guns.skin_by_gun(gid)
 	if sk.is_empty():
 		return
-	var sid := str(sk["id"])
+	var base := str(sk["id"])
 	var cur := _stash.skin_fit_of(gid)
-	if cur == sid:
-		_stash.equip_skin(gid, "none")
-		show_hint("「%s」皮肤卸下，恢复原厂涂装" % String(sk.get("name", sid)))
-		return
-	if not _stash.owns_skin(sid):
-		if _stash.buy_skin(sid):
-			_stash.equip_skin(gid, sid)
-			show_hint("已购并装上 %s —— %s" % [String(sk.get("name", sid)),
-					String(sk.get("desc", ""))])
-		else:
-			show_hint("%s 需 ₵%s —— 现金不足" % [String(sk.get("name", sid)),
-					_fmt(_to_int(sk.get("price", 0)))])
-		return
-	_stash.equip_skin(gid, sid)
-	show_hint("已装上 %s —— %s" % [String(sk.get("name", sid)),
-			String(sk.get("desc", ""))])
+	var vids: Array = _stash.skin_variants_of(gid, base)
+	# 循环序：none → 变体列表 → none
+	var i0 := vids.find(cur)
+	var nxt: String = "none"
+	if i0 == -1 and vids.size() > 0:
+		nxt = str(vids[0])
+	elif i0 >= 0 and i0 < vids.size() - 1:
+		nxt = str(vids[i0 + 1])
+	_stash.equip_skin(gid, nxt)
+	var nm := _stash.skin_label_of(gid)
+	show_hint("皮肤已切换：%s" % nm)
+
 
 func _cycle_rear_grip_for(gid: String) -> void:
 	var ids: Array = []
@@ -2520,6 +2522,18 @@ func _cycle_ammo_kind_for(gid: String) -> void:
 
 
 # ================= 光标 / 确认 =================
+
+## 抽奖（2026-11-19）：每次随机流光配色变体、抽到即装上——提示新变体名
+func _roll_skin_for(gid: String) -> void:
+	var sk := Guns.skin_by_gun(gid)
+	if sk.is_empty():
+		return
+	var rr: Dictionary = _stash.roll_skin(str(sk["id"]))
+	if not bool(rr.get("ok", false)):
+		show_hint("抽取需 ₵%s —— 现金不足" % _fmt(_to_int(
+				sk.get("gacha_price", 0))))
+		return
+	show_hint("抽出 %s —— 随机流光配色已装上" % str(rr.get("name", "")))
 
 func _move(dh: int, dv: int) -> void:
 	match _tab:

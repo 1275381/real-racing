@@ -544,8 +544,9 @@ static func rear_grip_by_id(id: String) -> Dictionary:
 ## 枪械观感由 emission 驱动：albedo 白+emission 深色+vm 弱光=暗色观感，
 ## 按 albedo 匹配的路线永不命中）；only 绑枪（skin_fit per-gun）
 const GUN_SKINS := [
-	{"id": "mk4_speed", "gun": "mk4", "name": "疾光魅影",
-		"desc": "银蓝超跑涂装 · 流光纹路 · S11 典藏复刻", "price": 2800,
+	{"id": "mk4_speed", "gun": "mk4", "name": "极光魅影",
+		"desc": "银蓝超跑涂装 · 每次抽取随机流光配色 · S11 典藏复刻",
+		"gacha_price": 2000,
 		"paint": {"albedo": Color(0.52, 0.60, 0.75),
 			"em": Color(0.22, 0.38, 0.80), "glow": 0.62, "metallic": 0.6,
 			"rough": 0.3}},

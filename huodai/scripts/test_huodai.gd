@@ -425,33 +425,63 @@ func _run() -> void:
 	check("无皮肤枪查询为空（过滤契约）", Guns.skin_by_gun("rifle").is_empty()
 			and Guns.skin_by_gun("knife").is_empty())
 	main.stash.cash = 99999
-	check("购皮肤扣款 ₵2800", main.stash.buy_skin("mk4_speed")
-			and main.stash.owns_skin("mk4_speed")
-			and main.stash.cash == 99999 - 2800)
-	check("重复购不扣款", main.stash.buy_skin("mk4_speed")
-			and main.stash.cash == 99999 - 2800)
-	main.stash.equip_skin("mk4", "mk4_speed")
-	check("装配 mk4 皮肤（fit 往返）", main.stash.skin_fit_of("mk4") == "mk4_speed")
-	check("绑枪守卫：mk4 皮装不上别的枪",
-			(main.stash.skin_paint_of("rifle") as Dictionary).is_empty())
-	check("重涂表下发（paint 经 provider 通路）",
-			not (main.stash.skin_paint_of("mk4") as Dictionary).is_empty())
-	# 换色实效：装配后 build 出的枪模材质含新 albedo 色（provider 已在 main 注入）
+	check("极光魅影不可直购（须抽奖 · 现金不变）",
+			not main.stash.buy_skin("mk4_speed")
+			and main.stash.cash == 99999)
+
+	# 卸下恢复原色
+	main.stash.equip_skin("mk4", "none")
+	check("卸下皮肤回原色（paint 空）",
+			(main.stash.skin_paint_of("mk4") as Dictionary).is_empty())
+
+	# 2e-d. 极光魅影抽奖（2026-11-19 用户「抽奖获得，每次颜色随机」）：
+	#       每抽生成随机流光配色变体（入库唯一 vid、抽到即装上）
+	check("极光魅影抽奖价在位（₵2000）",
+			int(Guns.skin_by_id("mk4_speed").get("gacha_price", 0)) == 2000)
+	main.stash.cash = 99999
+	var rr1: Dictionary = main.stash.roll_skin("mk4_speed")
+	var pa: Dictionary = main.stash.skin_paint_of("mk4")   # rr1 变体（首次自动装配）
+	var rr2: Dictionary = main.stash.roll_skin("mk4_speed")
+	check("连抽两次成两变体（vid 唯一 · 自动装配 · 扣款 ₵4000）",
+			bool(rr1.get("ok", false)) and bool(rr2.get("ok", false))
+			and str(rr1["vid"]) != str(rr2["vid"])
+			and main.stash.skin_fit_of("mk4") == str(rr2["vid"])
+			and main.stash.cash == 99999 - 4000)
+	var pb: Dictionary = main.stash.skin_paint_of("mk4")   # rr2 变体（二次自动装配）
+	check("变体 paint 含随机流光参数（颜色/发光/金属度）",
+			pa.has("albedo") and pa.has("em") and pa.has("glow")
+			and pa.has("metallic"))
+	check("两次抽取配色随机（albedo 或发光色不同）",
+			(pa["albedo"] as Color) != (pb["albedo"] as Color)
+			or (pa["em"] as Color) != (pb["em"] as Color),
+			"a=%s b=%s" % [(pa["albedo"] as Color).to_html(false),
+					(pb["albedo"] as Color).to_html(false)])
+	check("变体名带序号（极光魅影 · NN）",
+			str(rr2.get("name", "")).begins_with("极光魅影 · "))
+	check("变体换装循环列表含两变体",
+			(main.stash.skin_variants_of("mk4", "mk4_speed") as Array).size() == 2)
+	# 存档往返：变体 html 颜色解析回 Color（save→load 同色）
+	main.stash.save()
+	main.stash._load()   # 存档读取为私有 _load（无公开 load）
+	check("变体存档往返（paint 下发不丢）",
+			not (main.stash.skin_paint_of("mk4") as Dictionary).is_empty()
+			and main.stash.skin_fit_of("mk4") == str(rr2["vid"]),
+			"fit=%s var=%s owned=%s" % [main.stash.skin_fit_of("mk4"),
+					str(main.stash.skin_var.has(str(rr2["vid"]))),
+					main.stash.skins_owned.size()])
+	# 换色实效：装配变体后 build 出的枪模材质含该变体 albedo 色（provider 已注入）
+	var want_c: Color = main.stash.skin_paint_of("mk4").get("albedo", Color.BLACK)
 	var sk_root: Node3D = main.guns._build_gun_visual("mk4")
 	var found_new := false
 	for mi_s in sk_root.find_children("*", "MeshInstance3D", true, false):
 		var mm: MeshInstance3D = mi_s
 		for si_s in mm.mesh.get_surface_count():
 			var sm := mm.mesh.surface_get_material(si_s) as StandardMaterial3D
-			if sm != null and sm.albedo_color.is_equal_approx(
-					Color(0.52, 0.60, 0.75)):
+			if sm != null and sm.albedo_color.is_equal_approx(want_c):
 				found_new = true
-	check("枪模重涂实色落位（银蓝主色 0.52/0.60/0.75）", found_new)
+	check("枪模重涂实色落位（变体 albedo 落进材质）", found_new,
+		"want=%s" % want_c.to_html(false))
 	sk_root.free()
-	# 卸下恢复原色
-	main.stash.equip_skin("mk4", "none")
-	check("卸下皮肤回原色（paint 空）",
-			(main.stash.skin_paint_of("mk4") as Dictionary).is_empty())
 
 	# 2f. 双头弹（2026-11-01 用户定案：ASH-12 专属、无视护甲直伤）
 	check("双头弹表落位（ASH-12 专属 · 双弹头 · pen99）",
