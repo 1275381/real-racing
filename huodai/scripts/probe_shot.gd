@@ -904,6 +904,31 @@ func _initialize() -> void:
 	main.targets.set_mover_dist(HDTargets.MOVER_PRESETS[0])
 	await frames(2)
 
+	# ---- 皮肤图证（2026-11-19 极光魅影抽奖）：连抽两次装配不同随机配色，
+	#      各拍一张（两张枪身色调应不同）——拍完恢复原厂
+	if not main.stash.guns_owned.has("mk4"):
+		main.stash.guns_owned.append("mk4")
+	main.stash.cash = 99999
+	var rr_a: Dictionary = main.stash.roll_skin("mk4_speed")
+	var rr_b: Dictionary = main.stash.roll_skin("mk4_speed")
+	main.stash.loadout = {"primary": "mk4", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	main.set_process(false)
+	main.hud.visible = false
+	main.player.cam.position = Vector3(main.player.pos.x + 0.35,
+			main.player.pos.y + 1.5, main.player.pos.z - 0.55)
+	main.player.cam.rotation = Vector3(-0.12, PI + 0.35, 0)
+	await frames(6)
+	shot("res://out/shot_skin_variant_a.png")
+	main.stash.equip_skin("mk4", str(rr_a.get("vid", rr_b.get("vid", "none"))))
+	await frames(6)
+	shot("res://out/shot_skin_variant_b.png")
+	main.set_process(true)
+	main.hud.visible = true
+	main.stash.equip_skin("mk4", "none")
+	await frames(4)
+
 	# ---- 视效动画图证（2026-11-03 用户「机枪弹链滑动 / 狙击枪抛壳」）：
 	#      qjb201 连开两发抓棘轮中间帧（链节沿弧向前进）；sniper 开火 0.3s
 	#      后抓空中弹壳——拍完复位 rifle
