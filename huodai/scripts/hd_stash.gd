@@ -329,15 +329,26 @@ func _load() -> void:
 		var kk_only := str(Guns.ammo_by_id(kk).get("only", ""))
 		if kk == "lv1" or (owned_l.has(kk) and (kk_only == "" or kk_only == str(gk2))):
 			ammo_kind[str(gk2)] = kk
-	# 皮肤（2026-11-08）：老档无字段 = 缺省（空）；id 校验在表 + 绑枪匹配
+	# 皮肤（2026-11-08）：老档无字段 = 缺省（空）；id 校验在表 + 绑枪匹配。
+	# 抽奖变体 id（2026-11-19 起 skins_owned 混存）同批接受——只认表内 id
+	# 会在重启时把全部变体从拥有集里静默清掉（skin_var 留着但 owns_skin
+	# 恒 false → 变体不可装配不可循环，钻石变体同中招）；先清再建（防御
+	# 口径同其他字段，杜绝内存残留混入）
 	var valid_skins := {}
 	for sk in Guns.GUN_SKINS:
 		valid_skins[str(sk["id"])] = str(sk["gun"])
+	var svar_ids := {}
+	var raw_svar0: Variant = d.get("skin_var", null)
+	if typeof(raw_svar0) == TYPE_DICTIONARY:
+		for vk0 in raw_svar0.keys():
+			svar_ids[str(vk0)] = true
+	skins_owned = []
 	var raw_skin_o: Variant = d.get("skins_owned", null)
 	if typeof(raw_skin_o) == TYPE_ARRAY:
 		for s0 in raw_skin_o:
 			var sid := str(s0)
-			if valid_skins.has(sid) and not skins_owned.has(sid):
+			if (valid_skins.has(sid) or svar_ids.has(sid)) \
+					and not skins_owned.has(sid):
 				skins_owned.append(sid)
 	skin_fit = {}
 	# 抽奖变体库（2026-11-19 极光魅影随机流光配色）+ 变体序号——先于 skin_fit
@@ -855,13 +866,20 @@ func buy_skin(id: String) -> bool:
 	return true
 
 
-## 装配皮肤（per-gun；none 卸下；未拥有/绑枪不匹配拒绝）
+## 装配皮肤（per-gun；none 卸下；未拥有/绑枪不匹配拒绝）。系列 id 查
+## GUN_SKINS 表；变体 id（2026-11-19 抽奖库）走 skin_var base 归属校验——
+## 与读档 fit 校验同口径（此前变体 id 一律静默卸皮回 none：大厅 N 换装
+## 循环到变体同样中招）
 func equip_skin(gun_id: String, skin_id: String) -> void:
 	var sid := "none"
 	if skin_id != "" and skin_id != "none" and owns_skin(skin_id):
 		var sk := Guns.skin_by_id(skin_id)
 		if not sk.is_empty() and str(sk.get("gun", "")) == gun_id:
 			sid = skin_id
+		elif skin_var.has(skin_id):
+			var sks := Guns.skin_by_id(str(skin_var[skin_id].get("base", "")))
+			if not sks.is_empty() and str(sks.get("gun", "")) == gun_id:
+				sid = skin_id
 	skin_fit[gun_id] = sid
 	save()
 	changed.emit()
@@ -879,10 +897,24 @@ func skin_var_key_ok(vid: String, vd: Dictionary) -> bool:
 	return typeof(pt) == TYPE_DICTIONARY and pt.has("albedo") and pt.has("em")
 
 
+## ---- 钻石极品变体（2026-11-20 用户定案「钻石透明材质要抽出来，不能直接
+## 获得」）：抽奖概率分层——流光变体（88%）+ 钻石极品变体（12%，三角洲砖皮
+## 隐藏款锚点：优品→极品→隐藏款最高稀有档、低概率无保底，666 抽实测级）。
+## 钻石档 paint 带 diamond/alpha 标记（bool/float JSON 原生类型直存 skin_var，
+## 序列化零改动——skin_var_key_ok 只校验 albedo/em 在位照旧放行），hd_guns
+## _apply_skin_paint 走透明晶体分支、_mount_diamond 挂棱面件
+const DIAMOND_ROLL_RATE := 0.12   # 钻石极品变体抽取概率（500 次抽取 8%~18% 验收带）
+## 钻石晶体 albedo alpha（透明蒙皮档，高于普通极品）：0.58 的 8bit 精确
+## 表示（148/255=0x94）——to_html→Color.html 存档往返无损（paint html 与
+## 材质直设两侧逐位同值，重涂实色断言 is_equal_approx 才稳）。
+## R1 验收提档（0.42→0.58）：壳体要读出「半透冰壳」体积感，alpha 档须让
+## albedo 漫反射主导、亮背景元素（青绿台面/黄色警示条）透壳仍可辨
+const DIAMOND_ALPHA := 148.0 / 255.0
+
 ## 抽奖（2026-11-19 用户「抽奖获得，每次成品颜色随机」）：扣 gacha_price →
-## 生成随机流光配色变体（银蓝超跑主题内随机色相/亮度/流光）→ 入库自动
-## 装配。paint 颜色以 html 字符串存档（JSON 稳）；Color 在 skin_paint_of
-## 解析返回
+## 概率分层生成变体（12% 钻石极品——透明冰蓝晶体 + 「钻石典藏」名；88% 随机
+## 流光配色——银蓝超跑主题内随机色相/亮度/流光）→ 入库自动装配。paint 颜色
+## 以 html 字符串存档（JSON 稳）；Color 在 skin_paint_of 解析返回
 func roll_skin(base_id: String) -> Dictionary:
 	var sk := Guns.skin_by_id(base_id)
 	if sk.is_empty() or not sk.has("gacha_price"):
@@ -893,20 +925,45 @@ func roll_skin(base_id: String) -> Dictionary:
 	cash -= price
 	_skin_seq += 1
 	var vid := base_id + "_v" + str(_skin_seq)
-	var hue := randf() * 360.0
-	var h1 := hue / 360.0
-	var h2 := fposmod(hue + randf_range(-24.0, 24.0), 360.0) / 360.0
-	var main := Color.from_hsv(h1, randf_range(0.28, 0.45),
-			randf_range(0.58, 0.78))
-	var em := Color.from_hsv(h1, 0.72, 0.95)
-	var deep := Color.from_hsv(h2, randf_range(0.35, 0.5),
-			randf_range(0.16, 0.28))
-	var vname := "%s · %02d" % [str(sk.get("name", base_id)), _skin_seq]
-	var paint := {
-		"albedo": main.to_html(true), "em": em.to_html(true),
-		"deep": deep.to_html(true), "glow": randf_range(0.55, 0.75),
-		"metallic": randf_range(0.4, 0.7), "rough": randf_range(0.25, 0.4),
-	}
+	var paint: Dictionary
+	var vname: String
+	if randf() < DIAMOND_ROLL_RATE:
+		# 钻石极品变体：冰蓝晶体锚色（hue 205°±10° 冰蓝/冰白底——考证冰蓝
+		# 配紫粉镀膜边缘）。R1 验收纠偏：旧档 S 0.18~0.30/V 0.90~0.98 渲染
+		# 深蓝近黑——提亮到 S≤0.2 / V≥0.95 读「冰白底」；metallic 0.9→0.08
+		# （高金属度杀漫反射=透壳不成立的根因，albedo 参与漫反射后亮背景
+		# 元素透壳可读）；alpha 提档 DIAMOND_ALPHA=0.58。
+		# R2 验收纠偏「冰白底未占主导：暗场景把壳体压成暗紫」——em 饱和再
+		# 降 0.28（近白冰光）+ glow 提 0.55~0.68（壳体自发光顶住暗场景权重）
+		var hd := (205.0 + randf_range(-10.0, 10.0)) / 360.0
+		var ab := Color.from_hsv(hd, randf_range(0.10, 0.20),
+				randf_range(0.95, 1.0))
+		ab.a = DIAMOND_ALPHA
+		paint = {
+			"albedo": ab.to_html(true),
+			"em": Color.from_hsv(hd, 0.28, 1.0).to_html(true),
+			"deep": Color.from_hsv(fposmod(hd + 0.16, 1.0), 0.45, 0.60)
+					.to_html(true),
+			"glow": randf_range(0.55, 0.68), "metallic": 0.08, "rough": 0.06,
+			"diamond": true, "alpha": DIAMOND_ALPHA,
+		}
+		vname = "%s · 钻石典藏 %02d" % [str(sk.get("name", base_id)), _skin_seq]
+	else:
+		# 随机流光变体（原路不变）
+		var hue := randf() * 360.0
+		var h1 := hue / 360.0
+		var h2 := fposmod(hue + randf_range(-24.0, 24.0), 360.0) / 360.0
+		var main := Color.from_hsv(h1, randf_range(0.28, 0.45),
+				randf_range(0.58, 0.78))
+		var em := Color.from_hsv(h1, 0.72, 0.95)
+		var deep := Color.from_hsv(h2, randf_range(0.35, 0.5),
+				randf_range(0.16, 0.28))
+		vname = "%s · %02d" % [str(sk.get("name", base_id)), _skin_seq]
+		paint = {
+			"albedo": main.to_html(true), "em": em.to_html(true),
+			"deep": deep.to_html(true), "glow": randf_range(0.55, 0.75),
+			"metallic": randf_range(0.4, 0.7), "rough": randf_range(0.25, 0.4),
+		}
 	skin_var[vid] = {"name": vname, "base": base_id, "paint": paint}
 	skins_owned.append(vid)
 	skin_fit[str(sk.get("gun", ""))] = vid   # 抽到即装上（体验直给）
@@ -940,6 +997,33 @@ func skin_label_of(gun_id: String) -> String:
 	return String(sk.get("name", fit)) if not sk.is_empty() else fit
 
 
+## 当前装配皮肤是否钻石极品变体（2026-11-20：大厅皮肤行 ◆ 稀有标记 +
+## main diamond_provider 同源判据——装配变体 paint.diamond 才算）
+func skin_fit_is_diamond(gun_id: String) -> bool:
+	var fit := skin_fit_of(gun_id)
+	return skin_var.has(fit) \
+			and bool((skin_var[fit].get("paint", {}) as Dictionary)
+					.get("diamond", false))
+
+
+## 钻石典藏铭牌文案（2026-11-20 R1 验收「★//唯一编号+成色值」考证件——
+## ref_02/ref_04 砖皮身份：★//1317225 + 优品/极品档）。唯一编号=变体序号
+## （名尾「钻石典藏 NN」解析），成色=dur_of（0..100 取整）。非钻石装配/
+## 名尾解析失败回 ""——hd_guns _mount_diamond 空文案不挂铭牌
+func diamond_plate_of(gun_id: String) -> String:
+	var fit := skin_fit_of(gun_id)
+	if not skin_fit_is_diamond(gun_id):
+		return ""
+	var nm := str((skin_var[fit].get("name", "") as String))
+	var seg := nm.split("钻石典藏 ")
+	var seq := 0
+	if seg.size() == 2:
+		seq = maxi(0, _to_i(seg[1].strip_edges()))
+	# R2 验收「字号加大」：px 0.00026 下去空格紧凑排版——「★//021·成色100」
+	# 全宽 ~0.128m，恰落照门座（z -0.47）与 facet_0（z -0.305）之间的侧面空档
+	return "★//%03d·成色%d" % [seq, int(round(dur_of(gun_id)))]
+
+
 ## paint 组装：装配变体 → skin_var html 解析回 Color；fit=系列 id（旧档
 ## 原型涂装兜底）→ 表内固定 paint；未装 → 空
 func skin_paint_of(gun_id: String) -> Dictionary:
@@ -958,6 +1042,10 @@ func skin_paint_of(gun_id: String) -> Dictionary:
 			"metallic": float(pt.get("metallic", 0.5)),
 			"rough": float(pt.get("rough", 0.3)),
 			"deep": Color.html(str(pt.get("deep", pt["albedo"]))),
+			# 钻石极品变体标记/透明档（流光变体缺省 false/1.0——hd_guns
+			# _apply_skin_paint 按此分流透明晶体分支）
+			"diamond": bool(pt.get("diamond", false)),
+			"alpha": float(pt.get("alpha", 1.0)),
 		}
 	var sk := Guns.skin_by_id(fit)
 	if sk.is_empty() or str(sk.get("gun", "")) != gun_id:

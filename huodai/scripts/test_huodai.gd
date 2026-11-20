@@ -483,6 +483,263 @@ func _run() -> void:
 		"want=%s" % want_c.to_html(false))
 	sk_root.free()
 
+	# 2e-d2. 钻石极品变体（2026-11-20 用户定案「钻石透明材质要抽出来，不能
+	#        直接获得」）：抽奖概率分层 12% 钻石/88% 流光——a. 500 抽占比
+	#        8%~18%；b. 钻石 paint 含 diamond=true 与 alpha 档、名带「钻石
+	#        典藏」；c. _apply_skin_paint 后晶体材质 ALPHA+albedo alpha≈0.58；
+	#        d. 钻石装配后 diamond_group 棱面件在位；e. 流光变体不受影响
+	#        （大厅 _refresh_all 与 500 连抽解耦——隐藏态整页重建 500 次
+	#        纯浪费，show_lobby 自带全量刷新，断言后原样接回）
+	var lobby_conn: bool = main.stash.changed.is_connected(main.lobby._refresh_all)
+	if lobby_conn:
+		main.stash.changed.disconnect(main.lobby._refresh_all)
+	main.stash.cash = 99999999
+	var dia_count := 0
+	var dia_vid := ""
+	for i_r in 500:
+		var rr_r: Dictionary = main.stash.roll_skin("mk4_speed")
+		if not bool(rr_r.get("ok", false)):
+			continue
+		var pt_r: Dictionary = (main.stash.skin_var[str(rr_r["vid"])] \
+				.get("paint", {}) as Dictionary)
+		if bool(pt_r.get("diamond", false)):
+			dia_count += 1
+			if dia_vid.is_empty():
+				dia_vid = str(rr_r["vid"])
+	check("钻石概率分层（500 抽占比 8%~18% · 目标 12%）",
+			dia_count >= 40 and dia_count <= 90,
+			"diamond=%d/500 (%.1f%%)" % [dia_count, 100.0 * dia_count / 500.0])
+	check("钻石变体 paint 含 diamond=true 与 alpha 档（名带钻石典藏）",
+			not dia_vid.is_empty()
+			and bool((main.stash.skin_var[dia_vid]["paint"] as Dictionary)
+					.get("diamond", false))
+			and absf(float((main.stash.skin_var[dia_vid]["paint"] as Dictionary)
+					.get("alpha", 0.0)) - 0.58) < 0.001
+			and str(main.stash.skin_var[dia_vid].get("name", ""))
+					.contains("钻石典藏")
+			and str(main.stash.skin_var[dia_vid].get("base", "")) == "mk4_speed")
+	# 序列化往返：diamond(bool)/alpha(float) JSON 原生类型——save→load 不丢
+	# （skin_var_key_ok 只校验 albedo/em 在位，钻石 paint 照旧放行）
+	main.stash.save()
+	main.stash._load()
+	check("钻石变体存档往返（diamond/alpha 字段不丢）",
+			main.stash.skin_var.has(dia_vid)
+			and bool((main.stash.skin_var[dia_vid]["paint"] as Dictionary)
+					.get("diamond", false))
+			and absf(float((main.stash.skin_var[dia_vid]["paint"] as Dictionary)
+					.get("alpha", 0.0)) - 0.58) < 0.001)
+	# c. 钻石透明实效：装配钻石变体重建枪模——晶体材质三件套（ALPHA 透明 +
+	#    albedo alpha≈0.58 + 清漆层）齐落（清漆只有钻石分支才设，签名唯一；
+	#    unibody 合段后全枪单 surface 单材质——命中 1 即整枪晶体化）
+	main.stash.equip_skin("mk4", dia_vid)
+	var dp_root: Node3D = main.guns._build_gun_visual("mk4")
+	var dia_mat_n := 0
+	for mi_dp in dp_root.find_children("*", "MeshInstance3D", true, false):
+		var mm_dp: MeshInstance3D = mi_dp
+		for si_dp in mm_dp.mesh.get_surface_count():
+			var sm_dp := mm_dp.mesh.surface_get_material(si_dp) \
+					as StandardMaterial3D
+			if sm_dp != null \
+					and sm_dp.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA \
+					and sm_dp.clearcoat_enabled \
+					and absf(sm_dp.albedo_color.a - 0.58) < 0.02:
+				dia_mat_n += 1
+	check("钻石重涂实效（晶体材质 ALPHA + albedo alpha≈0.58 + 清漆）",
+			dia_mat_n >= 1, "crystal_mat=%d" % dia_mat_n)
+	dp_root.free()
+	# d. 钻石装配挂载链：照引擎组验收同款摆拍——拆旧主武器模重进靶场，
+	#    diamond_group（facet×4 + 透明弹匣 + 准星座点缀×2）在位
+	var lo_d0: Dictionary = main.stash.loadout.duplicate()   # 摆拍前出发配置
+	var od_pk: Dictionary = main.guns._guns["primary"]
+	var od_h: Node3D = od_pk["holder"]
+	od_h.visible = false
+	od_h.queue_free()
+	(od_pk["flash"] as OmniLight3D).queue_free()
+	(od_pk["flash_env"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.stash.loadout = {"primary": "mk4", "secondary": "pistol"}
+	main._enter_range()
+	await frames(6)
+	var dg_pk: Dictionary = main.guns._guns["primary"]
+	var dia_n: Node3D = dg_pk.get("diamond", null)
+	var facet_n := 0
+	if dia_n != null:
+		for f_i in 4:
+			if dia_n.find_child("facet_%d" % f_i, true, false) != null:
+				facet_n += 1
+	check("钻石装配后 diamond_group 棱面件在位（facet×4+透明弹匣+准星座）",
+			dia_n != null and str(dia_n.name) == "diamond_group"
+			and facet_n == 4
+			and dia_n.find_child("diamond_mag", true, false) != null
+			and dia_n.find_child("sight_facet_l", true, false) != null
+			and dia_n.find_child("sight_facet_r", true, false) != null,
+			"facet=%d" % facet_n)
+	# e. 流光变体不受影响：显式选一个流光变体（500 连抽池里必有——钻石占
+	#    12%，rr2 本身有 12% 概率恰是钻石、拿它当流光样本是赌）——paint 无
+	#    diamond 标记、alpha 回 1.0 档、重建枪模无晶体签名材质（守卫照旧
+	#    跳过透明件不涂）
+	var flow_vid := ""
+	for vid_f in main.stash.skin_var.keys():
+		if str(main.stash.skin_var[vid_f].get("base", "")) == "mk4_speed" \
+				and not bool((main.stash.skin_var[vid_f]["paint"] as Dictionary)
+						.get("diamond", false)):
+			flow_vid = str(vid_f)
+			break
+	if flow_vid.is_empty():
+		flow_vid = str(rr2["vid"])   # 兜底（池里全钻石才走到——500 抽下不可能）
+	main.stash.equip_skin("mk4", flow_vid)
+	var fp2: Dictionary = main.stash.skin_paint_of("mk4")
+	var fl_root: Node3D = main.guns._build_gun_visual("mk4")
+	var fl_crystal := false
+	for mi_fl in fl_root.find_children("*", "MeshInstance3D", true, false):
+		var mm_fl: MeshInstance3D = mi_fl
+		for si_fl in mm_fl.mesh.get_surface_count():
+			var sm_fl := mm_fl.mesh.surface_get_material(si_fl) \
+					as StandardMaterial3D
+			if sm_fl != null \
+					and sm_fl.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA \
+					and sm_fl.clearcoat_enabled \
+					and absf(sm_fl.albedo_color.a - 0.58) < 0.02:
+				fl_crystal = true
+	check("流光变体不受影响（paint 无 diamond · 无晶体材质）",
+			not bool(fp2.get("diamond", true))
+			and absf(float(fp2.get("alpha", 0.0)) - 1.0) < 0.001
+			and not fl_crystal)
+	fl_root.free()
+	main.stash.loadout = lo_d0   # 摆拍还原（引擎段 2e-e 另有自己的摆拍链）
+	main.stash.cash = 99999
+	if lobby_conn:
+		main.stash.changed.connect(main.lobby._refresh_all)
+
+	# 2e-e. 引擎检视组（2026-11-20 MK4「极光魅影」皮肤专属视觉件——I 键
+	#       「引擎启动检视」演出，第 1 轮验收纠偏 J→I）：mk4_speed 系装配
+	#       （含抽奖变体）→ engine_group/pistons×4 在位；未装配 → 无引擎
+	#       组；检视触发 _inspect_t>0 且活塞随帧往复；开火联动
+	#       _engine_jolt>0；空仓特殊检视（增压拉满→爆缸→尾排喷火）；
+	#       hd_inspect(I) 注册在位
+	if not main.stash.guns_owned.has("mk4"):
+		main.stash.guns_owned.append("mk4")
+	var lo0: Dictionary = main.stash.loadout.duplicate()   # 摆拍前出发配置
+	# fit=rr2 变体在装（上段抽奖自动装配）——重建主武器枪模让引擎组挂上
+	# （enter 同槽同枪复用 holder；eng 态已在重建条件内，此处拆旧挂新保
+	#  确定性，照 probe _remount_primary 先例）
+	var oe_pk: Dictionary = main.guns._guns["primary"]
+	var oe_h: Node3D = oe_pk["holder"]
+	oe_h.visible = false
+	oe_h.queue_free()
+	(oe_pk["flash"] as OmniLight3D).queue_free()
+	(oe_pk["flash_env"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.stash.loadout = {"primary": "mk4", "secondary": "pistol"}
+	main._enter_range()
+	await frames(6)
+	var eg_pk: Dictionary = main.guns._guns["primary"]
+	var eng_n: Node3D = eg_pk.get("engine", null)
+	var pist_n: Array = eg_pk.get("pistons", [])
+	check("极光装配后引擎组在位（engine_group + pistons×4）",
+			eng_n != null and eng_n.name == "engine_group"
+			and pist_n.size() == 4 and pist_n[0] != null
+			and str((pist_n[0] as Node3D).name) == "piston_0"
+			and pist_n[3] != null and str((pist_n[3] as Node3D).name) == "piston_3")
+	check("engine_provider 归属判定（mk4_speed 系变体 → true）",
+			bool(main.guns.engine_provider.call("mk4")))
+	# 第 1 轮验收四条目断言：直列四缸并排横列 / 演出加长 8~13s / 银白曲轴
+	# 箱+铜橙活塞 / 拉花·钥匙卡·GT 尾翼·尾排喷火演出件在位
+	var cyl_n := 0
+	for c_e in eng_n.get_children():
+		if str(c_e.name).begins_with("cyl_"):
+			cyl_n += 1
+	check("直列四缸（4 缸筒并排横列，验收纠偏旧 V 型双缸）", cyl_n == 4,
+			"cyl=%d" % cyl_n)
+	var idur_e: float = main.guns._inspect_dur()
+	check("检视演出加长（考证 8~13s 档，纠偏旧 2.6s）",
+			idur_e >= 8.0 and idur_e <= 13.0, "dur=%.1f" % idur_e)
+	var blk_e: MeshInstance3D = eng_n.find_child("crank_block", true, false)
+	var blk_m: StandardMaterial3D = null
+	if blk_e != null:
+		blk_m = blk_e.mesh.surface_get_material(0) as StandardMaterial3D
+	check("曲轴箱银白金属（验收纠偏旧深蓝；银灰档防 vm 补光过曝）",
+			blk_m != null and blk_m.albedo_color.r > 0.6
+			and blk_m.albedo_color.b > 0.7,
+			"c=%s" % (blk_m.albedo_color.to_html(false) if blk_m else "null"))
+	var pis_m: StandardMaterial3D = (pist_n[0] as MeshInstance3D) \
+			.mesh.surface_get_material(0) as StandardMaterial3D
+	check("活塞铜橙可辨（验收纠偏旧银白）",
+			pis_m != null and pis_m.albedo_color.r > 0.6
+			and pis_m.albedo_color.b < 0.4,
+			"c=%s" % (pis_m.albedo_color.to_html(false) if pis_m else "null"))
+	check("检视演出件在位（钥匙卡/GT 尾翼/尾排喷火/流光彗星）",
+			eg_pk.get("card", null) != null
+			and eng_n.find_child("gt_wing", true, false) != null
+			and eg_pk.get("flame", null) != null
+			and (eg_pk.get("sweep", []) as Array).size() == 6)
+	var lbl_n := 0
+	for lb_e in eng_n.find_children("*", "Label3D", true, false):
+		lbl_n += 1
+	check("车贴拉花字样+号码标在位（RS7/GT2/V8/TF/07）", lbl_n >= 7,
+			"label=%d" % lbl_n)
+	# I 键边沿触发检视（直推动作层，不依赖物理键——hd_scope/hd_fire 先例）
+	Input.action_press("hd_inspect")
+	main.guns.update(1.0 / 60.0)   # 边沿帧：起检视（点火音同帧播）
+	check("检视触发 _inspect_t>0", main.guns._inspect_t > 0.0,
+			"t=%.3f" % main.guns._inspect_t)
+	var pl_mi: MeshInstance3D = pist_n[0]
+	var py_a: float = pl_mi.position.y
+	for i in 12:
+		main.guns.update(1.0 / 60.0)   # 0.2s：rpm 爬升段活塞往复
+	var py_b: float = pl_mi.position.y
+	for i in 12:
+		main.guns.update(1.0 / 60.0)
+	var py_c: float = pl_mi.position.y
+	check("检视活塞随帧往复（行程内逐段位移）",
+			absf(py_b - py_a) > 0.0005 and absf(py_c - py_b) > 0.0005,
+			"y=%.4f/%.4f/%.4f" % [py_a, py_b, py_c])
+	Input.action_release("hd_inspect")
+	main.guns.update(1.0 / 60.0)   # 松手帧：I 边沿归位
+	main.guns.try_fire()           # 开火联动（常规路径尾：颤动+相位前踢）
+	check("开火联动 _engine_jolt>0（点火感颤动起步）",
+			main.guns._engine_jolt > 0.0,
+			"jolt=%.3f" % main.guns._engine_jolt)
+	# 空仓特殊检视（2026-11-20 验收补：机械增压拉满→爆缸→尾排喷火）：
+	# ammo=0 按检视 → _inspect_empty 分支；手动步进到爆缸点（BLOW_PH 0.34
+	# ×9.5s≈3.2s，headless 直推 update 不吃真实帧率）断言颤动尖峰+喷火点亮
+	main.guns.ammo = 0
+	Input.action_press("hd_inspect")
+	main.guns.update(1.0 / 60.0)
+	check("空仓检视走特殊分支（_inspect_empty）", main.guns._inspect_t > 0.0
+			and main.guns._inspect_empty, "t=%.3f" % main.guns._inspect_t)
+	for i in 210:
+		main.guns.update(1.0 / 60.0)   # 3.5s：越过爆缸点（0.34×9.5≈3.23s）
+	check("空仓检视爆缸（jolt 尖峰+尾排喷火点亮）",
+			main.guns._engine_jolt > 0.3
+			and main.guns._guns["primary"]["flame"].visible,
+			"jolt=%.3f" % main.guns._engine_jolt)
+	Input.action_release("hd_inspect")
+	main.guns.update(1.0 / 60.0)
+	main.guns.ammo = int(main.guns._mag_cap())   # 摆拍还原满匣
+	# 卸下皮肤：engine_provider 归 false，eng 态变化触发 enter 重建链 → 无引擎组
+	main.stash.equip_skin("mk4", "none")
+	check("engine_provider 归属判定（none → false）",
+			not bool(main.guns.engine_provider.call("mk4")))
+	main.guns.enter({"primary": "mk4", "secondary": "pistol"})
+	await frames(4)
+	check("未装配 mk4_speed 系皮肤无引擎组",
+			main.guns._guns["primary"].get("engine", null) == null
+			and main.guns._engine == null)
+	# hd_inspect 注册在位（KEY_I 物理键——考证 item5 端游默认 I 键）
+	var j_ok := InputMap.has_action("hd_inspect")
+	if j_ok:
+		j_ok = false
+		for ev_j in InputMap.action_get_events("hd_inspect"):
+			if ev_j is InputEventKey \
+					and (ev_j as InputEventKey).physical_keycode == KEY_I:
+				j_ok = true
+	check("检视键 hd_inspect 注册在位（KEY_I 考证键位，纠偏旧 J）", j_ok)
+	# 摆拍还原：出发配置回原值（本段改过 loadout=mk4 进过靶场）——后续
+	# 撤离/阵亡账目段按原配置重开（阵亡丢的是带入的 rifle，非摆拍 mk4）
+	main.stash.loadout = lo0
+	await frames(4)
+
 	# 2f. 双头弹（2026-11-01 用户定案：ASH-12 专属、无视护甲直伤）
 	check("双头弹表落位（ASH-12 专属 · 双弹头 · pen99）",
 			str(Guns.ammo_by_id("duplex")["only"]) == "ash12"

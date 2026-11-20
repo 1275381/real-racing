@@ -73,6 +73,19 @@
 #   合同名取图，缺任一张判「探针未过·图缺失」（2026-10-29 R1 门禁实证）；
 #   R2 判图加约：件体占幅 1/3 以上、与 _on 图非同文件（R2 实证同 md5
 #   被判「无单件特写」）
+# + MK4「极光魅影」引擎检视图证（2026-11-20；第 1 轮验收扩容）：I 检视三帧
+#   shot_inspect_mk4_1/2/3（顶面满转/侧面翻转毕/流光扫过——活塞位置三帧应
+#   不同）+ shot_engine_close 气缸特写（检视姿态定格·机匣侧顶对准气缸组，
+#   冻结摆拍协议）+ 空仓特殊检视两张 shot_inspect_mk4_card/_blow（钥匙卡·
+#   增压拉满 / 爆缸·尾排喷火）+ shot_skin_mk4 整枪重拍与 shot_skin_mk4_side
+#   侧面近景（纠偏 11-19 旧暗蓝图证）+ 钻石极品变体图证四机位
+#   shot_diamond_mk4 / _side / _mag / _sight（2026-11-20 抽奖 12% 低概率稀有
+#   档——透明晶体蒙皮+六棱晶条+晶体内核弹匣+典藏铭牌+机匣内彩件；R1 纠偏
+#   旧单张远景改侧面近景多机位，R2 纠偏：橙黄垫带/黑横梁正对机匣验隔壳
+#   成色带、加拍照门座晶条特写）
+#   （第 1 轮门禁修复：裸帧数等待改 _inspect_t/_engine_rpm 状态门、两段
+#   检视隔帧防 _inspect_prev 边沿互吃、关键图前 _wait_draw 对齐真实
+#   绘制——三症结详见检视段注释）
 # 运行：/Applications/Godot.app/Contents/MacOS/Godot --path . --audio-driver Dummy -s res://scripts/probe_shot.gd
 # headless 下（集成门槛跑法）无渲染目标：跳过保存只跑断言，进程照常 quit 不挂起
 # 墙钟看门狗 390s（2026-10-30 第 1 轮门禁修复上调：22 枪×2 循环 + 10 组
@@ -163,6 +176,16 @@ func wait_until(pred: Callable, max_frames: int = 300) -> bool:
 			return true
 		await process_frame
 	return pred.call()
+
+
+## 等一帧真实绘制完成再放行抓帧（headless 集成门槛跑法无绘制事件，直接
+## 跳过——挂起会让进程吃 harness 420s 强杀）。第 1 轮门禁实证：遮挡/卡顿
+## 机上 get_image() 会读到上一段的残帧（shot_inspect_mk4_2 的内容拍到的
+## 是 engine_close 段姿态），关键图证抓帧前先对齐一次真实绘制
+func _wait_draw() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	await RenderingServer.frame_post_draw
 
 
 ## 截图统一出口：headless（无渲染目标）下 get_image() 返回 null——
@@ -924,10 +947,136 @@ func _initialize() -> void:
 	main.stash.equip_skin("mk4", str(rr_a.get("vid", rr_b.get("vid", "none"))))
 	await frames(6)
 	shot("res://out/shot_skin_variant_b.png")
+	# ---- 整枪图证重拍（第 1 轮验收：shot_skin_mk4.png 是 11-19 旧暗蓝枪
+	#      图证，无引擎无流光——用当前极光变体（引擎组/拉花/GT 尾翼在装）
+	#      重拍整枪图 + 侧面近景，拍完卸皮还原。取景走冻结摆枪架协议（照
+	#      engine_close 段）——枪模在 vm 世界锚定相机，动主相机不改变枪的
+	#      屏占比（首拍实证：主相机挪位只换背景、枪仍缩在角上），整枪/
+	#      侧面近景改摆 holder 位姿取景）
+	main.set_process(false)
+	main.hud.visible = false
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	var h_sk: Node3D = main.guns._guns["primary"]["holder"]
+	h_sk.position = Vector3(0.0, -0.055, -0.36)
+	h_sk.rotation_degrees = Vector3(12, 24, 4)
+	await frames(2)
+	await _wait_draw()
+	shot("res://out/shot_skin_mk4.png")
+	h_sk.position = Vector3(0.0, -0.048, -0.28)
+	h_sk.rotation_degrees = Vector3(6, 54, -2)
+	await frames(2)
+	await _wait_draw()
+	shot("res://out/shot_skin_mk4_side.png")
 	main.set_process(true)
 	main.hud.visible = true
 	main.stash.equip_skin("mk4", "none")
 	await frames(4)
+
+	# ---- 钻石极品变体图证（2026-11-20 用户定案：抽奖低概率稀有档 12%，
+	#      不能直接获得）：循环 roll 强制抽到钻石变体（paint.diamond，上限
+	#      400 防死循环——88% 流光下 400 抽不出概率 ≈ 5e-23），装配重进靶场
+	#      拍三张特写。R1 验收纠偏（transparency=false 等 6 项）：旧单张 3/4
+	#      远景机匣仅占幅 ~1/4、全部细节不可判读——改侧面近景三机位（3/4 侧
+	#      特写 / 左侧机匣大面近景·棱面件+铭牌 / 晶体弹匣对青绿台面特写——
+	#      亮背景元素透壳可读=ref_02 核心语言）。R2 验收再纠偏：机位定稿为
+	#      橙黄地垫带+黑横梁带正对机匣（隔壳成色带），铭牌字号/描边加大、
+	#      内彩件（枪机/导气管）与六棱晶条新件同帧取证，拍完卸皮还原
+	#      （引擎检视段随后自会重抽装配）
+	main.stash.cash = 99999
+	var dia_vid_p := ""
+	for i_dp in 400:
+		var rr_dp: Dictionary = main.stash.roll_skin("mk4_speed")
+		if not bool(rr_dp.get("ok", false)):
+			break
+		var pt_dp: Dictionary = (main.stash.skin_var[str(rr_dp["vid"])] \
+				.get("paint", {}) as Dictionary)
+		if bool(pt_dp.get("diamond", false)):
+			dia_vid_p = str(rr_dp["vid"])
+			break
+	check("探针抽得钻石变体（低概率稀有档）", not dia_vid_p.is_empty())
+	if not dia_vid_p.is_empty():
+		main.stash.equip_skin("mk4", dia_vid_p)
+		main.stash.loadout = {"primary": "mk4", "secondary": "pistol"}
+		main._enter_range()
+		await frames(20)
+		check("探针钻石棱面件在位（diamond_group 挂载）",
+				main.guns._guns["primary"].get("diamond", null) != null)
+		var dia_grp: Node3D = main.guns._guns["primary"].get("diamond", null)
+		var plate_l := dia_grp.find_child("collector_plate_l", true, false) \
+				as Label3D if dia_grp != null else null
+		var plate_r := dia_grp.find_child("collector_plate_r", true, false) \
+				as Label3D if dia_grp != null else null
+		check("探针钻石典藏铭牌在位（★//编号+成色两侧）",
+				plate_l != null and plate_r != null
+				and plate_l.text == plate_r.text,
+				"plate=%s" % (plate_l.text if plate_l != null else "缺"))
+		# 重涂实效断言（R1 验收 transparency=false 定罪复检）：枪身蒙皮
+		# 晶体材质四件套——ALPHA 透明 + albedo alpha≈0.58 + 低金属度
+		# ≤0.12（漫反射主导=透壳前提）+ 强 rim 2.0
+		var dia_mat_n := 0
+		for mi_dm in (main.guns._guns["primary"]["holder"] as Node3D) \
+				.find_children("*", "MeshInstance3D", true, false):
+			var mm_dm: MeshInstance3D = mi_dm
+			for si_dm in mm_dm.mesh.get_surface_count():
+				var sm_dm := mm_dm.mesh.surface_get_material(si_dm) \
+						as StandardMaterial3D
+				if sm_dm != null \
+						and sm_dm.transparency \
+								== BaseMaterial3D.TRANSPARENCY_ALPHA \
+						and absf(sm_dm.albedo_color.a - 0.58) < 0.02 \
+						and sm_dm.metallic <= 0.12 + 1e-4 \
+						and sm_dm.rim >= 1.9:
+					dia_mat_n += 1
+		check("探针钻石蒙皮实效（ALPHA+alpha≈0.58+metal≤0.12+rim2.0）",
+				dia_mat_n >= 1, "crystal_mat=%d" % dia_mat_n)
+		# 冻结摆拍协议（照引擎特写段）：停主循环隐 HUD。机位 dia_framing 小样
+		# 三连实测定稿（R2 验收「橙黄地垫/黑横梁隔壳成色带」）：cam.position/
+		# rotation 冻结态直改生效（player.update 只在 main._process 驱动）——
+		# 相机前移上到射击台上空、俯 -0.34~-0.38，把橙黄地垫带+黑横梁带正对
+		# 机匣垫后景=透壳成色带底；枪屏占比仍全由 holder 位姿控制
+		main.set_process(false)
+		main.hud.visible = false
+		main.guns._ads = 0.0
+		main.player.ads = 0.0
+		var h_dia: Node3D = main.guns._guns["primary"]["holder"]
+		# ① 3/4 侧特写：整枪入画、橙黄垫带正垫机匣中段后景
+		main.player.cam.position = main.player.pos + Vector3(0, 1.40, -0.90)
+		main.player.cam.rotation = Vector3(-0.38, PI, 0)
+		h_dia.position = Vector3(0.10, -0.16, -0.24)
+		h_dia.rotation_degrees = Vector3(14, 64, -6)
+		await frames(2)
+		await _wait_draw()
+		shot("res://out/shot_diamond_mk4.png")
+		# ② 左侧机匣大面近景：棱面晶条 facet_0/2 + 典藏铭牌 + 橙黄垫/黑梁
+		#    隔壳成色带一并判读（yaw 80 + holder 右错 0.19——铭牌落画面中部）
+		main.player.cam.position = main.player.pos + Vector3(0, 1.45, -1.10)
+		main.player.cam.rotation = Vector3(-0.34, PI, 0)
+		h_dia.position = Vector3(0.19, -0.095, -0.16)
+		h_dia.rotation_degrees = Vector3(4, 80, 0)
+		await frames(2)
+		await _wait_draw()
+		shot("res://out/shot_diamond_mk4_side.png")
+		# ③ 晶体弹匣特写对青绿台面：弹匣叠在亮绿地垫上——壳内亮青内核条与
+		#    透壳背景同框（ref_02「彩色内核包在无色晶体里」）；更近一档
+		#    z -0.145/yaw 84 与①②拉开视角差
+		h_dia.position = Vector3(0.14, -0.12, -0.145)
+		h_dia.rotation_degrees = Vector3(12, 84, -4)
+		await frames(2)
+		await _wait_draw()
+		shot("res://out/shot_diamond_mk4_mag.png")
+		# ④ 准星座晶条特写（R2 验收「加大 sight_facet 或提亮让其入镜」——
+		#    ∅18×44mm 六棱晶条压照门基座两侧，holder 再右错把照门座区拉到
+		#    画面中部：z -0.485 件距铭牌位 ~0.08m，x +0.30 ≈ 右移 ~275px 居中）
+		h_dia.position = Vector3(0.30, -0.09, -0.155)
+		h_dia.rotation_degrees = Vector3(4, 78, 0)
+		await frames(2)
+		await _wait_draw()
+		shot("res://out/shot_diamond_mk4_sight.png")
+		main.set_process(true)
+		main.hud.visible = true
+		main.stash.equip_skin("mk4", "none")   # 拍完卸皮还原
+		await frames(4)
 
 	# ---- 视效动画图证（2026-11-03 用户「机枪弹链滑动 / 狙击枪抛壳」）：
 	#      qjb201 连开两发抓棘轮中间帧（链节沿弧向前进）；sniper 开火 0.3s
@@ -949,6 +1098,122 @@ func _initialize() -> void:
 	main.guns.try_fire()
 	await frames(18)   # 栓机循环 0.28s 后弹壳在空中
 	shot("res://out/shot_sniper_eject.png")
+	# ---- MK4「极光魅影」引擎检视图证（2026-11-20 用户定案；第 1 轮验收
+	#      修复：I 键（考证端游检视键 item5）、直列四缸并排横列、9.5s 三段
+	#      加长演出）→ 检视三帧（顶面满转 / 侧面翻转毕 / 流光扫过——活塞
+	#      位置三帧应不同）+ 气缸特写 + 空仓特殊检视两帧（钥匙卡·增压拉满
+	#      / 爆缸·尾排喷火）——拍完卸皮还原。
+	#      状态门取帧沿第 1 轮门禁修复三症结方案：① _inspect_t 游戏时刻表
+	#      代替裸帧数（dt 封顶机上帧数≠游戏时）；② 两段检视间 release→
+	#      press 隔 2 帧防 _inspect_prev 边沿互吃；③ 每张关键图前 _wait_draw
+	#      对齐真实绘制防残帧串段。活塞行程端点采样把位移拉满到 ~行程全长
+	#      （第 2 轮门禁修复，判图可读）
+	if not main.stash.guns_owned.has("mk4"):
+		main.stash.guns_owned.append("mk4")
+	main.stash.cash = 99999
+	var eng_rr: Dictionary = main.stash.roll_skin("mk4_speed")
+	check("探针抽得极光变体（引擎装配前提）", bool(eng_rr.get("ok", false)))
+	main.stash.loadout = {"primary": "mk4", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	check("探针引擎组在位（mk4+极光）",
+			main.guns._guns["primary"].get("engine", null) != null)
+	var pist_in: Array = main.guns._guns["primary"]["pistons"]
+	check("探针直列四缸在位", pist_in.size() == 4 and pist_in[0] != null)
+	var idur: float = main.guns._inspect_dur()
+	check("探针检视加长档（8~13s 考证）", idur >= 8.0 and idur <= 13.0,
+			"dur=%.1f" % idur)
+	var pl_in: MeshInstance3D = pist_in[0]
+	var py0: float = float(pl_in.get_meta("py0"))
+	var pamp: float = float(main.guns.ENGINE_PARTS.get("mk4", {})
+			.get("stroke", 0.013)) * 0.5
+	var top_y: float = py0 + 0.6 * pamp
+	var bot_y: float = py0 - 0.6 * pamp
+	Input.action_press("hd_inspect")
+	check("检视一触发（I 边沿起表）", await wait_until(
+			func(): return main.guns._inspect_t > idur - 0.10, 60))
+	# 三帧状态门取帧（ph=演出进度）：顶面展示满转 0.30 / 侧面翻转毕 0.62 /
+	# 流光扫过段 0.75——每帧再等活塞行到上/下行程端点
+	await wait_until(func(): return main.guns._inspect_t <= idur * 0.70)
+	await wait_until(func(): return pl_in.position.y >= top_y, 120)
+	await _wait_draw()
+	var py1: float = pl_in.position.y
+	shot("res://out/shot_inspect_mk4_1.png")
+	await wait_until(func(): return main.guns._inspect_t <= idur * 0.38)
+	await wait_until(func(): return pl_in.position.y <= bot_y, 120)
+	await _wait_draw()
+	var py2: float = pl_in.position.y
+	shot("res://out/shot_inspect_mk4_2.png")
+	await wait_until(func(): return main.guns._inspect_t <= idur * 0.25)
+	await wait_until(func(): return pl_in.position.y >= top_y, 120)
+	await _wait_draw()
+	var py3: float = pl_in.position.y
+	shot("res://out/shot_inspect_mk4_3.png")
+	Input.action_release("hd_inspect")
+	check("检视三帧活塞位移不同", absf(py1 - py2) > 1e-5
+			and absf(py2 - py3) > 1e-5 and absf(py1 - py3) > 1e-5,
+			"y=%.4f/%.4f/%.4f" % [py1, py2, py3])
+	# 气缸特写：隔 2 帧再按（防边沿互吃），高转平台（rpm≥0.9，点火灯组已亮）
+	# 才冻结主循环定格——手动摆枪架让机匣侧顶对准气缸组（照皮肤变体/机匣
+	# 特写段的冻结摆拍协议；机位 tune2_p2 实测定稿：四缸筒环+筒内铜橙活塞+
+	# 点火灯组+红格栅满幅可辨）
+	await frames(2)
+	Input.action_press("hd_inspect")
+	check("检视二触发（气缸特写前提）", await wait_until(
+			func(): return main.guns._inspect_t > idur - 0.10, 60))
+	await wait_until(func(): return main.guns._engine_rpm >= 0.9)
+	main.set_process(false)
+	main.hud.visible = false
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	var h_en: Node3D = main.guns._guns["primary"]["holder"]
+	h_en.position = Vector3(0.0, -0.030, -0.14)
+	h_en.rotation_degrees = Vector3(58, 26, 12)
+	await frames(2)
+	await _wait_draw()
+	shot("res://out/shot_engine_close.png")
+	# 尾翼喷气互动帧（第 1 轮验收：拉动尾翼两侧喷气——jet 能量
+	# =2.4·rpm+5·jolt，本帧检视高转 rpm≥0.9 → 双锥常燃；摆枪架让枪尾/
+	# GT 尾翼入画取证）+ 喷气能量断言
+	check("尾翼喷气能量点亮（检视高转）",
+			main.guns._jet_m != null
+					and main.guns._jet_m.emission_energy_multiplier > 0.5,
+			"e=%.2f" % (main.guns._jet_m.emission_energy_multiplier
+					if main.guns._jet_m != null else -1.0))
+	h_en.position = Vector3(0.0, -0.045, -0.32)
+	h_en.rotation_degrees = Vector3(16, 30, 0)
+	await frames(2)
+	await _wait_draw()
+	shot("res://out/shot_wing_jet.png")
+	main.set_process(true)
+	main.hud.visible = true
+	# 空仓特殊检视（第 1 轮验收补：白色车钥匙遥控卡+机械增压拉满→爆缸→
+	# 尾排喷火）：ammo=0 触发特殊分支——f4=拉满段（钥匙卡在画·顶面定格）
+	# f5=爆缸后（jolt 尖峰+尾排喷火锥点亮）
+	Input.action_release("hd_inspect")
+	await frames(2)
+	var cap_mk4: int = main.guns._mag_cap()
+	main.guns.ammo = 0
+	Input.action_press("hd_inspect")
+	# 具名谓词 lambda（单行 lambda 体内不可跨行——原双行 `func(): return …
+	# and …` 触发 parse error，本段既有的门禁修复遗留）
+	var empty_pred := func() -> bool:
+		return main.guns._inspect_t > idur - 0.10 and main.guns._inspect_empty
+	check("空仓检视触发（特殊分支 _inspect_empty）",
+			await wait_until(empty_pred, 60))
+	await wait_until(func(): return main.guns._inspect_t <= idur * 0.80)
+	await _wait_draw()
+	shot("res://out/shot_inspect_mk4_card.png")
+	check("空仓爆缸触发（jolt 尖峰）", await wait_until(
+			func(): return main.guns._engine_jolt > 1.5, 600))
+	check("尾排喷火在位（爆缸后点亮）",
+			(main.guns._guns["primary"]["flame"] as Node3D).visible)
+	await _wait_draw()
+	shot("res://out/shot_inspect_mk4_blow.png")
+	Input.action_release("hd_inspect")
+	main.guns.ammo = cap_mk4   # 摆拍还原满匣
+	main.stash.equip_skin("mk4", "none")   # 拍完卸皮还原
+	await frames(30)   # 检视收尾回战斗位（enter 重建链随后整体复位）
 	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
 	main._enter_range()
 	await frames(10)

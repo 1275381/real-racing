@@ -524,6 +524,132 @@ func _make_click() -> AudioStreamWAV:
 	return _raw_wav(data)
 
 
+## 引擎启动音（2026-11-20 MK4「极光魅影」I 检视「引擎点火」演出）：
+## ~1.5s 三层合成（参数表照 SHOT_TUNE 模式——TapTap 考证「大排量引擎
+## 点火轰鸣声浪」）：
+##   sub 低频轰鸣：42→96Hz 扫频正弦，0.55s 渐强（排量感的胸腔共振）；
+##   saw 锯齿转速爬升：190→640Hz 扫频锯齿（转速表拉高），0.3s 起动机
+##       交棒后入（对应检视包络怠速→高转爬升段）；
+##   starter 起动机咔哒：前 0.35s 16Hz 门控 90Hz 阻尼正弦（点火哒哒）。
+## 末 0.12s 收音防咔哒爆音；峰值归一→总响度→16bit（照 _shot_stream 尾链）。
+## 惰性生成：play_engine 首调 _make_engine，不进 ensure 预生成表
+const ENGINE_TUNE := {
+	"dur": 1.5,
+	"sub": {"f0": 42.0, "f1": 96.0, "gain": 0.62},
+	"saw": {"f0": 190.0, "f1": 640.0, "gain": 0.30},
+	"starter": {"gate": 16.0, "freq": 90.0, "dur": 0.35, "gain": 0.24},
+	"gain": 0.72,
+}
+## 爆缸音（2026-11-20 MK4 空仓特殊检视「机械增压拉满→爆缸」——噪声爆裂
+## + 低频闷响坠底）：~0.5s 两层合成，照 _make_engine 尾链
+const BLOW_TUNE := {
+	"dur": 0.5,
+	"thump": {"f0": 120.0, "f1": 38.0, "gain": 0.85},
+	"noise": {"dur": 0.28, "gain": 0.55},
+	"gain": 0.80,
+}
+var _engine_stream: AudioStreamWAV
+var _blow_stream: AudioStreamWAV
+
+## 引擎点火：检视开始时播（hd_guns update 的 I 边沿分支调用）；与枪声共用
+## 轮换池（检视中无枪声冲突）；rate=播放音高（空仓增压拉满档传 1.4——
+## 增压器啸叫），一次性演出事件不随机移调
+func play_engine(rate := 1.0) -> void:
+	if _engine_stream == null:
+		_engine_stream = _make_engine()
+	var p := _next_player()
+	p.stream = _engine_stream
+	p.volume_db = linear_to_db(maxf(float(ENGINE_TUNE["gain"]) * 0.9, 0.05))
+	p.pitch_scale = rate
+	p.play()
+
+
+## 爆缸：空仓检视 ph 过 BLOW_PH 时播（金属爆裂+闷响坠底），惰性生成同款
+func play_blow() -> void:
+	if _blow_stream == null:
+		_blow_stream = _make_blow()
+	var p := _next_player()
+	p.stream = _blow_stream
+	p.volume_db = linear_to_db(maxf(float(BLOW_TUNE["gain"]) * 0.9, 0.05))
+	p.pitch_scale = 1.0
+	p.play()
+
+
+func _make_engine() -> AudioStreamWAV:
+	var dur: float = float(ENGINE_TUNE["dur"])
+	var n := int(MIX_RATE * dur)
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var sub: Dictionary = ENGINE_TUNE["sub"]
+	var saw: Dictionary = ENGINE_TUNE["saw"]
+	var st: Dictionary = ENGINE_TUNE["starter"]
+	var phase_s := 0.0
+	var phase_w := 0.0
+	for i in n:
+		var t := float(i) / MIX_RATE
+		var k := t / dur   # 0..1 扫频进度（转速爬升）
+		var tail := 1.0
+		if t > dur - 0.12:
+			tail = maxf((dur - t) / 0.12, 0.0)   # 末段收音防咔哒爆音
+		# 低频轰鸣：f0→f1 扫频正弦，0.55s 渐强
+		phase_s += TAU * lerpf(float(sub["f0"]), float(sub["f1"]), k) / MIX_RATE
+		var env_sub := minf(t / 0.55, 1.0) * tail
+		buf[i] += sin(phase_s) * env_sub * float(sub["gain"])
+		# 锯齿转速爬升：0.3s 后入（起动机交棒）
+		phase_w += TAU * lerpf(float(saw["f0"]), float(saw["f1"]), k) / MIX_RATE
+		var env_saw := clampf((t - 0.30) / 0.30, 0.0, 1.0) * tail
+		buf[i] += (2.0 * fposmod(phase_w / TAU, 1.0) - 1.0) * env_saw \
+				* float(saw["gain"])
+		# 起动机咔哒（前 starter.dur）：gate Hz 门控阻尼正弦
+		if t < float(st["dur"]):
+			var g := fposmod(t * float(st["gate"]), 1.0)
+			buf[i] += sin(TAU * float(st["freq"]) * t) * exp(-g * 9.0) \
+					* float(st["gain"])
+	# 峰值归一 → 乘总响度 → 16bit 编码（照 _shot_stream 尾链）
+	var peak := 0.0
+	for v in buf:
+		peak = maxf(peak, absf(v))
+	var norm: float = (0.88 / peak) if peak > 0.0001 else 0.0
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		data.encode_s16(i * 2, int(clampf(
+				buf[i] * norm * float(ENGINE_TUNE["gain"]), -1.0, 1.0) * 31500.0))
+	return _raw_wav(data)
+
+
+## 爆缸音合成：低频闷响 120→38Hz 扫频正弦 0.5s 指数坠底 + 前 0.28s 白噪
+## 爆裂（金属碎片感）；尾链同 _make_engine
+func _make_blow() -> AudioStreamWAV:
+	var dur: float = float(BLOW_TUNE["dur"])
+	var n := int(MIX_RATE * dur)
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var th: Dictionary = BLOW_TUNE["thump"]
+	var nz: Dictionary = BLOW_TUNE["noise"]
+	var phase_b := 0.0
+	for i in n:
+		var t := float(i) / MIX_RATE
+		var k := t / dur
+		var tail := maxf(1.0 - k, 0.0)
+		tail *= tail   # 平方坠底（爆缸后的熄火感）
+		phase_b += TAU * lerpf(float(th["f0"]), float(th["f1"]), k) / MIX_RATE
+		buf[i] += sin(phase_b) * tail * float(th["gain"])
+		if t < float(nz["dur"]):
+			var nk := 1.0 - t / float(nz["dur"])
+			buf[i] += randf_range(-1.0, 1.0) * nk * nk * float(nz["gain"])
+	var peak := 0.0
+	for v in buf:
+		peak = maxf(peak, absf(v))
+	var norm: float = (0.88 / peak) if peak > 0.0001 else 0.0
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		data.encode_s16(i * 2, int(clampf(
+				buf[i] * norm * float(BLOW_TUNE["gain"]), -1.0, 1.0) * 31500.0))
+	return _raw_wav(data)
+
+
 ## 命中反馈 ding：1200Hz 正弦 0.06s 快衰减
 func play_hit() -> void:
 	var p := _next_player()

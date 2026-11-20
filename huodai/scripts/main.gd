@@ -166,6 +166,24 @@ func _ready() -> void:
 	# 枪械皮肤重涂表（2026-11-08 疾光魅影首枪；合体后按原色匹配）
 	guns.skin_paint_provider = func(gid: String) -> Dictionary:
 		return stash.skin_paint_of(gid)
+	# 引擎组装配查询（2026-11-20 MK4「极光魅影」I 检视引擎启动演出）：当前
+	# 装配皮肤归属 mk4_speed 系（系列本体或抽奖随机流光变体 base）才挂
+	# engine_group——stash 查 skin_fit/skin_var；未装配/他枪 false
+	guns.engine_provider = func(gid: String) -> bool:
+		var fit := stash.skin_fit_of(gid)
+		if fit == "mk4_speed":
+			return true
+		return stash.skin_var.has(fit) \
+				and str(stash.skin_var[fit].get("base", "")) == "mk4_speed"
+	# 钻石极品变体装配查询（2026-11-20 抽奖低概率稀有档 12%）：当前装配
+	# 变体 paint.diamond 才挂 diamond_group 棱面件——stash 查 skin_fit/
+	# skin_var；未装配流光变体/系列本体/他枪 false
+	guns.diamond_provider = func(gid: String) -> bool:
+		return stash.skin_fit_is_diamond(gid)
+	# 钻石典藏铭牌文案（2026-11-20 R1 验收「★//唯一编号+成色值」）：装配
+	# 钻石变体才给文案（变体序号+耐久成色），非钻石装配回 "" 不挂铭牌
+	guns.diamond_plate_provider = func(gid: String) -> String:
+		return stash.diamond_plate_of(gid)
 
 	stash = HDStash.new()
 	# 投掷物（阶段 D）：雷/烟/闪 弹道与起爆；7/8/9 键投掷（_route_key）——
@@ -205,6 +223,11 @@ func _register_inputs() -> void:
 		"hd_slot1": [KEY_1], "hd_slot2": [KEY_2], "hd_melee": [KEY_X],
 		"hd_reload": [KEY_R], "hd_interact": [KEY_F],
 		"hd_lean_left": [KEY_Q], "hd_lean_right": [KEY_E],
+		# 检视（2026-11-20 MK4「极光魅影」「引擎启动检视」——考证 item5：端游
+		# 三角洲检视默认键位 I（可自定义），第 1 轮验收纠偏旧 KEY_J；
+		# hd_guns 只读动作名不认物理键；大厅 KEY_I 保险开关只在 lobby 页签
+		# 消费，局内不冲突
+		"hd_inspect": [KEY_I],
 	}
 	for action in defs:
 		if not InputMap.has_action(action):

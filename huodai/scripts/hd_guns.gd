@@ -56,6 +56,62 @@ const BELT_FEED_SPEED := 0.55                      # 链条棘轮前进速度（
 const EJECT_PORTS := {"sniper": Vector3(0.032, 0.055, 0.02)}
 const EJECT_DELAY := 0.28
 const EJECT_LIFE := 1.1                            # 弹壳存活秒数（末 0.3s 缩隐）
+
+## 引擎组参数表（2026-11-20 MK4「极光魅影」皮肤专属视觉件，I 检视「引擎启动」
+## 演出）：直列四缸并排横列（缸体/散热鳍/活塞头可动/排气管——第 1 轮验收
+## 纠偏：旧版 V 型双缸是考证四缸的「刻意减半」演绎，验收判图按 ref_07/ref_11
+## 逐帧定读「四缸筒并排横列」，改回 4 缸；缸径/缸高维持真实比例零放大失真）。
+## 位置=机匣顶面中后段（考证「瞄具正下方开舱段」——镜座挂载域 z<-0.09 与后照
+## 门基座 z≥0.096 之间的空档，装镜/机瞄都不打架）。坐标=枪身局部
+## （_mount_engine 补 HOLD_DELTA 烘焙），尺寸真实比例可辨不放大：
+##   cyl_r/cyl_h 缸筒半径/高（半透明银白，筒内铜橙活塞头可见——考证逐帧目视
+##   + 第 1 轮验收「活塞可辨化」：旧银白活塞+0.55 透明缸筒三帧全不可辨）；
+##   cyl_dx 缸心距（×1.5/×0.5 得四缸横列位，缸心距=1.13×缸径——直列机真实
+##   比例档）；stroke 活塞 sin 往复全行程（旧 0.008 加大 0.013=±6.5mm——三帧
+##   肉眼可辨，活塞顶仍在筒内不穿缸头）；dur 检视总时长（秒）——实机普通
+##   检视为 8~13s 加长演出（BV1CzEV6ZEiJ P3 逐帧），本作取 9.5s 三段演出
+##   （第 1 轮验收纠偏：旧 2.6s 与考证冲突；顶面展示→侧面翻转→流光扫过，
+##   含起检 1.3s 爬升 + 末 1.1s 回落的转速包络）
+const ENGINE_PARTS := {
+	"mk4": {
+		"pos": Vector3(0.0, 0.072, 0.012),
+		"cyl_dx": 0.0192,
+		"cyl_r": 0.0085,
+		"cyl_h": 0.020,
+		"stroke": 0.013,
+		"dur": 9.5,
+	},
+}
+const ENGINE_RPM_HZ := 14.0     # 转速满档活塞往复频率（Hz）——怠速 0.15 档
+                                # ≈2.1Hz 可辨慢怠速，满档 14Hz 高转嘶吼
+const ENGINE_JOLT_DECAY := 6.5  # 开火颤动能量衰减（/s，1.0 起步指数衰减）
+const INSPECT_OFF := Vector3(-0.13, 0.14, 0.30)      # 检视·顶面展示位姿偏移（枪架
+                                                     # 局部）：收向屏幕中心+上抬+拉近
+                                                     # （第 1 轮门禁修复定稿——tune5_b
+                                                     # 实测；旧值 z=-0.07 号称拉近实
+                                                     # 为把枪推远）
+const INSPECT_ROT := Vector3(50.0, 26.0, 12.0)       # 顶面展示姿态角（度）：前倾+回转
+                                                     # +滚转让机匣顶引擎舱正对镜（四
+                                                     # 缸筒+筒内铜橙活塞+点火灯组+红
+                                                     # 格栅满幅可辨；probe tune2_p2 实
+                                                     # 测 58/26/12 特写档收全枪用 50 档）
+const INSPECT_SIDE_OFF := Vector3(-0.12, 0.10, 0.24)  # 侧面展示位姿偏移（翻转段终点：
+                                                      # 枪侧面对镜——拉花/流光条/尾翼
+                                                      # 侧面轮廓满幅可辨）
+const INSPECT_SIDE_ROT := Vector3(8.0, 74.0, -2.0)    # 侧面展示姿态角（度）：小前倾+
+                                                      # 大回转（yaw 74+hip4≈78° 枪身
+                                                      # 横平展侧视——首拍 32° 枪头仍
+                                                      # 指向屏深处判图读不出侧轮廓，
+                                                      # probe 实拍纠偏）
+const INSP_RAISE_PH := 0.14     # 检视演出：起检上举段占比（顶面展示到位）
+const INSP_FLIP_PH := 0.40      # 顶面→侧面翻转段起点占比
+const INSP_FLIP_END_PH := 0.56  # 翻转段终点占比（侧面展示起）
+const INSP_RET_PH := 0.88       # 末段回落起点占比（缓出收枪）
+const INSP_CARD_WIN := Vector2(0.10, 0.42)   # 车钥匙遥控卡入画窗口（顶面展示段，
+                                             # 翻转前离场——考证「检视携钥匙卡演出」）
+const INSP_SWEEP_WIN := Vector2(0.56, 0.88)  # 流光沿车体扫过窗口（侧面展示段）
+const BLOW_PH := 0.34           # 空仓特殊检视：机械增压拉满→爆缸点（占比）
+const FLAME_END_PH := 0.86      # 空仓特殊检视：尾排喷火收熄点（占比）
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
 const RD_WIN_W := 0.06     # 红点镜玻璃窗宽（枪身局部 m）——无框反射式大窗
 const RISER_H := 0.024            # 镜体增高架抬高量（2026-10-28；rd_aim_y/AABB 顶自动跟随）
@@ -220,6 +276,36 @@ var _reload_off := Vector3.ZERO     # 换弹动画的枪体偏移/倾斜
 var _reload_rot := Vector3.ZERO
 var _falling_mag: MeshInstance3D    # 掉落弹匣替身（主世界空间——落地后要与地面交互，留在主世界；queue_free 惰性重建）
 var _belt_slide: Node3D             # 弹链滑动条（合体后追加的独立链节组，随 holder 重建）
+var _engine: Node3D                 # 引擎组（极光魅影皮肤专属——合体后追加的独立
+                                    # 节点；引用刷新唯一入口在 _equip，照 _belt_slide 教训）
+var _pistons: Array = []            # 活塞头×4 可动子节点（直列四缸沿缸轴 sin 往复，
+                                    # meta phase=点火相位——1&4 同相、2&3 反相）
+var _engine_fx: Array = []          # 引擎发光件材质表 [{m, base, fire}]（engine_group
+                                    # meta 持有，_equip 随引擎引用一并刷新）
+var _insp_card: Node3D              # 白色车钥匙遥控卡道具（检视演出入画，空态隐藏）
+var _exh_flame: Node3D              # 尾排喷火锥（空仓特殊检视爆缸后点亮）
+var _sweep_nodes: Array = []        # 流光扫过彗星段×3（顶面→侧面演出侧面段沿车体跑）
+var _sweep_mats: Array = []         # 彗星段发光材质（头亮尾淡，能量由 _tick_fx 驱动）
+var _jet_nodes: Array = []          # 尾翼两侧喷气锥×2（检视高转/开火颤动点亮——拉动
+                                    # 尾翼喷气互动）
+var _jet_m: StandardMaterial3D      # 喷气锥发光材质（共享一枚，能量脉冲）
+var _blow_lamp: MeshInstance3D      # 爆缸警示灯盘（爆缸瞬间闪红，衰减熄灭）
+var _blow_m: StandardMaterial3D     # 爆缸灯发光材质
+var _flame_mats: Array = []         # 尾排喷火双层锥发光材质 [外焰, 内焰]
+var _inspect_empty := false         # 本次检视走空仓特殊分支（ammo=0 触发时定格）
+var _blown := false                 # 空仓检视爆缸事件已触发（增压拉满→爆缸一次）
+var _engine_fx_keep: Array = []     # 引擎材质永久注册表（第 2 轮门禁修复）：
+                                    # 每次挂载的全部引擎材质追加于此且不清空——
+                                    # 重挂释放旧 holder 时材质资源绝不中生命期
+                                    # 消亡，RS 侧 pending 更新（_tick_fx 逐帧写
+                                    # emission_energy_multiplier）永远命中活 RID，
+                                    # 退出 teardown 不再刷 Parameter "material"
+                                    # is null（全量探针 84 条 → 0 实证见门禁记录）
+var _engine_jolt := 0.0             # 开火联动颤动能量（try_fire 置 1.0，此处衰减）
+var _engine_phase := 0.0            # 活塞往复相位（rad；直列四缸 1&4 同相 2&3 反相）
+var _engine_rpm := 0.0              # 平滑转速 0..1（检视包络驱动，帧间缓变）
+var _inspect_t := 0.0               # 检视剩余秒（>0 = 检视中；开火/换弹/切枪/ADS 打断）
+var _inspect_prev := false          # I 键边沿检测（只按 is_action_pressed 读法）
 var _belt_path := PackedVector3Array()  # 供弹弧折线点阵（贝塞尔细采样+HOLD_DELTA 烘焙）
 var _belt_len := 0.0                # 供弹弧总长（滑动循环周期）
 var _belt_pitch := 0.0              # 链距（每发推进步长=弧长/节数）
@@ -298,9 +384,17 @@ func enter(loadout: Dictionary) -> void:
 	_belt_off = 0.0
 	_belt_target = 0.0
 	_eject_t = -1.0
+	_inspect_t = 0.0     # 进场清检视/引擎动态（引用不清——见下）
+	_inspect_prev = false
+	_inspect_empty = false
+	_blown = false
+	_engine_jolt = 0.0
+	_engine_rpm = 0.0
+	_engine_phase = 0.0
 	# 注意：不清 _belt_slide——同枪复用 holder 时不重挂滑条，成员引用由
 	# _equip 末尾从 _guns[slot]["belt"] 刷新（清空=复用路径引用永久丢失，
-	# 2026-11-03 用户「没看见弹链滑动」的真根因）
+	# 2026-11-03 用户「没看见弹链滑动」的真根因）。_engine 同款教训：不清
+	# 引用，_equip 唯一刷新点（2026-11-20 极光魅影引擎组照抄）
 	_hide_hand()
 	if tracers != null:
 		tracers.hide_all()
@@ -330,7 +424,13 @@ func enter(loadout: Dictionary) -> void:
 		# 旧枪模释放前先隐身：queue_free 到帧末才生效，不隐身会同帧新旧两把
 		# 枪模叠影一帧（切枪链上唯一的实存渲染缺陷，2026-10 黄壳排查中修掉）
 		if _guns.has(slot) and (str(_guns[slot]["id"]) != gid \
-				or bool(_guns[slot].get("sup", false)) != _sup_on(gid)):
+				or bool(_guns[slot].get("sup", false)) != _sup_on(gid) \
+				or bool(_guns[slot].get("eng", false)) != _engine_on(gid) \
+				or _guns[slot].has("diamond") != _diamond_on(gid)):
+			# 引擎态并入重建条件（2026-11-20）：大厅装配/卸下极光魅影后再
+			# 进场，同枪 id 也必须重挂枪模——皮肤引擎组是装配时刻的快照。
+			# 钻石态并入（2026-11-20）：流光↔钻石变体互切同枪 id 也重挂
+			# ——透明蒙皮+棱面件同为装配时刻快照
 			var old: Dictionary = _guns[slot]
 			var old_holder: Node3D = old["holder"]
 			old_holder.visible = false
@@ -474,6 +574,26 @@ func update(dt: float) -> void:
 			dt * ADS_SPEED * _mod_muls().y)
 	player.ads = _ads
 	player.zoom = current_zoom()
+	# 检视（2026-11-20 MK4「极光魅影」I 键「引擎启动」演出——考证 item5：端游
+	# 三角洲检视默认键位 I（可自定义），第 1 轮验收纠偏旧 J 键；新增动作不改
+	# 既有键）：I 边沿起检视；门=引擎组在位（皮肤专属，他枪按 I 无效零改动）
+	# + 非换弹/非 ADS/非开火中（含点射轮内/扳机蓄力不检）。ammo=0 空仓按下
+	# 走特殊分支（机械增压拉满→爆缸→尾排喷火——考证空仓检视演出）。检视被
+	# 开火/换弹/切枪（_equip 清）/ADS 打断即清计时收回
+	var i_now := Input.is_action_pressed("hd_inspect")
+	if i_now and not _inspect_prev and _engine != null and reloading <= 0.0 \
+			and not _aiming and not fire_pressed and _burst_left <= 0 \
+			and _trig_delay <= FIRE_GATE and _ads < 0.3:
+		_inspect_t = _inspect_dur()
+		_inspect_empty = ammo <= 0
+		_blown = false
+		if audio != null and audio.has_method("play_engine"):
+			# 引擎点火声浪（hd_audio ENGINE_TUNE ~1.5s）；空仓分支机械增压
+			# 拉满档（播放音高 ×1.4——增压器啸叫）
+			audio.play_engine(1.4 if _inspect_empty else 1.0)
+	_inspect_prev = i_now
+	if _inspect_t > 0.0 and (reloading > 0.0 or _aiming or fire_pressed):
+		_inspect_t = 0.0
 	# 换弹动画：枪体下倾 → 0.25~0.55 旧匣脱落坠地（手跟到脱离点甩开）
 	# → 0.55~0.85 新匣滑入（0.55~0.75 手托匣上抬 / 0.75~0.85 手压拍合）→ 手离场
 	var mag: MeshInstance3D = g["mag"]
@@ -533,9 +653,22 @@ func update(dt: float) -> void:
 	if g.has("aim_y"):
 		ads_pos = Vector3(0.0, -GUN_SCALE * float(g["aim_y"]), GUN_ADS_Z)
 	_stab_t = maxf(0.0, _stab_t - dt * 5.0)
-	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off \
+	# 检视姿态（极光魅影引擎启动·加长演出 9.5s 三段——第 1 轮验收：对照考证
+	# 8~13s 加长 + 补「顶面→侧面翻转依次展示+流光沿车体扫过」段）：起检 14%
+	# 缓入上举进顶面展示 → 40%~56% 翻转侧面展示 → 88% 起缓出收回——
+	# smoothstep 包络与换弹偏移同槽叠加共存（检视门禁换弹，同帧叠加只在打断
+	# 残帧出现，无冲突）；空仓特殊分支整段定格顶面引擎舱（爆缸/喷火全程可读）
+	var insp_off := Vector3.ZERO
+	var insp_rot := Vector3.ZERO
+	if _inspect_t > 0.0 and reloading <= 0.0:
+		var pose := _inspect_pose(
+				clampf(1.0 - _inspect_t / _inspect_dur(), 0.0, 1.0))
+		insp_off = pose[0]
+		insp_rot = pose[1]
+	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off + insp_off \
 			+ Vector3(0.0, -0.012 * _stab_t, -0.075 * sin(_stab_t * PI))
-	holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot
+	holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot \
+			+ insp_rot
 	# 枪口火光衰减
 	if _flash_t > 0.0:
 		_flash_t -= dt
@@ -696,6 +829,609 @@ func _belt_point_at(ln: float) -> Vector3:
 			var f := (ln_c - acc) / maxf(seg_len, 0.00001)
 			return _belt_path[i - 1].lerp(_belt_path[i], clampf(f, 0.0, 1.0))
 	return _belt_path[_belt_path.size() - 1]
+
+
+## MK4「极光魅影」引擎组挂载（2026-11-20 用户定案——皮肤专属视觉件，照
+## rear grip 挂载先例：_mount_slot 合体后追加独立节点，不入 unibody，活塞
+## 头保持可动）。装配判定走 engine_provider（stash skin_fit/skin_var 归属
+## mk4_speed 系含抽奖变体）；坐标=枪身局部 + HOLD_DELTA 烘焙（照
+## _mount_belt_slide）。挂载时机在 _mount_slot AABB 量顶之后——皮肤不挪
+## ADS 瞄准锚（皮肤不改玩法数值），也晚于整枪重涂/_mount_slot 公共层位
+## 回环——独立材质不进重涂、vm_fill 层位（render layer 2）在此自补。
+## 构成（考证 ref_07/ref_11 逐帧目视 + 第 1 轮验收清单逐条）：
+##   银白金属曲轴箱（验收纠偏：旧深蓝 0.10/0.16/0.30 与考证「银白缸体」
+##   冲突）+ 半透明银白缸筒×4 直列并排横列（筒内铜橙活塞头可见）+ 铜橙活
+##   塞头×4（piston_0..3 可动，行程 ±6.5mm 三帧可辨）+ 缸头银环 + 外露六角
+##   固定螺栓×6 + 尾端红色散热格栅 + 尾排管 + 蓝发光鳍×6 + 车身侧面流光
+##   纹路条×3（发光随 rpm「能量传导」）+ 顶部橙色点火灯组×5（点火时点亮）
+##   + 车贴拉花（RS7/GT2/V8/TF 字样 Label3D + 碳纤纹理块×4 + 赛道号码标
+##   「07」白盘双侧）+ 白色车钥匙遥控卡道具（检视演出入画）+ GT 双柱大尾
+##   翼（双立柱+碳纤翼片+端板，尾翼两侧喷气锥）+ 尾排喷火锥（空仓特殊检
+##   视）+ 爆缸警示灯盘 + 流光扫过彗星段×6。
+## 发光件材质表挂 engine_group meta "engine_fx"（rpm 驱动组）/ "sweep_mats"
+## / "jet_m" / "blow_m" / "flame_mats"（演出事件驱动组），_equip 随引用一并
+## 刷新
+func _mount_engine(gun: Node3D, gid: String) -> Node3D:
+	if not _engine_on(gid):
+		return null
+	var ep: Dictionary = ENGINE_PARTS[gid]
+	var eng := Node3D.new()
+	eng.name = "engine_group"
+	eng.position = Vector3(ep["pos"]) + _hold_delta(gid)
+	gun.add_child(eng)
+	# —— 材质（皮肤系内自洽：银白金属缸体 + 铜橙活塞 + 蓝发光，独立材质
+	#    不参与整枪重涂污染；缸筒半透明降档 0.55→0.32 让筒内铜橙活塞头三帧
+	#    肉眼可辨——第 1 轮验收「活塞可辨化」；活塞铜橙对银白缸头/银白缸体
+	#    双重对比）——
+	var block_m := StandardMaterial3D.new()
+	block_m.albedo_color = Color(0.68, 0.71, 0.76)
+	block_m.metallic = 0.8
+	block_m.roughness = 0.34
+	var tube_m := StandardMaterial3D.new()
+	tube_m.albedo_color = Color(0.80, 0.85, 0.92, 0.32)
+	tube_m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	tube_m.metallic = 0.7
+	tube_m.roughness = 0.22
+	var bolt_m := StandardMaterial3D.new()
+	bolt_m.albedo_color = Color(0.78, 0.80, 0.85)
+	bolt_m.metallic = 0.9
+	bolt_m.roughness = 0.3
+	var piston_m := StandardMaterial3D.new()
+	piston_m.albedo_color = Color(0.78, 0.45, 0.20)
+	piston_m.metallic = 0.9
+	piston_m.roughness = 0.32
+	var fin_m := StandardMaterial3D.new()
+	fin_m.albedo_color = Color(0.05, 0.10, 0.20)
+	fin_m.emission_enabled = true
+	fin_m.emission = Color(0.30, 0.62, 1.0)
+	fin_m.emission_energy_multiplier = 1.4
+	var strip_m := StandardMaterial3D.new()
+	strip_m.albedo_color = Color(0.05, 0.10, 0.20)
+	strip_m.emission_enabled = true
+	strip_m.emission = Color(0.34, 0.64, 1.0)
+	strip_m.emission_energy_multiplier = 1.4
+	var red_m := StandardMaterial3D.new()
+	red_m.albedo_color = Color(0.42, 0.07, 0.08)
+	red_m.metallic = 0.4
+	red_m.roughness = 0.5
+	var ex_m := StandardMaterial3D.new()
+	ex_m.albedo_color = Color(0.12, 0.13, 0.15)
+	ex_m.metallic = 0.8
+	ex_m.roughness = 0.45
+	var dot_m := StandardMaterial3D.new()
+	dot_m.albedo_color = Color(0.25, 0.15, 0.05)
+	dot_m.emission_enabled = true
+	dot_m.emission = Color(1.0, 0.55, 0.15)
+	dot_m.emission_energy_multiplier = 0.0   # 熄灯态——点火（rpm 包络）才亮
+	var carbon_m := StandardMaterial3D.new()
+	carbon_m.albedo_color = Color(0.07, 0.075, 0.08)
+	carbon_m.metallic = 0.25
+	carbon_m.roughness = 0.32
+	var card_m := StandardMaterial3D.new()
+	card_m.albedo_color = Color(0.93, 0.93, 0.95)
+	card_m.roughness = 0.4
+	var btn_m := StandardMaterial3D.new()
+	btn_m.albedo_color = Color(0.15, 0.15, 0.17)
+	btn_m.roughness = 0.5
+	var disc_m := StandardMaterial3D.new()
+	disc_m.albedo_color = Color(0.92, 0.92, 0.92)
+	disc_m.roughness = 0.45
+	var sweep_ms: Array = []
+	for se_e in [4.2, 1.8, 0.8]:   # 头亮尾淡三档（能量由 _tick_fx 扫过段驱动）
+		var sm := StandardMaterial3D.new()
+		sm.albedo_color = Color(0.06, 0.10, 0.16)
+		sm.emission_enabled = true
+		sm.emission = Color(0.75, 0.92, 1.0)
+		sm.emission_energy_multiplier = 0.0
+		sweep_ms.append(sm)
+	var jet_m := StandardMaterial3D.new()
+	jet_m.albedo_color = Color(0.06, 0.10, 0.16)
+	jet_m.emission_enabled = true
+	jet_m.emission = Color(0.55, 0.85, 1.0)
+	jet_m.emission_energy_multiplier = 0.0
+	var flame_om := StandardMaterial3D.new()
+	flame_om.albedo_color = Color(0.30, 0.08, 0.02)
+	flame_om.emission_enabled = true
+	flame_om.emission = Color(1.0, 0.45, 0.12)
+	flame_om.emission_energy_multiplier = 0.0
+	var flame_cm := StandardMaterial3D.new()
+	flame_cm.albedo_color = Color(0.35, 0.15, 0.04)
+	flame_cm.emission_enabled = true
+	flame_cm.emission = Color(1.0, 0.85, 0.50)
+	flame_cm.emission_energy_multiplier = 0.0
+	var blow_m := StandardMaterial3D.new()
+	blow_m.albedo_color = Color(0.20, 0.05, 0.04)
+	blow_m.emission_enabled = true
+	blow_m.emission = Color(1.0, 0.30, 0.10)
+	blow_m.emission_energy_multiplier = 0.0
+	# —— 曲轴箱（银白金属，验收纠偏）+ 尾端红色散热格栅/排气侧（考证识别
+	#    特征①；加宽 0.050→0.078 座四缸横列——缸径不变不失真）——
+	var blk := _ebox(eng, block_m, Vector3(0.078, 0.010, 0.125),
+			Vector3(0, 0.005, 0))
+	blk.name = "crank_block"
+	_ebox(eng, red_m, Vector3(0.072, 0.009, 0.016), Vector3(0, 0.008, 0.058))
+	for gy in [0.0065, 0.0095, 0.0125]:
+		_ebox(eng, ex_m, Vector3(0.072, 0.0016, 0.004), Vector3(0, gy, 0.058))
+	# —— 直列四缸：半透明缸筒×4 并排横列（缸心距 1.13×缸径——直列机真实
+	#    比例档）+ 缸头银环 + 筒内活塞头（可动，1&4 同相 / 2&3 反相——直列
+	#    四缸 1-3-4-2 点火序的曲轴配对；「怠速→高转」由 _tick_fx rpm 包络
+	#    驱动）——
+	var cyl_r: float = float(ep["cyl_r"])
+	var dx: float = float(ep["cyl_dx"])
+	var pr_r: float = float(ep.get("piston_r", 0.0055))
+	var pr_h: float = float(ep.get("piston_h", 0.009))
+	var phases: Array = [0.0, PI, PI, 0.0]   # 曲轴配对相位（1-3-4-2 点火序）
+	for ci in 4:
+		var cx: float = (float(ci) - 1.5) * dx
+		var tube := _ecyl(eng, tube_m, cyl_r, float(ep["cyl_h"]),
+				Vector3(cx, 0.031, 0.008))
+		tube.name = "cyl_%d" % ci
+		GUN_LIB.torus_ring(eng, bolt_m, cyl_r * 0.88, cyl_r * 1.20,
+				Vector3(cx, 0.041, 0.008))
+		# 活塞头×4（命名契约：piston_0..3——测试/探针/动画按名取；py0 基准
+		# y 与点火相位挂 meta，_tick_fx 只写 y 不动 x/z）
+		var pn := _ecyl(eng, piston_m, pr_r, pr_h, Vector3(cx, 0.027, 0.008))
+		pn.name = "piston_%d" % ci
+		pn.set_meta("py0", 0.027)
+		pn.set_meta("phase", float(phases[ci]))
+	# —— 外露六角固定螺栓×6（radial_segments=6 即六角头）：曲轴箱顶四角
+	#    + 前端面两颗（考证「缸体外露六角固定螺栓」）——
+	for bp in [Vector3(-0.026, 0.0115, -0.048), Vector3(0.026, 0.0115, -0.048),
+			Vector3(-0.026, 0.0115, 0.048), Vector3(0.026, 0.0115, 0.048),
+			Vector3(-0.020, 0.005, -0.0635), Vector3(0.020, 0.005, -0.0635)]:
+		_ecyl(eng, bolt_m, 0.0022, 0.0032, bp,
+				Vector3(90, 0, 0) if absf(bp.z) > 0.06 else Vector3.ZERO)
+	# —— 尾排管（深金属管沿 z 出尾端）+ 蓝发光鳍×6（两侧各 3）——
+	_ecyl(eng, ex_m, 0.0055, 0.036, Vector3(0, 0.016, 0.082), Vector3(90, 0, 0))
+	for fz in [-0.030, 0.0, 0.030]:
+		_ebox(eng, fin_m, Vector3(0.0018, 0.0055, 0.024),
+				Vector3(-0.0406, 0.010, fz))
+		_ebox(eng, fin_m, Vector3(0.0018, 0.0055, 0.024),
+				Vector3(0.0406, 0.010, fz))
+	# —— 流光纹路条×3（车身侧面勾边——考证「不是贴图，是带流动的能量传导
+	#    光效」；发光能量随 rpm/颤动呼吸=_tick_fx）——
+	_ebox(eng, strip_m, Vector3(0.0014, 0.005, 0.24),
+			Vector3(-0.0287, -0.034, -0.072))
+	_ebox(eng, strip_m, Vector3(0.0014, 0.005, 0.22),
+			Vector3(0.0288, -0.024, -0.062))
+	_ebox(eng, strip_m, Vector3(0.0012, 0.004, 0.095),
+			Vector3(0.0262, -0.110, -0.0045))
+	# —— 顶部橙色点火灯组×5（考证「一排橙色点状灯组·点火时点亮」）——
+	for i in 5:
+		_ecyl(eng, dot_m, 0.0016, 0.0022,
+				Vector3(-0.027 + 0.0135 * float(i), 0.0115, -0.045))
+	# —— 车贴拉花（第 1 轮验收：ref_11 逐帧目视 RS7/GT2/V8/TF 字样 + 碳纤
+	#    纹理块 + 赛道号码标，现全枪零贴花——字样走 Label3D 两侧各自正向，
+	#    位置避让流光条带与缸体；碳纤块=哑光黑纹面板，号码标=白盘黑字 07）——
+	_elabel(eng, "RS7", Vector3(-0.0283, -0.054, -0.10), Vector3(0, -90, 0))
+	_elabel(eng, "GT2", Vector3(0.0283, -0.054, -0.10), Vector3(0, 90, 0))
+	_elabel(eng, "V8", Vector3(-0.0578, -0.05, -0.36), Vector3(0, -90, 0))
+	_elabel(eng, "TF", Vector3(0.0578, -0.05, -0.36), Vector3(0, 90, 0))
+	for sd_x in [-1.0, 1.0]:
+		var disc := _ecyl(eng, disc_m, 0.011, 0.0012,
+				Vector3(sd_x * 0.0282, -0.054, 0.02), Vector3(0, 0, 90))
+		disc.name = "race_num_%s" % ("l" if sd_x < 0 else "r")
+		_elabel(eng, "07", Vector3(sd_x * 0.0295, -0.054, 0.02),
+				Vector3(0, 90 * sd_x, 0), 0.00028, Color(0.10, 0.10, 0.12))
+	_ebox(eng, carbon_m, Vector3(0.0016, 0.016, 0.055),
+			Vector3(-0.0282, -0.058, -0.185))
+	_ebox(eng, carbon_m, Vector3(0.0016, 0.016, 0.055),
+			Vector3(0.0282, -0.058, -0.185))
+	_ebox(eng, carbon_m, Vector3(0.0016, 0.018, 0.06),
+			Vector3(-0.0575, -0.05, -0.30))
+	_ebox(eng, carbon_m, Vector3(0.0016, 0.018, 0.06),
+			Vector3(0.0575, -0.05, -0.30))
+	# —— 白色车钥匙遥控卡道具（考证「检视携白色车钥匙遥控卡」；信用卡真
+	#    实比例 86×54×4mm，暗色按键×3+钥匙柄暗块；默认隐身，检视顶面段
+	#    入画——visible 由 _tick_fx 按 INSP_CARD_WIN 驱动。悬位在舱顶右侧
+	#    70mm 外——首拍贴机匣侧面被曲轴箱顶视遮挡，probe 实拍纠偏）——
+	var card := Node3D.new()
+	card.name = "key_card"
+	card.position = Vector3(0.052, 0.014, 0.01)
+	card.rotation_degrees = Vector3(0, 0, 90)
+	card.visible = false
+	eng.add_child(card)
+	var card_bd := _ebox(card, card_m, Vector3(0.004, 0.054, 0.086),
+			Vector3.ZERO)
+	card_bd.name = "card_body"
+	for bz in [-0.010, 0.0, 0.010]:
+		_ebox(card, btn_m, Vector3(0.001, 0.007, 0.007),
+				Vector3(0.0022, -0.036, bz))
+	_ebox(card, btn_m, Vector3(0.001, 0.02, 0.03), Vector3(0.0022, -0.066, 0.028))
+	# —— GT 双柱大尾翼（考证 item2/10：枪托位改 GT 双柱大尾翼轮廓——双立
+	#    柱骑托体上，碳纤翼片+两侧端板架在缓冲管上方，托体原结构不动）——
+	var wing := Node3D.new()
+	wing.name = "gt_wing"
+	eng.add_child(wing)
+	for px_w in [-0.020, 0.020]:
+		_ebox(wing, bolt_m, Vector3(0.006, 0.030, 0.010),
+				Vector3(px_w, 0.001, 0.308))
+	_ebox(wing, carbon_m, Vector3(0.100, 0.005, 0.036),
+			Vector3(0, 0.018, 0.312), Vector3(-10, 0, 0))
+	_ebox(wing, carbon_m, Vector3(0.004, 0.028, 0.044),
+			Vector3(-0.050, 0.017, 0.312), Vector3(-10, 0, 0))
+	_ebox(wing, carbon_m, Vector3(0.004, 0.028, 0.044),
+			Vector3(0.050, 0.017, 0.312), Vector3(-10, 0, 0))
+	_elabel(wing, "TF", Vector3(-0.0525, 0.017, 0.312), Vector3(0, -90, 0),
+			0.00022)
+	_elabel(wing, "TF", Vector3(0.0525, 0.017, 0.312), Vector3(0, 90, 0),
+			0.00022)
+	# 尾翼两侧喷气锥（拉动尾翼喷气互动——检视高转常燃+开火颤动脉冲，能量
+	# 驱动在 _tick_fx；锥体沿 +z 外八字）
+	for js in [-1.0, 1.0]:
+		var jet := _econe(wing, jet_m, 0.0025, 0.0075, 0.036,
+				Vector3(js * 0.044, 0.015, 0.348),
+				Vector3(90, 12.0 * js, 0))
+		jet.name = "wing_jet_%s" % ("l" if js < 0 else "r")
+		jet.visible = false
+	# —— 尾排喷火锥（空仓特殊检视「爆缸→尾排喷火」：外焰橙+内焰亮黄双层
+	#    锥，默认隐身——visible/能量由 _tick_fx 空仓分支驱动）——
+	var flame := Node3D.new()
+	flame.name = "exhaust_flame"
+	flame.position = Vector3(0, 0.016, 0.118)
+	flame.visible = false
+	eng.add_child(flame)
+	_econe(flame, flame_om, 0.0035, 0.0075, 0.034, Vector3.ZERO,
+			Vector3(90, 0, 0))
+	_econe(flame, flame_cm, 0.0020, 0.0040, 0.024, Vector3(0, 0, -0.010),
+			Vector3(90, 0, 0))
+	# —— 爆缸警示灯盘（左 2 缸头顶：空仓检视爆缸瞬间闪红，随颤动衰减熄灭）
+	#    + 流光扫过彗星段×6（两侧各头/中/尾三段，侧面展示段沿车体往复跑）——
+	var lamp := _ecyl(eng, blow_m, 0.0035, 0.0015,
+			Vector3(-0.5 * dx, 0.0465, 0.008))
+	lamp.name = "blow_lamp"
+	var sweep_i := 0
+	for ss in [-1.0, 1.0]:
+		for sj in 3:
+			var seg := _ebox(eng, sweep_ms[sj], Vector3(0.0016 - 0.0002 * float(sj),
+					0.006 - 0.001 * float(sj), 0.10 - 0.02 * float(sj)),
+					Vector3(ss * (0.0288 - 0.0003 * float(sj)), -0.034, -0.26))
+			seg.name = "sweep_%d" % sweep_i
+			seg.visible = false
+			sweep_i += 1
+	eng.set_meta("engine_fx", [
+		{"m": strip_m, "base": 1.4, "fire": false},
+		{"m": fin_m, "base": 1.4, "fire": false},
+		{"m": dot_m, "base": 2.8, "fire": true},
+	])
+	eng.set_meta("sweep_mats", sweep_ms)
+	eng.set_meta("jet_m", jet_m)
+	eng.set_meta("blow_m", blow_m)
+	eng.set_meta("flame_mats", [flame_om, flame_cm])
+	# 材质生命周期钉死（第 2 轮门禁修复）：本次挂载的全部引擎材质进
+	# _engine_fx_keep 永久注册表——重挂释放旧 holder 时材质资源绝不中
+	# 生命期消亡，RS 侧 pending 更新（_tick_fx 逐帧写 emission）永远命中
+	# 活 RID，teardown 不再刷 Parameter "material" is null
+	for m_keep: StandardMaterial3D in [block_m, tube_m, bolt_m, piston_m,
+			fin_m, strip_m, red_m, ex_m, dot_m, carbon_m, card_m, btn_m,
+			disc_m, jet_m, flame_om, flame_cm, blow_m]:
+		if not _engine_fx_keep.has(m_keep):
+			_engine_fx_keep.append(m_keep)
+	for sm_k: StandardMaterial3D in sweep_ms:
+		if not _engine_fx_keep.has(sm_k):
+			_engine_fx_keep.append(sm_k)
+	# vm_fill 层位自补（挂载点晚于 _mount_slot 公共层位回环——补光只照
+	# render layer 2，引擎件不进层 2 会在贴掩体失光时整组发黑）
+	for mi_v in eng.find_children("*", "MeshInstance3D", true, false):
+		(mi_v as MeshInstance3D).layers |= 1 << 1
+	return eng
+
+
+## 钻石棱柱晶条（R2 验收「改棱柱/低段数多面体让切割面反光层次出现」）：
+## 正六棱柱晶条沿 Z 躺置（截面正六边形、平面法线逐面手写——倒角盒的平滑
+## 棱带出不了切割面层次，棱柱 6 侧平面+2 端帽才读「多面晶体」）。环绕惯例
+## 照 GUN_LIB._push_tri：Godot 正面=顺时针——截面环取 +Z 视角逆时针序，
+## 侧面/端帽三角形按外侧视角顺时针手排。
+static func _gem_cut(parent: Node3D, mat: Material, len_: float, r: float,
+		pos: Vector3, rot_deg: Vector3, sides := 6) -> MeshInstance3D:
+	var hl := len_ * 0.5
+	var ring: Array = []
+	for i in sides:
+		var a := TAU * float(i) / float(sides)
+		ring.append(Vector2(cos(a) * r, sin(a) * r))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in sides:
+		var v0: Vector2 = ring[i]
+		var v1: Vector2 = ring[(i + 1) % sides]
+		var rad := Vector3((v0.x + v1.x) * 0.5, (v0.y + v1.y) * 0.5, 0.0)\
+				.normalized()
+		var A := Vector3(v0.x, v0.y, -hl)
+		var B := Vector3(v1.x, v1.y, -hl)
+		var C := Vector3(v1.x, v1.y, hl)
+		var D := Vector3(v0.x, v0.y, hl)
+		for tri in [[A, D, C], [A, C, B]]:   # 外侧视角顺时针（Godot 正面）
+			for p in tri:
+				st.set_normal(rad)
+				st.add_vertex(p)
+	var cT := Vector3(0, 0, hl)
+	var cB := Vector3(0, 0, -hl)
+	for i in sides:
+		var w0: Vector2 = ring[i]
+		var w1: Vector2 = ring[(i + 1) % sides]
+		st.set_normal(Vector3(0, 0, 1))
+		st.add_vertex(cT)
+		st.add_vertex(Vector3(w1.x, w1.y, hl))
+		st.add_vertex(Vector3(w0.x, w0.y, hl))
+		st.set_normal(Vector3(0, 0, -1))
+		st.add_vertex(cB)
+		st.add_vertex(Vector3(w0.x, w0.y, -hl))
+		st.add_vertex(Vector3(w1.x, w1.y, -hl))
+	var mesh := st.commit()
+	mesh.surface_set_material(0, mat)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = pos
+	mi.rotation_degrees = rot_deg
+	parent.add_child(mi)
+	return mi
+
+
+## MK4「极光魅影」钻石极品变体挂载（2026-11-20 用户定案——抽奖低概率稀有档
+## randf()<0.12，不能直接获得；照 engine 组挂载先例：_mount_slot 合体后追加
+## 独立节点 diamond_group，不入 unibody）。装配判定走 diamond_provider（main
+## 注入 stash 查询：当前装配变体 paint.diamond）；坐标=写实 mk4（BL_GUNS
+## glb）枪身局部 + HOLD_DELTA 烘焙（照 _mount_belt_slide/_mount_engine，mk4
+## Δ=ZERO）。挂载时机在 _mount_slot AABB 量顶之后——皮肤不挪 ADS 瞄准锚，
+## 也晚于整枪重涂——独立晶体材质不进重涂。构成（砖皮考证：隐藏款棱镜攻势
+## 白色晶体棱面造型 ref_01、「玻璃攻势」全透明 M7、透明壳内高饱和内核
+## ref_02 弹匣亮绿弹排/导气结构）：
+##   棱面装饰件×4（facet_0..3：R2 验收「改棱柱/低段数多面体」——chamfer_box
+##   倒角盒棱带平滑出不了切割面层次，换 _gem_cut 正六棱柱平面法线晶条
+##   ∅28mm×130mm，机匣两侧×2 + 护筒两侧×2 半嵌面读「镶嵌晶条」，z 轴交错
+##   避开引擎组舱段 z -0.05..0.075，机匣左件 z -0.24 给典藏铭牌让位）+
+##   透明晶体弹匣（diamond_mag：钻石壳罩写实弹匣观感位 z≈-0.18 + 匣内亮青
+##   内核条×2=「彩色内核包在无色晶体里」透视层）+ 机匣内高饱和彩件×3
+##   （R2 验收「内部高饱和件层次单薄」——ref_02 导气结构层次：inner_bolt
+##   橙铜枪机块 y0.050 + inner_gas_l/r 品红导气管×2 y0.038，透壳显形）+
+##   棱面准星座点缀（sight_facet_l/r：R2 验收「加大 sight_facet」——小六棱
+##   晶条 ∅18mm×44mm 压照门基座两侧，内缘距 x=0 机瞄中线 9mm 不挡准星柱）
+##   + 镀膜氛围灯×2（rim_light_pink/ice：紫粉+冰蓝真灯光打亮壳缘棱面；
+##   R2 验收「补场景光」冰灯能量 0.9→1.15，range 0.32m 不外溢他枪/场景）
+##   + 典藏铭牌（collector_plate_l/r：Label3D「★//编号·成色NN」两侧各一，
+##   文案走 diamond_plate_provider←stash.diamond_plate_of，ref_02/ref_04
+##   砖皮身份件；R2 验收「字号加大/描边对比加强」——px 0.00020→0.00026、
+##   描边 22→30 全不透明；中文字形走 HDData.UI_FONT_NAMES 系统字体链）。
+func _mount_diamond(gun: Node3D, gid: String) -> Node3D:
+	if not _diamond_on(gid):
+		return null
+	var dia := Node3D.new()
+	dia.name = "diamond_group"
+	dia.position = _hold_delta(gid)
+	gun.add_child(dia)
+	# —— 材质（独立晶体材质不进整枪重涂污染；参数档与 _apply_skin_paint
+	#    钻石分支同源：冰蓝半透明+低金属度+镜面+清漆+强 rim；R1 纠偏
+	#    metal 0.9→0.08、alpha 提档 0.58；R2 纠偏「冰白底未占主导」晶体
+	#    自发光能量 0.4→0.55；内核条高饱和亮青发光——透壳可读「弹匣内
+	#    亮色弹排」考证层）——
+	var crystal := StandardMaterial3D.new()
+	crystal.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	crystal.albedo_color = Color(0.78, 0.90, 1.0, HDStash.DIAMOND_ALPHA)
+	crystal.metallic = 0.08
+	crystal.roughness = 0.06
+	crystal.clearcoat_enabled = true
+	crystal.clearcoat = 1.0
+	crystal.clearcoat_roughness = 0.06
+	crystal.rim_enabled = true
+	crystal.rim = 2.0
+	crystal.rim_tint = 0.9
+	crystal.emission_enabled = true
+	crystal.emission = Color(0.55, 0.80, 1.0)
+	crystal.emission_energy_multiplier = 0.55
+	var core_m := StandardMaterial3D.new()
+	core_m.albedo_color = Color(0.16, 0.38, 0.30)
+	core_m.emission_enabled = true
+	core_m.emission = Color(0.25, 0.95, 0.65)
+	core_m.emission_energy_multiplier = 1.6
+	# —— 机匣内高饱和彩件材质（R2 验收「仅弹匣青绿内核一处层次单薄」：
+	#    ref_02 导气结构=多件高饱和色透过壳体显形；橙铜枪机+品红导气管）——
+	var bolt_m := StandardMaterial3D.new()
+	bolt_m.albedo_color = Color(0.85, 0.32, 0.10)
+	bolt_m.emission_enabled = true
+	bolt_m.emission = Color(1.0, 0.45, 0.12)
+	bolt_m.emission_energy_multiplier = 1.25
+	var gas_m := StandardMaterial3D.new()
+	gas_m.albedo_color = Color(0.55, 0.12, 0.45)
+	gas_m.emission_enabled = true
+	gas_m.emission = Color(1.0, 0.25, 0.85)
+	gas_m.emission_energy_multiplier = 1.0
+	# —— 棱面装饰件×4（写实 mk4 glb unibody 断面实测半宽 0.0299（y0.03
+	#    采样，R1 plate_probe 诊断）——六棱晶条半嵌面：机匣件 ±0.0312
+	#    （∅28mm 嵌 ~13mm/凸 ~15mm）、护筒件 ±0.0305；z 取机匣前段/护筒段
+	#    避开引擎组与镜座锚域，机匣左件 z -0.24 给典藏铭牌让位；roll/yaw
+	#    小偏角让四件受光面向不同——切割面层次反光）——
+	var facet_def := [
+		[Vector3(-0.0312, 0.042, -0.24), Vector3(-6.0, 0.0, 18.0), 0.014],
+		[Vector3(0.0312, 0.042, -0.23), Vector3(6.0, 0.0, -18.0), 0.014],
+		[Vector3(-0.0305, 0.030, -0.62), Vector3(5.0, 0.0, -15.0), 0.012],
+		[Vector3(0.0305, 0.030, -0.66), Vector3(-5.0, 0.0, 15.0), 0.012],
+	]
+	for fi in facet_def.size():
+		var fd: Array = facet_def[fi]
+		var fp := _gem_cut(dia, crystal, 0.13, fd[2], fd[0], fd[1])
+		fp.name = "facet_%d" % fi
+	# —— 透明晶体弹匣（写实弹匣观感位：z -0.23..-0.14、y 到 -0.24——
+	#    壳罩其上「替换原弹匣观感」；壳内亮青内核条×2 沿匣长透视读弹排）——
+	var dmag := Node3D.new()
+	dmag.name = "diamond_mag"
+	dmag.position = Vector3(0, -0.125, -0.183)
+	dia.add_child(dmag)
+	var shell := GUN_LIB.chamfer_box(dmag, crystal,
+			Vector3(0.048, 0.20, 0.072), Vector3.ZERO, Vector3.ZERO, 0.004, 3)
+	shell.name = "mag_crystal"
+	GUN_LIB.chamfer_box(dmag, core_m, Vector3(0.018, 0.155, 0.026),
+			Vector3(0, -0.005, -0.013), Vector3.ZERO, 0.0015, 2)
+	GUN_LIB.chamfer_box(dmag, core_m, Vector3(0.018, 0.155, 0.026),
+			Vector3(0, -0.005, 0.013), Vector3.ZERO, 0.0015, 2)
+	# —— 机匣内高饱和彩件×3（R2 验收「内部高饱和件层次单薄」：ref_02
+	#    透明壳内多件高饱和色（弹匣亮绿弹排/导气结构）——枪机块居机匣上段
+	#    z -0.26 透顶面壳显形、导气管×2 45° 棱转沿护筒段 z -0.55 分列枪管
+	#    两侧透侧壳显形；件体全在 unibody 断面半宽内=x 向内嵌不穿帮）——
+	var ibolt := GUN_LIB.chamfer_box(dia, bolt_m, Vector3(0.016, 0.024, 0.078),
+			Vector3(0, 0.050, -0.26), Vector3.ZERO, 0.0015, 2)
+	ibolt.name = "inner_bolt"
+	for sd_x in [-1.0, 1.0]:
+		var rod := GUN_LIB.chamfer_box(dia, gas_m, Vector3(0.009, 0.009, 0.14),
+				Vector3(sd_x * 0.009, 0.038, -0.55), Vector3(0, 0, 45),
+				0.001, 2)
+		rod.name = "inner_gas_l" if sd_x < 0 else "inner_gas_r"
+	# —— 棱面准星座点缀（前照门基座高台 z -0.50..-0.47、顶 y 0.083——
+	#    R2 验收「加大 sight_facet 或提亮让其入镜」：7×11×24mm→六棱晶条
+	#    ∅18mm×44mm，内缘距 x=0 机瞄中线 9mm 不挡准星柱视场）——
+	for sd_x in [-1.0, 1.0]:
+		var sf := _gem_cut(dia, crystal, 0.044, 0.009,
+				Vector3(sd_x * 0.018, 0.080, -0.485), Vector3.ZERO)
+		sf.name = "sight_facet_l" if sd_x < 0 else "sight_facet_r"
+	# —— 镀膜氛围灯×2（R1 验收「rim 镀膜缺失：紫粉/冰蓝边缘 rim 光零可
+	#    辨」——rim_tint 0.9 只给 albedo 冰蓝侧，紫粉对齐 ref_04 极品档镀膜
+	#    须真灯光：紫粉灯居机匣右前、冰蓝灯居照门座左后，低 range 贴身打亮
+	#    棱面件与壳缘；shadow 关、0.32m 半径不外溢他枪/场景照明。
+	#    R2 验收「冰白底未占主导·补场景光」——冰灯 0.9→1.15 再抬壳体底色）——
+	var rim_pk := OmniLight3D.new()
+	rim_pk.name = "rim_light_pink"
+	rim_pk.light_color = Color(1.0, 0.45, 0.90)
+	rim_pk.light_energy = 1.5
+	rim_pk.omni_range = 0.32
+	rim_pk.shadow_enabled = false
+	rim_pk.position = Vector3(0.055, 0.075, -0.30)
+	dia.add_child(rim_pk)
+	var rim_ic := OmniLight3D.new()
+	rim_ic.name = "rim_light_ice"
+	rim_ic.light_color = Color(0.60, 0.85, 1.0)
+	rim_ic.light_energy = 1.15
+	rim_ic.omni_range = 0.32
+	rim_ic.shadow_enabled = false
+	rim_ic.position = Vector3(-0.055, 0.095, -0.575)
+	dia.add_child(rim_ic)
+	# —— 典藏铭牌×2（R1 验收「典藏标识缺失」：ref_02/ref_04 砖皮「★//唯一
+	#    编号+成色值」身份件——Label3D 两侧各自正向。R1 三连纠偏：①x ±0.0262
+	#    是旧程序枪半宽口径——glb unibody 实测断面半宽 0.0299，铭牌埋进壳体
+	#    3.7mm 被透明蒙皮盖死 → 提到 ±0.0316 凸 1.7mm；②无描边白字贴冰光爆
+	#    白晶体=不可辨 → 深钢青描边；③透明蒙皮同屏深度排序吃字 → opaque
+	#    pre-pass 先于透明壳绘制。R2 验收「字号加大、描边对比加强」——
+	#    px 0.00020→0.00026（字高 ~16.6mm）、描边 22→30 全不透明、文字提
+	#    近纯白。z -0.405 落照门座与 facet_0（z -0.24）之间的机匣侧面空档；
+	#    provider 未注入/非钻石装配返回空文案不挂，裸调零改动）——
+	var plate_txt := ""
+	if diamond_plate_provider.is_valid():
+		plate_txt = str(diamond_plate_provider.call(gid))
+	if not plate_txt.is_empty():
+		var fnt := SystemFont.new()
+		fnt.font_names = PackedStringArray(HDData.UI_FONT_NAMES)
+		for sd_x in [-1.0, 1.0]:
+			var lb := _elabel(dia, plate_txt,
+					Vector3(sd_x * 0.0316, 0.030, -0.405),
+					Vector3(0, 90.0 * sd_x, 0), 0.00026,
+					Color(0.95, 0.99, 1.0))
+			lb.alpha_cut = Label3D.ALPHA_CUT_OPAQUE_PREPASS
+			lb.name = "collector_plate_l" if sd_x < 0 else "collector_plate_r"
+			lb.font = fnt
+			lb.outline_size = 30
+			lb.outline_modulate = Color(0.03, 0.07, 0.13, 1.0)
+			lb.layers |= 1 << 1   # 铭牌随组进 vm 层（贴掩体失光段不丢牌）
+	# vm_fill 层位自补（照 _mount_engine：补光只照 render layer 2，不进层
+	# 会在贴掩体失光时整组发黑）
+	for mi_d in dia.find_children("*", "MeshInstance3D", true, false):
+		(mi_d as MeshInstance3D).layers |= 1 << 1
+	return dia
+
+
+## 检视总时长（ENGINE_PARTS 表 dur；mk4=9.5s 加长演出档，缺省 2.6s 仅兜底）
+func _inspect_dur() -> float:
+	return float(ENGINE_PARTS.get(cur_id, {}).get("dur", 2.6))
+
+
+## 检视演出位姿（枪架局部叠加量 [off, rot]）：ph=演出进度 0..1。
+## 普通检视三段式——上举顶面展示（引擎舱对镜+钥匙卡入画）→ 翻转侧面展示
+## （拉花/流光条/尾翼轮廓，流光扫过段由 _tick_fx 驱动）→ 回落收枪；空仓特殊
+## 检视整段定格顶面（爆缸/尾排喷火全程在镜）。保持段内加微小呼吸摆（判图
+## 「活」，幅度 1° 级不干扰活塞帧采样）
+func _inspect_pose(ph: float) -> Array:
+	var raise_k := 1.0
+	if ph < INSP_RAISE_PH:
+		var rk := ph / INSP_RAISE_PH
+		raise_k = rk * rk * (3.0 - 2.0 * rk)
+	if ph > INSP_RET_PH:
+		var fk := (ph - INSP_RET_PH) / (1.0 - INSP_RET_PH)
+		raise_k *= 1.0 - fk * fk * (3.0 - 2.0 * fk)
+	var flip_k := 0.0
+	if not _inspect_empty and ph > INSP_FLIP_PH and ph < INSP_FLIP_END_PH:
+		var ck := (ph - INSP_FLIP_PH) / (INSP_FLIP_END_PH - INSP_FLIP_PH)
+		flip_k = ck * ck * (3.0 - 2.0 * ck)
+	elif not _inspect_empty and ph >= INSP_FLIP_END_PH:
+		flip_k = 1.0
+	var t_wob := 1.0 - _inspect_t   # 演出已进行秒数（呼吸摆相位源）
+	var wob := Vector3(0.8 * sin(t_wob * 1.7), 1.6 * sin(t_wob * 0.9),
+			0.5 * sin(t_wob * 1.3))
+	var off := INSPECT_OFF.lerp(INSPECT_SIDE_OFF, flip_k) * raise_k
+	var rot := INSPECT_ROT.lerp(INSPECT_SIDE_ROT, flip_k) * raise_k + wob * raise_k
+	return [off, rot]
+
+
+## 引擎组小件工厂（枪身局部比例，box/cyl 各一——照 _kpart 先例的 static
+## 直挂，不进 GUN_LIB：仅引擎组消费）
+static func _ebox(root: Node3D, mat: StandardMaterial3D, size: Vector3,
+		pos: Vector3, rot := Vector3.ZERO) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	bm.material = mat
+	mi.mesh = bm
+	mi.position = pos
+	mi.rotation_degrees = rot
+	root.add_child(mi)
+	return mi
+
+
+static func _ecyl(root: Node3D, mat: StandardMaterial3D, radius: float,
+		height: float, pos: Vector3, rot := Vector3.ZERO) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = radius
+	cm.bottom_radius = radius
+	cm.height = height
+	cm.radial_segments = 12
+	cm.material = mat
+	mi.mesh = cm
+	mi.position = pos
+	mi.rotation_degrees = rot
+	root.add_child(mi)
+	return mi
+
+
+## 锥体小件（喷气/喷火——CylinderMesh 双半径收锥，r0=底（-y 端）/r1=顶
+## （+y 端）；rot 同 _ecyl）
+static func _econe(root: Node3D, mat: StandardMaterial3D, r0: float,
+		r1: float, height: float, pos: Vector3,
+		rot := Vector3.ZERO) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.bottom_radius = r0
+	cm.top_radius = r1
+	cm.height = height
+	cm.radial_segments = 12
+	cm.material = mat
+	mi.mesh = cm
+	mi.position = pos
+	mi.rotation_degrees = rot
+	root.add_child(mi)
+	return mi
+
+
+## 拉花字样贴花（Label3D 真实字形——RS7/GT2/V8/TF/07；px=pixel_size 米/像
+## 素，font_size 64 配 0.00035 → 字高 ~22mm、0.00028 → 18mm、0.00022 → 14mm）
+static func _elabel(root: Node3D, txt: String, pos: Vector3, rot: Vector3,
+		px := 0.00035, col := Color(0.95, 0.95, 0.97)) -> Label3D:
+	var lb := Label3D.new()
+	lb.text = txt
+	lb.font_size = 64
+	lb.pixel_size = px
+	lb.modulate = col
+	lb.outline_size = 0
+	lb.position = pos
+	lb.rotation_degrees = rot
+	root.add_child(lb)
+	return lb
 
 
 ## 每发视效钩（try_fire 常规路径尾调用）：弹链棘轮目标 +1 链距（_tick_fx
@@ -868,6 +1604,12 @@ func try_fire() -> void:
 		# 墙/落空：只画曳光+火花（tracer on_arrive 出火花）
 	fired.emit()
 	_on_shot_fx()
+	# 引擎联动（2026-11-20 极光魅影「点火感」——定案：开火时气缸小幅颤动）：
+	# 颤动能量置 1.0（_tick_fx 指数衰减）+ 活塞相位前踢；只有引擎组在位生效
+	# （近战分支已提前 return，其余枪 _engine==null 零改动）
+	if _engine != null:
+		_engine_jolt = 1.0
+		_engine_phase += 0.35
 	# 后坐力：视角上顶 + 水平随机漂移；开镜幅度 6 折（onfoot 公式照抄）；
 	# 整体 ×配件 recoil_mul（M14 战术护木 -45%——_mod_muls）。
 	# 超点射真实弹道特征（2026-10 AN-94 引入）：带射速档案（cd_profile）的枪
@@ -910,6 +1652,7 @@ func start_reload() -> void:
 	_press_shots = 0   # 换弹归零按压计数（cd_profile 档位回零——AN-94 超点射）
 	_burst_left = 0    # 换弹中止三连发点射（MK4：装填完要重新扣扳机）
 	_burst_gap = 0.0   # 换弹清轮间锁
+	_inspect_t = 0.0   # 换弹打断检视（R 与 J 同帧时先到先清）
 	if audio != null:
 		audio.play_reload()
 
@@ -959,6 +1702,18 @@ var ammo_provider: Callable = Callable()
 ## 枪械皮肤重涂表（func(gun_id)->paint 数组，main 注入 stash 链；未注入=
 ## 原色）：2026-11-08 皮肤系统——_build_gun_visual 合体后按原色匹配重涂
 var skin_paint_provider: Callable = Callable()
+## 引擎组装配查询（func(gun_id)->bool，main 注入 stash 链：当前装配皮肤归属
+## mk4_speed 系——系列本体或抽奖变体 base；未注入 = false 不挂，探针/测试
+## 裸调行为不变）：2026-11-20 MK4「极光魅影」引擎组挂载链
+var engine_provider: Callable = Callable()
+## 钻石极品变体装配查询（func(gun_id)->bool，main 注入 stash 链：当前装配
+## 变体 paint.diamond 才 true；未注入 = false 不挂，探针/测试裸调行为不变）：
+## 2026-11-20 抽奖低概率稀有档——_mount_diamond 棱面件挂载链
+var diamond_provider: Callable = Callable()
+## 钻石典藏铭牌文案（func(gun_id)->String，main 注入 stash.diamond_plate_of：
+## 「★//编号 · 成色NN」；未注入/空文案 = 不挂铭牌，裸调零改动）——R1 验收
+## 「典藏标识缺失」补：ref_02/ref_04 砖皮身份件
+var diamond_plate_provider: Callable = Callable()
 const SUP_LEN := 0.17      # 消音器长（枪架局部 m）：枪口点前移这么多
 const SUP_R := 0.021
 
@@ -979,6 +1734,19 @@ func _dur_mul() -> float:
 
 func _sup_on(gid: String) -> bool:
 	return sup_provider.is_valid() and bool(sup_provider.call(gid))
+
+
+## 引擎组装配判定（ENGINE_PARTS 有表且 provider 判 true 才挂——皮肤专属
+## 视觉件，未装配极光魅影/未注入 provider 一律 false 零改动）
+func _engine_on(gid: String) -> bool:
+	return ENGINE_PARTS.has(gid) and engine_provider.is_valid() \
+			and bool(engine_provider.call(gid))
+
+
+## 钻石极品变体装配判定（provider 判 true 才挂 diamond_group——低概率稀有
+## 档专属棱面件，未装配/未注入一律 false 零改动）
+func _diamond_on(gid: String) -> bool:
+	return diamond_provider.is_valid() and bool(diamond_provider.call(gid))
 
 
 ## 消音器圆筒（沿 -Z；k = 尺寸倍率：枪架局部 1.0 / 枪身局部 1/GUN_SCALE）
@@ -1240,6 +2008,40 @@ func _equip(slot: String) -> void:
 	_belt_slide = null
 	if _guns.has(slot) and _guns[slot].has("belt"):
 		_belt_slide = _guns[slot]["belt"]
+	# 引擎组引用随槽刷新（2026-11-20 极光魅影，照 _belt_slide 同款教训：
+	# enter 复位不清、复用不重挂，唯一刷新点在这里）；检视/转速/颤动一并
+	# 清零——切枪打断检视、新枪引擎从静止起步
+	_engine = null
+	_pistons = []
+	_engine_fx = []
+	_insp_card = null
+	_exh_flame = null
+	_sweep_nodes = []
+	_sweep_mats = []
+	_jet_nodes = []
+	_jet_m = null
+	_blow_lamp = null
+	_blow_m = null
+	_flame_mats = []
+	_inspect_empty = false
+	_blown = false
+	_inspect_t = 0.0
+	_inspect_prev = false
+	_engine_jolt = 0.0
+	_engine_rpm = 0.0
+	if _guns.has(slot) and _guns[slot].has("engine"):
+		_engine = _guns[slot]["engine"]
+		_pistons = _guns[slot]["pistons"]
+		_engine_fx = _engine.get_meta("engine_fx")
+		_insp_card = _guns[slot].get("card")
+		_exh_flame = _guns[slot].get("flame")
+		_sweep_nodes = _guns[slot].get("sweep", [])
+		_jet_nodes = _guns[slot].get("jets", [])
+		_sweep_mats = _engine.get_meta("sweep_mats")
+		_jet_m = _engine.get_meta("jet_m")
+		_blow_lamp = _guns[slot].get("blow_lamp")
+		_blow_m = _engine.get_meta("blow_m")
+		_flame_mats = _engine.get_meta("flame_mats")
 	# 只显示当前槽位枪模
 	for k in _guns:
 		var gi: Dictionary = _guns[k]
@@ -1399,11 +2201,36 @@ func _mount_slot(slot: String) -> void:
 		holder.add_child(can)
 		muzzle = mp + Vector3(0, 0, -SUP_LEN)
 		flash_mesh.position = muzzle
+	# 引擎组（2026-11-20 极光魅影皮肤专属）：合体+AABB 量顶之后追加独立
+	# 节点——不进 unibody（活塞可动）、不挪 top/cx（皮肤不改 ADS 瞄准锚）
+	var engine := _mount_engine(gun, gid)
+	# 钻石极品变体棱面件（2026-11-20 抽奖低概率稀有档）：同层位追加，
+	# 独立晶体材质、不挪 top/cx
+	var diamond := _mount_diamond(gun, gid)
 	var g_pack := {"id": gid, "holder": holder, "mag": mag, "show_mag": show_mag,
 			"mag_pos": mag_pos, "mag_size": mag_size, "sup": sup,
 			"muzzle_off": muzzle,
 			"flash": flash, "flash_env": flash_env, "flash_mesh": flash_mesh,
 			"top": top, "cx": cx}
+	if engine != null:
+		# 按槽记账（照 "belt"：_equip 唯一刷新点，同枪复用不重挂不丢引用）
+		g_pack["engine"] = engine
+		var pist_list: Array = []
+		for pi_c in 4:
+			pist_list.append(engine.find_child("piston_%d" % pi_c, true, false))
+		g_pack["pistons"] = pist_list
+		g_pack["card"] = engine.find_child("key_card", true, false)
+		g_pack["flame"] = engine.find_child("exhaust_flame", true, false)
+		g_pack["sweep"] = engine.find_children("sweep_*", "MeshInstance3D",
+				true, false)
+		g_pack["jets"] = engine.find_children("wing_jet_*", "MeshInstance3D",
+				true, false)
+		g_pack["blow_lamp"] = engine.find_child("blow_lamp", true, false)
+		g_pack["eng"] = true
+	if diamond != null:
+		# 按槽记账（钻石棱面件为静态组，无逐帧引用——挂载态快照键只服务
+		# enter 重建条件与验收断言）
+		g_pack["diamond"] = diamond
 	# 红点镜瞄准线：镜体工厂（_scope_visual reddot 分支）把窗中心 local y 写
 	# 进枪模 meta，这里记进枪架信息包 aim_y——update() 的 ADS 终点据此改按
 	# 「窗中心过屏幕中心」摆位，HUD 正中的红点分划才落进玻璃窗内。其它瞄具
@@ -1503,13 +2330,21 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 ## 皮肤重涂（2026-11-08 皮肤系统首枪 MK4「疾光魅影」）：本工程枪械观感
 ## 由 emission 驱动（albedo 白 + emission 深色 + vm 弱光 = 暗色）——整枪
 ## 统一重涂 albedo/emission/glow/metallic/rough（透明镜玻璃跳过，防涂死
-## 瞄具视场）；provider 未注入或无皮肤 = 原色零改动
+## 瞄具视场）；provider 未注入或无皮肤 = 原色零改动。
+## 钻石极品变体分支（2026-11-20）：paint.diamond=true → 整枪主动晶体化——
+## transparency ALPHA + albedo 半透明冰蓝（alpha 档 HDStash.DIAMOND_ALPHA=
+## 0.58，R1 验收提档）+ 低金属度（≤0.12 漫反射主导，透壳可读）+ 镜面
+## rough 0.06 + 清漆层 + rim 边缘发光（能量 2.0）+ 冰蓝微光。
+## 「透明镜玻璃跳过」守卫只挡非主动透明：diamond 是主动透明蒙皮（透装不挡
+## 视场），镜玻璃一并晶体化——
+## 棱镜攻势隐藏款「玻璃攻势」全透明 M7 锚点（透明度高于普通极品档）
 func _apply_skin_paint(root: Node3D, gid: String) -> void:
 	if not skin_paint_provider.is_valid():
 		return
 	var paint: Dictionary = skin_paint_provider.call(gid)
 	if paint.is_empty():
 		return
+	var diamond := bool(paint.get("diamond", false))
 	var mis: Array = root.find_children("*", "MeshInstance3D", true, false)
 	for mi in mis:
 		var m3d: MeshInstance3D = mi
@@ -1523,13 +2358,38 @@ func _apply_skin_paint(root: Node3D, gid: String) -> void:
 				mat = (m3d.mesh as PrimitiveMesh).material as StandardMaterial3D
 			if mat == null:
 				continue
-			if mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			if diamond:
+				# 主动透明：全表面钻石晶体蒙皮（含镜玻璃——见函数头注）；
+				# albedo 直取 paint 解析色，alpha 档统一钉 HDStash.DIAMOND_ALPHA
+				# （R1 验收提档 0.42→0.58——壳体读「半透冰壳」体积感，旧档存值
+				# 0.42 一并升档，材质侧不吃表值漂移）
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				var ab: Color = paint["albedo"]
+				ab.a = HDStash.DIAMOND_ALPHA
+				mat.albedo_color = ab
+				mat.emission = paint["em"]
+				mat.emission_energy_multiplier = float(paint["glow"])
+				# R1 验收纠偏：旧档 metallic 0.9 渲染深蓝近黑——高金属度杀
+				# 漫反射（diffuse×(1-metallic)≈0），暗环境镜面反射主导=透壳
+				# 不成立根因。钳 ≤0.12（新档存 0.08；旧档 0.9 也一并降档）
+				mat.metallic = minf(float(paint.get("metallic", 0.08)), 0.12)
+				mat.roughness = float(paint.get("rough", 0.06))
+				mat.clearcoat_enabled = true          # 清漆层=晶体镜面折光
+				mat.clearcoat = 1.0
+				mat.clearcoat_roughness = 0.06
+				mat.rim_enabled = true                # 边缘发光=棱面折光感
+				mat.rim = 2.0                         # R1 验收：rim 能量加大
+				# rim_tint 0.9→rim 近全吃 albedo 冰蓝；紫粉侧由 diamond_group
+				# 紫粉镀膜灯（_mount_diamond rim_light_*）打亮边缘补足
+				mat.rim_tint = 0.9
+			elif mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
 				continue   # 透明件（镜玻璃/透镜）不涂——挡视场
-			mat.albedo_color = paint["albedo"]
-			mat.emission = paint["em"]
-			mat.emission_energy_multiplier = float(paint["glow"])
-			mat.metallic = float(paint.get("metallic", 0.0))
-			mat.roughness = float(paint.get("rough", 0.5))
+			else:
+				mat.albedo_color = paint["albedo"]
+				mat.emission = paint["em"]
+				mat.emission_energy_multiplier = float(paint["glow"])
+				mat.metallic = float(paint.get("metallic", 0.0))
+				mat.roughness = float(paint.get("rough", 0.5))
 
 
 ## 枪顶瞄具模型统一收尾：装上的瞄具优先（iron=机瞄片）；狙击自带密位镜，
@@ -2120,6 +2980,104 @@ func _tick_fx(dt: float) -> void:
 	if _hand != null and _hand.visible:
 		if reloading <= 0.0 or player == null or player.dead:
 			_hand.visible = false
+	# 引擎组动画（2026-11-20 极光魅影皮肤专属；第 1 轮验收加长演出重做）：
+	# 普通检视 rpm 包络（怠速 0.15 → 0.6s 升满 → 末 0.5s 回落）驱动直列四缸
+	# 活塞 sin 往复（1&4 同相 / 2&3 反相——1-3-4-2 点火序曲轴配对）与流光/
+	# 点火灯组；空仓特殊检视分支（ammo=0 触发）：增压拉满（0→BLOW_PH 拉满
+	# 档）→ 爆缸（jolt 尖峰+警示灯闪+熄火+爆缸音）→ 尾排喷火（FLAME_END_PH
+	# 收熄）。开火颤动（_engine_jolt）叠加出点火感+尾翼喷气脉冲。引用链照
+	# _belt_slide：_equip 唯一刷新点，本块只消费。is_queued_for_deletion 守卫
+	# （第 2 轮门禁修复）：重挂当帧旧引擎已排队待删，材质写入留给删除后的
+	# 新引擎，不给将亡材质留 pending RS 更新
+	if _engine != null and is_instance_valid(_engine) \
+			and not _engine.is_queued_for_deletion():
+		var idur := _inspect_dur()
+		var insp := _inspect_t > 0.0
+		var ph := clampf(1.0 - _inspect_t / maxf(idur, 0.01), 0.0, 1.0)
+		var env := 0.0
+		if insp and _inspect_empty:
+			if ph < BLOW_PH:   # 机械增压拉满（比普通档起步更狠）
+				env = 0.35 + 1.0 * (ph / BLOW_PH)
+			else:
+				if not _blown:   # 爆缸事件（一次）：尖峰颤动+爆缸音
+					_blown = true
+					_engine_jolt = 2.4
+					if audio != null and audio.has_method("play_blow"):
+						audio.play_blow()
+				env = maxf(0.0, 0.5 - (ph - BLOW_PH) * 2.4) * 0.3   # 熄火档
+		elif insp:
+			var rise := clampf((idur - _inspect_t) / 0.6, 0.0, 1.0)
+			env = (0.15 + 0.85 * rise) * clampf(_inspect_t / 0.5, 0.0, 1.0)
+		_engine_rpm += (env - _engine_rpm) * minf(1.0, dt * 8.0)
+		_engine_jolt = maxf(0.0, _engine_jolt - dt * ENGINE_JOLT_DECAY)
+		_engine_phase += dt * TAU * ENGINE_RPM_HZ \
+				* clampf(_engine_rpm + _engine_jolt * 0.30, 0.0, 1.35)
+		# 活塞×4：全行程 ±stroke/2（0.013→±6.5mm 三帧可辨），点火相位读
+		# meta（py0/phase 挂 meta，只写 y 不动 x/z），颤动叠加高频小抖
+		var amp: float = float(ENGINE_PARTS.get(cur_id, {}).get("stroke",
+				0.013)) * 0.5
+		for pi_c in _pistons.size():
+			var pn: MeshInstance3D = _pistons[pi_c]
+			if pn == null or not is_instance_valid(pn):
+				continue
+			pn.position.y = float(pn.get_meta("py0")) \
+					+ amp * sin(_engine_phase + float(pn.get_meta("phase"))) \
+					+ (0.0013 + 0.0004 * float(pi_c % 2)) * _engine_jolt \
+					* sin(_engine_phase * 3.7 + float(pi_c))
+		for fx_v in _engine_fx:
+			var fxm: StandardMaterial3D = fx_v["m"]
+			if bool(fx_v["fire"]):
+				fxm.emission_energy_multiplier = float(fx_v["base"]) \
+						* clampf(2.6 * _engine_rpm + 3.0 * _engine_jolt, 0.0, 3.0)
+			else:
+				fxm.emission_energy_multiplier = float(fx_v["base"]) \
+						* (1.0 + 0.9 * _engine_rpm + 1.6 * _engine_jolt)
+		# —— 演出件驱动（钥匙卡/流光扫过/尾翼喷气/爆缸灯/尾排喷火）——
+		if _insp_card != null and is_instance_valid(_insp_card):
+			var c_win := Vector2(0.06, 0.30) if _inspect_empty \
+					else INSP_CARD_WIN
+			_insp_card.visible = insp and ph >= c_win.x and ph <= c_win.y
+		var sweep_on := insp and not _inspect_empty \
+				and ph >= INSP_SWEEP_WIN.x and ph <= INSP_SWEEP_WIN.y
+		if not _sweep_nodes.is_empty():
+			# 彗星段沿车体（机匣段 z -0.26..0.075）往复跑，头亮尾淡
+			var u := fposmod((ph - INSP_SWEEP_WIN.x) * 2.4, 1.0)
+			var zc := lerpf(-0.26, 0.075, u)
+			for sj in _sweep_nodes.size():
+				var sn: MeshInstance3D = _sweep_nodes[sj]
+				if sn == null or not is_instance_valid(sn):
+					continue
+				sn.visible = sweep_on
+				sn.position.z = zc - 0.045 * float(sj % 3)
+			var sweep_e := [5.5, 2.6, 1.2]
+			for sm_j in mini(_sweep_mats.size(), 3):
+				(_sweep_mats[sm_j] as StandardMaterial3D) \
+						.emission_energy_multiplier = \
+						float(sweep_e[sm_j]) if sweep_on else 0.0
+		var jet_e := clampf(2.4 * _engine_rpm + 5.0 * _engine_jolt, 0.0, 5.0)
+		if _jet_m != null and is_instance_valid(_jet_m):
+			_jet_m.emission_energy_multiplier = jet_e
+		for jn_c in _jet_nodes.size():
+			var jn: MeshInstance3D = _jet_nodes[jn_c]
+			if jn == null or not is_instance_valid(jn):
+				continue
+			jn.visible = jet_e > 0.05
+		if _blow_m != null and is_instance_valid(_blow_m):
+			_blow_m.emission_energy_multiplier = \
+					clampf(_engine_jolt * 2.6 - 1.2, 0.0, 6.0) if _blown else 0.0
+		if _exh_flame != null and is_instance_valid(_exh_flame):
+			var flame_on := insp and _inspect_empty and _blown \
+					and ph <= FLAME_END_PH
+			_exh_flame.visible = flame_on
+			if flame_on:
+				var ft := float(Time.get_ticks_msec()) * 0.001
+				var flick := 0.8 + 0.2 * sin(ft * 31.0) + 0.1 * sin(ft * 67.0)
+				for fm_j in _flame_mats.size():
+					(_flame_mats[fm_j] as StandardMaterial3D) \
+							.emission_energy_multiplier = \
+							(5.5 - 2.2 * float(fm_j)) * flick
+				_exh_flame.scale = Vector3(1.0, 1.0, 0.85 + 0.3 * flick)
+	_inspect_t = maxf(0.0, _inspect_t - dt)
 
 ## ================= 枪匠·七枪程序化模型（原独立文件并入） =================
 ## 原并行交付为 hd_gun_smg.gd / hd_gun_ar.gd 两份独立脚本，但回归门槛的执行

@@ -2112,6 +2112,10 @@ func _render_market(pg: VBoxContainer) -> void:
 	if not skin_def.is_empty():
 		var skfit := _stash.skin_fit_of(ammo_id)
 		var skname := _stash.skin_label_of(ammo_id)
+		# 钻石极品变体稀有标记（2026-11-20：装配变体 paint.diamond → 名尾
+		# 追加 ◆——「极光魅影 · 钻石典藏 NN ◆」，与流光变体一眼可辨）
+		if _stash.skin_fit_is_diamond(ammo_id):
+			skname += " ◆"
 		var skrow := HBoxContainer.new()
 		skrow.add_theme_constant_override("separation", 8)
 		skrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2533,7 +2537,15 @@ func _roll_skin_for(gid: String) -> void:
 		show_hint("抽取需 ₵%s —— 现金不足" % _fmt(_to_int(
 				sk.get("gacha_price", 0))))
 		return
-	show_hint("抽出 %s —— 随机流光配色已装上" % str(rr.get("name", "")))
+	# 钻石极品变体专属文案（2026-11-20 概率分层：12% 钻石/88% 流光——
+	# 抽到钻石按稀有档播报，不再误报「随机流光配色」）
+	var rr_dia := bool((_stash.skin_var.get(str(rr.get("vid", "")), {})
+			.get("paint", {}) as Dictionary).get("diamond", false))
+	if rr_dia:
+		show_hint("抽出 %s ◆ —— 钻石极品变体已装上（低概率稀有档）"
+				% str(rr.get("name", "")))
+	else:
+		show_hint("抽出 %s —— 随机流光配色已装上" % str(rr.get("name", "")))
 
 func _move(dh: int, dv: int) -> void:
 	match _tab:
