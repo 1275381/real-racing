@@ -1119,40 +1119,43 @@ func _initialize() -> void:
 	check("探针引擎组在位（mk4+极光）",
 			main.guns._guns["primary"].get("engine", null) != null)
 	var pist_in: Array = main.guns._guns["primary"]["pistons"]
-	check("探针直列四缸在位", pist_in.size() == 4 and pist_in[0] != null)
+	check("探针左右双缸在位（2026-11-21 用户纠偏）",
+			pist_in.size() == 2 and pist_in[0] != null)
 	var idur: float = main.guns._inspect_dur()
 	check("探针检视加长档（8~13s 考证）", idur >= 8.0 and idur <= 13.0,
 			"dur=%.1f" % idur)
 	var pl_in: MeshInstance3D = pist_in[0]
-	var py0: float = float(pl_in.get_meta("py0"))
+	# 2026-11-21 用户纠偏「活塞在左右两边」：左右双缸横置、活塞沿 X 水平
+	# 往复（伸/缩端点=px0 ± 行程）——三帧端点门与位移断言同改 x 轴
+	var px0: float = float(pl_in.get_meta("px0"))
 	var pamp: float = float(main.guns.ENGINE_PARTS.get("mk4", {})
 			.get("stroke", 0.013)) * 0.5
-	var top_y: float = py0 + 0.6 * pamp
-	var bot_y: float = py0 - 0.6 * pamp
+	var out_x: float = px0 + 0.6 * pamp
+	var in_x: float = px0 - 0.6 * pamp
 	Input.action_press("hd_inspect")
 	check("检视一触发（I 边沿起表）", await wait_until(
 			func(): return main.guns._inspect_t > idur - 0.10, 60))
 	# 三帧状态门取帧（ph=演出进度）：顶面展示满转 0.30 / 侧面翻转毕 0.62 /
-	# 流光扫过段 0.75——每帧再等活塞行到上/下行程端点
+	# 流光扫过段 0.75——每帧再等活塞行到伸/缩行程端点
 	await wait_until(func(): return main.guns._inspect_t <= idur * 0.70)
-	await wait_until(func(): return pl_in.position.y >= top_y, 120)
+	await wait_until(func(): return pl_in.position.x >= out_x, 120)
 	await _wait_draw()
-	var py1: float = pl_in.position.y
+	var px1: float = pl_in.position.x
 	shot("res://out/shot_inspect_mk4_1.png")
 	await wait_until(func(): return main.guns._inspect_t <= idur * 0.38)
-	await wait_until(func(): return pl_in.position.y <= bot_y, 120)
+	await wait_until(func(): return pl_in.position.x <= in_x, 120)
 	await _wait_draw()
-	var py2: float = pl_in.position.y
+	var px2: float = pl_in.position.x
 	shot("res://out/shot_inspect_mk4_2.png")
 	await wait_until(func(): return main.guns._inspect_t <= idur * 0.25)
-	await wait_until(func(): return pl_in.position.y >= top_y, 120)
+	await wait_until(func(): return pl_in.position.x >= out_x, 120)
 	await _wait_draw()
-	var py3: float = pl_in.position.y
+	var px3: float = pl_in.position.x
 	shot("res://out/shot_inspect_mk4_3.png")
 	Input.action_release("hd_inspect")
-	check("检视三帧活塞位移不同", absf(py1 - py2) > 1e-5
-			and absf(py2 - py3) > 1e-5 and absf(py1 - py3) > 1e-5,
-			"y=%.4f/%.4f/%.4f" % [py1, py2, py3])
+	check("检视三帧活塞位移不同", absf(px1 - px2) > 1e-5
+			and absf(px2 - px3) > 1e-5 and absf(px1 - px3) > 1e-5,
+			"x=%.4f/%.4f/%.4f" % [px1, px2, px3])
 	# 气缸特写：隔 2 帧再按（防边沿互吃），高转平台（rpm≥0.9，点火灯组已亮）
 	# 才冻结主循环定格——手动摆枪架让机匣侧顶对准气缸组（照皮肤变体/机匣
 	# 特写段的冻结摆拍协议；机位 tune2_p2 实测定稿：四缸筒环+筒内铜橙活塞+

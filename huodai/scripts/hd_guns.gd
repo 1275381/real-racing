@@ -952,28 +952,31 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	_ebox(eng, red_m, Vector3(0.072, 0.009, 0.016), Vector3(0, 0.008, 0.058))
 	for gy in [0.0065, 0.0095, 0.0125]:
 		_ebox(eng, ex_m, Vector3(0.072, 0.0016, 0.004), Vector3(0, gy, 0.058))
-	# —— 直列四缸：半透明缸筒×4 并排横列（缸心距 1.13×缸径——直列机真实
-	#    比例档）+ 缸头银环 + 筒内活塞头（可动，1&4 同相 / 2&3 反相——直列
-	#    四缸 1-3-4-2 点火序的曲轴配对；「怠速→高转」由 _tick_fx rpm 包络
-	#    驱动）——
+	# —— 左右双缸横置（2026-11-21 用户「活塞是在左右两边的」：直列四缸竖直
+	#    往复改为左右两缸水平对置——缸筒轴沿 X 横躺（rotation z 90°）、左右
+	#    各一，活塞沿 X 水平往复向外（相位反相=左右交替伸缩，V 型双缸考证
+	#    回归）+ 缸头银环 + 筒内铜橙活塞头——
 	var cyl_r: float = float(ep["cyl_r"])
-	var dx: float = float(ep["cyl_dx"])
+	var dx: float = 0.024   # 左右缸心距（±24mm 对称布置）
 	var pr_r: float = float(ep.get("piston_r", 0.0055))
 	var pr_h: float = float(ep.get("piston_h", 0.009))
-	var phases: Array = [0.0, PI, PI, 0.0]   # 曲轴配对相位（1-3-4-2 点火序）
-	for ci in 4:
-		var cx: float = (float(ci) - 1.5) * dx
+	var phases: Array = [0.0, PI]   # 左右反相（一侧伸则另一侧缩）
+	for ci in 2:
+		var cx: float = (float(ci) - 0.5) * 2.0 * dx   # -dx / +dx
 		var tube := _ecyl(eng, tube_m, cyl_r, float(ep["cyl_h"]),
-				Vector3(cx, 0.031, 0.008))
+				Vector3(cx, 0.031, 0.008), Vector3(0, 0, 90))
 		tube.name = "cyl_%d" % ci
 		GUN_LIB.torus_ring(eng, bolt_m, cyl_r * 0.88, cyl_r * 1.20,
-				Vector3(cx, 0.041, 0.008))
-		# 活塞头×4（命名契约：piston_0..3——测试/探针/动画按名取；py0 基准
-		# y 与点火相位挂 meta，_tick_fx 只写 y 不动 x/z）
-		var pn := _ecyl(eng, piston_m, pr_r, pr_h, Vector3(cx, 0.027, 0.008))
+				Vector3(cx, 0.041, 0.008), Vector3(0, 0, 90))
+		# 活塞头×2（命名契约：piston_0..1——测试/探针/动画按名取；px0 基准
+		# x 与点火相位挂 meta，_tick_fx 只写 x 不动 y/z；缸筒横置后活塞
+		# 旋转轴沿 X——rotation z 90° 与缸筒一致）
+		var pn := _ecyl(eng, piston_m, pr_r, pr_h, Vector3(cx, 0.031, 0.008),
+				Vector3(0, 0, 90))
 		pn.name = "piston_%d" % ci
-		pn.set_meta("py0", 0.027)
+		pn.set_meta("px0", cx)
 		pn.set_meta("phase", float(phases[ci]))
+		pn.set_meta("side", -1.0 if ci == 0 else 1.0)   # 伸缩方向（左缸向左、右缸向右）
 	# —— 外露六角固定螺栓×6（radial_segments=6 即六角头）：曲轴箱顶四角
 	#    + 前端面两颗（考证「缸体外露六角固定螺栓」）——
 	for bp in [Vector3(-0.026, 0.0115, -0.048), Vector3(0.026, 0.0115, -0.048),
@@ -1043,24 +1046,27 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	var wing := Node3D.new()
 	wing.name = "gt_wing"
 	eng.add_child(wing)
+	# 2026-11-21 用户「尾翼太挡视野，调低一点、调到前面」：翼片高度
+	# y 0.018→0.004（立柱同步降高 0.030→0.012）、整体前移 z 0.312→0.185
+	# （枪身中段——不再立在托尾高处挡瞄准线）
 	for px_w in [-0.020, 0.020]:
-		_ebox(wing, bolt_m, Vector3(0.006, 0.030, 0.010),
-				Vector3(px_w, 0.001, 0.308))
+		_ebox(wing, bolt_m, Vector3(0.006, 0.012, 0.010),
+				Vector3(px_w, 0.001, 0.185))
 	_ebox(wing, carbon_m, Vector3(0.100, 0.005, 0.036),
-			Vector3(0, 0.018, 0.312), Vector3(-10, 0, 0))
-	_ebox(wing, carbon_m, Vector3(0.004, 0.028, 0.044),
-			Vector3(-0.050, 0.017, 0.312), Vector3(-10, 0, 0))
-	_ebox(wing, carbon_m, Vector3(0.004, 0.028, 0.044),
-			Vector3(0.050, 0.017, 0.312), Vector3(-10, 0, 0))
-	_elabel(wing, "TF", Vector3(-0.0525, 0.017, 0.312), Vector3(0, -90, 0),
+			Vector3(0, 0.006, 0.185), Vector3(-10, 0, 0))
+	_ebox(wing, carbon_m, Vector3(0.004, 0.014, 0.044),
+			Vector3(-0.050, 0.004, 0.185), Vector3(-10, 0, 0))
+	_ebox(wing, carbon_m, Vector3(0.004, 0.014, 0.044),
+			Vector3(0.050, 0.004, 0.185), Vector3(-10, 0, 0))
+	_elabel(wing, "TF", Vector3(-0.0525, 0.004, 0.185), Vector3(0, -90, 0),
 			0.00022)
-	_elabel(wing, "TF", Vector3(0.0525, 0.017, 0.312), Vector3(0, 90, 0),
+	_elabel(wing, "TF", Vector3(0.0525, 0.004, 0.185), Vector3(0, 90, 0),
 			0.00022)
 	# 尾翼两侧喷气锥（拉动尾翼喷气互动——检视高转常燃+开火颤动脉冲，能量
 	# 驱动在 _tick_fx；锥体沿 +z 外八字）
 	for js in [-1.0, 1.0]:
 		var jet := _econe(wing, jet_m, 0.0025, 0.0075, 0.036,
-				Vector3(js * 0.044, 0.015, 0.348),
+				Vector3(js * 0.044, 0.004, 0.221),
 				Vector3(90, 12.0 * js, 0))
 		jet.name = "wing_jet_%s" % ("l" if js < 0 else "r")
 		jet.visible = false
@@ -2216,7 +2222,7 @@ func _mount_slot(slot: String) -> void:
 		# 按槽记账（照 "belt"：_equip 唯一刷新点，同枪复用不重挂不丢引用）
 		g_pack["engine"] = engine
 		var pist_list: Array = []
-		for pi_c in 4:
+		for pi_c in 2:
 			pist_list.append(engine.find_child("piston_%d" % pi_c, true, false))
 		g_pack["pistons"] = pist_list
 		g_pack["card"] = engine.find_child("key_card", true, false)
@@ -3012,17 +3018,18 @@ func _tick_fx(dt: float) -> void:
 		_engine_jolt = maxf(0.0, _engine_jolt - dt * ENGINE_JOLT_DECAY)
 		_engine_phase += dt * TAU * ENGINE_RPM_HZ \
 				* clampf(_engine_rpm + _engine_jolt * 0.30, 0.0, 1.35)
-		# 活塞×4：全行程 ±stroke/2（0.013→±6.5mm 三帧可辨），点火相位读
-		# meta（py0/phase 挂 meta，只写 y 不动 x/z），颤动叠加高频小抖
+		# 活塞×2：左右水平往复（全行程 ±stroke/2 三帧可辨），点火相位读
+		# meta（px0/phase/side 挂 meta，只写 x 不动 y/z），颤动叠加高频小抖
 		var amp: float = float(ENGINE_PARTS.get(cur_id, {}).get("stroke",
 				0.013)) * 0.5
 		for pi_c in _pistons.size():
 			var pn: MeshInstance3D = _pistons[pi_c]
 			if pn == null or not is_instance_valid(pn):
 				continue
-			pn.position.y = float(pn.get_meta("py0")) \
-					+ amp * sin(_engine_phase + float(pn.get_meta("phase"))) \
-					+ (0.0013 + 0.0004 * float(pi_c % 2)) * _engine_jolt \
+			var side: float = float(pn.get_meta("side", 1.0))
+			pn.position.x = float(pn.get_meta("px0")) + side * amp \
+					* sin(_engine_phase + float(pn.get_meta("phase"))) \
+					+ side * (0.0013 + 0.0004 * float(pi_c % 2)) * _engine_jolt \
 					* sin(_engine_phase * 3.7 + float(pi_c))
 		for fx_v in _engine_fx:
 			var fxm: StandardMaterial3D = fx_v["m"]
@@ -3823,7 +3830,7 @@ static func _smg_mk4() -> Node3D:
 	mag.name = "mag_straight"
 	mag.position = Vector3(0, -0.035, -0.115)
 	root.add_child(mag)
-	GUN_LIB.curved_mag(mag, maggrey, Vector3(0.042, 0.2, 0.068), 7.0, 3, 3)
+	GUN_LIB.curved_mag(mag, maggrey, Vector3(0.042, 0.2, 0.068), 16.0, 4, 3)
 	# ⑧ 枪管（36 段高分段 + 螺纹环×3 紧贴消焰器后）+ 短消焰器
 	#    （开筒内衬亮钢膛 + 两侧纵槽提示 + 前挡环）
 	GUN_LIB.barrel(root, dark, 0.10, 0.024, Vector3(0, 0.028, -0.60),

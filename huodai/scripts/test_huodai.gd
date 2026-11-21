@@ -636,11 +636,11 @@ func _run() -> void:
 	var eg_pk: Dictionary = main.guns._guns["primary"]
 	var eng_n: Node3D = eg_pk.get("engine", null)
 	var pist_n: Array = eg_pk.get("pistons", [])
-	check("极光装配后引擎组在位（engine_group + pistons×4）",
+	check("极光装配后引擎组在位（engine_group + pistons×2 左右双缸）",
 			eng_n != null and eng_n.name == "engine_group"
-			and pist_n.size() == 4 and pist_n[0] != null
+			and pist_n.size() == 2 and pist_n[0] != null
 			and str((pist_n[0] as Node3D).name) == "piston_0"
-			and pist_n[3] != null and str((pist_n[3] as Node3D).name) == "piston_3")
+			and pist_n[1] != null and str((pist_n[1] as Node3D).name) == "piston_1")
 	check("engine_provider 归属判定（mk4_speed 系变体 → true）",
 			bool(main.guns.engine_provider.call("mk4")))
 	# 第 1 轮验收四条目断言：直列四缸并排横列 / 演出加长 8~13s / 银白曲轴
@@ -649,7 +649,7 @@ func _run() -> void:
 	for c_e in eng_n.get_children():
 		if str(c_e.name).begins_with("cyl_"):
 			cyl_n += 1
-	check("直列四缸（4 缸筒并排横列，验收纠偏旧 V 型双缸）", cyl_n == 4,
+	check("左右双缸横置（2026-11-21 用户纠偏：活塞在左右两边）", cyl_n == 2,
 			"cyl=%d" % cyl_n)
 	var idur_e: float = main.guns._inspect_dur()
 	check("检视演出加长（考证 8~13s 档，纠偏旧 2.6s）",
@@ -684,16 +684,16 @@ func _run() -> void:
 	check("检视触发 _inspect_t>0", main.guns._inspect_t > 0.0,
 			"t=%.3f" % main.guns._inspect_t)
 	var pl_mi: MeshInstance3D = pist_n[0]
-	var py_a: float = pl_mi.position.y
+	var px_a: float = pl_mi.position.x
 	for i in 12:
-		main.guns.update(1.0 / 60.0)   # 0.2s：rpm 爬升段活塞往复
-	var py_b: float = pl_mi.position.y
+		main.guns.update(1.0 / 60.0)   # 0.2s：rpm 爬升段活塞水平往复
+	var px_b: float = pl_mi.position.x
 	for i in 12:
 		main.guns.update(1.0 / 60.0)
-	var py_c: float = pl_mi.position.y
-	check("检视活塞随帧往复（行程内逐段位移）",
-			absf(py_b - py_a) > 0.0005 and absf(py_c - py_b) > 0.0005,
-			"y=%.4f/%.4f/%.4f" % [py_a, py_b, py_c])
+	var px_c: float = pl_mi.position.x
+	check("检视活塞随帧水平往复（左右伸缩逐段位移）",
+			absf(px_b - px_a) > 0.0005 and absf(px_c - px_b) > 0.0005,
+			"x=%.4f/%.4f/%.4f" % [px_a, px_b, px_c])
 	Input.action_release("hd_inspect")
 	main.guns.update(1.0 / 60.0)   # 松手帧：I 边沿归位
 	main.guns.try_fire()           # 开火联动（常规路径尾：颤动+相位前踢）
