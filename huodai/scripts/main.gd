@@ -224,10 +224,11 @@ func _register_inputs() -> void:
 		"hd_reload": [KEY_R], "hd_interact": [KEY_F],
 		"hd_lean_left": [KEY_Q], "hd_lean_right": [KEY_E],
 		# 检视（2026-11-20 MK4「极光魅影」「引擎启动检视」——考证 item5：端游
-		# 三角洲检视默认键位 I（可自定义），第 1 轮验收纠偏旧 KEY_J；
+		# 2026-11-20 用户点名「J 触发」——检视键定 KEY_J（第 1 轮验收曾
+		# 按「三角洲默认 I」纠偏，用户实测按 J 无反应后定回 J）；
 		# hd_guns 只读动作名不认物理键；大厅 KEY_I 保险开关只在 lobby 页签
 		# 消费，局内不冲突
-		"hd_inspect": [KEY_I],
+		"hd_inspect": [KEY_J],
 	}
 	for action in defs:
 		if not InputMap.has_action(action):

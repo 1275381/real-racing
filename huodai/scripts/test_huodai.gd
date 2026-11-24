@@ -734,8 +734,13 @@ func _run() -> void:
 			if ev_j is InputEventKey \
 					and (ev_j as InputEventKey).physical_keycode == KEY_I:
 				j_ok = true
-	check("检视键 hd_inspect 注册在位（KEY_I 考证键位，纠偏旧 J）", j_ok)
-	# 摆拍还原：出发配置回原值（本段改过 loadout=mk4 进过靶场）——后续
+	var j_events: Array = InputMap.action_get_events("hd_inspect")
+	var j_evt_ok := false
+	for je_v in j_events:
+		if je_v is InputEventKey and (je_v as InputEventKey).physical_keycode == KEY_J:
+			j_evt_ok = true   # 注册走 physical_keycode（main._register_inputs）
+	check("检视键 hd_inspect 注册在位（KEY_J 用户点名）", j_evt_ok,
+			"绑=" + str(j_events.size()) + " 事件")	# 摆拍还原：出发配置回原值（本段改过 loadout=mk4 进过靶场）——后续
 	# 撤离/阵亡账目段按原配置重开（阵亡丢的是带入的 rifle，非摆拍 mk4）
 	main.stash.loadout = lo0
 	await frames(4)
