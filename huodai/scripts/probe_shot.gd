@@ -76,7 +76,9 @@
 # + MK4「极光魅影」引擎检视图证（2026-11-20；第 1 轮验收扩容）：I 检视三帧
 #   shot_inspect_mk4_1/2/3（顶面满转/侧面翻转毕/流光扫过——活塞位置三帧应
 #   不同）+ shot_engine_close 气缸特写（检视姿态定格·机匣侧顶对准气缸组，
-#   冻结摆拍协议）+ 空仓特殊检视两张 shot_inspect_mk4_card/_blow（钥匙卡·
+#   冻结摆拍协议）+ shot_wing_stream 尾翼特写（2026-11-27 流线翼定案：
+#   检视侧面姿态对准尾翼——上扬弧线+后缘流光条+双喷气锥应可辨）+ 空仓
+#   特殊检视两张 shot_inspect_mk4_card/_blow（钥匙卡·
 #   增压拉满 / 爆缸·尾排喷火）+ shot_skin_mk4 整枪重拍与 shot_skin_mk4_side
 #   侧面近景（纠偏 11-19 旧暗蓝图证）+ 钻石极品变体图证四机位
 #   shot_diamond_mk4 / _side / _mag / _sight（2026-11-20 抽奖 12% 低概率稀有
@@ -96,6 +98,11 @@ extends SceneTree
 
 var checks: int = 0     # 附加验收断言计数（软断言：只记档打印，不中断后续截图）
 var fails: int = 0
+var _check_log: PackedStringArray = []   # 断言行留存（第 1 轮验收：[probe]
+                                         # PASS/FAIL 只打 stdout 未落盘，翼角
+                                         # 两次过峰仅存代码推断——跑批时逐条
+                                         # 写 out/probe_checks.log 作验收证据，
+                                         # 后段崩溃/超时已写条目不丢）
 var shots_saved: int = 0   # 实存截图数（headless 下跳过保存，只跑断言链）
 var save_bak := ""      # 非空 = 探针前有真实存档，收尾还原（探针装瞄具会触发 save()）
 var _m                  # main 引用（shot() 收暂停菜单护栏用，_initialize 里赋值）
@@ -161,13 +168,24 @@ func frames(n: int) -> void:
 	for i in n:
 		await process_frame
 
-## 软断言（参照 test_huodai.check）：PASS/FAIL 打进日志，失败不停探针
+## 软断言（参照 test_huodai.check）：PASS/FAIL 打进日志，失败不停探针；
+## 每条落盘 out/probe_checks.log（逐条整写缓冲——断言证据不赌进程活到收尾，
+## 翼角过峰这类运行时门从此有档案可查，不靠代码推断）
 func check(name: String, ok: bool, extra := "") -> void:
 	checks += 1
 	if not ok:
 		fails += 1
-	print("[probe] %s %s%s" % ["PASS" if ok else "FAIL", name,
-			(" —— " + extra) if extra != "" else ""])
+	var line := "[probe] %s %s%s" % ["PASS" if ok else "FAIL", name,
+			(" —— " + extra) if extra != "" else ""]
+	print(line)
+	_check_log.append(line)
+	var d := DirAccess.open("res://")
+	if d != null:
+		d.make_dir_recursive("out")   # 幂等：已存在不报错
+	var fa := FileAccess.open("res://out/probe_checks.log", FileAccess.WRITE)
+	if fa != null:
+		fa.store_string("\n".join(_check_log) + "\n")
+		fa.close()
 
 ## 等状态成立：pred 每帧一查，上限 max_frames 帧；返回最终是否成立
 func wait_until(pred: Callable, max_frames: int = 300) -> bool:
@@ -515,6 +533,16 @@ func _initialize() -> void:
 	root.add_child(main)
 	print("[probe] 探针启动：存档已备份、main.tscn 已入树（卡死排查锚点）")
 	await frames(30)
+	# 鼠标事件隔离（第 2 轮验收 wingPull 段排查实证）：hd_fire/hd_scope 绑的
+	# 是物理鼠标左右键（main.gd:242-247）——跑批期间桌面上任何真实点击落进
+	# 置顶探针窗都会被读成开火/开镜：fire_pressed/_aiming 一真，hd_guns.gd
+	# 的打断链当场清 _inspect_t（尾翼段在拉拽中途被腰斩、弹药计数无端走空，
+	# 本轮 run2 实录 40→37→36）。探针全程不需要真实鼠标事件：开火/开镜段
+	# 走 main.guns.try_fire() 直调 + Input.action_press 直推动作层（动作状态
+	# 直写不经过 InputMap 事件），erase 后照常工作。进程随探针退出，无需还原
+	for act_off in ["hd_fire", "hd_scope"]:
+		if InputMap.has_action(act_off):
+			InputMap.action_erase_events(act_off)
 	main.stash.tutorial_done = true   # 摆拍不要首局引导卡遮左上角（新档默认会弹；stash 在 main 就绪后才有）
 	# 大厅卡片实物图（2026-10）：离屏拍的枪械缩略图要真出图（headless 不出图，跳过）
 	if DisplayServer.get_name() != "headless":
@@ -1152,6 +1180,65 @@ func _initialize() -> void:
 	await _wait_draw()
 	var px3: float = pl_in.position.x
 	shot("res://out/shot_inspect_mk4_3.png")
+	# —— 手拉尾翼段五帧+两拉断言（2026-11-27 用户定案「手拉两下可以动的
+	#      那个尾翼」；第 1 轮验收修复：旧 _3 与 _2 同拍「拉拽峰值态」——
+	#      f2-f3 实测像素差 0.18% 噪声级；第 2 轮验收修复：_1 门 0.3s 手在
+	#      托体后被挡→推 0.45s 越身上方、拉拽二断言回补、补 _5 终点帧）：
+	#      shot_wingpull_1 手入场过枪身上方（wing_t≈0.45s，拉1 起点前——
+	#         旧门 0.3s 手尚在枪尾托体结构后不可辨）
+	#      _2 拉1 峰值（翼角 +10° 下压到底，喷气锥爆亮窗内）
+	#      _3 拉1 回弹谷底（松手边沿快回初速 -60°/s 转欠阻尼弹簧，首负过冲
+	#         ~-4°——vel 过零翻正+翼角仍负的最先帧，与 _2 翼角反向 14° 可辨）
+	#      断言「拉拽二」＝_wing_pulls_done==2+翼角过阈（第 2 轮验收回补：
+	#         两下次数的运行时留存，不落图只落档）
+	#      _4 手离场中段（wing_t≈2.2s，OUT_T 起 0.2s=翼上沿→枪身上方跳段
+	#         中点）
+	#      _5 离场终点（wing_t≥2.5s 门后越 2.55 手隐边界定格——手已隐+
+	#         收枪回位起步，第 2 轮验收补帧）
+	#      门全走状态量（wing_t 时基、_wing_ang 翼角、_wing_vel 角速度、
+	#      _wing_pulls_done 拉拽计数），不吃裸帧数。本段检视继续走完（release
+	#      延后到五帧拍毕），随后等 _inspect_t 归零收枪——下段气缸特写的检视
+	#      门（_inspect_t > idur-0.10）不吃尾翼段残表。拉拽节奏为推断档（帖内
+	#      两段检视 GIF 均不含拉翼帧——判图按引擎段图证核对衔接即可）
+	var wpull_in := func() -> bool:
+		return main.guns._inspect_t > 0.0 \
+				and main.guns._inspect_t <= main.guns.WING_DUR * 0.9 - 0.15
+	check("探针尾翼段入场（wing_t≥0.45s 手越枪身上方）",
+			await wait_until(wpull_in, 400))
+	await _wait_draw()
+	shot("res://out/shot_wingpull_1.png")
+	var wpull_1 := func() -> bool:
+		return main.guns._wing_ang >= main.guns.WING_PULL_DEG * 0.8
+	check("探针拉拽一（翼角过峰阈）", await wait_until(wpull_1, 120))
+	await _wait_draw()
+	shot("res://out/shot_wingpull_2.png")
+	var wpull_vly := func() -> bool:
+		return main.guns._wing_pulls_done == 1 \
+				and main.guns._wing_vel > 0.0 \
+				and main.guns._wing_ang < -1.0
+	check("探针拉1回弹谷底（vel 翻正+翼角负过冲）",
+			await wait_until(wpull_vly, 180))
+	await _wait_draw()
+	shot("res://out/shot_wingpull_3.png")
+	var wpull_2 := func() -> bool:
+		return main.guns._wing_pulls_done == 2 \
+				and main.guns._wing_ang >= main.guns.WING_PULL_DEG * 0.8
+	check("探针拉拽二（计数 2+翼角过阈）", await wait_until(wpull_2, 180))
+	var wout_mid := func() -> bool:
+		return main.guns._inspect_t > 0.0 \
+				and main.guns._inspect_t <= main.guns._wing_extra() - 2.2
+	check("探针手离场中段（wing_t≥2.2s 沿枪身上方收回）",
+			await wait_until(wout_mid, 400))
+	await _wait_draw()
+	shot("res://out/shot_wingpull_4.png")
+	var wout_end := func() -> bool:
+		return main.guns._inspect_t > 0.0 \
+				and main.guns._inspect_t <= main.guns._wing_extra() - 2.5
+	check("探针手离场终点（wing_t≥2.5s 门）",
+			await wait_until(wout_end, 400))
+	await frames(10)   # 越 WING_HIDE_T 2.55 手隐边界再拍：_5 定格手已隐+
+	await _wait_draw()   # 收枪回位起步（60fps≈wing_t 2.67，回位淡出 ~1/3）
+	shot("res://out/shot_wingpull_5.png")
 	Input.action_release("hd_inspect")
 	check("检视三帧活塞位移不同", absf(px1 - px2) > 1e-5
 			and absf(px2 - px3) > 1e-5 and absf(px1 - px3) > 1e-5,
@@ -1159,7 +1246,9 @@ func _initialize() -> void:
 	# 气缸特写：隔 2 帧再按（防边沿互吃），高转平台（rpm≥0.9，点火灯组已亮）
 	# 才冻结主循环定格——手动摆枪架让机匣侧顶对准气缸组（照皮肤变体/机匣
 	# 特写段的冻结摆拍协议；机位 tune2_p2 实测定稿：四缸筒环+筒内铜橙活塞+
-	# 点火灯组+红格栅满幅可辨）
+	# 点火灯组+红格栅满幅可辨）——起按前先等上一检视（含尾翼段）走完归零，
+	# 触发门 _inspect_t > idur-0.10 才对得上新检视起点
+	await wait_until(func() -> bool: return main.guns._inspect_t <= 0.0, 300)
 	await frames(2)
 	Input.action_press("hd_inspect")
 	check("检视二触发（气缸特写前提）", await wait_until(
@@ -1183,6 +1272,18 @@ func _initialize() -> void:
 					and main.guns._jet_m.emission_energy_multiplier > 0.5,
 			"e=%.2f" % (main.guns._jet_m.emission_energy_multiplier
 					if main.guns._jet_m != null else -1.0))
+	# 尾翼特写（2026-11-27 定案：流线翼图证）——检视侧面姿态对准尾翼：
+	# 3 段渐变上扬弧线+后缘蓝流光条+双喷气锥应可辨（翼心 gun-local
+	# (0,0.076,0.100)·GUN_SCALE 0.62 过 rot 落 holder 局部 (0.055,0.053,
+	# 0.014)——holder 逐项反偏取中，z -0.095 特写距离；pitch -6 微昂尾：
+	# 实拍纠偏——检视侧面档 +8° 俯仰把枪尾压低 ~0.010，吃掉翼弧 ~0.005
+	# 的上扬量、判图读成下栽，翻 -6° 尾昂弧线才可辨（tmp_wing_pose 预演
+	# 三档对比定稿，预演脚本用完即删）
+	h_en.position = Vector3(-0.055, -0.056, -0.095)
+	h_en.rotation_degrees = Vector3(-6, 76, -2)
+	await frames(2)
+	await _wait_draw()
+	shot("res://out/shot_wing_stream.png")
 	h_en.position = Vector3(0.0, -0.045, -0.32)
 	h_en.rotation_degrees = Vector3(16, 30, 0)
 	await frames(2)
@@ -2381,7 +2482,9 @@ func _initialize() -> void:
 	main.set_process(true)
 	main.hud.visible = hud_mx
 
-	print("[probe] 探针完成：实存 %d 张 → res://out/  （断言 %d 项 / 失败 %d）" % [shots_saved, checks, fails])
+	print(("[probe] 探针完成：实存 %d 张 → res://out/  （断言 %d 项 / 失败 %d）"
+			+ "  断言档 → res://out/probe_checks.log")
+			% [shots_saved, checks, fails])
 	# 收尾还原真实存档：探针内装配瞄具触发过 stash.save()，不能留在用户档里
 	# （与看门狗强制收尾共用 _restore_save）
 	_done = true

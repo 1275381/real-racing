@@ -673,6 +673,16 @@ func _run() -> void:
 			and eng_n.find_child("gt_wing", true, false) != null
 			and eg_pk.get("flame", null) != null
 			and (eg_pk.get("sweep", []) as Array).size() == 6)
+	# 翼高断言（2026-11-27 流线翼定案硬指标）：翼片最高点 y ≤ 0.006+公差
+	# ——低矮不挡视野；遍历 gt_wing 全部翼 mesh（3 段渐变翼身+后缘蓝条+
+	# 两侧喷气锥）position.y 取最大（立柱/端板已删，无高点越过）
+	var wing_top := -1.0
+	var wing_n: Node3D = eng_n.find_child("gt_wing", true, false)
+	if wing_n != null:
+		for wm_e in wing_n.find_children("*", "MeshInstance3D", true, false):
+			wing_top = maxf(wing_top, (wm_e as MeshInstance3D).position.y)
+	check("流线翼低矮不挡视野（翼 mesh 最高 y≤0.006+0.001 公差）",
+			wing_top >= 0.0 and wing_top <= 0.007, "y=%.4f" % wing_top)
 	var lbl_n := 0
 	for lb_e in eng_n.find_children("*", "Label3D", true, false):
 		lbl_n += 1
@@ -696,6 +706,52 @@ func _run() -> void:
 			"x=%.4f/%.4f/%.4f" % [px_a, px_b, px_c])
 	Input.action_release("hd_inspect")
 	main.guns.update(1.0 / 60.0)   # 松手帧：I 边沿归位
+	# 2e-f. 手拉尾翼互动段（2026-11-27 用户定案「手拉两下可以动的那个尾翼」
+	#       ——检视两段式后段）：a.总时长=引擎段+尾翼段（空仓分支不追加）；
+	#       b.越过引擎段后手替身可见且逐帧向尾翼移动；c.拉拽两下 gt_wing
+	#       rotation.x 两次偏转峰；d.检视走完手隐+翼角回位。接在 2e-e 检视
+	#       活塞采样后、同一次检视内续走（_inspect_t 12.5s 一路步进）
+	check("检视总时长=引擎段+尾翼段（分段合成，有弹追加）",
+			main.guns._inspect_total() == main.guns._inspect_dur()
+					+ main.guns.WING_DUR,
+			"total=%.2f eng=%.2f wing=%.2f" % [main.guns._inspect_total(),
+					main.guns._inspect_dur(), main.guns.WING_DUR])
+	for i in 600:
+		main.guns.update(1.0 / 60.0)   # 引擎段剩余步进到尾翼段入场中段
+		if main.guns._inspect_t <= main.guns.WING_DUR * 0.95:
+			break
+	var wh_n: Node3D = main.guns._wing_hand
+	check("尾翼段手替身在位（复用换弹手构造·独立实例）",
+			wh_n != null and wh_n.visible)
+	var wpos_a: Vector3 = wh_n.global_position
+	for i in 10:
+		main.guns.update(1.0 / 60.0)   # 入场段逐帧推进
+	var wpos_b: Vector3 = wh_n.global_position
+	check("手入场随帧向尾翼移动（_inspect_t 越引擎段后）",
+			wpos_b.distance_to(wpos_a) > 0.001,
+			"d=%.4f" % wpos_b.distance_to(wpos_a))
+	var wing_tn: Node3D = main.guns._guns["primary"]["wing"]
+	var peaks := 0
+	var above := false
+	for i in 185:
+		main.guns.update(1.0 / 60.0)   # 3.08s：覆盖两拉+回弹+离场+段毕
+		var ax: float = wing_tn.rotation_degrees.x
+		if ax >= main.guns.WING_PULL_DEG * 0.8 and not above:
+			peaks += 1   # 越阈进峰（下压段）
+			above = true
+		elif ax < main.guns.WING_PULL_DEG * 0.4:
+			above = false   # 回落出峰（回弹段）——下峰等下次
+	check("拉拽两下 gt_wing rotation.x 两次偏转峰",
+			peaks == 2, "peaks=%d" % peaks)
+	for i in 240:
+		main.guns.update(1.0 / 60.0)   # 走完尾翼段余下秒（收枪熄火）
+		if main.guns._inspect_t <= 0.0:
+			break
+	check("检视结束手隐+翼角回位（收尾兜底链）",
+			main.guns._inspect_t <= 0.0 and not wh_n.visible
+			and absf(wing_tn.rotation_degrees.x) < 0.01,
+			"t=%.3f ax=%.3f" % [main.guns._inspect_t,
+					wing_tn.rotation_degrees.x])
 	main.guns.try_fire()           # 开火联动（常规路径尾：颤动+相位前踢）
 	check("开火联动 _engine_jolt>0（点火感颤动起步）",
 			main.guns._engine_jolt > 0.0,
@@ -708,6 +764,9 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("空仓检视走特殊分支（_inspect_empty）", main.guns._inspect_t > 0.0
 			and main.guns._inspect_empty, "t=%.3f" % main.guns._inspect_t)
+	check("空仓检视不追加尾翼段（total=引擎段）",
+			main.guns._inspect_total() == main.guns._inspect_dur(),
+			"total=%.2f" % main.guns._inspect_total())
 	for i in 210:
 		main.guns.update(1.0 / 60.0)   # 3.5s：越过爆缸点（0.34×9.5≈3.23s）
 	check("空仓检视爆缸（jolt 尖峰+尾排喷火点亮）",

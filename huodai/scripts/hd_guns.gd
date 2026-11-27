@@ -105,6 +105,18 @@ const INSPECT_SIDE_ROT := Vector3(8.0, 74.0, -2.0)    # 侧面展示姿态角（
                                                       # 横平展侧视——首拍 32° 枪头仍
                                                       # 指向屏深处判图读不出侧轮廓，
                                                       # probe 实拍纠偏）
+const INSPECT_WING_OFF := Vector3(-0.04, 0.10, 0.28)  # 尾翼段展示位姿偏移（2026-11-27
+                                                      # 手拉尾翼段：收向屏幕中央+拉近
+                                                      # ——probe 实拍判图四轮：平持位
+                                                      # 翼在右下角外；翼沉画面下沿外；
+                                                      # yaw18 翼甩右下角；yaw6 翼贴右
+                                                      # 缘中下，此档抬高归正收中）
+const INSPECT_WING_ROT := Vector3(-24.0, 0.0, -4.0)   # 尾翼段展示姿态角（度）：后仰
+                                                      # 24° 枪口上抬+枪尾下压——枪尾
+                                                      # 翼横贯画面下沿（考证清单12
+                                                      # 「第一人称下横贯画面下沿」；
+                                                      # 30° 翼出画面下沿、yaw 档翼甩
+                                                      # 右侧——实拍三轮收档）
 const INSP_RAISE_PH := 0.14     # 检视演出：起检上举段占比（顶面展示到位）
 const INSP_FLIP_PH := 0.40      # 顶面→侧面翻转段起点占比
 const INSP_FLIP_END_PH := 0.56  # 翻转段终点占比（侧面展示起）
@@ -114,6 +126,51 @@ const INSP_CARD_WIN := Vector2(0.10, 0.42)   # 车钥匙遥控卡入画窗口（
 const INSP_SWEEP_WIN := Vector2(0.56, 0.88)  # 流光沿车体扫过窗口（侧面展示段）
 const BLOW_PH := 0.34           # 空仓特殊检视：机械增压拉满→爆缸点（占比）
 const FLAME_END_PH := 0.86      # 空仓特殊检视：尾排喷火收熄点（占比）
+
+## 手拉尾翼互动段（2026-11-27 用户定案「手拉两下可以动的那个尾翼」：检视
+## 扩展两段式——引擎启动段（ENGINE_PARTS.dur，行为零改动）→ 尾翼段（本表，
+## 仅普通有弹检视追加；空仓特殊分支整段定格顶面爆缸演出，无手拉段）。
+## 考证：TapTap 评测 raw HTML「枪托收成超跑尾翼轮廓，你的每一次拉动都能感
+## 觉到引擎在回应」「拉动『尾翼』还会有大量气体在流线型的枪身两侧喷涌而出」
+## （多次拉拽+每次有效+喷气反馈）；17173 官方「有弹状态…大排量引擎启动检
+## 视动作」在前、拉动尾翼在后（衔接顺序）。拉翼帧未入帖内两段检视 GIF（各
+## 约 2.7s 只截到钥匙/引擎段），拉拽节奏（快拉慢回/间隔短促）与翼面回落晃
+## 动次数为推断（features 已如实标注，本表取快拉 0.18s+慢回弹簧晃停档）：
+const WING_DUR := 3.0           # 尾翼段总时长（秒）：入场 0.5+两拉 1.5+离场 1.0
+const WING_IN_T := 0.50         # 手入场毕=第一拉起点（右手越枪身上方伸向枪尾）
+const WING_P1_END_T := 0.68     # 第一拉下压毕（快拉 0.18s——节奏推断档）
+const WING_P2_T := 1.25         # 第二拉起点（与拉1 间隔短促，回弹窗口 0.57s）
+const WING_P2_END_T := 1.43     # 第二拉下压毕
+const WING_OUT_T := 2.00        # 手离场起点（松翼沿枪身上方收回握把）
+const WING_HIDE_T := 2.55       # 手隐（先于段毕，与换弹手 HAND_HIDE_T 同思路）
+const WING_PULL_DEG := 10.0     # 拉拽偏转角（度，rotation.x 正角=+z 翼端下沉；
+                                # 考证偏转 8~12° 档取中）
+const WING_STIFF := 180.0       # 翼面回弹弹簧刚度（ω≈13.4rad/s≈2.1Hz 晃动）
+const WING_DAMP := 9.0          # 翼面阻尼（ζ≈0.34 欠阻尼——回弹晃 2~3 次衰减
+                                # 停稳，晃动次数物理推断见上）
+const WING_RELEASE_VEL := -60.0 # 松手瞬间回弹初速（度/s，快回弹手感）
+const WING_JOLT := 0.9          # 拉拽引擎回应注入颤动能量（_engine_jolt 同槽：
+                                # 活塞高频抖+喷气锥爆亮+灯组增亮——「每一次拉
+                                # 动都能感觉到引擎在回应」的视觉/声学载体）
+## 尾翼段手锚（wing 节点局部偏移——wing 枢轴在 eng z 0.148，翼面三段铺
+## z' -0.018~0.080、后缘流光条 z'=0.0805；把握翼点压在后段近后缘（第 1 轮
+## 验收修复：旧 z'=0.047 中段握翼+0.55 手罩住翼板主体只剩翼尖与 TF 一角，
+## 实拍判图改后挪——指勾后缘、翼面中前段+TF 标全程可读）；
+## 入场/离场沿枪身上方走（ref_04 B站封面手越枪尾上沿+GIF1 f63-f66 回位路径）
+const WHAND_ENTRY_OFF := Vector3(0.14, 0.02, -0.10)  # 入画起点（握把右上方画面外）
+const WHAND_GRIP_OFF := Vector3(0.0, 0.012, 0.072)   # 握翼点（翼后段上沿近后缘）
+const WHAND_PULL_OFF := Vector3(0.0, -0.024, 0.078)  # 下拉最低点（手行程>翼行程）
+const WHAND_OVER_OFF := Vector3(0.0, 0.075, 0.02)    # 离场中转（枪身上方）
+const WHAND_EXIT_OFF := Vector3(0.13, -0.18, -0.12)  # 收回终点（握把右下画面外）
+const WHAND_ENTRY_ROT := Vector3(-30.0, 15.0, 0.0)   # 手姿态角（手模型局部，
+const WHAND_GRIP_ROT := Vector3(-88.0, 8.0, -6.0)    #   指端朝下勾翼上沿——
+const WHAND_PULL_ROT := Vector3(-78.0, 8.0, -6.0)    #   probe 实拍校参定稿）
+const WHAND_OVER_ROT := Vector3(-40.0, 10.0, 0.0)
+const WHAND_EXIT_ROT := Vector3(20.0, -15.0, 0.0)
+const WHAND_SCALE := 0.42       # 拉翼手近距缩放：尾翼段枪拉近后枪尾离相机
+                                # ~0.2m，0.16m 手低模贴镜占半屏（probe 实拍
+                                # 判图）——旧 0.55 深色手罩住翼板主体（第 1
+                                # 轮验收），再缩 42% 让偏转全程可读
 const HIDE_ZOOM := 3.0                             # 开镜倍率≥3 且到位 → 藏枪模
 const RD_WIN_W := 0.06     # 红点镜玻璃窗宽（枪身局部 m）——无框反射式大窗
 const RISER_H := 0.024            # 镜体增高架抬高量（2026-10-28；rd_aim_y/AABB 顶自动跟随）
@@ -291,6 +348,8 @@ var _sweep_mats: Array = []         # 彗星段发光材质（头亮尾淡，能
 var _jet_nodes: Array = []          # 尾翼两侧喷气锥×2（检视高转/开火颤动点亮——拉动
                                     # 尾翼喷气互动）
 var _jet_m: StandardMaterial3D      # 喷气锥发光材质（共享一枚，能量脉冲）
+var _jet_trail_m: StandardMaterial3D  # 喷气拖尾半透明材质（第 2 轮验收加，
+                                    #   同一 jet_e·0.8 联动）
 var _blow_lamp: MeshInstance3D      # 爆缸警示灯盘（爆缸瞬间闪红，衰减熄灭）
 var _blow_m: StandardMaterial3D     # 爆缸灯发光材质
 var _flame_mats: Array = []         # 尾排喷火双层锥发光材质 [外焰, 内焰]
@@ -306,6 +365,18 @@ var _engine_fx_keep: Array = []     # 引擎材质永久注册表（第 2 轮门
 var _engine_jolt := 0.0             # 开火联动颤动能量（try_fire 置 1.0，此处衰减）
 var _engine_phase := 0.0            # 活塞往复相位（rad；直列四缸 1&4 同相 2&3 反相）
 var _engine_rpm := 0.0              # 平滑转速 0..1（检视包络驱动，帧间缓变）
+var _wing_node: Node3D              # 尾翼可动节点（gt_wing——检视尾翼段 rotation.x
+                                    # 弹簧偏转；引用刷新唯一入口 _equip，照引擎组
+                                    # 教训：enter 不清引用）
+var _wing_hand: Node3D              # 拉翼手替身（复用 _build_hand 构造的第二实例，
+                                    # 挂 vm 相机——独立路径不污染换弹手 _hand）
+var _wing_ang := 0.0                # 翼面当前偏转角（度；拉拽下压/回弹弹簧状态）
+var _wing_vel := 0.0                # 翼面角速度（度/s；松手回弹初速置
+                                    # WING_RELEASE_VEL 欠阻尼晃停）
+var _wing_pulls_done := 0           # 本检视已触发拉拽次数（0..2；拉1/拉2 起点边沿
+                                    # +1，同步注入 _engine_jolt+声浪回应）
+var _wing_prev_pull := false        # 上一帧翼是否处下压段（松手边沿检测——回弹
+                                    # 初速只在压段→自由段跳变时置一次）
 var _inspect_t := 0.0               # 检视剩余秒（>0 = 检视中；开火/换弹/切枪/ADS 打断）
 var _inspect_prev := false          # I 键边沿检测（只按 is_action_pressed 读法）
 var _belt_path := PackedVector3Array()  # 供弹弧折线点阵（贝塞尔细采样+HOLD_DELTA 烘焙）
@@ -393,11 +464,16 @@ func enter(loadout: Dictionary) -> void:
 	_engine_jolt = 0.0
 	_engine_rpm = 0.0
 	_engine_phase = 0.0
+	_wing_ang = 0.0      # 尾翼段动态一并清零（翼角/角速度/拉拽计数；引用同款不清）
+	_wing_vel = 0.0
+	_wing_pulls_done = 0
 	# 注意：不清 _belt_slide——同枪复用 holder 时不重挂滑条，成员引用由
 	# _equip 末尾从 _guns[slot]["belt"] 刷新（清空=复用路径引用永久丢失，
 	# 2026-11-03 用户「没看见弹链滑动」的真根因）。_engine 同款教训：不清
-	# 引用，_equip 唯一刷新点（2026-11-20 极光魅影引擎组照抄）
+	# 引用，_equip 唯一刷新点（2026-11-20 极光魅影引擎组照抄）——_wing_node/
+	# _wing_hand 同规矩（引用不清、动态清零，翼角复位在 _equip 接管时做）
 	_hide_hand()
+	_hide_wing_hand()
 	if tracers != null:
 		tracers.hide_all()
 	for s in _im_pool:
@@ -586,8 +662,8 @@ func update(dt: float) -> void:
 	if i_now and not _inspect_prev and _engine != null and reloading <= 0.0 \
 			and not _aiming and not fire_pressed and _burst_left <= 0 \
 			and _trig_delay <= FIRE_GATE and _ads < 0.3:
-		_inspect_t = _inspect_dur()
-		_inspect_empty = ammo <= 0
+		_inspect_empty = ammo <= 0   # 先定分支再取总时长（尾翼段只在普通有弹检视追加）
+		_inspect_t = _inspect_total()
 		_blown = false
 		if audio != null and audio.has_method("play_engine"):
 			# 引擎点火声浪（hd_audio ENGINE_TUNE ~1.5s）；空仓分支机械增压
@@ -656,17 +732,39 @@ func update(dt: float) -> void:
 		ads_pos = Vector3(0.0, -GUN_SCALE * float(g["aim_y"]), GUN_ADS_Z)
 	_stab_t = maxf(0.0, _stab_t - dt * 5.0)
 	# 检视姿态（极光魅影引擎启动·加长演出 9.5s 三段——第 1 轮验收：对照考证
-	# 8~13s 加长 + 补「顶面→侧面翻转依次展示+流光沿车体扫过」段）：起检 14%
-	# 缓入上举进顶面展示 → 40%~56% 翻转侧面展示 → 88% 起缓出收回——
-	# smoothstep 包络与换弹偏移同槽叠加共存（检视门禁换弹，同帧叠加只在打断
-	# 残帧出现，无冲突）；空仓特殊分支整段定格顶面引擎舱（爆缸/喷火全程可读）
+	# 8~13s 加长 + 补「顶面→侧面翻转依次展示+流光沿车体扫过」段；2026-11-27
+	# 追加尾翼段后仍按引擎段时基——引擎段三段位姿逐帧不变，尾翼段 eng_ph 定
+	# 格 1.0=枪回平持（手拉演出在平持姿态下进行））：起检 14% 缓入上举进顶面
+	# 展示 → 40%~56% 翻转侧面展示 → 88% 起缓出收回——smoothstep 包络与换弹
+	# 偏移同槽叠加共存（检视门禁换弹，同帧叠加只在打断残帧出现，无冲突）；
+	# 空仓特殊分支整段定格顶面引擎舱（爆缸/喷火全程可读，且无尾翼段）
 	var insp_off := Vector3.ZERO
 	var insp_rot := Vector3.ZERO
 	if _inspect_t > 0.0 and reloading <= 0.0:
-		var pose := _inspect_pose(
-				clampf(1.0 - _inspect_t / _inspect_dur(), 0.0, 1.0))
+		var pose := _inspect_pose(clampf(
+				1.0 - (_inspect_t - _wing_extra()) / _inspect_dur(),
+				0.0, 1.0))
 		insp_off = pose[0]
 		insp_rot = pose[1]
+		# 尾翼段摆位（2026-11-27 probe 实拍判图：平持位枪尾翼在画面右下角
+		# 外、拉翼演出不可读——追加「尾翼展示位姿」：后仰收中拉近，枪尾翼
+		# 横贯画面下沿（考证清单12）；摆入 0.10~0.45s 与手入场同步，WING_HIDE_T
+		# 起 0.45s 摆出回平持衔接收枪；空仓分支无尾翼段（_wing_extra=0 不进）
+		var wtot_p := _wing_extra()
+		if _inspect_t <= wtot_p:
+			var wt_p := wtot_p - _inspect_t
+			var wk := 0.0
+			if wt_p < 0.45:
+				var kk := clampf((wt_p - 0.10) / 0.35, 0.0, 1.0)
+				wk = kk * kk * (3.0 - 2.0 * kk)
+			elif wt_p < WING_HIDE_T:
+				wk = 1.0
+			else:
+				var ko := clampf((wt_p - WING_HIDE_T)
+						/ (WING_DUR - WING_HIDE_T), 0.0, 1.0)
+				wk = 1.0 - ko * ko * (3.0 - 2.0 * ko)
+			insp_off = INSPECT_WING_OFF * wk
+			insp_rot = INSPECT_WING_ROT * wk
 	holder.position = GUN_HIP_POS.lerp(ads_pos, _ads) + _reload_off + insp_off \
 			+ Vector3(0.0, -0.012 * _stab_t, -0.075 * sin(_stab_t * PI))
 	holder.rotation_degrees = GUN_HIP_ROT.lerp(Vector3.ZERO, _ads) + _reload_rot \
@@ -847,9 +945,10 @@ func _belt_point_at(ln: float) -> Vector3:
 ##   固定螺栓×6 + 尾端红色散热格栅 + 尾排管 + 蓝发光鳍×6 + 车身侧面流光
 ##   纹路条×3（发光随 rpm「能量传导」）+ 顶部橙色点火灯组×5（点火时点亮）
 ##   + 车贴拉花（RS7/GT2/V8/TF 字样 Label3D + 碳纤纹理块×4 + 赛道号码标
-##   「07」白盘双侧）+ 白色车钥匙遥控卡道具（检视演出入画）+ GT 双柱大尾
-##   翼（双立柱+碳纤翼片+端板，尾翼两侧喷气锥）+ 尾排喷火锥（空仓特殊检
-##   视）+ 爆缸警示灯盘 + 流光扫过彗星段×6。
+##   「07」白盘双侧）+ 白色车钥匙遥控卡道具（检视演出入画）+ 低矮斜掠一
+##   体尾翼（2026-11-27 定案：流线薄翼 3 段渐变拼上扬弧线+后缘蓝流光条，
+##   无立柱无端板——旧 GT 双柱大尾翼重做；翼后缘两侧喷气锥）+ 尾排喷火
+##   锥（空仓特殊检视）+ 爆缸警示灯盘 + 流光扫过彗星段×6。
 ## 发光件材质表挂 engine_group meta "engine_fx"（rpm 驱动组）/ "sweep_mats"
 ## / "jet_m" / "blow_m" / "flame_mats"（演出事件驱动组），_equip 随引用一并
 ## 刷新
@@ -931,6 +1030,15 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	jet_m.emission_enabled = true
 	jet_m.emission = Color(0.55, 0.85, 1.0)
 	jet_m.emission_energy_multiplier = 0.0
+	# 喷气拖尾材质（第 2 轮验收：白蓝发光锥读作实心灯棒，非考证清单6/
+	# TapTap「大量气体在枪身两侧喷涌而出」的弥漫气雾感——加半透明淡蓝
+	# 外层拖尾锥扩体量；能量仍 _tick_fx 按同一 jet_e 联动）
+	var jet_trail_m := StandardMaterial3D.new()
+	jet_trail_m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	jet_trail_m.albedo_color = Color(0.62, 0.82, 1.0, 0.30)
+	jet_trail_m.emission_enabled = true
+	jet_trail_m.emission = Color(0.55, 0.85, 1.0)
+	jet_trail_m.emission_energy_multiplier = 0.0
 	var flame_om := StandardMaterial3D.new()
 	flame_om.albedo_color = Color(0.30, 0.08, 0.02)
 	flame_om.emission_enabled = true
@@ -1043,35 +1151,120 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 		_ebox(card, btn_m, Vector3(0.001, 0.007, 0.007),
 				Vector3(0.0022, -0.036, bz))
 	_ebox(card, btn_m, Vector3(0.001, 0.02, 0.03), Vector3(0.0022, -0.066, 0.028))
-	# —— GT 双柱大尾翼（考证 item2/10：枪托位改 GT 双柱大尾翼轮廓——双立
-	#    柱骑托体上，碳纤翼片+两侧端板架在缓冲管上方，托体原结构不动）——
+	# —— 低矮弧线一体尾翼（2026-11-27 第 2 轮验收重修：三段倒角盒拼弧被
+	#    判「平直三角板」——改参数曲面真弧线翼：单张网格翼面，平面投影
+	#    前后缘双曲率（前缘后掠 s²·10mm / 后缘前收 s²·12mm=弧形翼平面）
+	#    + 弦向鸭尾上翘弧（camber 0.001→0.0052，u^1.62 后段加速）+ 圆头
+	#    尖尾薄翼型（半厚 1.3mm、展向 sqrt 收尖），_grid_loft 共享顶点+
+	#    有限差分法线=平滑弧面着色（直棱观感根治）；翼面最高点 y≤0.0052
+	#    低矮不挡视野（旧翼片最高 0.006——整体不超旧高）；碳纤材质——
+	#    GT 尾翼命名契约不变（gt_wing/测试 find_child 在位断言沿用）——
+	#    2026-11-27 手拉尾翼段：wing 节点设旋转枢轴 z 0.148（翼面前缘/
+	#    托体连接处），翼弦全部位于枢轴后方 z' 0~0.084——拉拽 rotation.x
+	#    绕枢轴转时翼根前缘原地不动、翼面沉入整流罩顶=铰接鸭尾观感
+	#    （旧根前伸 z' −0.018 绕枢轴转 10° 会把翼根抬离托体 3mm 露缝）
 	var wing := Node3D.new()
 	wing.name = "gt_wing"
+	wing.position = Vector3(0, 0, 0.148)
 	eng.add_child(wing)
-	# 2026-11-21 用户「尾翼太挡视野，调低一点、调到前面」：翼片高度
-	# y 0.018→0.004（立柱同步降高 0.030→0.012）、整体前移 z 0.312→0.185
-	# （枪身中段——不再立在托尾高处挡瞄准线）
-	for px_w in [-0.020, 0.020]:
-		_ebox(wing, bolt_m, Vector3(0.006, 0.012, 0.010),
-				Vector3(px_w, 0.001, 0.185))
-	_ebox(wing, carbon_m, Vector3(0.100, 0.005, 0.036),
-			Vector3(0, 0.006, 0.185), Vector3(-10, 0, 0))
-	_ebox(wing, carbon_m, Vector3(0.004, 0.014, 0.044),
-			Vector3(-0.050, 0.004, 0.185), Vector3(-10, 0, 0))
-	_ebox(wing, carbon_m, Vector3(0.004, 0.014, 0.044),
-			Vector3(0.050, 0.004, 0.185), Vector3(-10, 0, 0))
-	_elabel(wing, "TF", Vector3(-0.0525, 0.004, 0.185), Vector3(0, -90, 0),
+	var wing_strip_m := StandardMaterial3D.new()
+	wing_strip_m.albedo_color = Color(0.03, 0.08, 0.18)
+	wing_strip_m.emission_enabled = true
+	# 第 2 轮验收「白色巨型光锥」根因：1.4 基能×rpm 系数 1.9≈2.7，远超
+	# 辉光阈值 1.05 炸白——压到 0.45 基能（检视满转 0.45×1.9≈0.86，蓝通
+	# 道不破阈值保持蓝色）+ 深饱和蓝 emission
+	wing_strip_m.emission = Color(0.16, 0.50, 1.0)
+	wing_strip_m.emission_energy_multiplier = 0.45
+	# —— 翼面：s 展向 [-0.985,0.985] / φ 翼型周向闭环（u_c=(1−cosφ)/2
+	#    0=前缘 1=后缘，圆头尖尾闭合）——
+	var wing_u := func(u: float, v: float) -> Vector3:
+		var ph := TAU * u
+		var ss := 1.97 * v - 0.985
+		var uc := (1.0 - cos(ph)) * 0.5
+		var zle := 0.010 * ss * ss
+		var zte := 0.084 - 0.012 * ss * ss
+		var yc := 0.0010 + 0.0042 * pow(uc, 1.62)
+		var th := 0.0013 * pow(sin(PI * pow(uc, 0.70)), 0.62) \
+				* sqrt(maxf(0.0, 1.0 - ss * ss))
+		return Vector3(0.052 * ss, yc + sin(ph) * th,
+				zle + uc * (zte - zle))
+	var wing_mi := MeshInstance3D.new()
+	wing_mi.name = "wing_surf"
+	wing_mi.mesh = _grid_loft(wing_u, 24, 14, carbon_m)
+	wing.add_child(wing_mi)
+	# 后缘蓝光带（第 2 轮验收「细线级」）：同曲面弦向收窄到尾段 5.5%
+	# （弦向 ~3.5-4.6mm 包边、沿弧线连续转折）+法向鼓 0.3mm 骑翼面无 z-fight
+	var band_u := func(u: float, v: float) -> Vector3:
+		var ph := TAU * u
+		var ss := 1.97 * v - 0.985
+		var uc := 0.945 + (1.0 - cos(ph)) * 0.5 * 0.055
+		var zle := 0.010 * ss * ss
+		var zte := 0.084 - 0.012 * ss * ss
+		var yc := 0.0010 + 0.0042 * pow(uc, 1.62)
+		var th := 0.0013 * pow(sin(PI * pow(uc, 0.70)), 0.62) \
+				* sqrt(maxf(0.0, 1.0 - ss * ss)) + 0.0003
+		return Vector3(0.052 * ss, yc + sin(ph) * th,
+				zle + uc * (zte - zle))
+	var band_mi := MeshInstance3D.new()
+	band_mi.name = "wing_band"
+	band_mi.mesh = _grid_loft(band_u, 10, 14, wing_strip_m)
+	wing.add_child(band_mi)
+	# —— 翼根碳纤整流罩（eng 静态子件，拉拽翼动罩不动）：驼峰自曲轴箱
+	#    尾顶平滑下掠入翼根——第 2 轮验收「翼根与托体衔接无法实证」：
+	#    前端 z 0.060 埋入曲轴箱（顶 y 0.010=箱顶平面无接缝）、尾端 z
+	#    0.152 顶 y 0.0013 咬入翼根下表面（z' 0.004 处 ≈0.0009）0.4mm
+	#    =实体互嵌无缝；侧影鼓弧半宽 24→44→30mm，底盘 y−0.006 沉入顶轨
+	#    （eng y−0.002）之下无底缝
+	var fair_u := func(u: float, v: float) -> Vector3:
+		var ps := TAU * v
+		var tn := clampf(u, 0.0, 1.0)
+		var hw := 0.024 + 0.020 * smoothstep(0.0, 0.5, tn) \
+				- 0.014 * smoothstep(0.62, 1.0, tn)
+		var spine := 0.0013 + 0.0087 * pow(1.0 - tn, 1.7)
+		var xx := hw * sin(ps)
+		var yy := -0.006 + (spine + 0.006) * pow(0.5 + 0.5 * cos(ps), 1.6)
+		return Vector3(xx, yy, 0.060 + 0.092 * tn)
+	var fair_mi := MeshInstance3D.new()
+	fair_mi.name = "wing_root_fair"
+	# 专用哑光深碳料（与翼身 carbon_m 同族更深一档）：carbon_m rough 0.32
+	# 的宽镜面高光让驼峰弧面读成亮灰——与近黑翼身断成两截，破坏「一体
+	# 长出」判读（首拍实证）；rough 0.55 柔化高光、albedo 压深
+	var fair_m := StandardMaterial3D.new()
+	# 缎面碳纤档：albedo 比翼身 carbon_m 亮半档（0.07→0.11）+ 清漆高光
+	# ——哑光黑在背光机位读「黑洞」（首拍实证），缎面微光让弧面轮廓在
+	# 暗部仍可辨，衔接判读不丢
+	fair_m.albedo_color = Color(0.11, 0.113, 0.12)
+	fair_m.metallic = 0.2
+	fair_m.roughness = 0.55
+	fair_m.clearcoat_enabled = true
+	fair_m.clearcoat = 0.4
+	fair_m.clearcoat_roughness = 0.35
+	fair_mi.mesh = _grid_loft(fair_u, 12, 18, fair_m)
+	eng.add_child(fair_mi)
+	_elabel(wing, "TF", Vector3(-0.0522, 0.0022, 0.040), Vector3(0, -90, 0),
 			0.00022)
-	_elabel(wing, "TF", Vector3(0.0525, 0.004, 0.185), Vector3(0, 90, 0),
+	_elabel(wing, "TF", Vector3(0.0522, 0.0022, 0.040), Vector3(0, 90, 0),
 			0.00022)
 	# 尾翼两侧喷气锥（拉动尾翼喷气互动——检视高转常燃+开火颤动脉冲，能量
-	# 驱动在 _tick_fx；锥体沿 +z 外八字）
+	# 驱动在 _tick_fx；锥体沿 +z 外八字，基口贴 0.04 展位后缘面（zte
+	# (0.77)≈0.077）随弧线，wing_jet_l/r 命名契约不变（_tick_fx 按名驱动
+	# 能量）；随翼面联动偏转）
 	for js in [-1.0, 1.0]:
 		var jet := _econe(wing, jet_m, 0.0025, 0.0075, 0.036,
-				Vector3(js * 0.044, 0.004, 0.221),
+				Vector3(js * 0.040, 0.0042, 0.084),
 				Vector3(90, 12.0 * js, 0))
 		jet.name = "wing_jet_%s" % ("l" if js < 0 else "r")
 		jet.visible = false
+		# 半透明加长拖尾锥（第 2 轮验收：核心锥 36mm 读作实心灯棒——
+		# 拖尾自核心锥尾端接出（z' 0.102→0.197），95mm 渐扩（r 0.0075→
+		# 0.018）外八字 12° 同轴续摆，alpha 0.30 弥漫气雾体量感；命名进
+		# wing_jet_* 契约=可见性随 _jet_nodes 同驱，能量 _tick_fx 按
+		# jet_e·0.8 联动（低于核心一档，锥内亮核外雾分层））
+		var trail := _econe(wing, jet_trail_m, 0.0075, 0.018, 0.095,
+				Vector3(js * 0.0477, 0.0042, 0.1495),
+				Vector3(90, 12.0 * js, 0))
+		trail.name = "wing_jet_trail_%s" % ("l" if js < 0 else "r")
+		trail.visible = false
 	# —— 尾排喷火锥（空仓特殊检视「爆缸→尾排喷火」：外焰橙+内焰亮黄双层
 	#    锥，默认隐身——visible/能量由 _tick_fx 空仓分支驱动）——
 	var flame := Node3D.new()
@@ -1100,10 +1293,13 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	eng.set_meta("engine_fx", [
 		{"m": strip_m, "base": 1.4, "fire": false},
 		{"m": fin_m, "base": 1.4, "fire": false},
+		{"m": wing_strip_m, "base": 0.45, "fire": false},   # 第 2 轮验收：后缘
+		#    光带大幅降能（旧 1.4——检视满转 2.7 破辉光阈值 1.05 炸白）
 		{"m": dot_m, "base": 2.8, "fire": true},
 	])
 	eng.set_meta("sweep_mats", sweep_ms)
 	eng.set_meta("jet_m", jet_m)
+	eng.set_meta("jet_trail_m", jet_trail_m)
 	eng.set_meta("blow_m", blow_m)
 	eng.set_meta("flame_mats", [flame_om, flame_cm])
 	# 材质生命周期钉死（第 2 轮门禁修复）：本次挂载的全部引擎材质进
@@ -1111,8 +1307,9 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	# 生命期消亡，RS 侧 pending 更新（_tick_fx 逐帧写 emission）永远命中
 	# 活 RID，teardown 不再刷 Parameter "material" is null
 	for m_keep: StandardMaterial3D in [block_m, tube_m, bolt_m, piston_m,
-			fin_m, strip_m, red_m, ex_m, dot_m, carbon_m, card_m, btn_m,
-			disc_m, jet_m, flame_om, flame_cm, blow_m]:
+			fin_m, strip_m, wing_strip_m, red_m, ex_m, dot_m, carbon_m,
+			fair_m, card_m, btn_m, disc_m, jet_m, jet_trail_m, flame_om,
+			flame_cm, blow_m]:
 		if not _engine_fx_keep.has(m_keep):
 			_engine_fx_keep.append(m_keep)
 	for sm_k: StandardMaterial3D in sweep_ms:
@@ -1122,6 +1319,11 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	# render layer 2，引擎件不进层 2 会在贴掩体失光时整组发黑）
 	for mi_v in eng.find_children("*", "MeshInstance3D", true, false):
 		(mi_v as MeshInstance3D).layers |= 1 << 1
+	# 翼根整流罩退层回 1（仅太阳/环境光）：罩顶弧面是全枪距 vm_fill
+	# （holder 原点、cull 层 2）最近的大曲面——0.6 能量近距平方衰减把它
+	# 打成白斑（首拍实证：层 2 白斑、退层后哑光碳正常）；碳黑件贴掩体
+	# 失光时本就近环境黑，退层零可读损失
+	fair_mi.layers = 1
 	return eng
 
 
@@ -1344,9 +1546,24 @@ func _mount_diamond(gun: Node3D, gid: String) -> Node3D:
 	return dia
 
 
-## 检视总时长（ENGINE_PARTS 表 dur；mk4=9.5s 加长演出档，缺省 2.6s 仅兜底）
+## 引擎段时长（ENGINE_PARTS 表 dur；mk4=9.5s 加长演出档，缺省 2.6s 仅兜底）
+## ——2026-11-27 追加尾翼段后本函数语义收紧为「引擎启动段」秒数：pose/_tick_fx
+## 包络全部按引擎段时基计算（引擎段行为零改动），检视触发点的总时长另取
+## _inspect_total()；回归门 8~13s 断言消费本函数，数值不变照旧过门
 func _inspect_dur() -> float:
 	return float(ENGINE_PARTS.get(cur_id, {}).get("dur", 2.6))
+
+
+## 尾翼段秒数（仅普通有弹检视追加 WING_DUR——空仓特殊分支整段定格顶面走
+## 爆缸/喷火演出，引擎熄火后无手拉段，追加 0）
+func _wing_extra() -> float:
+	return 0.0 if _inspect_empty else WING_DUR
+
+
+## 本次检视总时长=引擎段+尾翼段（_inspect_t 触发点初值唯一来源；_inspect_empty
+## 须先赋值再调——分支判定决定是否追加尾翼段）
+func _inspect_total() -> float:
+	return _inspect_dur() + _wing_extra()
 
 
 ## 检视演出位姿（枪架局部叠加量 [off, rot]）：ph=演出进度 0..1。
@@ -1440,6 +1657,47 @@ static func _elabel(root: Node3D, txt: String, pos: Vector3, rot: Vector3,
 	lb.rotation_degrees = rot
 	root.add_child(lb)
 	return lb
+
+
+## 参数曲面网格（2026-11-27 第 2 轮验收翼型修复的基底件）：fn(u,v)->Vector3
+## 采样 (nu+1)×(nv+1) 共享顶点网格 + 有限差分法线（共享顶点+平滑法线=
+## 真弧面着色，根治倒角盒拼弧的「平直棱线」观感）。u/v 都走 fn 闭式求值——
+## 法线用中心差分（步长 1/网格数）不依赖网格行列，翼面/后缘光带/翼根
+## 整流罩三处共用。
+static func _grid_loft(fn: Callable, nu: int, nv: int,
+		mat: StandardMaterial3D) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var du := 1.0 / float(nu)
+	var dv := 1.0 / float(nv)
+	var eps := 0.0015
+	for i in nu + 1:
+		var fu := minf(float(i) * du, 1.0)
+		for j in nv + 1:
+			var fv := float(j) * dv
+			var p: Vector3 = fn.call(fu, fv)
+			var pu: Vector3 = fn.call(minf(fu + eps, 1.0), fv) \
+					- fn.call(maxf(fu - eps, 0.0), fv)
+			var pv: Vector3 = fn.call(fu, minf(fv + eps, 1.0)) \
+					- fn.call(fu, maxf(fv - eps, 0.0))
+			var n := pu.cross(pv)
+			if n.length() > 1e-10:
+				n = n.normalized()
+			st.set_normal(n)
+			st.add_vertex(p)
+	for i in nu:
+		for j in nv:
+			var a := i * (nv + 1) + j
+			st.add_index(a)
+			st.add_index(a + nv + 1)
+			st.add_index(a + 1)
+			st.add_index(a + 1)
+			st.add_index(a + nv + 1)
+			st.add_index(a + nv + 2)
+	var mesh := st.commit()
+	mesh.surface_set_material(0, mat)   # 材质必须落 surface（缺省=白模/不可
+	# 判读——首拍实证翼面/光带漏材质渲染白线）
+	return mesh
 
 
 ## 每发视效钩（try_fire 常规路径尾调用）：弹链棘轮目标 +1 链距（_tick_fx
@@ -2028,6 +2286,7 @@ func _equip(slot: String) -> void:
 	_sweep_mats = []
 	_jet_nodes = []
 	_jet_m = null
+	_jet_trail_m = null
 	_blow_lamp = null
 	_blow_m = null
 	_flame_mats = []
@@ -2037,6 +2296,13 @@ func _equip(slot: String) -> void:
 	_inspect_prev = false
 	_engine_jolt = 0.0
 	_engine_rpm = 0.0
+	# 尾翼段（2026-11-27 手拉尾翼互动）动态清零+引用随槽刷新（同款教训）；
+	# 新接管翼节点归零旋转（上一局残角在 holder 复用链上不清自灭）
+	_wing_node = null
+	_wing_ang = 0.0
+	_wing_vel = 0.0
+	_wing_pulls_done = 0
+	_hide_wing_hand()
 	if _guns.has(slot) and _guns[slot].has("engine"):
 		_engine = _guns[slot]["engine"]
 		_pistons = _guns[slot]["pistons"]
@@ -2047,9 +2313,13 @@ func _equip(slot: String) -> void:
 		_jet_nodes = _guns[slot].get("jets", [])
 		_sweep_mats = _engine.get_meta("sweep_mats")
 		_jet_m = _engine.get_meta("jet_m")
+		_jet_trail_m = _engine.get_meta("jet_trail_m", null)
 		_blow_lamp = _guns[slot].get("blow_lamp")
 		_blow_m = _engine.get_meta("blow_m")
 		_flame_mats = _engine.get_meta("flame_mats")
+		_wing_node = _guns[slot].get("wing")
+		if _wing_node != null:
+			_wing_node.rotation_degrees.x = 0.0
 	# 只显示当前槽位枪模
 	for k in _guns:
 		var gi: Dictionary = _guns[k]
@@ -2234,6 +2504,7 @@ func _mount_slot(slot: String) -> void:
 		g_pack["jets"] = engine.find_children("wing_jet_*", "MeshInstance3D",
 				true, false)
 		g_pack["blow_lamp"] = engine.find_child("blow_lamp", true, false)
+		g_pack["wing"] = engine.find_child("gt_wing", true, false)   # 尾翼可动节点
 		g_pack["eng"] = true
 	if diamond != null:
 		# 按槽记账（钻石棱面件为静态组，无逐帧引用——挂载态快照键只服务
@@ -2838,6 +3109,11 @@ func _build_hand() -> Node3D:
 	add.call(Vector3(0.085, 0.05, 0.055), Vector3(0, -0.006, 0.095), Vector3.ZERO, cuff)
 	add.call(Vector3(0.07, 0.04, 0.05), Vector3(0, 0.0, 0.05), Vector3.ZERO, glove)
 	add.call(Vector3(0.072, 0.026, 0.09), Vector3(0, 0.0, -0.012), Vector3.ZERO, glove)
+	# 腕过渡块（第 2 轮验收：指分节直接接前臂黑块无腕/掌过渡——指根与
+	# 掌之间补一节渐厚腕块，手背轮廓成「指节→腕→掌→护腕」四级梯减，
+	# 拉翼勾握/换弹握匣两份手模同受益（同一 _build_hand 构造））
+	add.call(Vector3(0.068, 0.034, 0.046), Vector3(0, 0.004, -0.036),
+			Vector3.ZERO, glove)
 	# 四指：食指到小指各两节 [x 偏移, 近节长, 末节长]，指节微勾（握匣姿态）
 	var fingers: Array = [[0.027, 0.043, 0.03], [0.009, 0.045, 0.032],
 			[-0.009, 0.042, 0.03], [-0.027, 0.034, 0.026]]
@@ -2912,6 +3188,131 @@ func _update_reload_hand(prog: float) -> void:
 	_hand.visible = prog >= HAND_IN_T and prog < HAND_HIDE_T
 	_hand.global_position = mag.to_global(hand_off)
 	_hand.rotation_degrees = hand_rot
+
+
+## —— 手拉尾翼互动段（2026-11-27 检视两段式后段）——
+## 拉翼手替身：复用 _build_hand 构造的第二实例（同一双深灰战术手套——考证
+## 清单11「检视与换弹共用同一双手」；同一局同模型），挂 vm 相机独立路径驱
+## 动，不进换弹手锚（_hand）状态机——懒建同 _ensure_hand 先例
+func _ensure_wing_hand() -> void:
+	if _wing_hand != null or player == null or player.vm_cam == null:
+		return
+	_wing_hand = _build_hand()
+	_wing_hand.scale = Vector3.ONE * WHAND_SCALE   # 近距缩放（WHAND_SCALE 注）
+	player.vm_cam.add_child(_wing_hand)
+
+
+func _hide_wing_hand() -> void:
+	if _wing_hand != null:
+		_wing_hand.visible = false
+
+
+## 尾翼段逐帧驱动（_tick_fx 检视引擎块内调，仅普通检视引擎段演完后）：
+## wing_t=尾翼段已进行秒。编排（考证见 WING_* 常量区头注；拉拽节奏为推断
+## 档——帖内两段检视 GIF 均不含拉翼帧）：
+##   手入场（0~IN_T，从握把右上方越枪身伸向枪尾尾翼）→ 拉1 下压（快拉
+##   0.18s，手/翼 kinematic 跟随到 WING_PULL_DEG）→ 弹簧欠阻尼回弹晃停
+##   （慢回，ζ≈0.34 过冲 ~3.4° 再晃 2~3 次衰减——晃动次数物理推断档）
+##   → 拉2 同构 → 手离场（翼上沿→枪身上方→握把下收回，GIF1 f63-f66 回
+##   位路径）→ 隐手；拉拽下压全程注入 _engine_jolt（边沿起表、下压段持续
+##   续注防衰减——活塞高频抖+尾翼喷气锥爆亮+灯组增亮=「每一次拉动引擎在
+##   回应」的视觉载体，喷气可见窗=整个快拉+松手尾窗）+ 高音档声浪一声
+##   （play_engine 走轮换池不掐检视点火音；音高 1.3 推断档）
+func _tick_wing_pull(dt: float, wing_t: float) -> void:
+	var pulls := 0
+	if wing_t >= WING_P2_T:
+		pulls = 2
+	elif wing_t >= WING_IN_T:
+		pulls = 1
+	if pulls > _wing_pulls_done:
+		_wing_pulls_done = pulls
+		_engine_jolt = maxf(_engine_jolt, WING_JOLT)
+		if audio != null and audio.has_method("play_engine"):
+			audio.play_engine(1.3)
+	# 翼面目标角：下压段 kinematic 直达（probe 取帧门稳定），松手边沿给回
+	# 弹初速转弹簧自由衰减
+	var pull_k := -1.0
+	if _wing_pulls_done >= 2 and wing_t < WING_P2_END_T:
+		pull_k = clampf((wing_t - WING_P2_T) / (WING_P2_END_T - WING_P2_T),
+				0.0, 1.0)
+	elif _wing_pulls_done >= 1 and wing_t < WING_P1_END_T:
+		pull_k = clampf((wing_t - WING_IN_T) / (WING_P1_END_T - WING_IN_T),
+				0.0, 1.0)
+	var in_pull := pull_k >= 0.0
+	if in_pull:
+		var sk: float = pull_k * pull_k * (3.0 - 2.0 * pull_k)
+		_wing_ang = WING_PULL_DEG * sk
+		_wing_vel = 0.0
+		# 喷气可见窗口拉长（第 1 轮验收：拉拽峰值帧枪身两侧喷气不可读——
+		# 边沿注入 0.9 按 ENGINE_JOLT_DECAY 6.5/s 在 ~0.14s 内衰减归零，
+		# probe 采帧时只剩 rpm 底噪 2.4 档读不出「喷涌」；改下压全程持续
+		# 注入：喷气锥爆亮（jet_e 顶到 5.0）贯穿整个快拉 0.18s+松手后
+		# ~0.14s 尾窗，回弹谷帧 jolt 已归零——两帧亮/熄对照可辨）
+		_engine_jolt = maxf(_engine_jolt, WING_JOLT)
+	else:
+		if _wing_prev_pull:
+			_wing_vel = WING_RELEASE_VEL   # 松手瞬间快回初速
+		_wing_vel += (0.0 - _wing_ang) * WING_STIFF * dt \
+				- _wing_vel * WING_DAMP * dt
+		_wing_ang += _wing_vel * dt
+		_wing_ang = clampf(_wing_ang, -WING_PULL_DEG * 0.6,
+				WING_PULL_DEG * 1.2)   # 弹簧限幅防过冲穿模
+	_wing_prev_pull = in_pull
+	if _wing_node != null and is_instance_valid(_wing_node):
+		_wing_node.rotation_degrees.x = _wing_ang
+	# 手位姿五段插值（wing 节点局部锚 to_global——跟随枪体摆位/翼枢轴变换；
+	# 键帧模式照 _update_reload_hand 先例，不引入新状态机）
+	var hand_off: Vector3
+	var hand_rot: Vector3
+	if wing_t < WING_IN_T:
+		var k := clampf(wing_t / WING_IN_T, 0.0, 1.0)
+		hand_off = WHAND_ENTRY_OFF.lerp(WHAND_GRIP_OFF, k)
+		hand_rot = WHAND_ENTRY_ROT.lerp(WHAND_GRIP_ROT, k)
+	elif wing_t < WING_P1_END_T:
+		var k := clampf((wing_t - WING_IN_T) / (WING_P1_END_T - WING_IN_T),
+				0.0, 1.0)
+		hand_off = WHAND_GRIP_OFF.lerp(WHAND_PULL_OFF, k)
+		hand_rot = WHAND_GRIP_ROT.lerp(WHAND_PULL_ROT, k)
+	elif wing_t < WING_P2_T:
+		var k := clampf((wing_t - WING_P1_END_T) / (WING_P2_T - WING_P1_END_T),
+				0.0, 1.0)
+		hand_off = WHAND_PULL_OFF.lerp(WHAND_GRIP_OFF, k)
+		hand_rot = WHAND_PULL_ROT.lerp(WHAND_GRIP_ROT, k)
+	elif wing_t < WING_P2_END_T:
+		var k := clampf((wing_t - WING_P2_T) / (WING_P2_END_T - WING_P2_T),
+				0.0, 1.0)
+		hand_off = WHAND_GRIP_OFF.lerp(WHAND_PULL_OFF, k)
+		hand_rot = WHAND_GRIP_ROT.lerp(WHAND_PULL_ROT, k)
+	elif wing_t < WING_OUT_T:
+		var k := clampf((wing_t - WING_P2_END_T) / (WING_OUT_T - WING_P2_END_T),
+				0.0, 1.0)
+		hand_off = WHAND_PULL_OFF.lerp(WHAND_GRIP_OFF, k)
+		hand_rot = WHAND_PULL_ROT.lerp(WHAND_GRIP_ROT, k)
+	elif wing_t < WING_HIDE_T:
+		# 离场两跳：前 60% 翼上沿→枪身上方（OVER），后 40% 越身→握把下收
+		# 回（EXIT 画面外）——「松翼沿枪身上方收回」考证路径
+		var k := clampf((wing_t - WING_OUT_T) / (WING_HIDE_T - WING_OUT_T),
+				0.0, 1.0)
+		if k < 0.6:
+			var k1: float = k / 0.6
+			k1 = k1 * k1 * (3.0 - 2.0 * k1)
+			hand_off = WHAND_GRIP_OFF.lerp(WHAND_OVER_OFF, k1)
+			hand_rot = WHAND_GRIP_ROT.lerp(WHAND_OVER_ROT, k1)
+		else:
+			var k2: float = (k - 0.6) / 0.4
+			hand_off = WHAND_OVER_OFF.lerp(WHAND_EXIT_OFF, k2)
+			hand_rot = WHAND_OVER_ROT.lerp(WHAND_EXIT_ROT, k2)
+	else:
+		_hide_wing_hand()
+		return
+	_ensure_wing_hand()
+	if _wing_hand == null:
+		return
+	_wing_hand.visible = true
+	_wing_hand.global_position = _wing_node.to_global(hand_off) \
+			if _wing_node != null and is_instance_valid(_wing_node) \
+			else _wing_hand.global_position
+	_wing_hand.rotation_degrees = hand_rot
 
 
 func _tick_fx(dt: float) -> void:
@@ -3000,8 +3401,12 @@ func _tick_fx(dt: float) -> void:
 	if _engine != null and is_instance_valid(_engine) \
 			and not _engine.is_queued_for_deletion():
 		var idur := _inspect_dur()
+		var wtot := _wing_extra()   # 尾翼段秒数（空仓分支 0——时基即退化旧公式）
 		var insp := _inspect_t > 0.0
-		var ph := clampf(1.0 - _inspect_t / maxf(idur, 0.01), 0.0, 1.0)
+		# 引擎段进度（2026-11-27 追加尾翼段后仍按引擎段时基：_inspect_t 扣掉
+		# 尾翼段秒数——引擎段 rpm 包络/活塞/点火灯/喷气/爆缸/喷火逐帧零改动，
+		# 尾翼段 _inspect_t<wtot 时 eng_t≤0 → ph 定格 1.0=引擎段结束态）
+		var ph := clampf(1.0 - (_inspect_t - wtot) / maxf(idur, 0.01), 0.0, 1.0)
 		var env := 0.0
 		if insp and _inspect_empty:
 			if ph < BLOW_PH:   # 机械增压拉满（比普通档起步更狠）
@@ -3014,7 +3419,7 @@ func _tick_fx(dt: float) -> void:
 						audio.play_blow()
 				env = maxf(0.0, 0.5 - (ph - BLOW_PH) * 2.4) * 0.3   # 熄火档
 		elif insp:
-			var rise := clampf((idur - _inspect_t) / 0.6, 0.0, 1.0)
+			var rise := clampf((idur - _inspect_t + wtot) / 0.6, 0.0, 1.0)
 			env = (0.15 + 0.85 * rise) * clampf(_inspect_t / 0.5, 0.0, 1.0)
 		_engine_rpm += (env - _engine_rpm) * minf(1.0, dt * 8.0)
 		_engine_jolt = maxf(0.0, _engine_jolt - dt * ENGINE_JOLT_DECAY)
@@ -3066,6 +3471,9 @@ func _tick_fx(dt: float) -> void:
 		var jet_e := clampf(2.4 * _engine_rpm + 5.0 * _engine_jolt, 0.0, 5.0)
 		if _jet_m != null and is_instance_valid(_jet_m):
 			_jet_m.emission_energy_multiplier = jet_e
+		# 拖尾雾锥能量同源低一档（第 2 轮验收：核心亮+外雾淡的弥漫分层）
+		if _jet_trail_m != null and is_instance_valid(_jet_trail_m):
+			_jet_trail_m.emission_energy_multiplier = jet_e * 0.8
 		for jn_c in _jet_nodes.size():
 			var jn: MeshInstance3D = _jet_nodes[jn_c]
 			if jn == null or not is_instance_valid(jn):
@@ -3086,6 +3494,28 @@ func _tick_fx(dt: float) -> void:
 							.emission_energy_multiplier = \
 							(5.5 - 2.2 * float(fm_j)) * flick
 				_exh_flame.scale = Vector3(1.0, 1.0, 0.85 + 0.3 * flick)
+		# —— 尾翼段驱动（2026-11-27 手拉两下尾翼互动段）：普通检视引擎段演完
+		#    （_inspect_t 扣到 ≤ 尾翼段秒数）后入场——空仓分支无此段（_wing_extra
+		#    归 0，wing_t 永负不进）；_wing_node 悬空（他枪/未装配）同守卫
+		if insp and not _inspect_empty and _wing_node != null \
+				and is_instance_valid(_wing_node):
+			var wing_t := wtot - _inspect_t
+			if wing_t >= 0.0:
+				_tick_wing_pull(dt, minf(wing_t, wtot))
+	# 尾翼段收尾兜底（照上方 _hand 兜底块同款）：检视断/结束 → 翼角回位+
+	# 拉拽态清零+手隐；换弹打断帧（reloading>0）手一并收（翼角随 _inspect_t=0
+	# 回位）——打断链（开火/换弹/切枪/ADS）只清 _inspect_t，状态复位全在此
+	if _wing_node != null and is_instance_valid(_wing_node):
+		if _inspect_t <= 0.0:
+			_wing_node.rotation_degrees.x = 0.0
+			_wing_ang = 0.0
+			_wing_vel = 0.0
+			_wing_prev_pull = false
+			_wing_pulls_done = 0
+	if _wing_hand != null and _wing_hand.visible:
+		if _inspect_t <= 0.0 or reloading > 0.0 or player == null \
+				or player.dead:
+			_wing_hand.visible = false
 	_inspect_t = maxf(0.0, _inspect_t - dt)
 
 ## ================= 枪匠·七枪程序化模型（原独立文件并入） =================
