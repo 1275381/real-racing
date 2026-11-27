@@ -48,6 +48,7 @@ var _scope_ov: ScopeOverlay
 var _danger_vg: EdgeVignette
 var _danger_panel: Control
 var _ammo_label: Label
+var _cal_label: Label   # 弹药口径铭牌（caliber_of 缺键隐藏——AR57 验收特征12）
 var _health_num: Label
 var _segs: Array = []
 var _bag_label: Label
@@ -197,6 +198,18 @@ func setup() -> void:
 	_ammo_label.offset_bottom = -56
 	_ammo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_raid.add_child(_ammo_label)
+	# 弹药口径铭牌（2026-11-27 AR57 R1 验收特征12：弹药计数下方小字常显
+	# 型号——只 Guns.caliber_of 收录的枪显示，缺键隐藏 = 其他枪零改动）
+	_cal_label = _mk_label("", 13, _dim(0.62))
+	_cal_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_cal_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_cal_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_cal_label.offset_left = -300
+	_cal_label.offset_top = -56
+	_cal_label.offset_right = -26
+	_cal_label.offset_bottom = -34
+	_cal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_raid.add_child(_cal_label)
 
 	# 左下背包格
 	var bag_box := VBoxContainer.new()
@@ -484,6 +497,15 @@ func set_ammo(cur: int, reserve: int) -> void:
 	else:
 		_ammo_label.text = "%d / %d" % [cur, reserve]
 	_ammo_label.add_theme_color_override("font_color", COL_LOW if cur <= 8 else COL_TEXT)
+
+
+## 弹药口径铭牌（2026-11-27 AR57 验收特征12：HUD 显示弹药型号）：空串隐藏
+## ——只 caliber_of 收录的枪显示小字，其他枪 HUD 零改动
+func set_caliber(txt: String) -> void:
+	if _cal_label == null:
+		setup()
+	_cal_label.text = txt
+	_cal_label.visible = txt != ""
 
 
 func set_health(hp: float, max_hp: float) -> void:

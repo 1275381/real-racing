@@ -84,6 +84,36 @@ const ENGINE_PARTS := {
 		"dur": 9.5,
 	},
 }
+## 专属枪托改模参数表（2026-11-27 MK4「疾光魅影」专属托——整段换模非重涂，
+## 照 skel_stock 程序化原托替换先例 + engine_provider 皮肤系归属判定）。
+## 考证（ref_01-08 裁剪图 crop_ref01-08）：楔形斜梁骨架托（前高后低硬折线
+## 楔形上梁 + 梁下大矩形镂空 + 镂空内银色金属避震/悬挂连杆总成带网纹调节环
+## + 竖置深色碳纤纹角状肩垫（后倾、网格防滑纹）+ 银色垂直铰接块+销钉衔接
+## + 「MK4 DELTA」拉花/Limited 手写体贴花/竞速条码带 + 梁尾 chevron 色带
+## + 上梁顶棱贯穿镀铬高光折线 + 近机匣段碳纤纹理带）——与默认托（AR 式圆
+## 管伸缩托+聚合物壳+椭圆橡胶贴腮）五处结构差异全落 _mount_stock_skin。
+## 配色：工程银蓝超跑主题（官方未见纯银蓝档，自选主题与引擎组银白+蓝流光
+## 语言自洽），独立材质实例不参与整枪重涂污染（重涂在 _build_gun_visual
+## merge 后、专属托在 _mount_slot 重涂后追加——天然不冲突）。
+## 键值：pos=托组锚（枪身局部；件体坐标全在枪身系，锚只承担 HOLD_DELTA
+## 烘焙）；cut_z=写实枪模（mk4.glb 单网格）托段摘除判线——缓冲管起点
+## 实测 z 0.15（R1 验收返工轮顶点级实测订正：「机匣尾面 ≤0.13」是误读——
+## z 0.119..0.13 一带的「尾面」实为托壳鼻环，它连通的是托体三角簇而非机
+## 匣簇；机匣主壳连通簇尾端实测 z≈0.045，顶条带（z 0.039..0.176）三角形
+## 都是长跨片、被「任一顶点 z≥cut_z 整片摘除」反噬全摘 → 机匣可视尾面
+## 就是主壳尾端 0.045。判据收在 0.145 防管前缘 0.149 级顶点漏留；托尾
+## 0.379）；keep_z=孤立簇补摘判线（R1「托壳残片悬浮」返工新增）——过线
+## 摘除后凡不向前伸入机匣主壳（连通簇全部顶点 z>keep_z）的孤立三角簇判
+## 托壳余段补摘：托壳鼻环（z 0.119..0.128，顶 y 0.0558 会顶穿新上梁顶面）
+## + 缓冲管鼻 + 4 条机匣中心线内部细长片（z 0.05..0.124，悬在衔接套空腔
+## 里）——机匣主壳簇向枪口方向连通、min_z 远小于 keep_z 天然豁免
+const SKIN_STOCK := {
+	"mk4": {
+		"pos": Vector3.ZERO,
+		"cut_z": 0.145,
+		"keep_z": 0.048,
+	},
+}
 const ENGINE_RPM_HZ := 14.0     # 转速满档活塞往复频率（Hz）——怠速 0.15 档
                                 # ≈2.1Hz 可辨慢怠速，满档 14Hz 高转嘶吼
 const ENGINE_JOLT_DECAY := 6.5  # 开火颤动能量衰减（/s，1.0 起步指数衰减）
@@ -308,6 +338,15 @@ const RECOIL := {
 	# 水平漂移 0.11 与 m250 0.10 同档略抬（弹链供弹横向拉扯 + 970rpm 快节拍
 	# 横漂放大，机枪标准漂移）
 	"m3": [0.17, 0.07, 0.11],
+	# ar57 5.7×28mm 高射速步枪（2026-11-27 商店枪·三角洲 S9「回响」赛季
+	# AR57，用户定案 950rpm〔面板 900〕全自动）：5.7 高初速轻弹快节拍档：
+	# 单发推力 0.15——5.7×28mm 弹能量小于 5.56（k416 0.17）半档、步枪平台
+	# 直托抵肩比 P90 同弹冲锋枪（0.11）沉半档（转换套件上机匣 + AR 下机匣
+	# 的全尺寸枪体，三角洲面板「后坐力控制 41」中位档）；连发累增 0.07
+	# （950rpm 快节拍冲量累积与 mcxlt 840rpm 同档——复进簧组吃住，弹匣在
+	# 顶部的重心高沿线不影响垂直冲量）；水平漂移 0.09 窄档（腰射精度 60
+	# 偏好 + 直托抵肩线，高射速横漂放大就压不住）
+	"ar57": [0.15, 0.07, 0.09],
 }
 
 var player           # HDPlayer（鸭子类型：读 cam/dead，写 recoil_pitch/recoil_yaw/ads/zoom）
@@ -337,6 +376,8 @@ var _falling_mag: MeshInstance3D    # 掉落弹匣替身（主世界空间——
 var _belt_slide: Node3D             # 弹链滑动条（合体后追加的独立链节组，随 holder 重建）
 var _engine: Node3D                 # 引擎组（极光魅影皮肤专属——合体后追加的独立
                                     # 节点；引用刷新唯一入口在 _equip，照 _belt_slide 教训）
+var _stock_skin: Node3D             # 专属枪托（疾光魅影改模件——stock_mkgin，2026-11-27；
+                                    # 引用刷新唯一入口在 _equip，同款教训）
 var _pistons: Array = []            # 活塞头×4 可动子节点（直列四缸沿缸轴 sin 往复，
                                     # meta phase=点火相位——1&4 同相、2&3 反相）
 var _engine_fx: Array = []          # 引擎发光件材质表 [{m, base, fire}]（engine_group
@@ -504,11 +545,14 @@ func enter(loadout: Dictionary) -> void:
 		if _guns.has(slot) and (str(_guns[slot]["id"]) != gid \
 				or bool(_guns[slot].get("sup", false)) != _sup_on(gid) \
 				or bool(_guns[slot].get("eng", false)) != _engine_on(gid) \
-				or _guns[slot].has("diamond") != _diamond_on(gid)):
+				or _guns[slot].has("diamond") != _diamond_on(gid) \
+				or _guns[slot].has("stock_skin") != _stock_skin_on(gid)):
 			# 引擎态并入重建条件（2026-11-20）：大厅装配/卸下极光魅影后再
 			# 进场，同枪 id 也必须重挂枪模——皮肤引擎组是装配时刻的快照。
 			# 钻石态并入（2026-11-20）：流光↔钻石变体互切同枪 id 也重挂
-			# ——透明蒙皮+棱面件同为装配时刻快照
+			# ——透明蒙皮+棱面件同为装配时刻快照。
+			# 专属托态并入（2026-11-27）：装配/卸下疾光魅影同枪 id 也重挂
+			# ——改模是装配时刻的快照（原托摘除+stock_mkgin 挂载同链）
 			var old: Dictionary = _guns[slot]
 			var old_holder: Node3D = old["holder"]
 			old_holder.visible = false
@@ -1028,16 +1072,20 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	var jet_m := StandardMaterial3D.new()
 	jet_m.albedo_color = Color(0.06, 0.10, 0.16)
 	jet_m.emission_enabled = true
-	jet_m.emission = Color(0.55, 0.85, 1.0)
+	# 第 2 轮验收二修「粗大白色发光锥」：旧 emission(0.55,0.85,1.0)×高转
+	# 能量 2.24 → 三通道全破辉光阈值 1.05 炸白粗锥盖过后缘蓝线——深饱和
+	# 蓝只让蓝通道过阈（×2.24=红0.22/绿0.78/蓝2.24），锥体辉光读蓝色
+	jet_m.emission = Color(0.10, 0.35, 1.0)
 	jet_m.emission_energy_multiplier = 0.0
 	# 喷气拖尾材质（第 2 轮验收：白蓝发光锥读作实心灯棒，非考证清单6/
 	# TapTap「大量气体在枪身两侧喷涌而出」的弥漫气雾感——加半透明淡蓝
-	# 外层拖尾锥扩体量；能量仍 _tick_fx 按同一 jet_e 联动）
+	# 外层拖尾锥扩体量；能量仍 _tick_fx 按同一 jet_e 联动；二修同上改深
+	# 蓝+alpha 降档 0.30→0.22 压「白色立柱」感）
 	var jet_trail_m := StandardMaterial3D.new()
 	jet_trail_m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	jet_trail_m.albedo_color = Color(0.62, 0.82, 1.0, 0.30)
+	jet_trail_m.albedo_color = Color(0.25, 0.55, 1.0, 0.22)
 	jet_trail_m.emission_enabled = true
-	jet_trail_m.emission = Color(0.55, 0.85, 1.0)
+	jet_trail_m.emission = Color(0.10, 0.35, 1.0)
 	jet_trail_m.emission_energy_multiplier = 0.0
 	var flame_om := StandardMaterial3D.new()
 	flame_om.albedo_color = Color(0.30, 0.08, 0.02)
@@ -1212,18 +1260,22 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	# —— 翼根碳纤整流罩（eng 静态子件，拉拽翼动罩不动）：驼峰自曲轴箱
 	#    尾顶平滑下掠入翼根——第 2 轮验收「翼根与托体衔接无法实证」：
 	#    前端 z 0.060 埋入曲轴箱（顶 y 0.010=箱顶平面无接缝）、尾端 z
-	#    0.152 顶 y 0.0013 咬入翼根下表面（z' 0.004 处 ≈0.0009）0.4mm
-	#    =实体互嵌无缝；侧影鼓弧半宽 24→44→30mm，底盘 y−0.006 沉入顶轨
-	#    （eng y−0.002）之下无底缝
+	#    0.158 顶 y 0.0013 咬入翼根下表面（z' 0.010 处 ≈0.0009）0.4mm
+	#    =实体互嵌无缝；底盘 y−0.006 沉入顶轨（eng y−0.002）之下无底缝。
+	#    二修「薄板贴托体边缘式衔接/生硬直线边」：半宽加宽 24→58→50mm
+	#    （峰值 58mm > 翼半展 52mm）——翼根弦线全长埋入罩体，外露的直线
+	#    根边消除；可见交界只剩罩体自身鼓弧曲面=翼自托体「长」出来的
+	#    过渡面（翼根专业名词=翼根整流填角）；尾端半宽 50mm 收进翼展内，
+	#    开口尾环藏于翼面实体之下不露洞
 	var fair_u := func(u: float, v: float) -> Vector3:
 		var ps := TAU * v
 		var tn := clampf(u, 0.0, 1.0)
-		var hw := 0.024 + 0.020 * smoothstep(0.0, 0.5, tn) \
-				- 0.014 * smoothstep(0.62, 1.0, tn)
+		var hw := 0.024 + 0.034 * smoothstep(0.0, 0.5, tn) \
+				- 0.008 * smoothstep(0.62, 1.0, tn)
 		var spine := 0.0013 + 0.0087 * pow(1.0 - tn, 1.7)
 		var xx := hw * sin(ps)
 		var yy := -0.006 + (spine + 0.006) * pow(0.5 + 0.5 * cos(ps), 1.6)
-		return Vector3(xx, yy, 0.060 + 0.092 * tn)
+		return Vector3(xx, yy, 0.060 + 0.098 * tn)
 	var fair_mi := MeshInstance3D.new()
 	fair_mi.name = "wing_root_fair"
 	# 专用哑光深碳料（与翼身 carbon_m 同族更深一档）：carbon_m rough 0.32
@@ -1248,20 +1300,23 @@ func _mount_engine(gun: Node3D, gid: String) -> Node3D:
 	# 尾翼两侧喷气锥（拉动尾翼喷气互动——检视高转常燃+开火颤动脉冲，能量
 	# 驱动在 _tick_fx；锥体沿 +z 外八字，基口贴 0.04 展位后缘面（zte
 	# (0.77)≈0.077）随弧线，wing_jet_l/r 命名契约不变（_tick_fx 按名驱动
-	# 能量）；随翼面联动偏转）
+	# 能量）；随翼面联动偏转。第 2 轮验收二修「粗白色发光锥/发光棒立柱」：
+	# 半径对半压细（口 2.5mm→1.2mm、出口 7.5mm→3.0mm=后缘蓝线同级体量），
+	# 配合深蓝 emission 白棒感消除）
 	for js in [-1.0, 1.0]:
-		var jet := _econe(wing, jet_m, 0.0025, 0.0075, 0.036,
+		var jet := _econe(wing, jet_m, 0.0012, 0.0030, 0.030,
 				Vector3(js * 0.040, 0.0042, 0.084),
 				Vector3(90, 12.0 * js, 0))
 		jet.name = "wing_jet_%s" % ("l" if js < 0 else "r")
 		jet.visible = false
 		# 半透明加长拖尾锥（第 2 轮验收：核心锥 36mm 读作实心灯棒——
-		# 拖尾自核心锥尾端接出（z' 0.102→0.197），95mm 渐扩（r 0.0075→
-		# 0.018）外八字 12° 同轴续摆，alpha 0.30 弥漫气雾体量感；命名进
-		# wing_jet_* 契约=可见性随 _jet_nodes 同驱，能量 _tick_fx 按
-		# jet_e·0.8 联动（低于核心一档，锥内亮核外雾分层））
-		var trail := _econe(wing, jet_trail_m, 0.0075, 0.018, 0.095,
-				Vector3(js * 0.0477, 0.0042, 0.1495),
+		# 拖尾自核心锥尾端接出，渐扩外八字 12° 同轴续摆，alpha 0.22 弥漫
+		# 气雾体量感；命名进 wing_jet_* 契约=可见性随 _jet_nodes 同驱，
+		# 能量 _tick_fx 按 jet_e·0.8 联动（低于核心一档，锥内亮核外雾分
+		# 层）。二修同核心锥对半压细（r 2.5mm→5.0mm 渐扩、70mm 长），
+		# 中心随 12° 外八字摆到新中点 z' 0.134（x +0.0106 摆出量））
+		var trail := _econe(wing, jet_trail_m, 0.0025, 0.0050, 0.070,
+				Vector3(js * 0.0506, 0.0042, 0.134),
 				Vector3(90, 12.0 * js, 0))
 		trail.name = "wing_jet_trail_%s" % ("l" if js < 0 else "r")
 		trail.visible = false
@@ -1544,6 +1599,397 @@ func _mount_diamond(gun: Node3D, gid: String) -> Node3D:
 	for mi_d in dia.find_children("*", "MeshInstance3D", true, false):
 		(mi_d as MeshInstance3D).layers |= 1 << 1
 	return dia
+
+
+## MK4「疾光魅影」专属枪托挂载（2026-11-27 用户定案——皮肤专属「整段换模」
+## 件，照 skel_stock 程序化原托替换 + engine_provider 皮肤系归属先例：
+## _mount_slot 合体/重涂后追加独立节点）。装配判定走 stock_skin_provider
+## （stash skin_fit/skin_var 归属 mk4_speed 系——系列本体/抽奖流光变体/
+## 钻石典藏变体 base 同判）；坐标=枪身局部 + HOLD_DELTA 烘焙（mk4 Δ=0）。
+## 挂载时机在 _mount_slot AABB 量顶与整枪重涂之后——皮肤不挪 ADS 瞄准锚、
+## 独立材质实例不参与整枪重涂污染（重涂遍历的是 merge 后 unibody，专属托
+## 在重涂后追加，天然跳过 stock_mkgin 子树）。
+## 原托让位（托型考证五处差异 vs 默认 AR 式圆管伸缩托，crop_ref01-08；
+## R1 验收 6/11 未过返工——几何全线按顶点级实测重排，见各分段注）：
+##   ① 楔形斜梁骨架托：上梁前高后低硬折线两段（两段统一 8° 缓降=参考楔
+##      形 crop_ref03 实测档；旧 17.2°/11.5° 判「约参考两倍余」废），
+##      前宽 30mm 后窄 26mm——刀锋薄片感，侧向厚度约为默认托聚合物壳
+##      一半）+ 梁下大矩形镂空（下弦梁拉通，窗高 ~35mm 收浅档）
+##   ② 镂空内银色金属避震/悬挂连杆总成：金属筒从机匣后端斜向伸到下弦
+##      后端（超跑悬挂意象）+ 网纹调节环双环 + 深蓝点缀色环 + 上下挂耳
+##      （浅窗改配 rotX 105.4°，全组在窗内）
+##   ③ 托底板竖置深色碳纤角状肩垫：后倾 12°、顶角高出梁尾 9mm、板面
+##      网格防滑纹（3 竖 2 横浅银灰条，grid_m 对比档）——替换默认椭圆
+##      橡胶弧面贴腮；垫高 84mm 压包络（深/长比 ≈0.31，参考 ≈0.35）
+##   ④ 衔接改银色件组：衔接套前缘嵌入机匣主壳真实尾端（顶点实测 z
+##      0.045）20.5mm——消 R1「铰接块-机匣尾 15mm 透视缝」；顶面续机匣
+##      尾顶线（上梁起点），银色垂直铰接块+双销钉凸出套侧为可见接头，
+##      替换默认圆管插入
+##   ⑤ 梁侧拉花三件：MK4 DELTA 字样 + Limited 手写体斜贴花（roll ±8°）
+##      + 竞速条码带×6 + 梁尾 chevron 色带两行（金色贴片——银白+金宣发
+##      档识别件）+ 上梁顶棱贯穿镀铬高光折线（赛车车顶弧线意象）+
+##      衔接件周边碳纤织纹带（三面映射程序织纹）+ 下弦上缘蓝流光条
+##      （与引擎组流光条语言一致，恒亮 0.45 能量不进 rpm 驱动组）
+func _mount_stock_skin(gun: Node3D, gid: String) -> Node3D:
+	if not _stock_skin_on(gid):
+		return null
+	var st := Node3D.new()
+	st.name = "stock_mkgin"
+	st.position = Vector3(SKIN_STOCK[gid]["pos"]) + _hold_delta(gid)
+	gun.add_child(st)
+	# —— 材质（皮肤系内自洽：银蓝超跑车漆 + 镀铬顶棱 + 银色金属机械件 +
+	#    缎面碳纤肩垫 + 深蓝流光——独立材质实例不进整枪重涂。首拍判图：
+	#    高金属度档在靶馆暗环境读「石墨深灰」，metallic 降 0.45 让漫反射
+	#    主导、albedo 提亮回「银蓝车漆」档）——
+	var paint_m := StandardMaterial3D.new()
+	paint_m.albedo_color = Color(0.72, 0.78, 0.86)   # 银蓝车漆（提亮档）
+	paint_m.metallic = 0.45
+	paint_m.roughness = 0.30
+	paint_m.clearcoat_enabled = true
+	paint_m.clearcoat = 0.5
+	paint_m.clearcoat_roughness = 0.25
+	var chrome_m := StandardMaterial3D.new()
+	chrome_m.albedo_color = Color(0.98, 0.99, 1.0)
+	chrome_m.metallic = 1.0
+	chrome_m.roughness = 0.08
+	var joint_m := StandardMaterial3D.new()
+	joint_m.albedo_color = Color(0.85, 0.88, 0.92)
+	joint_m.metallic = 0.8
+	joint_m.roughness = 0.25
+	# 缎面碳纤（R1 验收「近机匣碳纤纹理带/托底板网格纹实拍不可辨」返工）：
+	# 8×8 双灰斜纹程序织纹 + 三面映射（uv1_scale 90 → 织纹块 ~2.8mm）铺
+	# 肩垫+衔接带，albedo 底色压 0.30 档与浅银灰防滑网格条 grid_m（0.45
+	# 档+金属）拉开亮度/质感双差——实拍近景可辨
+	var weave := Image.create_empty(8, 8, false, Image.FORMAT_RGB8)
+	for wy in 8:
+		for wx in 8:
+			var wb := 1.0 if (wx + wy) % 4 < 2 else 0.42
+			weave.set_pixel(wx, wy,
+					Color(wb * 0.93, wb * 0.96, wb))
+	var weave_tex := ImageTexture.create_from_image(weave)
+	var carbon_m2 := StandardMaterial3D.new()
+	carbon_m2.albedo_color = Color(0.30, 0.31, 0.34)
+	carbon_m2.albedo_texture = weave_tex
+	carbon_m2.uv1_triplanar = true
+	carbon_m2.uv1_scale = Vector3.ONE * 90.0
+	carbon_m2.metallic = 0.35
+	carbon_m2.roughness = 0.42
+	carbon_m2.clearcoat_enabled = true
+	carbon_m2.clearcoat = 0.5
+	carbon_m2.clearcoat_roughness = 0.28
+	var grid_m := StandardMaterial3D.new()
+	grid_m.albedo_color = Color(0.45, 0.47, 0.50)
+	grid_m.metallic = 0.55
+	grid_m.roughness = 0.4
+	var dark_m2 := StandardMaterial3D.new()
+	dark_m2.albedo_color = Color(0.05, 0.055, 0.065)
+	dark_m2.roughness = 0.6
+	var glow_m := StandardMaterial3D.new()
+	glow_m.albedo_color = Color(0.06, 0.10, 0.16)
+	glow_m.emission_enabled = true
+	glow_m.emission = Color(0.34, 0.64, 1.0)
+	glow_m.emission_energy_multiplier = 0.45   # 与引擎组尾缘光带同档
+	var ring_blue_m := StandardMaterial3D.new()
+	ring_blue_m.albedo_color = Color(0.05, 0.10, 0.20)
+	ring_blue_m.emission_enabled = true
+	ring_blue_m.emission = Color(0.30, 0.62, 1.0)
+	ring_blue_m.emission_energy_multiplier = 0.5
+	var gold_m := StandardMaterial3D.new()
+	gold_m.albedo_color = Color(0.82, 0.62, 0.18)
+	gold_m.metallic = 0.7
+	gold_m.roughness = 0.35
+	# ④ 衔接套（R1 验收「铰接块-机匣尾 15mm 透视缝」返工新增）：顶点级
+	#    实测机匣主壳连通簇尾端 z≈0.045（旧注「尾面 ≤0.13」的 z 0.119..
+	#    0.13 一带是托壳鼻环、连托簇不连机匣簇，过线摘除即消失）——套前
+	#    缘 z 0.0245 嵌入机匣主壳真实尾端 20.5mm（续「嵌入机匣尾 20mm
+	#    无缝」语义），x ±0.018 缩进机匣壁 ±0.0184 之内不穿帮、顶面
+	#    y 0.051 续上机匣尾顶线 0.0497——楔形上梁直接以机匣尾顶线为起点
+	GUN_LIB.chamfer_box(st, paint_m, Vector3(0.036, 0.097, 0.118),
+			Vector3(0, 0.0025, 0.0835), Vector3.ZERO, 0.002, 6).name \
+			= "stock_adapter"
+	# ①④ 银色垂直铰接块（y -0.030..0.058、z 0.110..0.140——x ±0.020 比
+	#    衔接套宽出 2mm/侧凸成可见竖向接头）+ 双销钉（X 轴横穿）
+	GUN_LIB.chamfer_box(st, joint_m, Vector3(0.040, 0.088, 0.030),
+			Vector3(0, 0.014, 0.125), Vector3.ZERO, 0.002, 6).name \
+			= "hinge_joint"
+	_ecyl(st, joint_m, 0.0035, 0.054, Vector3(0, 0.040, 0.125),
+			Vector3(0, 0, 90)).name = "stock_pin_top"
+	_ecyl(st, joint_m, 0.0035, 0.054, Vector3(0, -0.012, 0.125),
+			Vector3(0, 0, 90)).name = "stock_pin_bot"
+	# ① 楔形上梁硬折线两段——R1 验收「下垂角 18-21° 约参考楔形缓降
+	#    (≈8°) 两倍余」返工：两段统一 8°（crop_ref03_stock 实测档），
+	#    前段 z 0.139..0.263 顶线 0.052→0.035、后段 z 0.254..0.382 顶线
+	#    0.035→0.017（前宽 30mm 后窄 26mm 不变）——顶线压到机匣尾顶线
+	#    0.052 起步；包络深/长比 150/268≈0.56 → 110/355≈0.31（参考
+	#    ≈0.35，下弦/肩垫同步上收）。前后段各一条顶棱镀铬高光折线
+	#    （比梁身微宽，侧视读「贯穿亮边」）
+	var beam_a := GUN_LIB.chamfer_box(st, paint_m, Vector3(0.030, 0.020, 0.124),
+			Vector3(0, 0.0335, 0.201), Vector3(8, 0, 0), 0.002, 8)
+	beam_a.name = "beam_front"
+	var beam_b := GUN_LIB.chamfer_box(st, paint_m, Vector3(0.026, 0.017, 0.128),
+			Vector3(0, 0.0175, 0.318), Vector3(8, 0, 0), 0.002, 8)
+	beam_b.name = "beam_rear"
+	GUN_LIB.chamfer_box(st, chrome_m, Vector3(0.0315, 0.003, 0.122),
+			Vector3(0, 0.0445, 0.201), Vector3(8, 0, 0), 0.0008, 4)
+	GUN_LIB.chamfer_box(st, chrome_m, Vector3(0.0275, 0.003, 0.126),
+			Vector3(0, 0.0285, 0.318), Vector3(8, 0, 0), 0.0008, 4)
+	# ① 梁下大矩形镂空的下弦梁（拉通衔接套→肩垫，前端嵌衔接套底腔、
+	#    后端嵌肩垫板——镂空窗闭合矩形负形。R1 返工：chord 上抬 23mm
+	#    （-0.0503→-0.0275）收浅镂空窗 55→35mm 档）
+	var chord := GUN_LIB.chamfer_box(st, paint_m, Vector3(0.020, 0.012, 0.240),
+			Vector3(0, -0.0275, 0.256), Vector3(8, 0, 0), 0.0015, 6)
+	chord.name = "beam_chord"
+	# ① 流光条×2（下弦上缘两侧，与引擎组流光语言同色同能量）
+	_ebox(st, glow_m, Vector3(0.0012, 0.0028, 0.180),
+			Vector3(-0.0107, -0.0188, 0.256), Vector3(8, 0, 0))
+	_ebox(st, glow_m, Vector3(0.0012, 0.0028, 0.180),
+			Vector3(0.0107, -0.0188, 0.256), Vector3(8, 0, 0))
+	# ② 避震/悬挂连杆总成（金属筒斜向 + 网纹调节环双环 + 深蓝点缀环 +
+	#    上下挂耳）——R1 返工随浅窗改配：上耳嵌前段梁底 (0,0.019,0.168)、
+	#    下耳嵌下弦 (0,-0.031,0.350)，筒轴角 atan(0.050/0.182)≈15.4° →
+	#    rotX 105.4°、筒长 0.180，调节环沿轴 t≈0.33/0.42/0.51 重排——
+	#    全组落在收浅后的镂空窗内不穿梁不穿弦
+	GUN_LIB.torus_ring(st, joint_m, 0.006, 0.010, Vector3(0, 0.019, 0.168),
+			Vector3(105.4, 0, 0)).name = "shock_eye_top"
+	var shock := _ecyl(st, joint_m, 0.0075, 0.180, Vector3(0, -0.006, 0.259),
+			Vector3(105.4, 0, 0))
+	shock.name = "shock_body"
+	GUN_LIB.torus_ring(st, joint_m, 0.0095, 0.0135, Vector3(0, 0.0025, 0.2281),
+			Vector3(105.4, 0, 0)).name = "adjust_ring"
+	GUN_LIB.torus_ring(st, joint_m, 0.0095, 0.0125, Vector3(0, -0.002, 0.2444),
+			Vector3(105.4, 0, 0))
+	GUN_LIB.torus_ring(st, ring_blue_m, 0.0095, 0.0125, Vector3(0, -0.0065, 0.2608),
+			Vector3(105.4, 0, 0)).name = "shock_ring_blue"
+	GUN_LIB.torus_ring(st, joint_m, 0.006, 0.010, Vector3(0, -0.031, 0.350),
+			Vector3(105.4, 0, 0)).name = "shock_eye_bot"
+	# ③ 竖置碳纤角状肩垫（后倾 12°）+ 网格防滑纹（3 竖 2 横条贴垫背面，
+	#    横条随 12° 后倾沿垫面斜率逐条挪 z 不脱面）——R1 验收返工两处：
+	#    ①高度 112→98mm 压包络（顶角高出梁尾 9mm，原 20mm 与「深/长比
+	#    ≈0.35」二选一取包络档；98mm 档包络深 124/长 355=0.35 恰落参考
+	#    实测值）；②防滑纹 dark_m2→grid_m 浅银灰、条宽 2→3mm、垫面织
+	#    纹提对比（实拍可辨档）
+	GUN_LIB.chamfer_box(st, carbon_m2, Vector3(0.056, 0.098, 0.010),
+			Vector3(0, -0.023, 0.372), Vector3(12, 0, 0), 0.002, 6).name \
+			= "buttpad"
+	for gx in [-0.014, 0.0, 0.014]:
+		_ebox(st, grid_m, Vector3(0.003, 0.084, 0.003),
+				Vector3(gx, -0.023, 0.3785), Vector3(12, 0, 0))
+	for gy in [-0.002, -0.044]:
+		_ebox(st, grid_m, Vector3(0.048, 0.003, 0.003),
+				Vector3(0, gy, 0.3799 + (gy + 0.023) * 0.2079),
+				Vector3(12, 0, 0))
+	# ⑤ 拉花三件（Label3D 真实字形两侧各自正向，照引擎组 RS7/GT2 先例）：
+	#    MK4 DELTA 字样（前段梁侧）+ Limited 手写体斜贴花（roll ±8°）+
+	#    竞速条码带×6 + 梁尾 chevron 金色贴片两行 + 衔接件周边碳纤纹理带
+	_elabel(st, "MK4 DELTA", Vector3(-0.0157, 0.0345, 0.205),
+			Vector3(0, -90, 0), 0.00016, Color(0.10, 0.14, 0.22)).name \
+			= "livery_mk4_delta_l"
+	_elabel(st, "MK4 DELTA", Vector3(0.0157, 0.0345, 0.205),
+			Vector3(0, 90, 0), 0.00016, Color(0.10, 0.14, 0.22)).name \
+			= "livery_mk4_delta_r"
+	_elabel(st, "Limited", Vector3(-0.0137, 0.023, 0.285),
+			Vector3(0, -90, 8), 0.00015, Color(0.92, 0.94, 0.98)).name \
+			= "livery_limited_l"
+	_elabel(st, "Limited", Vector3(0.0137, 0.023, 0.285),
+			Vector3(0, 90, -8), 0.00015, Color(0.92, 0.94, 0.98)).name \
+			= "livery_limited_r"
+	for sd_x in [-1.0, 1.0]:
+		for bi in 6:
+			_ebox(st, dark_m2, Vector3(0.0012, 0.007, 0.0026),
+					Vector3(sd_x * 0.0155, 0.029, 0.210 + 0.0064 * float(bi)),
+					Vector3.ZERO)
+		for cv_z in [0.342, 0.354]:
+			var cy := 0.0145 if cv_z < 0.35 else 0.013
+			_ebox(st, gold_m, Vector3(0.0013, 0.012, 0.003),
+					Vector3(sd_x * 0.0134, cy, cv_z), Vector3(38, 0, 0))
+			_ebox(st, gold_m, Vector3(0.0013, 0.012, 0.003),
+					Vector3(sd_x * 0.0134, cy - 0.0065, cv_z), Vector3(-38, 0, 0))
+		_ebox(st, carbon_m2, Vector3(0.001, 0.056, 0.026),
+				Vector3(sd_x * 0.0206, 0.014, 0.125), Vector3.ZERO)
+	# 贴花随组进 vm 层（照 collector_plate 先例——贴掩体失光段不丢牌）+
+	# vm_fill 层位自补（挂载点晚于 _mount_slot 公共层位回环）
+	for lb_s in st.find_children("*", "Label3D", true, false):
+		(lb_s as Label3D).layers |= 1 << 1
+	for mi_s in st.find_children("*", "MeshInstance3D", true, false):
+		(mi_s as MeshInstance3D).layers |= 1 << 1
+	return st
+
+
+## 写实枪模（mk4.glb 单网格）托段顶点级摘除（疾光魅影专属托改模——原托
+## 与机匣同网格、无节点可隐，merge 后按 SKIN_STOCK.cut_z 判线重建 unibody
+## 表面：任一顶点 z≥cut_z 的三角形判为托体组件（缓冲管/托体/托底板，GLB
+## 实测托尾 0.379；机匣内壳壁延伸到 0.175 与缓冲管互嵌，长跨片一并摘走
+## ——余段全落衔接套/前梁体内不可见）整片丢弃。
+## 二段判据（R1 验收「托壳残片悬浮」返工）：过线摘除后 z<cut 侧仍留整簇
+## 不与机匣主壳连通的托壳余段（顶点级实测：托壳鼻环 138 片 z 0.119..0.125
+## 顶 y 0.0558、缓冲管鼻 74 片、中心线内部细长片 4 簇）——1mm 焊接网格
+## 并查集分簇，簇全顶点 z>keep_z（SKIN_STOCK）= 不伸入机匣主壳 → 整簇
+## 补摘；机匣主壳簇向枪口连通、min_z 远小于 keep_z 天然豁免。
+## 顶点压缩重建（只滤 INDEX 时 AABB 按全量顶点缓冲算，托尾不收口）。
+## 程序化枪身路径不走此函数（stock_default 已在合并前整组摘除）；
+## HD_NO_MERGE 诊断档 unibody 不存在、原托保留（A/B 开关仅分装诊断用，
+## 不做皮肤合流）
+static func _cull_stock_region(root: Node3D, gid: String) -> void:
+	var uni := root.find_child("unibody", true, false) as MeshInstance3D
+	if uni == null or not (uni.mesh is ArrayMesh):
+		return
+	var src := uni.mesh as ArrayMesh
+	var cut := float(SKIN_STOCK[gid].get("cut_z", 0.145))
+	var am := ArrayMesh.new()
+	var culled := 0
+	for si in src.get_surface_count():
+		var arr := src.surface_get_arrays(si)
+		var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var idx_v: Variant = arr[Mesh.ARRAY_INDEX]
+		var idx := (idx_v as PackedInt32Array) if idx_v != null \
+				else PackedInt32Array()
+		var kept := PackedInt32Array()
+		var drop := 0
+		# 判据=任一顶点 z≥cut 整片摘除（GLB 机匣内壳壁延伸到 z 0.175 与缓
+		# 冲管互嵌——「三顶点全过线」判据会把 0.04↔0.33 级长跨三角形留在
+		# 镂空窗里读成毛刺；任一过线判据把内壳余段一并摘走，余段全落在
+		# 铰接块/前梁体内不可见）
+		if not idx.is_empty():
+			for t in range(0, idx.size(), 3):
+				var a := idx[t]
+				var b := idx[t + 1]
+				var c := idx[t + 2]
+				if vs[a].z >= cut or vs[b].z >= cut or vs[c].z >= cut:
+					drop += 1
+				else:
+					kept.append(a)
+					kept.append(b)
+					kept.append(c)
+		else:
+			for t in range(0, vs.size() - 2, 3):
+				if vs[t].z >= cut or vs[t + 1].z >= cut \
+						or vs[t + 2].z >= cut:
+					drop += 1
+				else:
+					kept.append(t)
+					kept.append(t + 1)
+					kept.append(t + 2)
+		if drop == 0:
+			continue   # 本表面无托段三角形——原样搬运（含材质）
+		culled += drop
+		if kept.is_empty():
+			continue   # 整表面皆托段——整面跳过（材质随表面消亡）
+		# —— 二段判据：孤立簇补摘（判线 keep_z 见 SKIN_STOCK 键注）——
+		var keep_z := float(SKIN_STOCK[gid].get("keep_z", -1.0))
+		if keep_z >= 0.0:
+			var uf := {}
+			for e in kept:
+				var k0 := _vkey(vs[e])
+				if not uf.has(k0):
+					uf[k0] = k0
+			for t in range(0, kept.size(), 3):
+				var ra: Vector3i = _ufind(uf, _vkey(vs[kept[t]]))
+				var rb: Vector3i = _ufind(uf, _vkey(vs[kept[t + 1]]))
+				var rc: Vector3i = _ufind(uf, _vkey(vs[kept[t + 2]]))
+				uf[rb] = ra
+				uf[rc] = ra
+			var cmin := {}
+			for e in kept:
+				var r0: Vector3i = _ufind(uf, _vkey(vs[e]))
+				cmin[r0] = minf(float(cmin.get(r0, 1e9)), vs[e].z)
+			var kept2 := PackedInt32Array()
+			var drop2 := 0
+			for t in range(0, kept.size(), 3):
+				var r1: Vector3i = _ufind(uf, _vkey(vs[kept[t]]))
+				if float(cmin[r1]) > keep_z:
+					drop2 += 1
+				else:
+					kept2.append(kept[t])
+					kept2.append(kept[t + 1])
+					kept2.append(kept[t + 2])
+			if drop2 > 0:
+				culled += drop2
+				kept = kept2
+			if kept.is_empty():
+				continue   # 补摘后整面空——整面跳过（材质随表面消亡）
+		# 顶点压缩重建（两拍实测教训：①只过滤 INDEX 时 add_surface_from_arrays
+		# 仍按全量顶点缓冲算 AABB——托尾 0.379 的未引用顶点不参与绘制却撑着
+		# 包围盒，验收断言/资源释放全部失真；②逐顶点通道必须按「唯一顶点数」
+		# 压缩（kept 是索引条目数=3×三角形，按它压缩会让 array.size()≠顶点数
+		# 直接 ERR_INVALID_PARAMETER）。升序 remap 旧顶点号→压缩号，逐顶点
+		# 通道（NORMAL/TANGENT/TEX_UV/COLOR/UV2）同序压缩保格式
+		var used := PackedByteArray()
+		used.resize(vs.size())
+		for e in kept:
+			used[e] = 1
+		var remap := PackedInt32Array()
+		remap.resize(vs.size())
+		remap.fill(-1)
+		var nvs := PackedVector3Array()
+		for k in vs.size():
+			if used[k] == 1:
+				remap[k] = nvs.size()
+				nvs.append(vs[k])
+		var nidx := PackedInt32Array()
+		nidx.resize(kept.size())
+		for e in kept.size():
+			nidx[e] = remap[kept[e]]
+		arr[Mesh.ARRAY_VERTEX] = nvs
+		arr[Mesh.ARRAY_INDEX] = nidx
+		for ch in [Mesh.ARRAY_NORMAL, Mesh.ARRAY_TANGENT, Mesh.ARRAY_COLOR,
+				Mesh.ARRAY_TEX_UV, Mesh.ARRAY_TEX_UV2]:
+			var cv: Variant = arr[ch]
+			if cv == null:
+				continue
+			if cv is PackedVector3Array and (cv as PackedVector3Array).size() \
+					== vs.size():
+				var a3: PackedVector3Array = cv
+				var n3 := PackedVector3Array()
+				for k in a3.size():
+					if remap[k] != -1:
+						n3.append(a3[k])
+				arr[ch] = n3
+			elif cv is PackedFloat32Array \
+					and (cv as PackedFloat32Array).size() == vs.size() * 4:
+				var a1: PackedFloat32Array = cv   # TANGENT：每顶点 4 float
+				var n1 := PackedFloat32Array()
+				for k in vs.size():
+					if remap[k] != -1:
+						for q in 4:
+							n1.append(a1[k * 4 + q])
+				arr[ch] = n1
+			elif cv is PackedColorArray and (cv as PackedColorArray).size() \
+					== vs.size():
+				var ac: PackedColorArray = cv
+				var nc := PackedColorArray()
+				for k in ac.size():
+					if remap[k] != -1:
+						nc.append(ac[k])
+				arr[ch] = nc
+			elif cv is PackedVector2Array and (cv as PackedVector2Array).size() \
+					== vs.size():
+				var a2: PackedVector2Array = cv
+				var n2 := PackedVector2Array()
+				for k in a2.size():
+					if remap[k] != -1:
+						n2.append(a2[k])
+				arr[ch] = n2
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		if am.get_surface_count() > 0:
+			am.surface_set_material(am.get_surface_count() - 1,
+					src.surface_get_material(si))
+	if culled > 0:
+		uni.mesh = am
+
+
+## 托段摘除·孤立簇判读的顶点焊接键（1mm 网格量化——GLB 顶点浮点抖动
+## 容差；mk4 实测 1mm 档能把托壳鼻环/缓冲管鼻/机匣主壳干净分簇）
+static func _vkey(v: Vector3) -> Vector3i:
+	return Vector3i(int(round(v.x * 1000.0)), int(round(v.y * 1000.0)),
+			int(round(v.z * 1000.0)))
+
+
+## 并查集寻根（路径减半，原地压缩）
+static func _ufind(uf: Dictionary, k: Vector3i) -> Vector3i:
+	while uf[k] != k:
+		uf[k] = uf[uf[k]]
+		k = uf[k]
+	return k
 
 
 ## 引擎段时长（ENGINE_PARTS 表 dur；mk4=9.5s 加长演出档，缺省 2.6s 仅兜底）
@@ -1980,6 +2426,12 @@ var diamond_provider: Callable = Callable()
 ## 「★//编号 · 成色NN」；未注入/空文案 = 不挂铭牌，裸调零改动）——R1 验收
 ## 「典藏标识缺失」补：ref_02/ref_04 砖皮身份件
 var diamond_plate_provider: Callable = Callable()
+## 专属枪托装配查询（func(gun_id)->bool，main 注入 stash 链：当前装配皮肤
+## 归属 mk4_speed 系（系列本体/抽奖流光变体/钻石典藏变体，base 同判——
+## engine_provider 同款 lambda）；未注入 = false 不挂不摘，探针/测试裸调
+## 行为不变）：2026-11-27 MK4「疾光魅影」专属托改模链（SKIN_STOCK/
+## _mount_stock_skin/_stock_skin_on）
+var stock_skin_provider: Callable = Callable()
 const SUP_LEN := 0.17      # 消音器长（枪架局部 m）：枪口点前移这么多
 const SUP_R := 0.021
 
@@ -2013,6 +2465,13 @@ func _engine_on(gid: String) -> bool:
 ## 档专属棱面件，未装配/未注入一律 false 零改动）
 func _diamond_on(gid: String) -> bool:
 	return diamond_provider.is_valid() and bool(diamond_provider.call(gid))
+
+
+## 专属枪托装配判定（SKIN_STOCK 有表且 provider 判 true 才改模——皮肤专属
+## 换模件，未装配疾光魅影/未注入 provider 一律 false 零改动：原托照常在位）
+func _stock_skin_on(gid: String) -> bool:
+	return SKIN_STOCK.has(gid) and stock_skin_provider.is_valid() \
+			and bool(stock_skin_provider.call(gid))
 
 
 ## 消音器圆筒（沿 -Z；k = 尺寸倍率：枪架局部 1.0 / 枪身局部 1/GUN_SCALE）
@@ -2320,6 +2779,11 @@ func _equip(slot: String) -> void:
 		_wing_node = _guns[slot].get("wing")
 		if _wing_node != null:
 			_wing_node.rotation_degrees.x = 0.0
+	# 专属枪托引用随槽刷新（2026-11-27 疾光魅影，照 belt/engine 同款教训：
+	# enter 复位不清引用、复用不重挂，唯一刷新点在 _equip）
+	_stock_skin = null
+	if _guns.has(slot) and _guns[slot].has("stock_skin"):
+		_stock_skin = _guns[slot]["stock_skin"]
 	# 只显示当前槽位枪模
 	for k in _guns:
 		var gi: Dictionary = _guns[k]
@@ -2343,7 +2807,10 @@ func _mount_slot(slot: String) -> void:
 	# 持枪对齐随动（枪架局部 = 枪身 Δ × GUN_SCALE）：弹匣锚/枪口火光/曳光
 	# 三处消费同一 hold_off，与 _build_gun_visual 的枪身平移保持同源
 	var hold_off: Vector3 = _hold_delta(gid) * GUN_SCALE
-	var gun := _build_gun_visual(gid)
+	# swap_stock=专属托改模（2026-11-27 疾光魅影）：主链读 provider 决定原托
+	# 让位（大厅预览链 build_preview 不传——预览不带皮肤换模件，与引擎组/
+	# 钻石件不入预览的先例一致）
+	var gun := _build_gun_visual(gid, _stock_skin_on(gid))
 	gun.set_meta("gun_id", gid)
 	var sup := _sup_on(gid)
 	var holder := Node3D.new()
@@ -2510,6 +2977,14 @@ func _mount_slot(slot: String) -> void:
 		# 按槽记账（钻石棱面件为静态组，无逐帧引用——挂载态快照键只服务
 		# enter 重建条件与验收断言）
 		g_pack["diamond"] = diamond
+	# 专属枪托改模（2026-11-27 疾光魅影）：同层位追加 stock_mkgin 建模件
+	# ——原托已在 _build_gun_visual(swap_stock=true) 内让位（程序化摘
+	# stock_default 组 / GLB 截线摘托段），不挪 top/cx（皮肤不改 ADS 锚）
+	var stock_skin := _mount_stock_skin(gun, gid)
+	if stock_skin != null:
+		# 按槽记账（专属托为静态组，无逐帧引用——键只服务 enter 重建条件
+		# 与验收断言；has() 判定照 "diamond" 同款）
+		g_pack["stock_skin"] = stock_skin
 	# 红点镜瞄准线：镜体工厂（_scope_visual reddot 分支）把窗中心 local y 写
 	# 进枪模 meta，这里记进枪架信息包 aim_y——update() 的 ADS 终点据此改按
 	# 「窗中心过屏幕中心」摆位，HUD 正中的红点分划才落进玻璃窗内。其它瞄具
@@ -2554,7 +3029,10 @@ func _mag_override(gid: String) -> Dictionary:
 ## 拼装已整体迁出）。
 ## 弹匣动画节点/枪口火光仍由 _mount_slot 统一挂、镜体由 _finish_gun 统一挂
 ## （瞄具挂点常量原样保留，换弹手部锚点与换弹三段时间轴零改动）
-func _build_gun_visual(gun_id: String) -> Node3D:
+## swap_stock=专属托改模开关（2026-11-27 疾光魅影：仅 _mount_slot 主链传
+## _stock_skin_on(gid)——大厅预览/缩略图链 build_preview 缺省 false，原托
+## 照常在位，与引擎组/钻石件不入预览的先例一致）
+func _build_gun_visual(gun_id: String, swap_stock := false) -> Node3D:
 	var root: Node3D
 	if gun_id == "knife":
 		root = _finish_gun(_knife_build(), gun_id, Vector3(0.06, 0.02, -0.18))
@@ -2586,6 +3064,17 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 	if gun_id == "sniper" and _m14_mod("skel_stock") \
 			and root.find_child("skel_stock", true, false) == null:
 		_attach_skel_stock(root)
+	# 专属托改模·原托摘除（2026-11-27 疾光魅影，skel_stock 原位替换先例）：
+	# 程序化枪身的 stock_default 命名组在此整组摘除（必须在合并前——merge
+	# 收集无视 visible，隐藏挡不住托件进 unibody，摘件才是「隐藏」的落地
+	# 形态；换枪重建路径 _mount_slot 重挂时枪模全新构建=stock_default 天然
+	# 恢复）。写实枪模（GLB 单网格）无此节点，托段由 merge 后的
+	# _cull_stock_region 顶点级摘除
+	if swap_stock and SKIN_STOCK.has(gun_id):
+		var sd := root.find_child("stock_default", true, false)
+		if sd != null:
+			root.remove_child(sd)
+			sd.free()
 	# 持枪对齐：枪身+镜体整体平移 Δ（见 HOLD_DELTA 表头注释）——握把顶锚
 	# 统一落 MK4 基准；镜体随枪同移（scope_anchor 语义不变），AABB 与 ADS
 	# 摆位自动含 Δ，枪架局部三锚在 _mount_slot/try_fire 按 Δ×GUN_SCALE 随动
@@ -2603,6 +3092,11 @@ func _build_gun_visual(gun_id: String) -> Node3D:
 		GUN_LIB.merge_unibody(root)
 	# 皮肤重涂在 merge 之后：段材质已克隆落盘，按原色匹配改克隆实例
 	_apply_skin_paint(root, gun_id)
+	# 专属托改模·托段顶点级摘除（GLB unibody——在重涂之后做，重涂遍历的
+	# 材质对象不受顶点过滤影响；专属托建模件由 _mount_slot 在本函数返回后
+	# 追加，独立材质天然不被重涂污染）
+	if swap_stock and SKIN_STOCK.has(gun_id):
+		_cull_stock_region(root, gun_id)
 	return root
 
 
@@ -2695,7 +3189,8 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 			or gun_id == "ash12"
 			or gun_id == "qjb201"
 			or gun_id == "mcxlt"
-			or gun_id == "m3") \
+			or gun_id == "m3"
+			or gun_id == "ar57") \
 			and s_kind == "iron":
 		# mp7 未装镜不叠 iron 兜底机瞄片：前后机瞄已由枪匠考证建模件承担
 		# （竖向护翼圆顶准星 + 亮环觇孔照门，见 _smg_mp7 ④）——首轮判图
@@ -2743,6 +3238,10 @@ func _finish_gun(root: Node3D, gun_id: String, anchor: Vector3) -> Node3D:
 		# 准星（直立）+ 机匣前部觇孔表尺（放倒态贴轨）为考证建模件
 		# （_lmg_m3 ⑧，ref_01/10 直读），叠 iron 兜底片会悬浮轨顶与真实
 		# 瞄具叠影；改装镜照常落 else 通用挂载，不设 pass 吞镜分支
+		# ar57 同例（2026-11-27 商店枪·AR57 突击步枪·步枪册）：轨前端直立
+		# 准星 + 弹匣盒后方折叠平贴照门为考证建模件（_ar_ar57 ⑥，ref_02/
+		# ref_05），叠 iron 兜底片会悬浮顶匣轨顶与真实瞄具叠影；改装镜
+		# 照常落 else 通用挂载，不设 pass 吞镜分支
 		pass
 	# sr25（2026-10-26 用户定案原厂不带镜——自带 2.5-8 倍镜已从 _ar_sr25 拆除）：
 	# iron 走上方建模机瞄分支（不叠兜底片）；改装镜（reddot/holo/optic/thermal）
@@ -3604,6 +4103,11 @@ const HOLD_DELTA := {
 	# grip(pos=(0,-0.05,0.07)) = (0, -0.022+0.05, -0.0018-0.07)
 	# （机枪册后置握把与 m250/qjb201 同锚同式，29c 持握锚 ±1.5mm 断言同链）
 	"m3": Vector3(0, 0.028, -0.0718),
+	# ar57 精算：Δ = MK4 基准 (0,-0.022,-0.0018) − hd_gun_ar _ar_ar57 握把
+	# 顶锚 grip(pos=(0,-0.030,0.075)) = (0, -0.022+0.030, -0.0018-0.075)
+	# （AR 式握把与 k416/k437/tenglong/ash12/mcxlt 同锚，29c 持握锚 ±1.5mm
+	# 断言同链）
+	"ar57": Vector3(0, 0.008, -0.0768),
 	"knife": Vector3(0, -0.038, -0.0118),   # 匕首：grip_hold 锚(0,0.016,0.01)→MK4 基准(0,-0.022,-0.0018)
 	"pistol": Vector3(0, -0.0263, -0.0348),
 	"smg": Vector3(0, 0.0190, -0.1321),
@@ -4213,28 +4717,35 @@ static func _smg_mk4() -> Node3D:
 			Vector3(-0.017, 0.062, 0.13), Vector3.ZERO, 0.0008, 3)
 	# ⑥ 缓冲管（开筒 + 前锁环/后调节环双 torus）+ 铰链块 + 可调支臂（下斜细件）
 	#    + 托体/贴腮板 + 橡胶托底板 + 侧调节圆钮（torus 侧钮，环面 ⊥ X）
+	#    ——托体件并入命名组 stock_default（child 命名契约照 mag_*/grip_hold，
+	#    find_child 可寻址）：2026-11-27「疾光魅影」专属托改模的摘除锚——
+	#    装配专属托时 _build_gun_visual 在合并前整组摘除（merge 收集无视
+	#    visible，隐藏=件不进 unibody），未装配零改动
 	# 缓冲管尾端开放（cap_tail=false，2026-10 三轮判图「MK4 银环」终审：
 	# 尾盖圆盘正对沿轴视角且 dark 材质仍渲 0.4+——开放后只剩内衬尾盖
 	# 暗面（凸出 2mm）+管口环，端面异物消失）
-	GUN_LIB.tube(root, dark, 0.17, 0.036, Vector3(0, 0.014, 0.155),
+	var stock_def := Node3D.new()
+	stock_def.name = "stock_default"
+	root.add_child(stock_def)
+	GUN_LIB.tube(stock_def, dark, 0.17, 0.036, Vector3(0, 0.014, 0.155),
 			Vector3(90, 0, 0), 0.005, 0, null, 3, 32, 0.05, false)
 	# 后调节环 dark（2026-10 二轮判图「MK4 银环」：steel 弧带在顶灯直射
 	# 下读作亮银环异物——换 dark 与缓冲管/前锁环同色隐入）
-	GUN_LIB.torus_ring(root, dark, 0.017, 0.021, Vector3(0, 0.014, 0.215),
+	GUN_LIB.torus_ring(stock_def, dark, 0.017, 0.021, Vector3(0, 0.014, 0.215),
 			Vector3(90, 0, 0))
-	GUN_LIB.torus_ring(root, steel, 0.017, 0.021, Vector3(0, 0.014, 0.215),
+	GUN_LIB.torus_ring(stock_def, steel, 0.017, 0.021, Vector3(0, 0.014, 0.215),
 			Vector3(90, 0, 0))
-	GUN_LIB.chamfer_box(root, polymer, Vector3(0.046, 0.032, 0.03),
+	GUN_LIB.chamfer_box(stock_def, polymer, Vector3(0.046, 0.032, 0.03),
 			Vector3(0, 0.016, 0.245), Vector3.ZERO, 0.002, 4)
-	GUN_LIB.chamfer_box(root, dark, Vector3(0.03, 0.012, 0.13),
+	GUN_LIB.chamfer_box(stock_def, dark, Vector3(0.03, 0.012, 0.13),
 			Vector3(0, -0.045, 0.30), Vector3(-16, 0, 0), 0.0012, 4)
-	GUN_LIB.chamfer_box(root, polymer, Vector3(0.044, 0.07, 0.13),
+	GUN_LIB.chamfer_box(stock_def, polymer, Vector3(0.044, 0.07, 0.13),
 			Vector3(0, 0.005, 0.31), Vector3.ZERO, 0.003, 12)
-	GUN_LIB.chamfer_box(root, polymer, Vector3(0.04, 0.02, 0.11),
+	GUN_LIB.chamfer_box(stock_def, polymer, Vector3(0.04, 0.02, 0.11),
 			Vector3(0, 0.05, 0.31), Vector3.ZERO, 0.002, 6)
-	GUN_LIB.chamfer_box(root, dark, Vector3(0.05, 0.095, 0.016),
+	GUN_LIB.chamfer_box(stock_def, dark, Vector3(0.05, 0.095, 0.016),
 			Vector3(0, -0.005, 0.38), Vector3.ZERO, 0.002, 6)
-	GUN_LIB.torus_ring(root, steel, 0.005, 0.0115, Vector3(0.026, -0.005, 0.27),
+	GUN_LIB.torus_ring(stock_def, steel, 0.005, 0.0115, Vector3(0.026, -0.005, 0.27),
 			Vector3(0, 0, 90))
 	# ⑦ 弹匣井（挂合同直匣）+ 后握把（指棱高模握把、后倾 20°）+
 	#    护圈/扳机/快慢机/空挂杆
@@ -4672,7 +5183,7 @@ static func _add_grip(parent: Node3D, pos: Vector3, mat: Material,
 	return mi
 
 const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
-	"k437", "tenglong", "ash12", "mcxlt"]
+		"k437", "tenglong", "ash12", "mcxlt", "ar57"]
 # m14（2026-10 商店枪 M14 射手步枪）：官方考证 DMR 并入步枪册——几何体在
 # hd_gun_ar.gd _ar_m14（HDGunLib 高模件，枪体量比 SCAR-H 更长）
 # asval（2026-10 商店枪 AS Val 特种突击步枪）：官方考证 9×39mm 亚音速一体
@@ -4708,6 +5219,14 @@ const AR_IDS := ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
 # 八边形 M-LOK/圆孔护木 + 侧折伸缩双功能三角镂空托 + 默认大消音器「短管
 # 长消音管」剪影；纯全自动不带 cd_profile/burst/trigger_delay——三角洲
 # 无特殊机制；消音器为外观考证件，消音机制只认改枪台 sup_provider）
+# ar57（2026-11-27 商店枪 AR57 突击步枪）：三角洲 S9「回响 Echo」赛季新
+# 4 级 AR（国服名 AR57突击步枪；现实原型 AR-57 上机匣转换套件——P90 50
+# 发弹匣自机匣顶部插入、空壳经原弹匣井向下前方抛出）并入步枪册——几何体
+# 在 hd_gun_ar.gd _ar_ar57（HDGunLib 高模件，P90 式顶部横插 50 发长匣
+# mag_ar57 独立命名节点〔全枪册唯一顶插匣 AR〕+ AR-15 下机匣空置弹匣井
+# 抛壳通道 + 右壁封闭盖板 + 顶置后移拉机柄 + 四面包皮导轨护木 + 侧折
+# 三角镂空托；射速 950rpm 为用户定案〔面板 900 注明于 guns.gd 条目〕，
+# 纯全自动不带 cd_profile/burst/trigger_delay）
 
 
 ## id 是否属于步枪册（_build_gun_visual 的分发判据）
@@ -4850,6 +5369,17 @@ static func _ar_mag_of(id: String) -> Dictionary:
 			# 同 k437 口径用枪身局部原值）
 			return {"pos": Vector3(0.0, -0.087, -0.129),   # 2026-11-05 井匣后移 35mm 手锚随动（-0.151+0.035×0.62）
 					"size": Vector3(0.050, 0.180, 0.088), "show": false}
+		"ar57":
+			# 特征① P90 式 50 发顶部横插长匣（全枪册唯一顶插匣 AR）：真匣是
+			# 枪身建模件（mag_ar57 独立命名节点 + 扁平长匣盒 + 两面黄铜条 +
+			# CAL 5.7×28MM 白刻印——匣形由枪身件表达），动画匣隐（照 p90
+			# mag_top 顶匣先例——换弹沿上插路径：手锚自动到机匣顶部）；pos=
+			# 换弹手锚（枪身局部匣中段 (0,0.098,-0.06)——匣在机匣上方，
+			# 匣顶 0.117 下行半匣高 0.019，+Δ(0,0.008,-0.0768) 后 ×0.62 ≈
+			# (0,0.066,-0.085)）、size=匣外形（掉匣替身缩放基准，顶匣横长
+			# 盒同 p90 口径）
+			return {"pos": Vector3(0.0, 0.066, -0.085),
+					"size": Vector3(0.056, 0.038, 0.30), "show": false}
 	return {}
 
 
@@ -4927,6 +5457,16 @@ static func _ar_scope_anchor(id: String) -> Vector3:
 			# else 挂载（红点/全息 + 增高架生态自动可装——严禁 sr25 式
 			# pass 分支吞镜）
 			return Vector3(0.083, -0.06, -0.29)
+		"ar57":
+			# (my, mz, fz) = 镜座安装面高 0.127（顶轨楔齿尖——P90 式顶插匣
+			# 把轨面抬高一档，0.083 步枪档之上加顶匣 0.038 高+嵌入量；ref_03
+			# 光学镜即骑匣顶轨）/ 镜体中心 z -0.06（机匣中段、顶匣正上方——
+			# ref_03 Optic 槽位同位）/ 前准星 z -0.41（轨前端直立准星）——
+			# 前直立准星 + 弹匣盒后方折叠平贴照门均为考证建模件（ref_02/
+			# ref_05），iron 不叠兜底机瞄片，见 _finish_gun；改装镜走通用
+			# else 挂载（红点/全息 + 增高架生态自动可装——严禁 sr25 式
+			# pass 分支吞镜）
+			return Vector3(0.127, -0.06, -0.41)
 	return Vector3(0.085, -0.1, -0.42)   # 兜底 = M7 机瞄位
 
 

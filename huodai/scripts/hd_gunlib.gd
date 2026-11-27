@@ -31,14 +31,18 @@ extends RefCounted
 ##   qjb201=39624 商店 5.8×42mm 国产 QJB-201 班用机枪——R1~R5 验收
 ## 修复 2026-11-03 后基线 4953）/ mcxlt=23352 商店 .300 BLK SIG MCX
 ## Spear LT SBR 突击步枪（2026-11-05 并册）/ m3=25032 商店 7.62×51mm
-## 三角洲 S12「微光」赛季 M3 通用机枪·原型 MG3（2026-11-06 并册）
+## 三角洲 S12「微光」赛季 M3 通用机枪·原型 MG3（2026-11-06 并册）/
+## ar57=21288 商店 5.7×28mm 三角洲 S9「回响」赛季 AR57 突击步枪·原型
+## AR-57 上机匣转换套件（2026-11-27 并册；同日 R1 验收返工基线
+## 2271→2661：贴腮板搓纹暗条×2 盒 + 鸟笼侧壁 3 孔环×2 柱）
 const POLY_MIN := {"mk4": 11040, "m4a1": 10128, "akm": 6552, "scarh": 7200,
 		"mp5": 6384, "p90": 4440, "uzi": 4056, "vector": 5520,
 		"pistol": 768, "smg": 3336, "rifle": 7584, "shotgun": 1488,
 		"sniper": 3168, "m250": 27432, "mp7": 28752, "m14": 12456,
 		"asval": 15024, "k416": 17976, "an94": 28536, "sr25": 32000,
 		"k437": 18776, "qcq171": 18888, "tenglong": 17544,
-		"ash12": 30600, "qjb201": 39624, "mcxlt": 23352, "m3": 25032}
+		"ash12": 30600, "qjb201": 39624, "mcxlt": 23352, "m3": 25032,
+		"ar57": 21288}
 
 ## 低模基线：改造前（git HEAD）机械清点，口径全表统一 = 盒×24 + 柱×57
 ## （CylinderMesh radial_segments=10、rings=1 双盖；_add_grip 内部自建 1 盒
@@ -270,6 +274,24 @@ const POLY_MIN := {"mk4": 11040, "m4a1": 10128, "akm": 6552, "scarh": 7200,
 ##     = 90×24+17×57 = 3129（几何体在 hd_gun_lmg.gd；目标 ≥10000，红线
 ##     25032 = 8× 基线；机枪册第三把——盒多柱少布局（MG42 系护筒吃掉
 ##     裸枪管柱位、散热槽用盒负形），识别件密度对照 qjb201）
+##   ar57  = 80 盒（直排 71 + 循环展开 9 = 顶轨楔齿×9 + 侧轨横齿 4×2 +
+##     底轨横齿×3，循环体逐语句展开；新枪无旧模，按公式口径对 hd_gun_ar.gd
+##     _ar_ar57 建模调用清点，评审逐行确权：直排=转换段上机匣/AR-15 下
+##     机匣/尾接托块/空弹匣井/井底暗腔板/前倾抛壳坡板/空仓挂机杆/快慢机/
+##     弹匣卡笋/右壁封闭盖板/顶轨基/机匣尾轨台块/T 拉机柄杆/T 翼×2/折叠
+##     照门基座/折叠照门片/前准星基座/前准星柱/顶匣主盒/黄铜条×2/CAL
+##     铭文条×2/型号编号刻/匣盖接缝×2/护木/侧轨基×2/底轨基/梯形散热段×6
+##     计循环/消焰器纵槽×2/grip 内部 6（ridges=3）/护圈底梁/护圈前柱/
+##     护圈后柱/扳机/托铰链块/折叠拨片/锁扣钮/贴腮板凸台/贴腮板搓纹暗条×2/
+##     托上杆/下斜撑/托底立板/橡胶托底垫/托底前钩；2026-11-27 R1 验收
+##     返工：CAL 铭文条加长计直排不变（2 条原有），+贴腮板搓纹暗条×2；
+##     CAL 铭文 Label3D 贴花（mark_label）不进顶点账）
+##     + 13 柱（裸枪管+螺纹环/鸟笼消焰器 tube + 前挡环 + 侧壁 3 孔环×2
+##     〔R1 验收返工，an94 排气孔环同语言〕/托铰接销轴/铰接端钮/背带环×2）
+##     = 80×24+13×57 = 2661（几何体在 hd_gun_ar.gd；目标 ≥10000，红线
+##     21288 = 8× 基线；步枪册第十三把——盒多柱少布局同 k437/tenglong
+##     〔枪管几乎全被四面包皮护木包住、裸露段短 + 鸟笼消焰器；顶匣盒负
+##     件组吃掉柱位〕，识别件密度对照 mcxlt）
 ## 若 CylinderMesh rings 吃 4.7 默认 4 则柱顶点翻倍 → 门槛更松（红线只紧不松）。
 ## 【2026-10 源码复核】rings 缺省确为 4（官方类文档）→ 柱实际 90 顶/根
 ## （= 8·seg+10，见头部公式）；冲锋枪册 mp5/p90/uzi/vector 四把已按 90/柱
@@ -283,7 +305,7 @@ const POLY_BASE := {"mk4": 1380, "m4a1": 1266, "akm": 819, "scarh": 900,
 		"sniper": 396, "m250": 3429, "mp7": 3594, "m14": 1557,
 		"asval": 1878, "k416": 2247, "an94": 3567, "sr25": 4073,
 		"k437": 2346, "qcq171": 2361, "tenglong": 2193, "ash12": 3825,
-		"qjb201": 4953, "mcxlt": 2919, "m3": 3129}
+		"qjb201": 4953, "mcxlt": 2919, "m3": 3129, "ar57": 2661}
 
 ## 分段旋钮（顶点量级的唯一来源；SEG_TUBE ≥ 32 = 圆护木圆滑红线）
 const SEG_CHAMFER := 6      # 倒角盒每面网格默认分段
@@ -331,7 +353,11 @@ const _FACE_AXES := [
 static func merge_unibody(root: Node3D) -> void:
 	var segs: Array = []        # [mat, SurfaceTool] 段=树序连续同材质
 	var keepers: Array = []     # [[name, Transform3D], ...] 待重建的命名锚点
-	_collect_meshes(root, root, segs, keepers)
+	var labels: Array = []      # [Label3D, Transform3D] 贴花原样保留（AR57
+	                            # CAL 铭文——2026-11-27 R1 返工；Label3D 非
+	                            # MeshInstance3D 不进段合并，旧件被 queue_free
+	                            # 会丢字，duplicate 后按 root 局部变换重挂）
+	_collect_meshes(root, root, segs, keepers, labels)
 	# 摘除全部旧子件（网格已拷贝进 SurfaceTool，资源仍被引用不受释放影响）
 	for child in root.get_children():
 		root.remove_child(child)
@@ -368,16 +394,26 @@ static func merge_unibody(root: Node3D) -> void:
 		anchor.name = k[0]
 		anchor.transform = k[1]
 		root.add_child(anchor)
+	# 贴花重挂（duplicate 保字体/字色/层级/alpha_cut，变换=root 局部）
+	for lb in labels:
+		var lb_dup := lb[0].duplicate() as Label3D
+		lb_dup.transform = lb[1]
+		root.add_child(lb_dup)
 
 
 ## 递归收集：mi 的每个 surface 按树序连续段 append_from（变换累计到 root
-## 局部）；命名锚点（grip_hold / mag_*）记录 [名字, 相对 root 变换]
+## 局部）；命名锚点（grip_hold / mag_*）记录 [名字, 相对 root 变换]；
+## Label3D 贴花记录 [节点, 相对 root 变换]（merge 后 duplicate 重挂）
 static func _collect_meshes(node: Node3D, root: Node3D,
-		segs: Array, keepers: Array) -> void:
+		segs: Array, keepers: Array, labels: Array) -> void:
 	for child in node.get_children():
 		if child is Node3D:
 			var c3 := child as Node3D
 			var rel := _transform_rel(root, c3)
+			if c3 is Label3D:
+				labels.append([c3, rel])
+				_collect_meshes(c3, root, segs, keepers, labels)
+				continue
 			if c3 is MeshInstance3D and (c3 as MeshInstance3D).mesh != null:
 				var mi := c3 as MeshInstance3D
 				var m: Mesh = mi.mesh
@@ -402,12 +438,16 @@ static func _collect_meshes(node: Node3D, root: Node3D,
 			# 命名锚点保留登记（含带网格的锚节点——几何照常合并，锚点空重建）：
 			# grip_hold / mag_* 之外，后握把（rear_phantom）与骨架狙击枪托
 			# （skel_stock）两个配件建模件同名保留（2026-10-29 审计判据——
-			# 探针/回归按名找件，一体成型后几何并入 unibody、空锚重建）
+			# 探针/回归按名找件，一体成型后几何并入 unibody、空锚重建）；
+			# stock_default = MK4 原托命名组（2026-11-27「疾光魅影」专属托
+			# 改模——装配专属托时合并前整组摘除不会到这，未装配时空锚在位
+			# 供「原托在位」命名契约断言）
 			var cname := String(c3.name)
 			if cname == "grip_hold" or cname.begins_with("mag_") \
-					or cname == "rear_phantom" or cname == "skel_stock":
+					or cname == "rear_phantom" or cname == "skel_stock" \
+					or cname == "stock_default":
 				keepers.append([cname, rel])
-			_collect_meshes(c3, root, segs, keepers)
+			_collect_meshes(c3, root, segs, keepers, labels)
 
 
 ## c3 相对 root 的局部变换（沿父链累计——root 可能未入场景树，不能用
@@ -690,3 +730,33 @@ static func curved_mag(parent: Node3D, mat: Material, size: Vector3,
 	chamfer_box(parent, mat, Vector3(size.x + 0.004, 0.012, size.z + 0.008),
 			base_c, Vector3(bend_deg * float(segments - 1), 0, 0), 0.0015, seg)
 	return parent
+
+
+## 白色铭文贴花（Label3D 真实字形——AR57 弹匣盒 CAL 5.7×28MM 口径铭文，
+## 2026-11-27 R1 验收「细短刻印条读不出字」返工件）。照 hd_guns._elabel/
+## 钻石典藏铭牌先例：透明贴花走 opaque pre-pass 先绘制（防同屏透明排序吃字）、
+## 字体 SystemFont 中文字体链（本文件内嵌照 hd_data.UI_FONT_NAMES 抄——
+## 不为字体引新依赖；Font 资源≠StandardMaterial3D，材质唯一出处纪律不破）、
+## 层 2 随枪身进 vm 补光域（贴掩体失光段不丢字）。rot_y 约定：-90 左壁外
+## 正向 / +90 右壁外正向（Label3D 默认面朝 +Z）。贴花不进 count_vertices
+## 顶点账（非 MeshInstance3D），POLY_BASE 口径如实注明。
+static func mark_label(parent: Node3D, txt: String, pos: Vector3,
+		rot_deg: Vector3, px := 0.0003,
+		col := Color(0.95, 0.95, 0.97)) -> Label3D:
+	var fnt := SystemFont.new()
+	fnt.font_names = PackedStringArray(["Hiragino Sans GB", "Heiti SC",
+			"STHeiti", "Microsoft YaHei UI", "Microsoft YaHei", "SimHei",
+			"SimSun", "Noto Sans CJK SC", "Source Han Sans SC", "sans-serif"])
+	var lb := Label3D.new()
+	lb.text = txt
+	lb.font = fnt
+	lb.font_size = 64
+	lb.pixel_size = px
+	lb.modulate = col
+	lb.outline_size = 0
+	lb.alpha_cut = Label3D.ALPHA_CUT_OPAQUE_PREPASS
+	lb.position = pos
+	lb.rotation_degrees = rot_deg
+	lb.layers |= 1 << 1   # 层 2 与枪模同层：vm_fill 照得到（照铭牌先例）
+	parent.add_child(lb)
+	return lb

@@ -1016,9 +1016,16 @@ func _gun_brief(gid: String) -> PanelContainer:
 			["弹匣", float(g.get("mag", 0)) / mx["mag"], str(g.get("mag", "--"))],
 			["射程", float(g.get("range", 0)) / mx["range"], "%sm" % str(g.get("range", "--"))]]:
 		grid.add_child(_stat_row(str(row[0]), float(row[1]), str(row[2])))
-	var ammo_line := _mk_label("单价 ₵%d/发 · %s 余 %d 发 · 按 3 买弹" % [
-			_to_int(HDData.AMMO_PRICE.get(gid, 0)), HDData.AMMO_NAME, _stash.ammo_of(gid)],
-			12, HDData.AMMO_COLOR)
+	# 口径铭牌上卡（2026-11-27 AR57 R1 验收特征12/14：局内武器卡显示弹药
+	# 型号——只 caliber_of 收录的枪追加口径段，其他枪文案零改动）
+	var cal_txt := Guns.caliber_of(gid)
+	var ammo_fmt := "单价 ₵%d/发 · %s 余 %d 发 · 按 3 买弹"
+	var ammo_args: Array = [_to_int(HDData.AMMO_PRICE.get(gid, 0)),
+			HDData.AMMO_NAME, _stash.ammo_of(gid)]
+	if cal_txt != "":
+		ammo_fmt = "单价 ₵%d/发 · %s · 余 %d 发 · 按 3 买弹（口径 %s）"
+		ammo_args.append(cal_txt)
+	var ammo_line := _mk_label(ammo_fmt % ammo_args, 12, HDData.AMMO_COLOR)
 	ammo_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # 右栏 300 宽防撑破
 	ammo_line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(ammo_line)

@@ -61,7 +61,13 @@
 # mark——SIG 白刻印带可读出证，照 ⑱c/⑲ mark 先例）；M3 2026-11-06 并入
 # 两循环（逐枪美照 + 红点审计）+ ⑳ 前三大识别特征特写 shroud/belt/stock
 # （MG42 系长条椭圆散热孔护筒/左侧弹链+迷彩平衡弹箱/鱼尾托+独立握把，照
-# ⑲ qjb201 belt/bipod/handle 先例）；滚动订正以 grep
+# ⑲ qjb201 belt/bipod/handle 先例）；AR57 2026-11-27 并入两循环（逐枪
+# 美照 + 红点审计）+ ㉑ 识别特征特写六连拍 topmag/lower/charging/
+# rightside/hud_ammo/card（P90 式顶部横插 50 发弹匣盒〔上插弹匣+黄铜条+
+# CAL 5.7×28MM 铭文条 Label3D 真字〕/AR-15 下机匣空置弹匣井抛壳通道+右壁
+# 封闭盖板/顶置后移拉机柄+折叠照门+侧折托铰链/右侧整枪侧视证右壁无开口/
+# HUD 弹药口径小字/改枪台武器卡——R1 验收「三图同 MD5」返工改冻结摆拍
+# 协议 + 特征3/12/14 补证，照 mk4 引擎特写段先例）；滚动订正以 grep
 # 计数 + 单跑实测为准）
 # 腰射/换弹手部/逐枪美照/切枪/探头各段姿势即肩射位——胸前提枪已移除）
 # + 配件图证七张（2026-10-29）：shot_rear_phantom_off/on 幻影后握把
@@ -76,8 +82,10 @@
 # + MK4「极光魅影」引擎检视图证（2026-11-20；第 1 轮验收扩容）：I 检视三帧
 #   shot_inspect_mk4_1/2/3（顶面满转/侧面翻转毕/流光扫过——活塞位置三帧应
 #   不同）+ shot_engine_close 气缸特写（检视姿态定格·机匣侧顶对准气缸组，
-#   冻结摆拍协议）+ shot_wing_stream 尾翼特写（2026-11-27 流线翼定案：
-#   检视侧面姿态对准尾翼——上扬弧线+后缘流光条+双喷气锥应可辨）+ 空仓
+#   冻结摆拍协议）+ shot_wing_stream 尾翼特写（2026-11-27 第 2 轮验收
+#   重拍：俯角对准翼面本体+压低曝光 0.55——上扬弧线弧面+后缘蓝细条+
+#   双喷气锥应可辨）+ shot_wing_root 翼根近距特写（整流罩/翼根/托体
+#   三体同框衔接实证）+ 空仓
 #   特殊检视两张 shot_inspect_mk4_card/_blow（钥匙卡·
 #   增压拉满 / 爆缸·尾排喷火）+ shot_skin_mk4 整枪重拍与 shot_skin_mk4_side
 #   侧面近景（纠偏 11-19 旧暗蓝图证）+ 钻石极品变体图证四机位
@@ -1253,7 +1261,24 @@ func _initialize() -> void:
 	Input.action_press("hd_inspect")
 	check("检视二触发（气缸特写前提）", await wait_until(
 			func(): return main.guns._inspect_t > idur - 0.10, 60))
-	await wait_until(func(): return main.guns._engine_rpm >= 0.9)
+	# 第 2 轮验收修复（拉翼手挡翼/翼面中拉态不可读）：冻结点从 rpm 门后移
+	# 到尾翼段回位态——wing_t≥2.6（第二拉回弹毕+手离场 WING_HIDE_T=2.55
+	# 后、段毕 3.0 前），高转包络已封顶 rpm≈1.0、翼面静止无手遮挡再定格；
+	# 检视若中途过期（_inspect_t 归零）重按一次重走（帧数上限按 119fps
+	# 实测档 2200 帧≈18s>全程 12.5s）
+	var wtot_en: float = main.guns._wing_extra()
+	var wing_rest := func() -> bool:
+		return main.guns._inspect_t > 0.02 \
+				and wtot_en - main.guns._inspect_t >= 2.6
+	if not await wait_until(wing_rest, 2200):
+		Input.action_release("hd_inspect")
+		await frames(2)
+		Input.action_press("hd_inspect")
+		check("检视重触发（尾翼段回位重走）", await wait_until(
+				func(): return main.guns._inspect_t > idur - 0.10, 60))
+	check("尾翼段回位可拍（翼静止+手离场）", await wait_until(wing_rest, 2200))
+	check("检视高转维持（翼特写前提）", main.guns._engine_rpm >= 0.9,
+			"rpm=%.2f" % main.guns._engine_rpm)
 	main.set_process(false)
 	main.hud.visible = false
 	main.guns._ads = 0.0
@@ -1272,18 +1297,38 @@ func _initialize() -> void:
 					and main.guns._jet_m.emission_energy_multiplier > 0.5,
 			"e=%.2f" % (main.guns._jet_m.emission_energy_multiplier
 					if main.guns._jet_m != null else -1.0))
-	# 尾翼特写（2026-11-27 定案：流线翼图证）——检视侧面姿态对准尾翼：
-	# 3 段渐变上扬弧线+后缘蓝流光条+双喷气锥应可辨（翼心 gun-local
-	# (0,0.076,0.100)·GUN_SCALE 0.62 过 rot 落 holder 局部 (0.055,0.053,
-	# 0.014)——holder 逐项反偏取中，z -0.095 特写距离；pitch -6 微昂尾：
-	# 实拍纠偏——检视侧面档 +8° 俯仰把枪尾压低 ~0.010，吃掉翼弧 ~0.005
-	# 的上扬量、判图读成下栽，翻 -6° 尾昂弧线才可辨（tmp_wing_pose 预演
-	# 三档对比定稿，预演脚本用完即删）
-	h_en.position = Vector3(-0.055, -0.056, -0.095)
-	h_en.rotation_degrees = Vector3(-6, 76, -2)
+	# —— 尾翼特写两张（第 2 轮验收重拍：旧机位 -6/76/-2 翼面斜掉画面
+	#    右侧、喷气白锥灌满半幅——翼本体只剩小片深蓝判「构图失效」）：
+	#    ① shot_wing_stream 相机对准翼面本体（俯角 35°+偏航 40° 三视角，
+	#    翼面占幅过半、上扬弧线弧面着色+后缘蓝细条+双喷气锥同框可辨；
+	#    tmp_wing_pose 预演八轮定稿，预演脚本用完即删）；② shot_wing_root
+	#    翼根近距特写（第 2 轮验收补图）：碳纤整流罩驼峰自托体尾顶「长」出
+	#    咬合翼根下表面——罩/翼/托体三体同框无浮缝
+	# 「压低曝光」：流光条特写临时降 vm 环境 tonemap 曝光 0.92→0.55（白锥
+	#    高能辉光压档、翼面暗部层次可读），翼根特写前复原——只影响截图态，
+	#    游戏视觉零改动
+	var vm_env_x: Environment = null
+	for we_x in main.player.vm_viewport.get_children():
+		if we_x is WorldEnvironment:
+			vm_env_x = (we_x as WorldEnvironment).environment
+	var exp_orig := 0.92
+	if vm_env_x != null:
+		exp_orig = vm_env_x.tonemap_exposure
+		vm_env_x.tonemap_exposure = 0.55
+	h_en.position = Vector3(-0.030, -0.016, -0.128)
+	h_en.rotation_degrees = Vector3(40, 40, 4)
 	await frames(2)
 	await _wait_draw()
 	shot("res://out/shot_wing_stream.png")
+	# 翼根特写复原常规曝光再拍（翼根判读要的是「衔接可实证」——压曝会把
+	# 整流罩压回暗部，恰是第 2 轮验收点名的旧症；曝光只压流光条特写）
+	if vm_env_x != null:
+		vm_env_x.tonemap_exposure = exp_orig
+	h_en.position = Vector3(-0.022, -0.018, -0.100)
+	h_en.rotation_degrees = Vector3(36, 30, 26)
+	await frames(2)
+	await _wait_draw()
+	shot("res://out/shot_wing_root.png")
 	h_en.position = Vector3(0.0, -0.045, -0.32)
 	h_en.rotation_degrees = Vector3(16, 30, 0)
 	await frames(2)
@@ -1318,6 +1363,62 @@ func _initialize() -> void:
 	main.guns.ammo = cap_mk4   # 摆拍还原满匣
 	main.stash.equip_skin("mk4", "none")   # 拍完卸皮还原
 	await frames(30)   # 检视收尾回战斗位（enter 重建链随后整体复位）
+	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
+	main._enter_range()
+	await frames(10)
+
+	# ---- 靶场暂停菜单
+	# ---- 专属枪托对比图证（2026-11-27 MK4「疾光魅影」改模；置于引擎检视段
+	#      之后——前置段四次 freeze+shot 会给首检视的尾翼段状态门追加墙钟负
+	#      担，实拍两轮把「拉1回弹谷底/拉拽二/离场」四门挤掉，迁位避让）：
+	#      未装配原托
+	#      shot_stock_default.png / 装配专属托 shot_stock_mkgin.png + 托段特写
+	#      shot_stock_mkgin_close.png——机位对准枪托侧面（托型差异应满幅可辨：
+	#      楔形斜梁骨架托+镂空避震连杆+竖置碳纤肩垫 vs 默认 AR 圆管伸缩托）。
+	#      取景走冻结摆枪架协议（照 18a5 skel_stock 段：_pose_side 侧视 +
+	#      近距特写档），拍完卸皮还原
+	if not main.stash.guns_owned.has("mk4"):
+		main.stash.guns_owned.append("mk4")
+	main.stash.equip_skin("mk4", "none")
+	main.stash.loadout = {"primary": "mk4", "secondary": "pistol"}
+	main._enter_range()
+	await frames(20)
+	check("探针未装配原托基线（无 stock_mkgin）",
+			main.guns._guns["primary"].get("stock_skin", null) == null)
+	main.set_process(false)
+	main.hud.visible = false
+	_pose_side(0.46, -0.10)
+	await frames(2)
+	shot("res://out/shot_stock_default.png")
+	main.set_process(true)
+	var ss_vid := ""
+	for vid_s in main.stash.skin_var.keys():
+		if str(main.stash.skin_var[vid_s].get("base", "")) == "mk4_speed":
+			ss_vid = str(vid_s)
+			break
+	if ss_vid == "":
+		main.stash.cash = 99999
+		var rr_ss: Dictionary = main.stash.roll_skin("mk4_speed")
+		ss_vid = str(rr_ss.get("vid", ""))
+	check("探针抽得变体（专属托装配前提）", ss_vid != "")
+	main.stash.equip_skin("mk4", ss_vid)
+	_remount_primary()
+	await frames(6)
+	check("探针专属托在位（stock_mkgin 挂载）",
+			main.guns._guns["primary"].get("stock_skin", null) != null)
+	main.set_process(false)
+	main.hud.visible = false
+	_pose_side(0.46, -0.10)
+	await frames(2)
+	shot("res://out/shot_stock_mkgin.png")
+	_pose_side(0.30, 0.02, 0.16)   # 托段件体特写（fov75 下满幅 ~1/3+，照 skel_stock 档）
+	await frames(2)
+	shot("res://out/shot_stock_mkgin_close.png")
+	main.set_process(true)
+	main.hud.visible = true
+	main.stash.equip_skin("mk4", "none")   # 拍完卸皮还原
+	# 出发配置还原 rifle（本段改过 loadout=mk4——下文「两发后余弹 28」按
+	# rifle 30 发匣读数，配置被顶掉会读成别的枪，见段头 587 行警示）
 	main.stash.loadout = {"primary": "rifle", "secondary": "pistol"}
 	main._enter_range()
 	await frames(10)
@@ -1420,11 +1521,14 @@ func _initialize() -> void:
 	# 商店枪 MCX-LT 并册追加（.300 BLK SIG MCX Spear LT 9 寸 SBR·全长一体
 	# 顶轨/八边 M-LOK 圆孔护木/侧折伸缩双功能托/默认大消音器「短管长消音管」）；
 	# 2026-11-06 商店枪 M3 并册追加（7.62×51mm 三角洲 S12「微光」赛季 M3
-	# 通用机枪·原型 MG3·MG42 系散热孔护筒/左侧弹链+迷彩弹箱/鱼尾托）
+	# 通用机枪·原型 MG3·MG42 系散热孔护筒/左侧弹链+迷彩弹箱/鱼尾托）；
+	# 2026-11-27 商店枪 AR57 并册追加（5.7×28mm 三角洲 S9「回响」赛季
+	# AR57 突击步枪·原型 AR-57 转换套件·P90 式顶部横插 50 发弹匣/AR-15
+	# 下机匣弹井抛壳/顶置后移拉机柄/四面包皮导轨护木/侧折三角镂空托）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "m3", "knife",
-			"pistol", "smg", "rifle", "shotgun", "sniper"]:
+			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "m3", "ar57",
+			"knife", "pistol", "smg", "rifle", "shotgun", "sniper"]:
 		if not main.stash.guns_owned.has(gid):
 			main.stash.guns_owned.append(gid)
 		main.stash.loadout = {"primary": gid, "secondary": "pistol"}
@@ -1482,12 +1586,13 @@ func _initialize() -> void:
 	# 并册追加——机枪册裸轨放倒瞄具枪，改装镜走通用挂载必须在位；MCX-LT
 	# 2026-11-05 并册追加——全长一体轨放倒瞄具枪，改装镜走通用挂载必须在位；
 	# M3 2026-11-06 并册追加——机枪册裸轨放倒表尺枪，改装镜走通用挂载
-	# 必须在位）
+	# 必须在位；AR57 2026-11-27 并册追加——顶匣轨直立准星+折叠照门枪，
+	# 改装镜走通用挂载必须在位）
 	if not main.stash.scopes_owned.has("reddot"):
 		main.stash.scopes_owned.append("reddot")
 	for gid0 in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "mk4",
 			"m250", "mp7", "m14", "asval", "k416", "an94", "sr25", "k437",
-			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "m3",
+			"qcq171", "tenglong", "ash12", "qjb201", "mcxlt", "m3", "ar57",
 			"pistol", "smg", "rifle", "shotgun", "sniper"]:
 		main.stash.loadout = {"primary": gid0, "secondary": "pistol"}
 		main._enter_range()
@@ -2428,6 +2533,125 @@ func _initialize() -> void:
 	await shot("res://out/shot_gun_m3_stock.png")
 	_set_ads_mx(0.0)   # 特写收尾恢复腰射摆位
 	main.world.set_indoor(false)   # m3 特写段收尾：恢复户外氛围
+	# ㉑ AR57 前三大识别特征特写 + R1 验收补图（2026-11-27 商店枪并册，段起
+	#     照 ⑳ m3 shroud/belt/stock 先例；R1 验收 6/11 未过返工——三张特写
+	#     MD5 相同且均为同一张远景地面图，根因 = 旧协议不冻结主循环
+	#     〔guns.update 每帧覆写摆位回腰射位〕+ 尾段渲染节流连拍同帧残影，
+	#     改用 MK4 引擎特写段的冻结摆拍协议〔set_process(false) + 摆 holder
+	#     + _wait_draw 对齐真实绘制再抓帧〕逐张实拍）：
+	#     ① P90 式顶部横插 50 发弹匣盒（顶面斜角特写——扁平长匣+两面黄铜
+	#       条+CAL 5.7×28MM 白铭文条 Label3D 真字+顶轨走匣顶同框）
+	#       shot_ar57_topmag / ② AR-15 下机匣保留布局（右前低角——原 5.56
+	#       弹匣井空置改抛壳通道〔井底暗腔板+前倾坡板〕+右壁封闭盖板）
+	#       shot_ar57_lower / ③ 顶置后移拉机柄（右后顶角——T 形柄+折叠平贴
+	#       照门+侧折托铰链块/铰接销+贴腮板凸台同框）shot_ar57_charging /
+	#     ④ 右侧整枪侧视（R1 验收特征3「右壁抛壳窗封闭未证实——需补右侧
+	#       视角截图验证右壁无开口」补证：纯右侧面右壁平顺无开口+封闭盖板
+	#       +梯形散热段同框）shot_ar57_rightside / ⑤ 鸟笼消焰器 3 孔特写
+	#       （特征11 返工件图证）shot_ar57_muzzle /
+	#     ⑥ HUD 弹药口径铭牌（R1 验收特征12「5.7×28mm 弹药无证据」定案
+	#       选项 B——HUD 弹药计数下小字「5.7×28mm」可读）
+	#       shot_ar57_hud_ammo /
+	#     ⑦ 局内武器卡（R1 验收特征14「无证据」补图：改枪台选中 AR57——
+	#       枪名卡+3D 实物预览+数据卡〔口径上卡〕）shot_ar57_card
+	#     （机位=2026-11-27 调参 sweep 定稿：摆位解算含枪身 HOLD_DELTA
+	#     〔ar57 (0,0.008,-0.0768)〕与 GUN_SCALE 0.62——p=target-R·((C+Δ)·s)，
+	#     C 注在各特写注释）
+	main.stash.guns_owned.append("ar57")   # 幂等直拥（收尾还原真实存档）
+	main.stash.loadout = {"primary": "ar57", "secondary": "pistol"}
+	main._start_mission({"primary": "ar57", "secondary": "pistol"})
+	await frames(8)
+	for i in main.soldiers.soldiers.size():
+		var sm14: Dictionary = main.soldiers.soldiers[i]
+		sm14["pos"] = Vector3(0, 300, float(i) * 3.0)   # 挪出场外（iso2 协议）
+		sm14["engaged"] = false
+		sm14["moving"] = false
+		sm14["state"] = "combat"
+		main.soldiers._write_pose(i)
+	main.player.pos = Vector3(HDData.HALL_CENTER.x + 3.70,
+			HDData.HALL_FLOOR_Y + 1.55, HDData.HALL_CENTER.z + 11.0)
+	main.player.yaw = PI
+	main.player.pitch = 0.0
+	main.player.update(0.016)
+	main.world.set_indoor(true)
+	# 冻结摆拍（照钻石/mk4 引擎特写段协议）：主循环停更后 guns.update 不再
+	# 覆写摆位；相机手动定格馆内平视（冻结态 player.update 不跑）
+	main.set_process(false)
+	main.hud.visible = false
+	main.guns._ads = 0.0
+	main.player.ads = 0.0
+	main.player.cam.position = main.player.pos
+	main.player.cam.rotation = Vector3(-0.08, PI + PI, 0)
+	var g_a57: Dictionary = main.guns._cur_gun()
+	var h_a57: Node3D = g_a57["holder"]
+	# 特写①：顶匣段右斜上视（C=右匣壁中心 (0.028,0.100,-0.04)）——顶匣段
+	# 满幅：扁平长匣盒骑机匣上方 + 顶轨走匣顶齿列 + 两面黄铜条（ref_05
+	# 半透明匣内 5.7 弹铜壳读法）+ CAL 5.7×28MM 白铭文条 Label3D 真字同框
+	h_a57.position = Vector3(-0.0556, -0.1025, -0.2316)
+	h_a57.rotation_degrees = Vector3(14, -84, 0)
+	await frames(2)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_topmag.png")
+	# 特写②：下机匣段右前低角（C=下机匣右壁 (0.028,-0.02,0.03)）——下机匣
+	# 段满幅：空置 AR 弹匣井（井底暗腔板+前倾抛壳坡板读「弹井抛壳」）+
+	# 右壁封闭盖板 + 护圈/握把/快慢机/弹匣卡笋全在位
+	h_a57.position = Vector3(-0.0285, -0.0167, -0.2645)
+	h_a57.rotation_degrees = Vector3(-12, -84, 0)
+	await frames(2)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_lower.png")
+	# 特写③：枪尾顶段右后上斜角（C=尾部轨台拉机柄簇 (0,0.108,0.125)）——
+	# 弹匣盒后端/尾部轨台 T 拉机柄区/折叠平贴照门 + 侧折托铰链块+铰接销
+	# 轴+骨架托三角镂空+贴腮板凸台同框
+	h_a57.position = Vector3(0.0433, -0.0835, -0.2036)
+	h_a57.rotation_degrees = Vector3(24, -130, 0)
+	await frames(2)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_charging.png")
+	# 特写④：右侧整枪侧视（Ry -88 近正右侧、Rx 2 微平；C=枪身视觉中心
+	# (0,0.02,-0.15)）——整枪侧面满幅：右壁平顺无抛壳窗开口（封闭盖板
+	# 平贴）+ 护木梯形散热段 + 骨架托三角镂空/贴腮板凸台/外撇托底垫 +
+	# 鸟笼消焰器 3 孔侧排同框（特征3/7/11 一张侧视全读）
+	h_a57.position = Vector3(-0.1398, -0.0423, -0.5151)
+	h_a57.rotation_degrees = Vector3(2, -88, 0)
+	await frames(2)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_rightside.png")
+	# 特写⑤：鸟笼消焰器 3 孔特写（C=消焰器筒心 (0,0.043,-0.61)）——裸枪
+	# 管+螺纹环/鸟笼开筒+侧壁 3 孔环/前挡环满幅可读（特征11 返工件图证）
+	h_a57.position = Vector3(-0.411, -0.096, -0.0426)
+	h_a57.rotation_degrees = Vector3(6, -78, 0)
+	await frames(2)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_muzzle.png")
+	# 特写⑥：HUD 弹药口径铭牌（恢复 HUD + 腰射摆位整幅）——右下弹药计数
+	# 「50 / 150」下小字「5.7×28mm」可读（特征12 图证）
+	main.hud.visible = true
+	_set_ads_mx(0.0)
+	await frames(2)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_hud_ammo.png")
+	# 特写⑥：局内武器卡（R1 验收特征14）——摆拍局先置「已结算」再回大厅
+	# （不丢装备，照转靶场段先例），改枪台选中 AR57：左列枪名卡「已拥有」
+	# + 中列 3D 实物预览 + 数据卡（口径上卡「口径 5.7×28mm」）
+	main._raid_live = false
+	main._back_to_lobby()
+	var a57_idx := 0
+	for gi_a57 in Guns.GUNS.size():
+		if str(Guns.GUNS[gi_a57]["id"]) == "ar57":
+			a57_idx = gi_a57
+			break
+	main.lobby._gun_idx = a57_idx
+	main.lobby._bench_col = 0
+	main.lobby.set_tab(1)
+	await frames(10)
+	await _wait_draw()
+	await shot("res://out/shot_ar57_card.png")
+	# ar57 特写段收尾：重进行动（锁房段前提）+ 恢复主循环与户外氛围
+	main._start_mission({"primary": "ar57", "secondary": "pistol"})
+	main.set_process(true)
+	main.world.set_indoor(false)
+	await frames(20)
 	# ---- 钥匙锁房图证（「更好玩」阶段 B）：军火库上锁红门 → 持钥匙 F 开锁
 	#      （绿灯 + 门滑升 + 房内 safe/武器箱生成）
 	main.player.pos = Vector3(-40.2, 1.55, -47.0)

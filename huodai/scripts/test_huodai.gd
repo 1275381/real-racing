@@ -3,9 +3,9 @@
 #       + 画质战场回归：开镜倍率语义/靶馆地坪分层/士兵比例/雾密度红线
 #       + 交易行页签（唯一购买入口）：页签切换/光标跨段/成交链/出发页·改枪台购买入口回收
 #       + 高模顶点红线：MK4 + 冲锋枪册六枪（mp5/p90/uzi/vector/mp7/qcq171）+
-#         步枪册十二枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437/tenglong/
-#         ash12/mcxlt）+ 旧五枪 + 机枪册 M250/QJB201/M3 总顶点 ≥ 8× 低模基线
-#         （HDGunLib.POLY_MIN 表）
+#         步枪册十三枪（m4a1/akm/scarh/m14/asval/k416/an94/sr25/k437/tenglong/
+#         ash12/mcxlt/ar57）+ 旧五枪 + 机枪册 M250/QJB201/M3 总顶点 ≥ 8× 低模
+#         基线（HDGunLib.POLY_MIN 表）
 #       + 持枪（胸前提枪已移除）：出发枪常驻肩射位/无胸前横端/开镜回瞄准位
 #       + 红点镜 ADS 瞄准线：镜窗改大（60×45mm）+ 窗中心过屏幕中心——
 #         HUD 中心红点必须落进玻璃窗内（用户反馈「准星飞出镜子外」）
@@ -799,7 +799,127 @@ func _run() -> void:
 		if je_v is InputEventKey and (je_v as InputEventKey).physical_keycode == KEY_J:
 			j_evt_ok = true   # 注册走 physical_keycode（main._register_inputs）
 	check("检视键 hd_inspect 注册在位（KEY_J 用户点名）", j_evt_ok,
-			"绑=" + str(j_events.size()) + " 事件")	# 摆拍还原：出发配置回原值（本段改过 loadout=mk4 进过靶场）——后续
+			"绑=" + str(j_events.size()) + " 事件")
+	# 2e-g. 专属枪托改模（2026-11-27 MK4「疾光魅影」整段换模——楔形斜梁骨架
+	#       托+镂空避震连杆+竖置碳纤肩垫，skel_stock 原托替换先例 +
+	#       engine_provider skin 系归属同款）：a. 未装配无 stock_mkgin/原托
+	#       在位；b. 装配流光变体 stock_mkgin 在位+原托让位（写实枪模 GLB
+	#       托段顶点截线收口 ≤0.16，程序化路径 stock_default 摘除）；c. 卸下
+	#       恢复原托；d. 钻石典藏变体同触发改模；e. 程序化枪身路径
+	#       （HD_NO_BL=1）stock_default 命名契约三态（未装可见/装被摘/卸回归）
+	#       ——tail=unibody AABB 尾端 z（原托托尾 0.379；专属托截线 0.14）
+	var pk_ga: Dictionary = main.guns._guns["primary"]
+	var uni_ga: MeshInstance3D = (pk_ga["holder"] as Node3D) \
+			.find_child("unibody", true, false) as MeshInstance3D
+	var tail_a: float = uni_ga.mesh.get_aabb().end.z \
+			if uni_ga != null and uni_ga.mesh != null else -1.0
+	var sd_a: Node = (pk_ga["holder"] as Node3D) \
+			.find_child("stock_default", true, false)
+	var bl_off: bool = OS.get_environment("HD_NO_BL") != ""
+	check("未装配无专属托（stock_mkgin 缺 + 托尾原长 + 原托在位）",
+			pk_ga.get("stock_skin", null) == null
+			and main.guns._stock_skin == null
+			and tail_a > 0.30
+			and ((bl_off and sd_a != null and (sd_a as Node3D).visible)
+					or not bl_off),
+			"tail=%.3f bl_off=%s" % [tail_a, str(bl_off)])
+	# b. 装配流光变体（2d 段留存 flow_vid）→ stock_skin_provider 判 true、
+	#    enter 重建链换装专属托
+	main.stash.equip_skin("mk4", flow_vid)
+	check("stock_skin_provider 归属判定（mk4_speed 系流光变体 → true）",
+			bool(main.guns.stock_skin_provider.call("mk4")))
+	main.guns.enter({"primary": "mk4", "secondary": "pistol"})
+	await frames(4)
+	var pk_gb: Dictionary = main.guns._guns["primary"]
+	var st_gb: Node3D = pk_gb.get("stock_skin", null)
+	var uni_gb: MeshInstance3D = (pk_gb["holder"] as Node3D) \
+			.find_child("unibody", true, false) as MeshInstance3D
+	var tail_b: float = uni_gb.mesh.get_aabb().end.z \
+			if uni_gb != null and uni_gb.mesh != null else -1.0
+	check("装配流光变体专属托在位（stock_mkgin+铰接块/避震筒/调节环/肩垫/拉花）",
+			st_gb != null and str(st_gb.name) == "stock_mkgin"
+			and main.guns._stock_skin == st_gb
+			and st_gb.find_child("hinge_joint", true, false) != null
+			and st_gb.find_child("shock_body", true, false) != null
+			and st_gb.find_child("adjust_ring", true, false) != null
+			and st_gb.find_child("buttpad", true, false) != null
+			and st_gb.find_child("livery_mk4_delta_l", true, false) != null
+			and st_gb.find_child("livery_limited_r", true, false) != null,
+			"tail=%.3f" % tail_b)
+	check("装配后原托让位（托尾截线收口 ≤0.16 + stock_default 摘除 + 引擎组同挂）",
+			tail_b > 0.0 and tail_b <= 0.16
+			and (pk_gb["holder"] as Node3D) \
+					.find_child("stock_default", true, false) == null
+			and pk_gb.get("engine", null) != null,
+			"tail=%.3f" % tail_b)
+	# c. 卸下恢复（provider 归 false → enter 重建链回默认托）
+	main.stash.equip_skin("mk4", "none")
+	check("stock_skin_provider 归属判定（none → false）",
+			not bool(main.guns.stock_skin_provider.call("mk4")))
+	main.guns.enter({"primary": "mk4", "secondary": "pistol"})
+	await frames(4)
+	var pk_gc: Dictionary = main.guns._guns["primary"]
+	var uni_gc: MeshInstance3D = (pk_gc["holder"] as Node3D) \
+			.find_child("unibody", true, false) as MeshInstance3D
+	var tail_c: float = uni_gc.mesh.get_aabb().end.z \
+			if uni_gc != null and uni_gc.mesh != null else -1.0
+	var sd_c: Node = (pk_gc["holder"] as Node3D) \
+			.find_child("stock_default", true, false)
+	check("卸下恢复原托（stock_mkgin 移除 + 托尾回原长 + stock_default 回归）",
+			pk_gc.get("stock_skin", null) == null
+			and main.guns._stock_skin == null
+			and tail_c > 0.30
+			and ((bl_off and sd_c != null and (sd_c as Node3D).visible)
+					or not bl_off),
+			"tail=%.3f" % tail_c)
+	# d. 钻石典藏变体同触发改模（2d 段留存 dia_vid——provider 只认 mk4_speed
+	#    base，变体档位不分裂托形）
+	main.stash.equip_skin("mk4", dia_vid)
+	main.guns.enter({"primary": "mk4", "secondary": "pistol"})
+	await frames(4)
+	var pk_gd: Dictionary = main.guns._guns["primary"]
+	check("钻石典藏变体同触发专属托改模（stock_mkgin+棱面件同框）",
+			pk_gd.get("stock_skin", null) != null
+			and pk_gd.get("diamond", null) != null
+			and bool(main.guns.stock_skin_provider.call("mk4")))
+	# e. 程序化枪身路径命名契约（HD_NO_BL=1 强制程序化枪身——stock_default
+	#    节点三态：未装可见 / 装被摘 / 卸回归；照 2e-e 拆旧挂新链，
+	#    _equip 直调早退不改可见性——新 holder 默认可见，探针同款）
+	OS.set_environment("HD_NO_BL", "1")
+	for pass_e in 3:
+		main.stash.equip_skin("mk4", flow_vid if pass_e == 1 else "none")
+		var oe_e: Dictionary = main.guns._guns["primary"]
+		(oe_e["holder"] as Node3D).visible = false
+		(oe_e["holder"] as Node3D).queue_free()
+		(oe_e["flash"] as OmniLight3D).queue_free()
+		(oe_e["flash_env"] as OmniLight3D).queue_free()
+		main.guns._guns.erase("primary")
+		main.guns._mount_slot("primary")
+		main.guns._equip("primary")
+		var pk_e: Dictionary = main.guns._guns["primary"]
+		var sd_e: Node = (pk_e["holder"] as Node3D) \
+				.find_child("stock_default", true, false)
+		var has_st: bool = pk_e.get("stock_skin", null) != null
+		if pass_e == 0:
+			check("程序化路径·未装配 stock_default 可见（命名契约）",
+					sd_e != null and (sd_e as Node3D).visible and not has_st)
+		elif pass_e == 1:
+			check("程序化路径·装配专属托 stock_default 摘除+stock_mkgin 在位",
+					sd_e == null and has_st)
+		else:
+			check("程序化路径·卸下恢复 stock_default 回归可见",
+					sd_e != null and (sd_e as Node3D).visible and not has_st)
+	OS.set_environment("HD_NO_BL", "")   # 还原写实枪模路径
+	var oe_r: Dictionary = main.guns._guns["primary"]
+	(oe_r["holder"] as Node3D).visible = false
+	(oe_r["holder"] as Node3D).queue_free()
+	(oe_r["flash"] as OmniLight3D).queue_free()
+	(oe_r["flash_env"] as OmniLight3D).queue_free()
+	main.guns._guns.erase("primary")
+	main.guns._mount_slot("primary")
+	main.guns._equip("primary")
+	await frames(2)
+	# 摆拍还原：出发配置回原值（本段改过 loadout=mk4 进过靶场）——后续
 	# 撤离/阵亡账目段按原配置重开（阵亡丢的是带入的 rifle，非摆拍 mk4）
 	main.stash.loadout = lo0
 	await frames(4)
@@ -1401,12 +1521,12 @@ func _run() -> void:
 	check("当前环境雾密度 ≤ 红线", main.world._env.fog_density <= HDWorld.FOG_MAX,
 		"density=%.4f" % main.world._env.fog_density)
 
-	# 16. 新枪账本：二十把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
+	# 16. 新枪账本：二十二把新枪逐把出发进场——满弹 + 备弹=stash 首局礼物满额 + 后坐表落位
 	#     （RECOIL 缺键会吃 [0.4,0.2,0.25] 兜底，后坐爆炸；旧语义「每局免费满备弹」
 	#     已改弹药经济：首次进弹药经济一次性送满额，此后只买不送）
 	for gid in ["mp5", "p90", "uzi", "vector", "m4a1", "akm", "scarh", "m14",
 			"m250", "mp7", "asval", "k416", "an94", "sr25", "k437", "qcq171",
-			"tenglong", "ash12", "qjb201", "mcxlt", "m3"]:
+			"tenglong", "ash12", "qjb201", "mcxlt", "m3", "ar57"]:
 		var gi: Dictionary = Guns.gun_by_id(gid)
 		main._start_mission({"primary": gid, "secondary": "pistol"})
 		await frames(8)
@@ -1634,20 +1754,21 @@ func _run() -> void:
 			int(GUN_LIB.POLY_BASE["mk4"])])
 	mk4_root.free()
 
-	# 27. 高模顶点红线：步枪册十二枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
+	# 27. 高模顶点红线：步枪册十三枪（hd_gun_ar.gd 高模重建；m14 商店 DMR
 	#     2026-10 并册、asval 商店特种突击步枪 2026-10 并册、k416 商店突击
 	#     步枪 2026-10 并册、an94 商店超点射突击步枪 2026-10 并册、
 	#     sr25 商店半自动 DMR 2026-10 并册、k437 .300 BLK 突击步枪
 	#     2026-10-29 并册、tenglong 5.8×42mm 国产腾龙突击步枪
 	#     2026-10-31 并册、ash12 12.7×55mm 无托重弹突击步枪 2026-11-01 并册、
-	#     mcxlt .300 BLK SIG MCX Spear LT SBR 突击步枪 2026-11-05 并册）
+	#     mcxlt .300 BLK SIG MCX Spear LT SBR 突击步枪 2026-11-05 并册、
+	#     ar57 5.7×28mm 三角洲 S9「回响」赛季 AR57 突击步枪 2026-11-27 并册）
 	#     逐把枪身根总顶点 ≥ 8× 低模基线（走
 	#     hd_guns._ar_build 分发入口，含 mag_stanag/mag_banana/mag_wide/
 	#     mag_dmr/mag_val/mag_k416/mag_an94/mag_sr25/mag_k437/mag_tenglong/
-	#     mag_ash12/mag_mcxlt 独立命名弹匣节点；POLY_MIN/POLY_BASE 见
-	#     HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
+	#     mag_ash12/mag_mcxlt/mag_ar57 独立命名弹匣节点；POLY_MIN/POLY_BASE
+	#     见 HDGunLib——门槛与 mk4 同口径 = 盒×24 + 柱×57 的 8 倍）
 	for gid in ["m4a1", "akm", "scarh", "m14", "asval", "k416", "an94", "sr25",
-			"k437", "tenglong", "ash12", "mcxlt"]:
+			"k437", "tenglong", "ash12", "mcxlt", "ar57"]:
 		var ar_root: Node3D = HDGuns._ar_build(gid)
 		var ar_verts: int = GUN_LIB.count_vertices(ar_root)
 		check("步枪 %s 高模顶点 ≥ POLY_MIN（8× 基线）" % gid,
@@ -2127,6 +2248,133 @@ func _run() -> void:
 		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("m3",
 				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("m3")),
 			str(m3_def.get("ad", "缺"))])
+
+	# 27m. AR57 商店枪专项（2026-11-27 并册·三角洲 S9「回响 Echo」赛季新
+	#      4 级 AR，现实原型 AR-57 上机匣转换套件——P90 50 发弹匣自机匣顶部
+	#      插入、空壳经原弹匣井向下前方抛出；册属步枪 AR_IDS，几何体在
+	#      hd_gun_ar.gd _ar_ar57）：考证断言七件（照 27k MCX-LT/27l M3 段
+	#      先例）——
+	#      ① 独立命名弹匣锚点 mag_ar57 在枪身根下（P90 式 50 发顶插长匣，
+	#        换弹手沿 mag_of 锚跟随的契约件，#27 循环只查 mag_* 存在性，
+	#        这里锁名；走 _ar_build 分发入口）
+	#      ② 【第一识别特征节点级断言】mag_ar57 节点在机匣上方（原点 y
+	#        +0.117——全枪册唯一顶插匣 AR，下插匣枪 mag 节点 y 全负对照）
+	#      ③ 简介射速「950发每分」与 cd 换算一致 ±1%（60/0.0632=949.4——
+	#        用户定案硬指标 950 发每分执行，面板实值 900 注明于 guns.gd
+	#        条目考证段）
+	#      ④ 全自动缺省（auto 不写 = true，面板全自动+单发；纯突击步枪不带
+	#        cd_profile/burst/trigger_delay）+ 弹匣 50（自带 P90 式 50 发匣
+	#        =用户定案且与 ZillionGamer capacity 50/中文攻略「50 发超大弹容」
+	#        双源一致）
+	#      ⑤ 备弹/购弹双表在表（RESERVE/AMMO_PRICE 缺键则 enter() 备弹 0 /
+	#        交易行购弹静默拒；5.7×28mm 与 p90 同弹族档 150 发 ×₵4——P90
+	#        弹匣/弹药通用是设定核心）
+	#      ⑥ 后坐表 RECOIL 落位（缺键吃 [0.4,0.2,0.25] 兜底后坐爆炸——
+	#        5.7 高射速步枪档 [0.15,0.07,0.09]）
+	#      ⑦ 枪声调音表 SHOT_TUNE 在位（四层枪声 ar57 专项档：5.7×28mm
+	#        高射速轻快，对照 mp7/p90）+ ad 甲伤字段在位（2026-10-29 护甲
+	#        机制全枪必带——面板甲伤 31 直读 ref_04）
+	var a57_root: Node3D = HDGuns._ar_build("ar57")
+	var a57_mag: Node = a57_root.find_child("mag_ar57", true, false)
+	check("AR57 独立命名弹匣锚点 mag_ar57 在根下", a57_mag != null,
+		"node=%s" % (str(a57_mag.name) if a57_mag != null else "无"))
+	check("AR57 上插弹匣（mag_ar57 节点在机匣上方——顶插匣识别特征）",
+		a57_mag != null and (a57_mag as Node3D).position.y >= 0.05,
+		"mag_y=%s" % (str((a57_mag as Node3D).position.y)
+			if a57_mag != null else "无节点"))
+	a57_root.free()
+	var a57_def: Dictionary = Guns.gun_by_id("ar57")
+	var a57_rpm := 60.0 / float(a57_def["cd"])
+	check("AR57 简介射速 950发每分与 cd 换算一致（±1%，面板 900 用户定案 950）",
+		str(a57_def["desc"]).contains("950发每分")
+			and absf(a57_rpm - 950.0) / 950.0 <= 0.01,
+		"cd=%s rpm=%.1f" % [str(a57_def["cd"]), a57_rpm])
+	check("AR57 全自动缺省 + 弹匣 50 + 无特殊机制字段",
+		bool(a57_def.get("auto", true)) and int(a57_def["mag"]) == 50
+			and not a57_def.has("cd_profile") and not a57_def.has("burst")
+			and not a57_def.has("trigger_delay"),
+		"auto=%s mag=%s cd_profile=%s" % [str(a57_def.get("auto")),
+			str(a57_def.get("mag")), str(a57_def.get("cd_profile", "无"))])
+	check("AR57 备弹/购弹双表在表（5.7×28mm 弹族 150 发 ×₵4 与 p90 同档）",
+		(HDData.RESERVE as Dictionary).has("ar57")
+			and (HDData.AMMO_PRICE as Dictionary).has("ar57")
+			and int(HDData.RESERVE["ar57"]) == 150
+			and int(HDData.AMMO_PRICE["ar57"]) == 4,
+		"reserve=%s price=%s" % [str(HDData.RESERVE.get("ar57", "缺")),
+			str(HDData.AMMO_PRICE.get("ar57", "缺"))])
+	check("AR57 后坐表 RECOIL 落位 + 枪声调音表 SHOT_TUNE 在位 + ad 甲伤字段在位",
+		(HDGuns.RECOIL as Dictionary).has("ar57")
+			and (HDAudio.SHOT_TUNE as Dictionary).has("ar57")
+			and a57_def.has("ad") and int(a57_def["ad"]) == 31,
+		"recoil=%s tune=%s ad=%s" % [str((HDGuns.RECOIL as Dictionary).get("ar57",
+				"缺")), str((HDAudio.SHOT_TUNE as Dictionary).has("ar57")),
+			str(a57_def.get("ad", "缺"))])
+
+	# 27m-R1. AR57 R1 验收返工补断言（2026-11-27 验收 6/11 未过落码，照
+	#      27m 编号续段）——
+	#      ⑧ CAL 5.7×28MM 铭文真实字形（Label3D 两侧、文本/朝向锁——R1
+	#        「口径铭文不可辨」返工件：细短刻印条升级白铭文条+Label3D 真字）
+	#      ⑨ 鸟笼消焰器侧壁 3 孔环×2（R1「只有双节圆柱轮廓无开孔」返工件
+	#        ——TorusMesh 孔缘沿笼身两侧纵向均布 z -0.594/-0.6075/-0.621）
+	#      ⑩ 双色分层（R1「整机单色纯黑」返工件：转换段上机匣=root 首件、
+	#        m14steel 档 albedo.r≥0.2；顶匣主盒=mag_ar57 首件、polymer 档
+	#        albedo.r≤0.10——明度分层有实证）
+	#      ⑪ 口径铭牌数据链（R1 特征12 定案选项 B：caliber_of("ar57")==
+	#        「5.7×28mm」上 HUD/武器卡；其他枪缺键空串=只修 AR-57 纪律）
+	a57_root = HDGuns._ar_build("ar57")
+	var a57_labels := a57_root.find_children("*", "Label3D", true, false)
+	var a57_cal_ok := a57_labels.size() >= 2
+	for lb_a57 in a57_labels:
+		var l_a57 := lb_a57 as Label3D
+		if l_a57.text != "CAL 5.7×28MM" \
+				or absf(absf(l_a57.rotation_degrees.y) - 90.0) > 1.0:
+			a57_cal_ok = false
+	check("AR57 CAL 5.7×28MM 铭文 Label3D 两侧真实字形（R1 特征9 返工）",
+		a57_cal_ok, "labels=%d" % a57_labels.size())
+	# 运行时链（_build_gun_visual 过 merge_unibody——贴花 duplicate 重挂，
+	# 旧件 queue_free 不丢字；裸 _ar_build 是合并前树，上面断言只证建模在位）
+	if main != null and main.guns != null:
+		var a57_vis: Node3D = main.guns._build_gun_visual("ar57")
+		check("AR57 铭文 Label3D 过 merge_unibody 存活（运行时链）",
+			(a57_vis.find_children("*", "Label3D", true, false) as Array).size() >= 2,
+			"labels_merged=%d" % (a57_vis.find_children("*", "Label3D",
+					true, false) as Array).size())
+		a57_vis.free()
+	var a57_holes := 0
+	for mi_a57 in a57_root.find_children("*", "MeshInstance3D", true, false):
+		var m_a57 := mi_a57 as MeshInstance3D
+		if m_a57.mesh is TorusMesh and m_a57.position.z <= -0.585 \
+				and m_a57.position.z >= -0.625 \
+				and absf(m_a57.position.x) >= 0.011 \
+				and absf(m_a57.position.x) <= 0.015:
+			a57_holes += 1
+	check("AR57 鸟笼消焰器侧壁 3 孔环×2（R1 特征11 返工）", a57_holes == 6,
+		"holes=%d" % a57_holes)
+	var a57_rcv := a57_root.get_child(0) as MeshInstance3D
+	var a57_magbody := (a57_root.find_child("mag_ar57", true, false) as Node3D) \
+			.get_child(0) as MeshInstance3D
+	var a57_layered := false
+	if a57_rcv != null and a57_magbody != null:
+		var mr_a57 := a57_rcv.mesh.surface_get_material(0) as StandardMaterial3D
+		var mb_a57 := a57_magbody.mesh.surface_get_material(0) as StandardMaterial3D
+		a57_layered = mr_a57 != null and mb_a57 != null \
+				and mr_a57.albedo_color.r >= 0.2 \
+				and mb_a57.albedo_color.r <= 0.10
+	check("AR57 机匣提亮/聚合物压暗双层（R1 配色返工：上机匣 m14steel 档 vs 匣盒 polymer 档）",
+		a57_layered, "rcv=%s mag=%s" % [str(a57_rcv != null), str(a57_magbody != null)])
+	a57_root.free()
+	check("AR57 口径铭牌数据链（caliber_of=5.7×28mm；其他枪缺键空串）",
+		Guns.caliber_of("ar57") == "5.7×28mm"
+			and Guns.caliber_of("m4a1") == "" and Guns.caliber_of("p90") == "",
+		"ar57=%s m4a1=%s" % [Guns.caliber_of("ar57"), Guns.caliber_of("m4a1")])
+	if main.hud != null:
+		main.hud.set_caliber("5.7×28mm")
+		var cal_on: bool = main.hud._cal_label != null \
+				and main.hud._cal_label.text == "5.7×28mm" \
+				and main.hud._cal_label.visible
+		main.hud.set_caliber("")
+		check("HUD 口径铭牌显隐（set_caliber 空串隐藏——其他枪零改动）",
+			cal_on and not main.hud._cal_label.visible)
 
 	# 28. 高模顶点红线：旧五枪（pistol/smg/rifle/shotgun/sniper，原
 	#     _build_gun_visual 内联 BoxMesh 分支高模重建）逐把枪身根总顶点
@@ -3310,6 +3558,32 @@ func _run() -> void:
 	main.guns.update(1.0 / 60.0)
 	check("m3 长程射速达表值 970rpm（全枪册机枪最高节拍）",
 		absf(m3_shots - 80.8) <= 2.2, "shots=%d/300帧（5s）" % m3_shots)
+	# ar57 950rpm（2026-11-27 并册·用户定案 950〔面板 900〕，cd 0.0632 ≈
+	# 3.79 帧/发结转冷却）：无扳机延迟纯全自动；满弹 50 进场（P90 式顶插
+	# 50 发匣=自带弹匣容量）+ 5s 按压实测期望 950×5/60 ≈ 79.2 发
+	main._start_mission({"primary": "ar57", "secondary": "pistol"})
+	await frames(8)
+	check("ar57 满弹 50 进场（P90 式顶插匣容量）",
+		main.guns.ammo == 50 and main.guns._mag_cap() == 50,
+		"ammo=%d cap=%d" % [main.guns.ammo, main.guns._mag_cap()])
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	main.guns.update(1.0 / 60.0)
+	var a57_first: int = 999 - main.guns.ammo
+	Input.action_release("hd_fire")
+	check("ar57 按下当帧即出弹（无扳机延迟纯全自动）", a57_first >= 1,
+		"first_frame_shots=%d" % a57_first)
+	main.guns.ammo = 999
+	main.guns.update(1.0 / 60.0)
+	Input.action_press("hd_fire")
+	for i in 300:
+		main.guns.update(1.0 / 60.0)
+	Input.action_release("hd_fire")
+	var a57_shots: int = 999 - main.guns.ammo
+	main.guns.update(1.0 / 60.0)
+	check("ar57 长程射速达表值 950rpm（5.7 高射速轻弹档）",
+		absf(a57_shots - 79.2) <= 2.2, "shots=%d/300帧（5s）" % a57_shots)
 	# 其余枪零延迟抽查：rifle 按下当帧即出弹（trigger_delay 缺省 0）
 	main._start_mission({"primary": "rifle", "secondary": "pistol"})
 	await frames(8)
@@ -3806,7 +4080,8 @@ func _run() -> void:
 	# vs「550」、mp7 0.063→952.4 vs「950」、m14 0.0822→729.9 vs「730」、
 	# k416 0.0682→879.8 vs「880」、an94 0.1→600.0 vs「600」（超点射首对 1800
 	# 在 desc 里不邻「发每分」不参与机读，档案位校验见 27c）、mcxlt
-	# 0.0714→840.3 vs「840」（S8 季中调整后档）、m3 0.0619→969.3 vs「970」
+	# 0.0714→840.3 vs「840」（S8 季中调整后档）、m3 0.0619→969.3 vs「970」、
+	# ar57 0.0632→949.4 vs「950」（用户定案 950、面板 900 注明）
 	var rpm_re := RegEx.new()
 	rpm_re.compile("(\\d+)发每分")
 	var rpm_bad: Array = []
@@ -3818,7 +4093,7 @@ func _run() -> void:
 		var actual := 60.0 / float(g_def["cd"])
 		if absf(actual - claim) / claim > 0.01:
 			rpm_bad.append("%s %.1f≠%.0f" % [str(g_def["id"]), actual, claim])
-	check("desc「N发每分」与 cd 换算一致（±1%，十四处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12/qjb201/mcxlt/m3）", rpm_bad.is_empty(),
+	check("desc「N发每分」与 cd 换算一致（±1%，十五处 m250/mp7/m14/asval/k416/an94/sr25/k437/qcq171/tenglong/ash12/qjb201/mcxlt/m3/ar57）", rpm_bad.is_empty(),
 		str(rpm_bad))
 	# 切枪不继承冷却：狙击开一枪（cd 1.2）→ 切副枪 fire_cd 清零
 	main._start_mission({"primary": "sniper", "secondary": "pistol"})

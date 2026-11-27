@@ -175,6 +175,15 @@ func _ready() -> void:
 			return true
 		return stash.skin_var.has(fit) \
 				and str(stash.skin_var[fit].get("base", "")) == "mk4_speed"
+	# 专属枪托装配查询（2026-11-27 MK4「疾光魅影」专属托改模）：skin 系归属
+	# 判定照 engine_provider 同款——mk4_speed 系（系列本体/抽奖流光变体/
+	# 钻石典藏变体 base）都换装专属托；未装配/他枪 false（原托零改动）
+	guns.stock_skin_provider = func(gid: String) -> bool:
+		var fit := stash.skin_fit_of(gid)
+		if fit == "mk4_speed":
+			return true
+		return stash.skin_var.has(fit) \
+				and str(stash.skin_var[fit].get("base", "")) == "mk4_speed"
 	# 钻石极品变体装配查询（2026-11-20 抽奖低概率稀有档 12%）：当前装配
 	# 变体 paint.diamond 才挂 diamond_group 棱面件——stash 查 skin_fit/
 	# skin_var；未装配流光变体/系列本体/他枪 false
@@ -886,6 +895,7 @@ func _step_mission(dt: float) -> void:
 	hud.set_danger(pz == "center" or pz == "dam")
 	# 弹药/血量/背包同步
 	hud.set_ammo(guns.ammo, guns.reserve)
+	hud.set_caliber(Guns.caliber_of(guns.cur_id))   # 口径铭牌（AR57 验收特征12）
 	hud.set_health(player.health, 100.0)
 	hud.set_backpack(loot.backpack.size(), HDData.BACKPACK_MAX, loot.secure.size(), loot.secure_cap)
 	# 开镜分划
@@ -957,6 +967,7 @@ func _step_range(dt: float) -> void:
 	guns.update(dt)
 	targets.update(dt)
 	hud.set_ammo(guns.ammo, guns.reserve)
+	hud.set_caliber(Guns.caliber_of(guns.cur_id))   # 口径铭牌（AR57 验收特征12）
 	hud.set_health(player.health, 100.0)
 	hud.set_score(targets.score, targets.best, "靶距 %dm · 移动 %dm %s · 台上平板可调"
 			% [int(targets.range_dist), int(targets.mover_dist),
